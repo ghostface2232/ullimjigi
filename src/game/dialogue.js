@@ -45,6 +45,7 @@ export class Dialogue {
     this.active = false;
     this.cur = null;
     this.depth = 0;
+    this.box.addEventListener('mousedown', (e) => { if (e.button === 0) G.input.mouse.pressed.add(0); });
   }
 
   begin(opts = {}) {
@@ -67,6 +68,7 @@ export class Dialogue {
     document.getElementById('hud').classList.remove('dlg');
     G.cameraRig.release();
     G.interactCD = 0.4;
+    if (G.state === 'play' && !G.game.menu && !G.player.dead) G.input.requestLock();
     for (const n of G.npcs.list) n.talking = false;
     if (G.companion) G.companion.talking = false;
     G.input.consume('KeyE'); G.input.consume('Space'); G.input.mouse.pressed.delete(0);

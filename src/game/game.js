@@ -170,7 +170,7 @@ export class Game {
       });
     });
     $('#game').addEventListener('click', () => {
-      if (G.state === 'play' && !this.menu && !G.input.locked) G.input.requestLock();
+      if (G.state === 'play' && G.mode === 'free' && !this.menu && !G.input.locked && !G.player.dead) G.input.requestLock();
     });
     $('#map-canvas').addEventListener('click', (e) => this.onMapClick(e));
     G.input.onLockChange = (locked) => {
@@ -528,6 +528,7 @@ export class Game {
       G.music.update();
     }
     if (G.state === 'play') G.hud.update(raw);
+    if (I.locked && (G.state !== 'play' || G.mode !== 'free' || this.menu || G.player.dead)) { this.ignoreUnlock = true; I.exitLock(); }
     const ctp = $('#click-to-play');
     const wantCtp = G.state === 'play' && !I.locked && !this.menu && G.mode === 'free' && !G.player.dead;
     if (ctp.classList.contains('hidden') === wantCtp) ctp.classList.toggle('hidden', !wantCtp);

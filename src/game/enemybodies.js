@@ -6,7 +6,7 @@
 // share their glow Color with the glow material, so cracks follow the tier.
 import * as THREE from 'three';
 import { damp, clamp, lerp, rand } from '../core/util.js';
-import { tube, blob, sheet, addGeo, sstep, mix, TAU, bodyMat, crackMat, vnoise3, rotateTowards, ik2, Spring } from './charkit.js';
+import { tube, blob, sheet, addGeo, sstep, mix, TAU, bodyMat, crackMat, vnoise3, rotateTowards, ik2, setWorldQuat, Spring } from './charkit.js';
 import { CHAR, HumanRig, humanType, makeGhost } from './humanrig.js';
 import * as HB from './humanoid.js';
 import { glowBasic, glowTwin } from './creatures.js';
@@ -472,6 +472,135 @@ export function makeShieldBearer() {
   rig.shield = pivot; rig.shieldPivot = pivot;
   rig.glowMats = [glow]; rig.glowMat = glow;
   rig.height = 2.0;
+  return rig;
+}
+
+// ===========================================================================
+// 메아리 사수 — a hooded echo in a tattered cloak and cracked bone mask that
+// still draws a bow it no longer remembers (glowing string, quivered arrows).
+const ARCHER_CFG = {
+  scale: 1.0, bodyW: 0.84, limb: 0.82, legLen: 0.82, armLen: 1.05, headR: 0.15, cape: 1, capeLen: 0.95, capeRag: true, capeFlare: 1.2,
+  bootH: 0.7, gloves: 1, belt: 1, face: false, head: true, noEars: true, hairStyle: 'none', outline: true, hunch: 0.18, stride: 1.9, legFolds: 0.05,
+  group: (k) => (k === 'glow' ? 'glow' : 'skin'),
+  colors: { skin: 0x2c2833, top: 0x2c2833, sleeve: 0x2c2833, pants: 0x25222c, cape: 0x3a4452, lining: 0x262c38, cloak: 0x3a4452, cloakIn: 0x262c38, mask: 0xd8d0bf, glove: 0x3a3440, boots: 0x3a3440, sole: 0x18161c, belt: 0x4a3a2c, buckle: 0x6a5a44, wood: 0x5a4230, glow: 0xffffff, dark: 0x0e0c12 },
+  sculpt(S, L) {
+    const hr = L.hr, HC = L.HC;
+    HB.hood(S, L, this, 'cloak', 'cloakIn');
+    // bone mask with dark eye holes and ember eyes
+    blob(S, 'mask', ['head'], {
+      c: HC.clone().add(v(0, -hr * 0.1, hr * 0.62)), r: [hr * 0.78, hr * 0.95, hr * 0.5], ws: 18, hs: 12, skip: (d) => d.z < -0.1,
+      fn: (d, p) => { p.z += hr * 0.18 * (1 - d.x * d.x) * sstep(-0.9, 0.3, d.y); if (d.y < -0.4) { p.x *= 1 - 0.35 * (-d.y - 0.4); p.z += hr * 0.1; } },
+    });
+    for (const sd of [1, -1]) {
+      blob(S, 'dark', ['head'], { c: HC.clone().add(v(sd * hr * 0.3, hr * 0.02, hr * 1.21)), r: [hr * 0.17, hr * 0.13, hr * 0.05], ws: 10, hs: 6, fn: (d, p) => { p.y += p.x * sd * 0.3; } });
+      blob(S, 'glow', ['head'], { c: HC.clone().add(v(sd * hr * 0.3, hr * 0.01, hr * 1.25)), r: [hr * 0.065, hr * 0.08, hr * 0.025], ws: 8, hs: 6 });
+    }
+    // quiver on the back with glowing nocks
+    const q0 = v(-0.08, L.SY - 0.36, -0.13), q1 = v(0.1, L.SY + 0.08, -0.17);
+    tube(S, 'wood', ['chest', 'spine'], { pts: [q0, q1], seg: 10, steps: 4, r: (u) => mix(0.045, 0.055, u), ref: v(0, 0, 1), cap0: 0.6 });
+    for (let k = 0; k < 3; k++) {
+      const b0 = q1.clone().add(v((k - 1) * 0.025, 0.01, (k % 2) * 0.02 - 0.01));
+      tube(S, 'glow', ['chest'], { pts: [b0, b0.clone().add(v(0.02, 0.11, -0.01))], seg: 4, steps: 2, r: (u) => 0.018 * (1 - u * 0.6), cap1: 1 });
+    }
+  },
+};
+let bowGeo = null;
+const BOW_R = 0.62, BOW_A = 0.4 * Math.PI;
+const BOW_TIP_Y = BOW_R * Math.sin(BOW_A), BOW_TIP_Z = -BOW_R + BOW_R * Math.cos(BOW_A);
+function getBowGeo() {
+  if (bowGeo) return bowGeo;
+  bowGeo = HB.rigidGeo((S) => {
+    // bow in its own space: grip at origin, limbs arc up/down curving back to -Z
+    const pts = [];
+    for (let k = 0; k <= 16; k++) { const a = mix(-BOW_A, BOW_A, k / 16); pts.push(v(0, BOW_R * Math.sin(a), -BOW_R + BOW_R * Math.cos(a) + 0.05 * Math.pow(Math.abs(a / BOW_A), 3))); }
+    tube(S, 'wood', 'r', { pts, seg: 6, steps: 32, ref: v(0, 0, 1), r: (u) => { const c = Math.abs(u - 0.5) * 2; return [0.016 + 0.01 * (1 - c), 0.022 + 0.012 * (1 - c)]; }, cap0: 1, cap1: 1 });
+    tube(S, 'wrap', 'r', { pts: [v(0, -0.08, 0.004), v(0, 0.08, 0.004)], seg: 7, steps: 4, ref: v(0, 0, 1), r: 0.032 });
+  }, { wood: 0x5a4230, wrap: 0x3a2a24 });
+  return bowGeo;
+}
+function archerPose(q, s, R, dt) {
+  R.aimW = damp(R.aimW ?? 0, s.aim ? 1 : 0, s.aim ? 10 : 5, dt);
+  const a = R.aimW;
+  if (a < 0.01) return;
+  // side-on stance: left shoulder to the target, head turned back to aim
+  q.chesty -= 1.0 * a; q.spiney -= 0.35 * a; q.hipsy -= 0.3 * a;
+  q.heady += 1.15 * a; q.necky += 0.2 * a; q.headx += -(s.aimPitch ?? 0) * 0.5 * a;
+  q.spinex -= 0.08 * a; q.chestx += (s.aimPitch ?? 0) * 0.3 * a;
+  q.thighLz += 0.12 * a; q.thighRz -= 0.12 * a; q.thighLy -= 0.4 * a;
+  q.fingL = 1.4; q.thumbL = 1.2; q.fingR = lerp(q.fingR, 0.7, a);
+}
+function archerPost(s, R, dt) {
+  const B = R.B;
+  const a = R.aimW ?? 0;
+  const lie = Math.max(R.w.dead, R.w.down);
+  R.drawW = damp(R.drawW ?? 0, s.draw ?? 0, s.draw ? 8 : 30, dt);
+  const d = R.drawW * a;
+  const re = R.root.matrixWorld.elements, rs = R.root.scale.x || 1;
+  const up = _v1.set(re[4], re[5], re[6]).multiplyScalar(1 / rs), fw = _v2.set(re[8], re[9], re[10]).multiplyScalar(1 / rs);
+  const pitch = s.aimPitch ?? 0;
+  const aim = R._aim.copy(fw).multiplyScalar(Math.cos(pitch)).addScaledVector(up, -Math.sin(pitch)).normalize();
+  const W = 1 - lie;
+  if (a > 0.01 && W > 0.01) {
+    // bow arm straight at the target, draw hand pulls the string to the cheek
+    B.armL.getWorldPosition(_v3);
+    const reach = R._reach;
+    const tL = R._tL.copy(_v3).addScaledVector(aim, reach * 0.97);
+    ik2(B.armL, B.foreL, R._hOffL, tL, _v3.clone().addScaledVector(up, -1).addScaledVector(fw, -0.3), a * W);
+    const bowP = B.handL.getWorldPosition(R._bp);
+    const tR = R._tR.copy(bowP).addScaledVector(aim, -mix(0.16, reach * 0.95, d)).addScaledVector(up, 0.02);
+    B.armR.getWorldPosition(_v3);
+    ik2(B.armR, B.foreR, R._hOffR, tR, _v3.clone().addScaledVector(up, 0.2).addScaledVector(aim, -1), a * W);
+  }
+  // bow: vertical, facing the aim (held low at the side when idle)
+  const bow = R._bow;
+  const idleDir = _v3.copy(fw).multiplyScalar(0.8).addScaledVector(up, -0.6).normalize();
+  const dir = R._dir.copy(idleDir).lerp(aim, a).normalize();
+  const bu = R._bu.copy(up).addScaledVector(dir, -up.dot(dir)).normalize();
+  const bx = _v1.crossVectors(bu, dir).normalize();
+  R._m.makeBasis(bx, bu, dir);
+  _q1.setFromRotationMatrix(R._m);
+  setWorldQuat(bow, _q1, 1);
+  bow.updateMatrixWorld(true);
+  // string: tips to the nock (right hand while drawing)
+  const nock = R._nock.set(0, 0, BOW_TIP_Z);
+  if (d > 0.01) { B.handR.getWorldPosition(_v2); R._inv.copy(bow.matrixWorld).invert(); _v2.applyMatrix4(R._inv); nock.lerp(_v2, sstep(0, 0.25, d)); nock.x *= 0.3; }
+  const seg = (m, ty) => { _v3.set(0, ty, BOW_TIP_Z).sub(nock); const L = _v3.length(); m.position.copy(nock); m.scale.set(1, L, 1); m.quaternion.setFromUnitVectors(R._up, _v3.normalize()); };
+  seg(R._strA, BOW_TIP_Y); seg(R._strB, -BOW_TIP_Y);
+  R._arrow.visible = d > 0.08;
+  R._arrow.position.copy(nock);
+}
+
+export function makeArcher() {
+  const T = humanType(ARCHER_CFG);
+  const glow = glowBasic(0x9aeaff, 2.6);
+  const M = { skin: crackMat(0xffffff, glow.color, { vertexColors: true, freq: 7, glow: 0.45, width: 0.03, rim: 0.6, mott: 0.12 }), glow };
+  const rig = new HumanRig(T, { mats: M, castPose: false, hold: null, outline: 0.011, rim: 0.6, pose: archerPose, post: archerPost });
+  const B = rig.B;
+  const gear = bodyMat(0xffffff, { vertexColors: true, rim: 0.6 });
+  rig.mats.push(gear);
+  const bow = new THREE.Group();
+  const bm = new THREE.Mesh(getBowGeo(), gear); bm.castShadow = true; bow.add(bm);
+  const g2 = glowTwin(glow);
+  const tipG = new THREE.ConeGeometry(0.028, 0.1, 4);
+  for (const sy of [-1, 1]) { const t = new THREE.Mesh(tipG, g2); t.position.set(0, sy * (BOW_TIP_Y + 0.03), BOW_TIP_Z + 0.03); t.rotation.x = sy > 0 ? -0.5 : Math.PI + 0.5; bow.add(t); }
+  const segGeo = new THREE.CylinderGeometry(0.005, 0.005, 1, 3); segGeo.translate(0, 0.5, 0);
+  rig._strA = new THREE.Mesh(segGeo, g2); rig._strB = new THREE.Mesh(segGeo, g2);
+  bow.add(rig._strA, rig._strB);
+  const arrow = new THREE.Group();
+  { const ag = new THREE.CylinderGeometry(0.01, 0.01, 0.82, 4); ag.rotateX(Math.PI / 2); ag.translate(0, 0, 0.41); arrow.add(new THREE.Mesh(ag, g2)); }
+  { const hg = new THREE.ConeGeometry(0.03, 0.11, 4); hg.rotateX(Math.PI / 2); hg.translate(0, 0, 0.86); arrow.add(new THREE.Mesh(hg, g2)); }
+  bow.add(arrow);
+  bow.position.set(0, -rig.L.hand * 0.36, 0.01);
+  B.handL.add(bow);
+  Object.assign(rig, {
+    _bow: bow, _arrow: arrow, _aim: new V3(), _tL: new V3(), _tR: new V3(), _bp: new V3(), _dir: new V3(), _bu: new V3(), _nock: new V3(), _up: new V3(0, 1, 0),
+    _m: new THREE.Matrix4(), _inv: new THREE.Matrix4(),
+    _hOffL: T.def.pos('handL').clone().sub(T.def.pos('foreL')), _hOffR: T.def.pos('handR').clone().sub(T.def.pos('foreR')),
+    _reach: (rig.L.upper + rig.L.fore) * (T.c.scale ?? 1),
+  });
+  rig.p.bow = bow;
+  rig.glowMats = [glow]; rig.glowMat = glow;
+  rig.height = 1.75;
   return rig;
 }
 

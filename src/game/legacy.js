@@ -734,7 +734,7 @@ function makeShieldOld() {
 // ------------------------------------------------------------------
 // 메아리 사수 — a hooded echo that still draws a bow it no longer remembers
 // ------------------------------------------------------------------
-export function makeArcher() {
+function makeArcherOld() {
   const rig = new LegacyRig();
   const P = (rig.p = {});
   const mats = [];

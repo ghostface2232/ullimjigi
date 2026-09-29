@@ -412,6 +412,13 @@ export function skirt(S, L, c, mat, o) {
     inside: (p) => v(0, p.y, 0),
     innerMat: o.innerMat,
   });
+  // front surface depth at height y (for layering an apron over the skirt)
+  return (y) => {
+    const vv = sat01((y - ya) / (yb - ya));
+    if (y > ya) return -1;
+    const rz0 = T.rz(uTop) + 0.012, e = Math.pow(vv, 0.75);
+    return mix(rz0, rz0 * 1.1 + 0.1 * flare, e) * (1 + 0.06 * vv + 0.025 * vv) + T.oz(uTop) * (1 - vv);
+  };
 }
 
 // belt with buckle and optional pouch
@@ -557,7 +564,7 @@ export function scarf(S, L, c, chains) {
 }
 
 // apron over the front
-export function apron(S, L, c, mat) {
+export function apron(S, L, c, mat, under = null) {
   const [y0, y1] = torsoSpan(L);
   const T = torsoR(L, c);
   sheet(S, mat, [['hips', 0.8], 'spine', 'chest', ['thighL', 1.2], ['thighR', 1.2]], {
@@ -568,7 +575,8 @@ export function apron(S, L, c, mat) {
       const wz = y > y0 ? T.rz(uu) + T.oz(uu) : 0.12;
       const hw = mix(0.1, 0.17, sstep(0.25, 0.4, vv)) * L.bw;
       const a = (u - 0.5) * 2;
-      out.set(a * hw, y, Math.max(wz, 0.1 * L.bw + 0.04 * vv) + 0.014 - a * a * 0.03 + 0.03 * vv * vv);
+      const uz = under ? under(y) : -1;
+      out.set(a * hw, y, Math.max(wz + 0.016, 0.1 * L.bw + 0.04 * vv, uz + 0.014) + 0.004 - a * a * 0.02 + 0.03 * vv * vv);
     },
     inside: () => v(0, L.H, -0.1),
   });
@@ -641,11 +649,11 @@ export function glasses(S, L, c) {
     const cc = HC.clone().add(v(sd * hr * 0.35, -hr * 0.0, hr * 1.02));
     const pts = [];
     for (let k = 0; k < 12; k++) { const a = (k / 12) * TAU; pts.push(cc.clone().add(v(Math.cos(a) * hr * 0.22, Math.sin(a) * hr * 0.2, -Math.abs(Math.cos(a)) * hr * 0.03 * (Math.cos(a) * sd > 0 ? 1.6 : 0.3)))); }
-    tube(S, 'frame', ['head'], { pts, closed: true, seg: 5, steps: 24, r: hr * 0.022, ref: v(0, 0, 1) });
+    tube(S, 'frame', ['head'], { pts, closed: true, seg: 5, steps: 24, r: hr * 0.024, ref: v(0, 0, 1), ol: 0.1 });
     // temple arm
-    tube(S, 'frame', ['head'], { pts: [cc.clone().add(v(sd * hr * 0.22, 0, -hr * 0.03)), v(sd * hr * 0.93, HC.y + hr * 0.02, HC.z + hr * 0.2), v(sd * hr * 0.95, HC.y - hr * 0.05, HC.z - hr * 0.3)], seg: 4, steps: 6, r: hr * 0.017 });
+    tube(S, 'frame', ['head'], { pts: [cc.clone().add(v(sd * hr * 0.22, 0, -hr * 0.03)), v(sd * hr * 0.93, HC.y + hr * 0.02, HC.z + hr * 0.2), v(sd * hr * 0.95, HC.y - hr * 0.05, HC.z - hr * 0.3)], seg: 4, steps: 6, r: hr * 0.017, ol: 0.1 });
   }
-  tube(S, 'frame', ['head'], { pts: [HC.clone().add(v(-hr * 0.13, hr * 0.02, hr * 1.03)), HC.clone().add(v(0, hr * 0.06, hr * 1.06)), HC.clone().add(v(hr * 0.13, hr * 0.02, hr * 1.03))], seg: 4, steps: 5, r: hr * 0.018 });
+  tube(S, 'frame', ['head'], { pts: [HC.clone().add(v(-hr * 0.13, hr * 0.02, hr * 1.03)), HC.clone().add(v(0, hr * 0.06, hr * 1.06)), HC.clone().add(v(hr * 0.13, hr * 0.02, hr * 1.03))], seg: 4, steps: 5, r: hr * 0.018, ol: 0.1 });
 }
 
 // ---------------------------------------------------------------------------

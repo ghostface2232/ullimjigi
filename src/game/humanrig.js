@@ -41,6 +41,7 @@ function palette(c) {
     glove: c.gloves ?? 0x6a4a30, beard: c.beard ?? c.hair ?? 0xe0e0e0, frame: 0x3a3028, metal: c.metal ?? c.hatColor ?? 0x9a9aa8, trim: 0xb89a58, visor: 0x101014,
     plume: c.plume ?? 0x3a6ad0, satchel: 0x8a6a44, strap: 0x5a4028, apron: c.apron ?? 0xf4ecd8, vest: c.vest ?? 0x5a4030, robe: c.robe ?? c.top ?? 0x7a6a8a,
     tunic: c.tunic ?? c.top ?? 0xe8dcc0, dark: 0x201a24, shawl: c.shawl ?? 0x8a6a5a, pouch: 0x6a4a30,
+    sleeveIn: dk(c.sleeve ?? c.top ?? 0xe8dcc0, 0.5),
   };
 }
 
@@ -95,8 +96,9 @@ export function humanType(c) {
   if (c.armor) HB.armor(S, L, cc);
   if (c.vest) HB.vest(S, L, cc, 'vest');
   if (c.tunic) HB.skirt(S, L, cc, 'tunic', { bottom: L.H - (c.tunicLen ?? 0.3), flare: 0.5, folds: 8, uTop: 0.4, hipBias: 0.7 });
-  if (c.robe) HB.skirt(S, L, cc, 'robe', { bottom: Math.max(0.05, L.H - (c.robeLen ?? 0.7)), flare: (c.robeFlare ?? 1) * 0.9, folds: 11, uTop: 0.36, nv: 7, hipBias: 0.45 });
-  if (c.apron) HB.apron(S, L, cc, 'apron');
+  let robeZ = null;
+  if (c.robe) robeZ = HB.skirt(S, L, cc, 'robe', { bottom: Math.max(0.05, L.H - (c.robeLen ?? 0.7)), flare: (c.robeFlare ?? 1) * 0.9, folds: 11, uTop: 0.36, nv: 7, hipBias: 0.45 });
+  if (c.apron) HB.apron(S, L, cc, 'apron', robeZ);
   if (c.belt || c.tunic) HB.belt(S, L, cc, 'belt', c.tunic ? 0.41 : 0.39);
   if (c.satchel) HB.satchel(S, L, cc);
   if (c.shawl) HB.mantle(S, L, cc, 'shawl', 'shawl');
@@ -110,7 +112,9 @@ export function humanType(c) {
     for (const sd of [1, -1]) {
       const n = sd > 0 ? 'L' : 'R';
       const el = def.pos('fore' + n), wr = def.pos('hand' + n);
-      tube(S, 'sleeve', ['fore' + n, ['hand' + n, 1.5]], { pts: [el.clone().lerp(wr, 0.2), el.clone().lerp(wr, 0.7), wr.clone().lerp(el, -0.25)], seg: 14, steps: 6, r: (u) => [mix(0.05, 0.085, u * u), mix(0.05, 0.08, u * u)], shape: (u, a) => 1 + 0.08 * Math.sin(a * 5) * u, flat0: false });
+      const sp = [el.clone().lerp(wr, 0.2), el.clone().lerp(wr, 0.7), wr.clone().lerp(el, -0.25)];
+      tube(S, 'sleeve', ['fore' + n, ['hand' + n, 1.5]], { pts: sp, seg: 14, steps: 6, r: (u) => [mix(0.05, 0.085, u * u), mix(0.05, 0.08, u * u)], shape: (u, a) => 1 + 0.08 * Math.sin(a * 5) * u, flat0: false });
+      tube(S, 'sleeveIn', ['fore' + n, ['hand' + n, 1.5]], { pts: sp, seg: 14, steps: 6, r: (u) => [mix(0.05, 0.085, u * u) - 0.006, mix(0.05, 0.08, u * u) - 0.006], shape: (u, a) => 1 + 0.08 * Math.sin(a * 5) * u, inward: true, ol: 0 });
     }
   }
   if (c.sculpt) c.sculpt(S, L, def, extraCh);
@@ -897,15 +901,27 @@ export function makeHumanoid(c = {}) {
   return new HumanRig(T);
 }
 
+// Ghost echo: every mesh switches to a skinned additive fresnel material. A
+// depth-only pre-pass (drawn in the transparent queue just before) keeps only the
+// frontmost surface, so inner layers (body under clothes) don't show through.
+const ghostDepth = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, transparent: true });
 export function makeGhost(rig, color = 0xbfe8ff, alpha = 0.6) {
   const gm = ghostSkinMat(color, alpha);
-  const drop = [];
+  const drop = [], meshes = [];
   rig.root.traverse((o) => {
     if (!o.isMesh) return;
     if (o.userData.isOutline) { drop.push(o); return; }
-    o.material = gm; o.castShadow = false;
+    meshes.push(o);
   });
   for (const o of drop) o.parent.remove(o);
+  for (const o of meshes) {
+    o.material = gm; o.castShadow = false; o.renderOrder = 11;
+    const d = o.isSkinnedMesh ? new THREE.SkinnedMesh(o.geometry, ghostDepth) : new THREE.Mesh(o.geometry, ghostDepth);
+    if (o.isSkinnedMesh) { d.bind(o.skeleton, o.bindMatrix); d.boundingSphere = o.boundingSphere; }
+    d.position.copy(o.position); d.quaternion.copy(o.quaternion); d.scale.copy(o.scale);
+    d.renderOrder = 10; d.castShadow = false; d.userData.ghostDepth = true;
+    o.parent.add(d);
+  }
   rig.ghostMat = gm;
   rig.faceU = null;
   return rig;

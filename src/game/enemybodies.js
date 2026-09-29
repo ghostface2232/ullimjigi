@@ -13,7 +13,7 @@ import { glowBasic, glowTwin } from './creatures.js';
 
 const V3 = THREE.Vector3;
 const v = (x, y, z) => new V3(x, y, z);
-const _v1 = new V3(), _v2 = new V3(), _v3 = new V3(), _q1 = new THREE.Quaternion();
+const _v1 = new V3(), _v2 = new V3(), _v3 = new V3(), _v4 = new V3(), _v5 = new V3(), _q1 = new THREE.Quaternion();
 
 // faceted rock geometry (flat shaded), unit size
 const ROCKS = new Map();
@@ -334,7 +334,7 @@ function knightPost(s, R) {
   const want = _v3.copy(fw).multiplyScalar(Math.cos(ang)).addScaledVector(up, Math.sin(ang)).normalize();
   const hand = R.B.handR;
   hand.getWorldQuaternion(_q1);
-  const cur = new V3(0, 0, 1).applyQuaternion(_q1);
+  const cur = _v4.set(0, 0, 1).applyQuaternion(_q1);
   rotateTowards(hand, cur, want, 0.95 * (1 - R.w.shock));
   hand.updateMatrixWorld(true);
 }
@@ -442,7 +442,7 @@ function shieldPost(s, R) {
   const ang = mix(-0.35, 1.3, b) + g * 0.4;
   const want = _v3.copy(fw).multiplyScalar(Math.cos(ang)).addScaledVector(up, Math.sin(ang)).normalize();
   B.handR.getWorldQuaternion(_q1);
-  rotateTowards(B.handR, new V3(0, 0, 1).applyQuaternion(_q1), want, 0.9 * (1 - R.w.shock) * (1 - R.w.dead));
+  rotateTowards(B.handR, _v4.set(0, 0, 1).applyQuaternion(_q1), want, 0.9 * (1 - R.w.shock) * (1 - R.w.dead));
   B.handR.updateMatrixWorld(true);
 }
 
@@ -545,11 +545,11 @@ function archerPost(s, R, dt) {
     B.armL.getWorldPosition(_v3);
     const reach = R._reach;
     const tL = R._tL.copy(_v3).addScaledVector(aim, reach * 0.97);
-    ik2(B.armL, B.foreL, R._hOffL, tL, _v3.clone().addScaledVector(up, -1).addScaledVector(fw, -0.3), a * W);
+    ik2(B.armL, B.foreL, R._hOffL, tL, _v4.copy(_v3).addScaledVector(up, -1).addScaledVector(fw, -0.3), a * W);
     const bowP = B.handL.getWorldPosition(R._bp);
     const tR = R._tR.copy(bowP).addScaledVector(aim, -mix(0.16, reach * 0.95, d)).addScaledVector(up, 0.02);
     B.armR.getWorldPosition(_v3);
-    ik2(B.armR, B.foreR, R._hOffR, tR, _v3.clone().addScaledVector(up, 0.2).addScaledVector(aim, -1), a * W);
+    ik2(B.armR, B.foreR, R._hOffR, tR, _v4.copy(_v3).addScaledVector(up, 0.2).addScaledVector(aim, -1), a * W);
   }
   // bow: vertical, facing the aim (held low at the side when idle)
   const bow = R._bow;

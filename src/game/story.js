@@ -11,6 +11,7 @@ import { PAL } from '../render/vfx.js';
 import { pick, randRange, rand, fillName, clamp, lerp } from '../core/util.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const GV = (x, dy, z) => new THREE.Vector3(x, G.world.h(x, z) + dy, z); // ground-relative
 const KBD = (k) => `<kbd>${k}</kbd>`;
 
 export class Story {
@@ -474,16 +475,16 @@ export class Story {
     const W = G.world;
     const C = G.companion;
     await this.conv(async () => {
-      G.cameraRig.setCine(V(12, 9, 24), V(6, 11, 12));
+      G.cameraRig.setCine(GV(12, 3, 24), GV(6, 3.5, 12));
       await this.say('narr', '손을 대자, 차가운 돌 안쪽에서 희미한 바람 소리가 난다…', { cam: false });
-      G.audio.play('updraft', { pos: V(6, 14, 10) });
+      G.audio.play('updraft', { pos: GV(6, 7, 10) });
       C.show(true);
-      C.override = V(6, 15.5, 12.5);
-      C.place(V(6, 17, 11));
-      G.vfx.burst(V(6, 15, 12), 'wind', 40, { radius: 1.5, speed: 6 });
-      G.vfx.burst(V(6, 15, 12), 'star', 1, { el: 'wind', size: 5 });
+      C.override = GV(6, 7.5, 12.8);
+      C.place(GV(6, 11, 11));
+      G.vfx.burst(GV(6, 7.5, 12.8), 'wind', 40, { radius: 1.5, speed: 6 });
+      G.vfx.burst(GV(6, 7.5, 12.8), 'star', 1, { el: 'wind', size: 5 });
       await this.sleep(0.9);
-      C.override = V(6, 10.8, 14.2);
+      C.override = GV(6, 2.6, 14.4);
       await this.sleep(1.2);
       G.audio.play('fox');
       await this.say('boreum', '누가 감히 이 몸의 낮잠을— …흠?');
@@ -568,7 +569,7 @@ export class Story {
   async ringVillageBell() {
     const W = G.world;
     const bp = V(6, W.h(6, 10) + 13, 10);
-    G.cameraRig.setCine(V(18, 8, 30), bp);
+    G.cameraRig.setCine(GV(18, 3.5, 30), bp);
     await this.sleep(0.8);
     for (let k = 0; k < 3; k++) {
       W.bellSwing = 0.35;
@@ -919,7 +920,7 @@ export class Story {
     await this.fade(false, 1.2);
     G.game.musicOverride = 'ending';
     await this.conv(async () => {
-      G.cameraRig.setCine(V(6, 5, 32), V(6, 6, 12));
+      G.cameraRig.setCine(GV(6, 3.2, 31), GV(6, 3, 14));
       await this.say('bau', '자, 다들 모였쥬? 어… 그라니께, 노래를 부르면 된다는 거여?', { cam: false });
       await this.say('isol', '네. 기록에 따르면, 가사는 중요하지 않습니다. 기억하는 마음이 중요하지요. …아마도요.', { cam: false });
       await this.say('dodam', '누룽지도 같이 불러요! 누룽지는 음치지만요!', { cam: false });

@@ -21,7 +21,7 @@ export const DEF = {
   oozeFire: { name: '불잿물', hp: 34, dmg: 2, speed: 4, radius: 0.62, height: 0.9, xp: 7, aggro: 15, resist: { fire: 0, frost: 1.6 }, immune: ['fire'], make: () => makeOoze('fire'), base: 'ooze', variant: 'fire' },
   oozeFrost: { name: '서리잿물', hp: 34, dmg: 2, speed: 3.8, radius: 0.62, height: 0.9, xp: 7, aggro: 15, resist: { frost: 0, fire: 1.6 }, immune: ['frost'], make: () => makeOoze('frost'), base: 'ooze', variant: 'frost' },
   moth: { name: '재나방', hp: 14, dmg: 1, speed: 7, radius: 0.4, height: 0.4, xp: 3, aggro: 20, resist: { fire: 2, wind: 1.6 }, flying: true, make: () => makeMoth(), base: 'moth' },
-  knight: { name: '무명의 기사', hp: 950, dmg: 4, speed: 4.4, radius: 0.8, height: 2.4, xp: 180, aggro: 30, resist: { storm: 0.5 }, kbResist: 0.92, freezeAt: 8, freezeTime: 1.6, make: () => makeKnight(false), boss: true },
+  knight: { name: '무명의 기사', hp: 600, dmg: 3, speed: 4.4, radius: 0.8, height: 2.4, xp: 180, aggro: 30, resist: { storm: 0.5 }, kbResist: 0.92, freezeAt: 8, freezeTime: 1.6, make: () => makeKnight(false), boss: true },
 };
 
 // Level tiers: how long a thing has been forgotten
@@ -712,7 +712,7 @@ class Knight extends Enemy {
           G.audio.play('sword', { pos: this.pos });
           const f = tmp.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
           this.pos.addScaledVector(f, 1.2);
-          if (this.combo < 2) { if (this.playerInArc(3.4, 0.1)) this.hurtPlayer(this.def.dmg, 7); }
+          if (this.combo < 2) { if (this.playerInArc(3.4, 0.1)) this.hurtPlayer(this.def.dmg * 0.8, 7); }
           else {
             const p = this.pos.clone().addScaledVector(f, 2.2); p.y = G.world.ground(p.x, p.z, p.y + 3);
             G.vfx.ring(p, PAL.storm.glow, 4, 0.4, { thick: 0.3 }); G.vfx.burst(p, 'electric', 20, { speed: 8 }); G.vfx.burst(p, 'dust', 12, { speed: 6 });
@@ -879,7 +879,7 @@ class Heart {
     this.boss = true; this.type = 'heart'; this.name = '이름 삼킨 자'; this.def = { xp: 0, name: '이름 삼킨 자', boss: true };
     this.level = level;
     this.center0 = center.clone();
-    this.maxHp = Math.round(2000 * (1 + 0.18 * (level - 1))); this.hp = this.maxHp;
+    this.maxHp = Math.round(1000 * (1 + 0.18 * (level - 1))); this.hp = this.maxHp;
     this.alive = true; this.hittable = false; this.radius = 1.9; this.height = 3;
     this.st = newStatus(); this.resist = {}; this.armor = 0; this.freezeAt = 10; this.freezeTime = 1.5;
     this.pos = center.clone().setY(center.y + 6); this.home = this.pos.clone();
@@ -919,7 +919,7 @@ class Heart {
   }
   spawnPlates() {
     const pool = ['fire', 'frost', 'storm', 'wind'];
-    const n = this.phase === 1 ? 3 : 4;
+    const n = this.phase === 3 ? 4 : 3;
     const picks = [];
     const unl = [...G.player.unlocked];
     for (let i = 0; i < n; i++) {
@@ -972,7 +972,7 @@ class Heart {
       this.core.position.y = damp(this.core.position.y, this.pos.y + Math.sin(G.time) * 0.3, 2, dt);
       this.hittable = false;
       if (this.plates.length === 0) {
-        this.exposed = 9;
+        this.exposed = 11.5;
         G.hud.floatText(this.core.position, '심장이 드러났다!', '#ffd86a');
         G.audio.play('shatter', { pos: this.core.position });
         G.vfx.ring(this.center0, PAL.hush.core, 12, 1, { thick: 0.2 });

@@ -182,6 +182,7 @@ export class Props {
     if (d(POI.frost) < 26 + r) return true;
     if (d(POI.storm) < 30 + r) return true;
     if (d(POI.meadow) < 10 + r) return true;
+    if (d(POI.rift) < 38 + r) return true;
     if (Math.hypot(x, z) > 226) return true;
     if (this.T.pathInfo(x, z).d < 4.5 + r) return true;
     return false;

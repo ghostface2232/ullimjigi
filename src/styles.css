@@ -160,7 +160,7 @@ button { font-family: inherit; }
 #heavy-slot .hk { font-family: var(--latin); color: var(--gold); }
 #heavy-slot .hn { color: var(--ink); font-family: var(--blade); }
 
-#boss-bar { position: absolute; bottom: 118px; left: 50%; transform: translateX(-50%); width: 620px; text-align: center; animation: fadeUp 1s ease-out; }
+#boss-bar { position: absolute; bottom: 56px; left: 50%; transform: translateX(-50%); width: 620px; text-align: center; animation: fadeUp 1s ease-out; }
 .boss-name { font-family: var(--blade); font-size: 18px; letter-spacing: 0.25em; margin-bottom: 8px; text-shadow: 0 0 12px rgba(180, 140, 255, 0.8), 0 2px 4px #000; }
 .boss-track { height: 10px; background: rgba(0, 0, 0, 0.65); border: 1px solid rgba(200, 170, 255, 0.4); position: relative; }
 .boss-fill, .boss-ghost { position: absolute; left: 0; top: 0; bottom: 0; }

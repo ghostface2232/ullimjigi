@@ -32,4 +32,5 @@
 // ---------------------------------------------------------------------------
 export { CHAR, Rig, HumanRig, makeHumanoid, makeGhost } from './humanrig.js';
 export { makeFox, makeCat } from './creatures.js';
-export { makeAshling, makeWailer, makeBrute, makeKnight, makeOoze, makeMoth, makeShieldBearer, makeArcher, makeRootHand, makeWatcher } from './legacy.js';
+export { makeAshling, makeBrute, makeKnight, makeShieldBearer } from './enemybodies.js';
+export { makeWailer, makeOoze, makeMoth, makeArcher, makeRootHand, makeWatcher } from './legacy.js';

@@ -628,7 +628,7 @@ const CRACK_EMIT = `
 totalEmissiveRadiance += uCrackC * _crk * uCrackP.y;
 `;
 export function crackMat(color, glowColor, o = {}) {
-  const m = bodyMat(color, { rim: o.rim ?? 0.6, emissive: o.emissive ?? 0x000000 });
+  const m = bodyMat(color, { rim: o.rim ?? 0.6, emissive: o.emissive ?? 0x000000, vertexColors: !!o.vertexColors });
   const u = { uCrackC: { value: glowColor }, uCrackP: { value: new THREE.Vector4(o.freq ?? 7, o.glow ?? 0.32, o.mott ?? 0.22, o.width ?? 0.05) } };
   m.userData.crack = u;
   extend(m, 'crack', (sh) => {

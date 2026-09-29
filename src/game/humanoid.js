@@ -58,13 +58,14 @@ export function skeleton(c, L) {
 // Body
 const supEll = (a, n) => { const c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a)); return 1 / Math.pow(Math.pow(c, n) + Math.pow(s, n), 1 / n); };
 
-function torsoR(L, c) {
+export function torsoR(L, c) {
   const bw = L.bw, be = L.belly, fem = L.fem;
   const rx = prof([[0, 0.085], [0.14, 0.15 + fem * 0.012], [0.38, 0.132 - fem * 0.01 + be * 0.03], [0.62, 0.158 - fem * 0.006], [0.8, 0.168 - fem * 0.012], [0.9, 0.145], [0.97, 0.085], [1, 0.062]]);
   const rz = prof([[0, 0.07], [0.14, 0.112], [0.38, 0.1 + be * 0.075], [0.62, 0.118 + fem * 0.01 + be * 0.03], [0.8, 0.108], [0.9, 0.09], [0.97, 0.068], [1, 0.058]]);
   const oz = prof([[0, 0.0], [0.14, -0.012], [0.38, 0.004 + be * 0.05], [0.62, 0.014 + be * 0.012], [0.8, 0.006], [1, 0.002]]);
-  const k = c.torsoK ?? 1;
-  return { rx: (u) => rx(u) * (0.5 + 0.5 * bw) * k * (u > 0.1 && u < 0.95 ? (0.82 + 0.18 * bw) : 1), rz: (u) => rz(u) * (0.7 + 0.3 * bw) * k, oz };
+  const k = c.torsoK ?? 1, ck = (c.chestK ?? 1) - 1, hk = (c.hipK ?? 1) - 1;
+  const band = (u) => 1 + ck * sstep(0.42, 0.78, u) * sstep(1.02, 0.9, u) + hk * sstep(0.5, 0.2, u);
+  return { rx: (u) => rx(u) * (0.5 + 0.5 * bw) * k * band(u) * (u > 0.1 && u < 0.95 ? (0.82 + 0.18 * bw) : 1), rz: (u) => rz(u) * (0.7 + 0.3 * bw) * k * (1 + (band(u) - 1) * 0.6), oz };
 }
 export function torsoSpan(L) { return [L.H - 0.1, L.NY + 0.025]; }
 
@@ -103,7 +104,7 @@ function sub(pts, a, b) {
   return new THREE.CatmullRomCurve3(out, false, 'centripetal');
 }
 
-function arm(S, L, c, sd) {
+export function arm(S, L, c, sd) {
   const n = sd > 0 ? 'L' : 'R';
   const sh = S.skel.pos('arm' + n), el = S.skel.pos('fore' + n), wr = S.skel.pos('hand' + n);
   const lg = L.limb * (c.armGirth ?? 1);
@@ -118,7 +119,7 @@ function arm(S, L, c, sd) {
   }
   // cuff ring
   if (!c.bareArms && !c.noCuff) tube(S, c.cuffMat ?? mat, ['fore' + n, 'hand' + n], { pts: [wr.clone().lerp(el, 0.12), wr.clone().lerp(el, -0.02)], seg: 10, steps: 1, r: [0.037 * lg, 0.034 * lg], closed: false, flat0: false });
-  hand(S, L, c, sd);
+  if (!c.noHand) hand(S, L, c, sd);
 }
 
 export function hand(S, L, c, sd) {
@@ -156,14 +157,14 @@ function claw(S, L, c, sd) {
   for (let k = 0; k < 3; k++) {
     const z = 0.026 - k * 0.026;
     const base = wr.clone().add(v(0, -hl * 0.45, z));
-    const len = hl * 1.25;
-    tube(S, c.clawMat ?? 'dark', fw, { pts: [base.clone().add(v(0, hl * 0.1, 0)), base, base.clone().add(v(-sd * 0.01, -len * 0.55, z * 0.2)), base.clone().add(v(-sd * 0.04, -len, z * 0.3 + 0.02))], seg: 6, steps: 6, r: (u) => 0.014 * (1 - u * 0.92), cap0: 0.6 });
+    const len = hl * (c.clawLen ?? 0.95);
+    tube(S, c.clawMat ?? 'dark', fw, { pts: [base.clone().add(v(0, hl * 0.1, 0)), base, base.clone().add(v(-sd * 0.012, -len * 0.5, z * 0.2 + 0.012)), base.clone().add(v(-sd * 0.045, -len * 0.85, z * 0.3 + 0.035)), base.clone().add(v(-sd * 0.075, -len, z * 0.3 + 0.05))], seg: 6, steps: 8, r: (u) => 0.016 * (1 - u * 0.92), cap0: 0.6 });
   }
   const tb = wr.clone().add(v(-sd * 0.015, -hl * 0.2, 0.03));
   tube(S, c.clawMat ?? 'dark', ['hand' + n, 'thumb' + n], { pts: [tb, tb.clone().add(v(-sd * 0.01, -hl * 0.3, 0.03)), tb.clone().add(v(-sd * 0.03, -hl * 0.6, 0.05))], seg: 6, steps: 4, r: (u) => 0.013 * (1 - u * 0.9), cap0: 0.6 });
 }
 
-function leg(S, L, c, sd) {
+export function leg(S, L, c, sd) {
   const n = sd > 0 ? 'L' : 'R';
   const hp = S.skel.pos('thigh' + n), kn = S.skel.pos('shin' + n), an = S.skel.pos('foot' + n);
   const lg = L.limb * (c.legGirth ?? 1) * (0.75 + 0.25 * L.bw);

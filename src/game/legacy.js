@@ -396,7 +396,7 @@ function makeCatOld() {
 // ------------------------------------------------------------------
 function EM(color, o = {}) { return toon(color, { nocache: true, rim: o.rim ?? 0.6, ...o }); }
 
-export function makeAshling(variant = 'normal') {
+function makeAshlingOld(variant = 'normal') {
   const rig = new LegacyRig();
   const P = (rig.p = {});
   const frost = variant === 'frost';
@@ -483,7 +483,7 @@ export function makeWailer() {
   return rig;
 }
 
-export function makeBrute(variant = 'normal') {
+function makeBruteOld(variant = 'normal') {
   const rig = new LegacyRig();
   const P = (rig.p = {});
   const frost = variant === 'frost';
@@ -529,7 +529,7 @@ export function makeBrute(variant = 'normal') {
   return rig;
 }
 
-export function makeKnight(spectral = false) {
+function makeKnightOld(spectral = false) {
   const rig = legacyHumanoid({ ...CHAR.kael, scale: 1.4, outline: false });
   const P = rig.p;
   const mats = [];
@@ -653,7 +653,7 @@ export function makeMoth() {
 // ------------------------------------------------------------------
 // 방패지기 — a forgotten gate guard that still hides behind its tower shield
 // ------------------------------------------------------------------
-export function makeShieldBearer() {
+function makeShieldOld() {
   const rig = new LegacyRig();
   const P = (rig.p = {});
   const mats = [];

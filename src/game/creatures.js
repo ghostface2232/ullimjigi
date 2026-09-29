@@ -35,6 +35,14 @@ export function glowBasic(color, k = 2.6, o = {}) {
   return m;
 }
 
+// Same color object as `glow` (follows tier recolors) for meshes without vertex colors.
+export function glowTwin(glow) {
+  const m = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  m.color = glow.color;
+  m.userData.dissolve = { value: 0 };
+  return m;
+}
+
 export class CreatureRig extends Rig {
   // T: { def, built, chains: [{ names, tail, opts, cols? }] }, M: group -> material
   constructor(T, M, o = {}) {

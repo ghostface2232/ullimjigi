@@ -847,6 +847,7 @@ class Brute extends Enemy {
     const s = { speed: this.curSpeed || 0, grounded: !this.airborne };
     if (this.state === 'slamWind' || this.state === 'alert') s.wave = false, s.cast = true, s.aimPitch = -1.3;
     if (this.state === 'recover' && this.stateT < 0.3) s.cast = true, s.aimPitch = 0.6;
+    if (this.state === 'chargeWind' || this.state === 'charge') s.charge = this.state === 'charge' ? 1 : 0.6;
     return s;
   }
 }

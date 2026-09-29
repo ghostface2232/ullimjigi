@@ -325,6 +325,7 @@ export class HumanRig extends Rig {
     this.ikW = 1;
     this.flickT = 9;
     this.hold = o.hold !== undefined ? o.hold : c.staff ? 'staff' : c.cane ? 'cane' : c.spear ? 'spear' : null;
+    this.castPose = o.castPose ?? true; // built-in staff casting pose (enemies supply their own)
     this.poseHook = o.pose || null;   // (q, s, rig, dt): edit the pose before it is written to bones
     this.postHook = o.post || null;   // (s, rig, dt): after IK / secondary motion (props, glows)
   }
@@ -619,7 +620,7 @@ export class HumanRig extends Rig {
     const pitch = s.aimPitch ?? 0;
     const kick = -this.castSp.x;                    // 0 → ~1 on release, springs back
     const ft = this.flickT;
-    if (W.cast > 0.01) {
+    if (W.cast > 0.01 && this.castPose) {
       const a = W.cast;
       const kind = this.castKind;
       let ax = -0.72 - pitch * 0.5, az = 0.22, fx = -0.45, hx = 0, lx = -0.8, lz = 0.25, lfx = -0.9;

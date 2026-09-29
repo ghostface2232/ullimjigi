@@ -2,10 +2,11 @@
 // animation, faces, expressions and gestures. See characters.js for the contract.
 import * as THREE from 'three';
 import { G } from '../core/context.js';
-import { toon, addOutline, glowMat, ghostMat, fresnelMat } from '../render/materials.js';
+import { toon, addOutline, glowMat, ghostMat } from '../render/materials.js';
 import { damp, clamp, lerp, rand } from '../core/util.js';
 import { Sculpt, tube, blob, sheet, prof, sstep, mix, TAU, instance, bodyMat, faceMat, crackMat, ghostSkinMat, ik2, setWorldQuat, rotateTowards, Chain, Spring, SkelDef } from './charkit.js';
 import * as HB from './humanoid.js';
+import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
 
 const V3 = THREE.Vector3;
 const _v1 = new V3(), _v2 = new V3(), _v3 = new V3(), _v4 = new V3(), _v5 = new V3();
@@ -339,9 +340,14 @@ export class HumanRig extends Rig {
     const m = new THREE.Mesh(T.staff, toon(0xffffff, { vertexColors: true, rim: 0.45 })); m.castShadow = true; g.add(m);
     if (this.c.outline) addOutline(m, 0.006);
     const top = HB.STAFF.len - HB.STAFF.below;
-    const gem = new THREE.Mesh(T.gem, new THREE.MeshBasicMaterial({ color: new THREE.Color(2, 1.6, 3) }));
+    // faceted, double-terminated crystal (long axis = local Y, laid onto the staff);
+    // material.color is the tint *and* glow colour (player.js retints it per element)
+    const gemMat = crystalMaterial({ color: new THREE.Color(2, 1.6, 3), intensity: 1.25, sparkle: 1.2, nocache: true });
+    const gem = new THREE.Mesh(crystalGeometry('prism', { double: true, sides: 6, radius: 0.4, tip: 0.5, seed: 13 }), gemMat);
+    gem.scale.setScalar(0.07);
     gem.position.set(0, 0.0, top + 0.02); gem.rotation.x = Math.PI / 2; g.add(gem);
-    const halo = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 8), fresnelMat(0x000000, 0xcfb8ff, { intensity: 0.5, power: 2.2 }));
+    const halo = crystalGlowSprite(0xcfb8ff, 5.2, { nocache: true });
+    halo.onBeforeRender = () => { halo.material.color.copy(gemMat.color).multiplyScalar(0.16); };
     gem.add(halo);
     const tip = new THREE.Object3D(); tip.position.set(0, 0, top + 0.05); g.add(tip);
     // grip point in the right fist

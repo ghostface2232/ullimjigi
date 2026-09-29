@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { toon, fresnelMat, glowMat, U } from '../render/materials.js';
 import { mulberry32 } from '../core/util.js';
+import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
 
 export const MAT = {
   stone: toon(0xb8ad9a, { flat: true, rim: 0.2, tex: 'stone' }),
@@ -262,8 +263,9 @@ export function moraTower() {
   mesh(rg, MAT.roofMora, 0, H + 1 + 4, 0, g);
   const brim = new THREE.Mesh(new THREE.TorusGeometry(5.5, 0.18, 6, 32), MAT.gold);
   brim.rotation.x = Math.PI / 2; brim.position.y = H + 1.05; g.add(brim);
-  const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.5, 0), glowMat(0xffd88a, 3));
-  star.position.set(2.4, H + 1 + 8.3, 0); g.add(star);
+  const star = new THREE.Mesh(crystalGeometry('prism', { double: true, sides: 5, radius: 0.5, seed: 41 }), crystalMaterial({ color: 0xffe2a0, glow: 0xffc860, intensity: 1.5 }));
+  star.scale.setScalar(0.5); star.position.set(2.4, H + 1 + 8.3, 0); g.add(star);
+  star.add(crystalGlowSprite(0xffc860, 5, { intensity: 0.35 }));
   // windows
   for (let i = 0; i < 4; i++) {
     const a = i * 1.6 + 0.4, y = 3.5 + i * 2.8;
@@ -292,7 +294,10 @@ export function moraTower() {
   const chimes = [];
   for (let i = 0; i < 5; i++) {
     const a = i * 1.25;
-    const c = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), glowMat([0xb894ff, 0xff8a3a, 0x7dffc3, 0x8fe3ff, 0xffd84a][i], 2.2));
+    const col = [0xb894ff, 0xff8a3a, 0x7dffc3, 0x8fe3ff, 0xffd84a][i];
+    const c = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 20 + i }), crystalMaterial({ color: col, intensity: 1.3 }));
+    c.scale.setScalar(0.2);
+    c.add(crystalGlowSprite(col, 6, { intensity: 0.35 }));
     c.position.set(Math.cos(a) * 5.2, H + 0.4 - (i % 2) * 0.4, Math.sin(a) * 5.2);
     g.add(c); chimes.push(c);
   }
@@ -333,6 +338,8 @@ export function shrine(el, runeTex, opts = {}) {
   const g = new THREE.Group();
   const rnd = mulberry32(el.length * 31);
   const stone = el === 'frost' ? MAT.stoneBlue : MAT.ruin;
+  const bodyCol = new THREE.Color(EL_HEX[el]).lerp(new THREE.Color(0xffffff), 0.25);
+  const orbMat = crystalMaterial({ color: bodyCol, glow: EL_HEX[el], intensity: 1.1 });
   cyl(10.5, 11, 0.5, 32, MAT.stoneDark, 0, 0.1, 0, g);
   cyl(9.2, 9.5, 0.6, 32, stone, 0, 0.55, 0, g);
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(16, 16), new THREE.MeshBasicMaterial({ map: runeTex, color: new THREE.Color(EL_HEX[el]).multiplyScalar(0.5), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -348,8 +355,10 @@ export function shrine(el, runeTex, opts = {}) {
     box(1.5, 0.4, 1.5, MAT.stoneDark, x, 1.0, z, g);
     if (!broken) {
       box(1.5, 0.45, 1.5, MAT.stoneDark, x, 0.85 + h + 0.2, z, g);
-      const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.3, 0), glowMat(EL_HEX[el], 1.2));
+      const orb = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 60 + i }), orbMat);
+      orb.scale.setScalar(0.3); orb.rotation.y = rnd() * 3;
       orb.position.set(x, 0.85 + h + 0.8, z); g.add(orb);
+      orb.add(crystalGlowSprite(EL_HEX[el], 7, { intensity: 0.28 }));
     } else {
       const chunk = mesh(new THREE.DodecahedronGeometry(0.6, 0), stone, x + rnd() * 2 - 1, 0.4, z + rnd() * 2 - 1, g);
       chunk.rotation.set(rnd() * 3, rnd() * 3, 0);
@@ -359,9 +368,21 @@ export function shrine(el, runeTex, opts = {}) {
   box(2.6, 0.6, 2.6, MAT.stoneDark, 0, 1.15, 0, g);
   box(1.6, 1.0, 1.6, stone, 0, 1.95, 0, g);
   box(2.0, 0.25, 2.0, MAT.stoneDark, 0, 2.55, 0, g);
-  const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.7, 0), fresnelMat(0xffffff, EL_HEX[el], { intensity: 1.6 }));
-  crystal.scale.set(0.8, 1.4, 0.8);
+  // element crystal: a group so the orbiting shards and halo follow it (story.js moves / scales / hides it)
+  const crystal = new THREE.Group();
   crystal.position.y = 4.2; g.add(crystal);
+  const cMat = crystalMaterial({ color: bodyCol, glow: EL_HEX[el], intensity: 1.35, seed: el.length });
+  const core = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 5, radius: 0.46 }), cMat);
+  core.scale.setScalar(1.05); crystal.add(core);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + 0.4;
+    const sh = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 80 + i, radius: 0.34 }), cMat);
+    sh.scale.setScalar(0.2 + (i % 2) * 0.06);
+    sh.position.set(Math.cos(a) * 1.25, (i % 2 ? 0.35 : -0.3), Math.sin(a) * 1.25);
+    sh.rotation.set((i % 2 ? 0.3 : -0.25), a, (i % 2 ? -0.2 : 0.25));
+    crystal.add(sh);
+  }
+  crystal.add(crystalGlowSprite(EL_HEX[el], 5.5, { intensity: 0.32 }));
   // bell arch (behind altar, -z)
   for (const sx of [-1, 1]) cyl(0.4, 0.45, 5.5, 8, stone, sx * 2, 0.85 + 2.75, -5, g);
   box(5.2, 0.6, 1, MAT.stoneDark, 0, 6.5, -5, g);
@@ -384,6 +405,7 @@ export function lanternStone() {
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(0.14, 0.7, 0.14, MAT.stone, sx * 0.34, 2.25, sz * 0.34, g);
   const flame = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), flameMat.clone());
   flame.position.y = 2.2; flame.visible = false; g.add(flame);
+  flame.add(crystalGlowSprite(0xffa040, 2.6, { intensity: 0.4 }));
   const cage = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.62, 0.62), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.8, 1.0, 0.4), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
   cage.position.y = 2.25; g.add(cage);
   const roof = new THREE.Mesh(new THREE.ConeGeometry(0.85, 0.6, 4), MAT.stoneDark);
@@ -526,10 +548,25 @@ export function dummy() {
 
 export function targetCrystal(color = 0xb894ff) {
   const g = new THREE.Group();
-  const c = new THREE.Mesh(new THREE.OctahedronGeometry(0.5, 0), fresnelMat(0xffffff, color, { intensity: 0.55 }));
-  c.scale.set(0.8, 1.2, 0.8); g.add(c);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.04, 6, 24), glowMat(color, 0.8));
+  const mat = crystalMaterial({ color, intensity: 1.15, seed: 3 });
+  const c = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 11, radius: 0.48 }), mat);
+  c.scale.setScalar(0.62); g.add(c);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.022, 6, 48), glowMat(color, 0.9));
   ring.rotation.x = Math.PI / 2; g.add(ring);
+  // mini shards ride the ring (ring spins about world Y in world.js); ring-local
+  // orientation = inverse(ring tilt) * (upright, slightly leaning, facing outward)
+  const qInv = new THREE.Quaternion().setFromEuler(ring.rotation).invert();
+  const qW = new THREE.Quaternion(), eW = new THREE.Euler();
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    const s = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 90 + i, radius: 0.36 }), mat);
+    s.scale.setScalar(0.13);
+    s.position.set(Math.cos(a) * 0.9, Math.sin(a) * 0.9, (i - 1) * 0.12);
+    qW.setFromEuler(eW.set(0, -a, 0.28 * (i % 2 ? 1 : -1), 'YXZ'));
+    s.quaternion.copy(qInv).multiply(qW);
+    ring.add(s);
+  }
+  g.add(crystalGlowSprite(color, 3.2, { intensity: 0.3 }));
   g.userData = { c, ring };
   return g;
 }
@@ -554,6 +591,7 @@ export function pillarBroken(h = 3, rnd = Math.random) {
 export function riftGate() {
   const g = new THREE.Group();
   const rnd = mulberry32(777);
+  const veinMat = crystalMaterial({ color: 0x6a4a9a, glow: 0xa070ff, intensity: 1.4, seed: 9 });
   for (let i = 0; i < 9; i++) {
     const a = (i / 9) * Math.PI * 2;
     const h = 7 + rnd() * 9;
@@ -562,7 +600,8 @@ export function riftGate() {
     c.position.set(Math.cos(a) * (26 + rnd() * 4), h * 0.5, Math.sin(a) * (26 + rnd() * 4));
     c.rotation.set((rnd() - 0.5) * 0.5, rnd() * 3, (rnd() - 0.5) * 0.5);
     c.castShadow = true; g.add(c);
-    const vein = new THREE.Mesh(new THREE.OctahedronGeometry(0.4, 0), glowMat(0x9a6aff, 2));
+    const vein = new THREE.Mesh(crystalGeometry('cluster', { seed: 300 + i, count: 5 }), veinMat);
+    vein.scale.setScalar(0.55); vein.rotation.set(Math.PI + (rnd() - 0.5) * 0.6, rnd() * 3, 0);
     vein.position.copy(c.position); vein.position.y = h * 0.8; g.add(vein);
   }
   // gate

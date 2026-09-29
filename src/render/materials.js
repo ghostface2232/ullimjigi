@@ -233,6 +233,9 @@ float _dirShadow = 1.0;
 float _isDir = 0.0;
 float _cloudSh = 1.0;
 float _ndlOff = 0.0;
+// Foliage mask from the vertex colour alpha (RGBA vertex colours only):
+// 1 = leaves, 0 = wood/stone. -1 = not provided (fall back to hue tests).
+float _leafM = -1.0;
 float cloudShadowAt(vec3 p) {
   if (uCloud.w <= 0.0) return 1.0;
   vec2 q = p.xz + uSunW.xz * ((160.0 - p.y) / max(uSunW.y, 0.25));
@@ -256,7 +259,7 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
     reflectedLight.directDiffuse += irr * BRDF_Lambert( material.diffuseColor );
     #ifdef TOON_FOLIAGE
       float tr = pow( clamp( dot( -geometryViewDir, directLight.direction ), 0.0, 1.0 ), 3.0 );
-      float leaf = smoothstep( 0.0, 0.06, material.diffuseColor.g - material.diffuseColor.r );
+      float leaf = _leafM >= 0.0 ? _leafM : smoothstep( 0.0, 0.06, material.diffuseColor.g - material.diffuseColor.r );
       reflectedLight.directDiffuse += directLight.color * material.diffuseColor * vec3( 1.0, 1.05, 0.7 ) * tr * leaf * 0.32 * ( 0.3 + 0.7 * _dirShadow * _cloudSh );
     #endif
   } else {
@@ -363,6 +366,9 @@ const SURFACE_FRAG = `
     vec2 _uv = _top ? _p.xz : vec2(_an.x > _an.z ? _p.z : _p.x, _p.y);
     float _above = groundAbove(_p);
     float _leafN = 0.5;
+    #ifdef USE_COLOR_ALPHA
+      _leafM = clamp(vColor.a, 0.0, 1.0);
+    #endif
     #if defined( TEX_PLASTER )
     {
       float mott = texture2D(uNoiseTex, _uv * 0.11).g;
@@ -431,13 +437,13 @@ const SURFACE_FRAG = `
     }
     #elif defined( TEX_BARK )
     {
-      float brown = smoothstep(0.0, 0.035, diffuseColor.r - diffuseColor.g);
+      float brown = _leafM >= 0.0 ? 1.0 - _leafM : smoothstep(0.0, 0.035, diffuseColor.r - diffuseColor.g);
       if (brown > 0.0) {
         float a = (_an.x > _an.z ? _p.z : _p.x) * 2.2;
         float f = texture2D(uNoiseTex, vec2(a, _p.y * 0.12)).b;
         diffuseColor.rgb *= mix(1.0, mix(0.7, 1.08, smoothstep(0.3, 0.62, f)), brown);
       }
-      float green = smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
+      float green = _leafM >= 0.0 ? _leafM : smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
       #ifdef LEAFY_EDGE
         _leafN = _dn(_p * 3.3);
       #else
@@ -450,7 +456,7 @@ const SURFACE_FRAG = `
     {
       // ragged, leafy crown silhouettes: cut away noisy bits where the
       // (smoothed) foliage normal turns away from the viewer
-      float green = smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
+      float green = _leafM >= 0.0 ? _leafM : smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
       if (green > 0.5) {
         float e = 1.0 - abs(dot(normal, normalize(vViewPosition)));
         #ifdef TEX_BARK

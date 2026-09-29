@@ -110,8 +110,16 @@ export class World {
       const geos = [];
       for (const m of b.list) {
         let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
-        for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+        for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && !(k === 'color' && b.mat.vertexColors)) g.deleteAttribute(k);
         if (!g.attributes.normal) g.computeVertexNormals();
+        if (b.mat.vertexColors && !g.attributes.color) {
+          const cc = new Float32Array(g.attributes.position.count * 4).fill(1);
+          g.setAttribute('color', new THREE.BufferAttribute(cc, 4));
+        } else if (g.attributes.color && g.attributes.color.itemSize === 3) {
+          const src = g.attributes.color.array, cc = new Float32Array(g.attributes.position.count * 4);
+          for (let i = 0; i < g.attributes.position.count; i++) { cc[i * 4] = src[i * 3]; cc[i * 4 + 1] = src[i * 3 + 1]; cc[i * 4 + 2] = src[i * 3 + 2]; cc[i * 4 + 3] = 0; }
+          g.setAttribute('color', new THREE.BufferAttribute(cc, 4));
+        }
         g.applyMatrix4(m.matrixWorld);
         geos.push(g);
       }
@@ -511,6 +519,7 @@ export class World {
     this.sky.update(dt, playerPos, 1, camPos);
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);
+    this.props.update(G.camera);
     const n = this.sky.night;
     B.windowMat.color.setRGB(1.6, 1.1, 0.5).multiplyScalar(0.25 + n * 1.3);
     for (const a of this.anims) a(dt);

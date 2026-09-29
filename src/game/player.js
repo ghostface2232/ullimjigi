@@ -84,9 +84,8 @@ export class Player {
 
   // --------------------------------------------------------------
   aimRayPoint(maxD = 80) {
-    const cam = G.cameraRig.cam;
-    const o = cam.position.clone();
-    const d = new THREE.Vector3(); cam.getWorldDirection(d);
+    // unshaken view ray, so camera shake/kick never nudges the aim
+    const { o, d } = G.cameraRig.aimRay();
     // start the ray at the player's depth so enemies behind the player aren't hit
     const skip = Math.max(0, tmp.subVectors(this.pos, o).dot(d));
     return { o, d, skip };
@@ -466,8 +465,8 @@ export class Player {
     G.slowmo = dur; G.slowmoMax = dur;
     G.audio.play('perfect_dodge');
     G.hud.floatText(this.center().add(new THREE.Vector3(0, 0.6, 0)), '완벽 회피!', '#bfe8ff', 'react');
-    G.vfx.burst(this.center(), 'star', 1, { el: 'white', size: 6 });
-    G.vfx.ring(this.pos, PAL.white.core, 7, 0.5, { thick: 0.15 });
+    G.vfx.burst(this.center(), 'star', 1, { el: 'white', size: 3.2 });
+    G.vfx.ring(this.pos, PAL.white.core, 7, 0.5, { thick: 0.15, alpha: 0.6 });
     G.renderer.grade.uniforms.uImpact.value = Math.max(G.renderer.grade.uniforms.uImpact.value, 0.45);
     G.hitstop = Math.max(G.hitstop, 0.05);
     if (G.skills) G.skills.charge(12);

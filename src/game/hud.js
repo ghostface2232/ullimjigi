@@ -337,7 +337,7 @@ export class HUD {
     const mf = (P.mana / P.maxMana) * 100;
     this.el.manaFill.style.width = mf + '%';
     this.el.manaGhost.style.width = mf + '%';
-    this.el.mana.style.width = 180 + P.maxMana * 0.4 + 'px';
+    this.el.mana.style.width = Math.min(420, 180 + P.maxMana * 0.4) + 'px';
     const sf = P.stamina / P.maxStamina;
     this.el.stFill.style.strokeDashoffset = 251.3 * (1 - sf);
     const showSt = sf < 0.995 || P.sprinting || P.gliding;

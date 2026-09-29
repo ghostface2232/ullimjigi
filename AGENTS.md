@@ -40,7 +40,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | `render/` | `renderer.js` | 렌더러, MSAA 컴포저, 블룸, 색보정·충격 패스(`grade`) |
 | | `materials.js` | 툰 재질(`toon`), 림 라이트, 바람 흔들림, 외곽선, 발광 재질 |
 | | `particles.js` | CPU 시뮬레이션 + GPU 포인트 스프라이트 파티클 |
-| | `vfx.js` | 파티클 프리셋, 조명 풀, 링, 룬 원진, 번개, 얼음, 회오리, 광선, 경고 표시 |
+| | `vfx.js` | 파티클 프리셋, 조명 풀, 링, 룬 원진, 번개, 얼음, 회오리, 광선, 경고 표시. 속성별 레시피(`cast`·`impact`·`explode`·`strike`·`react`·`kill`·`dodge`·`ultCast`), 속도 방향 불꽃(`sparks`), 투사체 궤적(`ribbon`), 지형을 따르는 바닥 흔적(`decal`: 그을음·서리·물웅덩이·번개 자국 등), 충격 구체·빛기둥(`shock`·`pillar`), 잔여 효과(`linger`) |
 | `world/` | `layout.js` | 랜드마크 좌표(`POI`), 길(`PATHS`), 지역(`REGIONS`) |
 | | `terrain.js` | 높이맵 지형, 채색, 높이·법선·레이캐스트 조회 |
 | | `sky.js` · `water.js` · `grass.js` | 하늘과 낮밤, 물, 풀(청크 단위 스트리밍) |
@@ -49,7 +49,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | | `world.js` | 위 모든 것의 배치, 등석·씨앗·기억 물건, 정적 메시 합치기, 환경 연출 |
 | `game/` | `game.js` | 부팅, 타이틀, 메인 루프, 메뉴, 저장·불러오기, 사망, 등석, 음악 선택 |
 | | `player.js` | 이동(달리기·순간이동·점프·활공·수영), 시전, 능력치 |
-| | `camera.js` | 어깨 너머 카메라, 지형 충돌, 흔들림, 대상 고정, 컷씬 카메라 |
+| | `camera.js` | 어깨 너머 카메라, 지형 충돌, 흔들림(부드러운 노이즈+회전), 방향성 반동(`kick`·`impact`), FOV 펀치, 대상 고정, 컷씬 카메라. 조준은 흔들림이 빠진 `aimRay()`를 씁니다 |
 | | `spells.js` | 기본 마법, 고유 마법, 엮기, 궁극기, 투사체, 지속 효과 영역(`field`·`vortex`·`wave`) |
 | | `combat.js` | 피해 계산, 상태 이상, 원소 반응(`pickReaction`), 연쇄 반응, 울림 나무 수정치 |
 | | `skills.js` | 울림 나무(스킬 트리) 데이터 `TREES`, 울림점, 궁극기 게이지, 반응 도감 |

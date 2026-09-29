@@ -5,7 +5,7 @@ import { newStatus } from './combat.js';
 import { makeAshling, makeWailer, makeBrute, makeKnight, makeOoze, makeMoth, makeShieldBearer, makeArcher, makeRootHand, makeWatcher } from './characters.js';
 import { fresnelMat, glowMat, toon } from '../render/materials.js';
 import { PAL } from '../render/vfx.js';
-import { clamp, damp, angleDamp, randRange, rand, pick, wrapAngle, lerp } from '../core/util.js';
+import { clamp, damp, angleDamp, randRange, rand, pick, wrapAngle, lerp, josa } from '../core/util.js';
 import { regionAt } from '../world/layout.js';
 
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), tmp3 = new THREE.Vector3();
@@ -44,17 +44,10 @@ export const TIERS = [
 export const tierOf = (lv) => (lv >= 10 ? 3 : lv >= 7 ? 2 : lv >= 4 ? 1 : 0);
 const EPITHETS = ['새벽을 등진', '녹슨 종의', '울지 않는', '재를 뒤집어쓴', '천 번 잊힌', '빛을 삼킨', '돌아오지 못한'];
 
-// Mirrors Combat.resolve's reaction rules (without side effects) so shields can tell
-// whether a hit is going to erupt into an elemental reaction.
+// Uses Combat's own (side-effect free) reaction picker so shields know whether a
+// hit is going to erupt into an elemental reaction.
 function predictsReaction(t, h) {
-  if (h.noReact) return false;
-  const st = t.st, el = h.el || 'arcane';
-  if (el === 'fire') return st.frozen > 0 || st.chill >= 1 || st.wet > 0;
-  if (el === 'frost') return st.burn > 0 || st.wet > 0;
-  if (el === 'storm') return st.frozen > 0 || st.wet > 0 || st.burn > 0;
-  if (el === 'wind') return st.burn > 0 || st.frozen > 0 || st.chill >= 1 || st.shock > 0;
-  if (h.heavy && st.frozen > 0 && el !== 'frost') return true;
-  return false;
+  return !!G.combat.pickReaction(t.st, h.el || 'arcane', h);
 }
 
 const easeIn = (k) => k * k;
@@ -1795,7 +1788,7 @@ class Knight extends Enemy {
 // Final boss: The Heart of the Hush — warded plates + exposed core
 // ------------------------------------------------------------------
 const WARD = {
-  fire: { weak: 'frost', color: 0xff6a3a, name: '화염' },
+  fire: { weak: 'frost', weak2: 'water', color: 0xff6a3a, name: '화염' },
   frost: { weak: 'fire', color: 0x6cd0ff, name: '서리' },
   storm: { weak: 'wind', color: 0xffd84a, name: '번개' },
   wind: { weak: 'storm', color: 0x6effc0, name: '바람' },
@@ -1819,12 +1812,12 @@ class Plate {
   center() { return this.pos.clone(); }
   receive(h) {
     if (!this.alive) return 0;
-    const weak = WARD[this.ward].weak;
-    let mult = h.el === weak ? 3 : h.el === 'arcane' ? 0.35 : 0.12;
+    const weak = WARD[this.ward].weak, weak2 = WARD[this.ward].weak2;
+    let mult = h.el === weak ? 3 : weak2 && h.el === weak2 ? 2.4 : h.el === 'arcane' ? 0.35 : 0.12;
     let dmg = Math.max(1, Math.round(h.dmg * mult));
     this.hp -= dmg; this.flash = 1; this.barT = 5;
     G.hud.damage(this.pos, dmg, h.el, false, null);
-    if (mult < 1) { if (rand() < 0.4) G.hud.floatText(this.pos.clone().setY(this.pos.y + 0.8), `저항 — ${WARD[weak] ? '' : ''}${({ fire: '화염', frost: '서리', storm: '번개', wind: '바람' })[weak]}이 필요하다`, '#c9c0d8', 'info'); G.audio.play('hit_armor', { pos: this.pos }); }
+    if (mult < 1) { if (rand() < 0.4) G.hud.floatText(this.pos.clone().setY(this.pos.y + 0.8), `저항 — ${josa(({ fire: '화염', frost: '서리', storm: '번개', wind: '바람' })[weak], '이')} 필요하다`, '#c9c0d8', 'info'); G.audio.play('hit_armor', { pos: this.pos }); }
     else { G.audio.play('shatter', { pos: this.pos, gap: 0.1 }); G.vfx.burst(this.pos, 'spark', 12, { el: h.el }); G.hitstop = Math.max(G.hitstop, 0.05); G.cameraRig.shake(0.15); }
     if (this.hp <= 0) this.die();
     return dmg;

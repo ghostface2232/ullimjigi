@@ -26,7 +26,7 @@ export const DEF = {
   oozeFire: { name: '불잿물', hp: 34, dmg: 2, speed: 4, radius: 0.62, height: 0.9, xp: 7, aggro: 15, resist: { fire: 0, frost: 1.6, water: 2.0 }, immune: ['fire'], make: () => makeOoze('fire'), base: 'ooze', variant: 'fire', deathStyle: 'flatten', edge: new THREE.Color(2.2, 0.8, 0.2) },
   oozeFrost: { name: '서리잿물', hp: 34, dmg: 2, speed: 3.8, radius: 0.62, height: 0.9, xp: 7, aggro: 15, resist: { frost: 0, fire: 1.6, water: 0.8 }, immune: ['frost'], make: () => makeOoze('frost'), base: 'ooze', variant: 'frost', deathStyle: 'flatten', edge: new THREE.Color(0.6, 1.6, 2.4) },
   oozeWater: { name: '물잿물', hp: 34, dmg: 2, speed: 4, radius: 0.62, height: 0.9, xp: 7, aggro: 15, resist: { water: 0, storm: 1.6, fire: 0.7 }, immune: ['water'], make: () => makeOoze('water'), base: 'ooze', variant: 'water', deathStyle: 'flatten', edge: new THREE.Color(0.4, 1.2, 2.6) },
-  moth: { name: '재나방', hp: 14, dmg: 1, speed: 7, radius: 0.4, height: 0.4, xp: 3, aggro: 20, resist: { fire: 2, wind: 1.6, water: 1.3 }, flying: true, frozenFall: 1, make: () => makeMoth(), base: 'moth' },
+  moth: { name: '재나방', hp: 14, dmg: 1, speed: 7, radius: 0.4, height: 0.4, xp: 3, aggro: 20, resist: { fire: 2, wind: 1.6, water: 1.3 }, flying: true, frozenFall: 1.2, make: () => makeMoth(), base: 'moth' },
   shield: { name: '방패지기', hp: 90, dmg: 3, speed: 3.2, radius: 0.62, height: 2.0, xp: 16, aggro: 16, resist: { storm: 1.3, wind: 1.2 }, kbResist: 0.5, panic: false, make: () => makeShieldBearer() },
   archer: { name: '메아리 사수', hp: 30, dmg: 3, speed: 4.2, radius: 0.45, height: 1.75, xp: 10, aggro: 30, resist: { storm: 1.4, wind: 1.4 }, panic: true, knockdown: true, dodge: 0.45, make: () => makeArcher() },
   rootHand: { name: '뿌리손', hp: 70, dmg: 3, speed: 6, radius: 0.75, height: 2.2, xp: 14, aggro: 18, resist: { fire: 1.6, frost: 0.8, wind: 0.6, water: 0.6 }, kbResist: 0.95, freezeAt: 4, make: () => makeRootHand(), deathStyle: 'sink' },
@@ -226,6 +226,8 @@ export class Enemy {
     G.audio.play('enemy_glint', { pos: pt, gap: 0.05 });
     this.glintFlash = 1;
     this.glinted = true;
+    // exposed for perfect-dodge / parry timing elsewhere
+    G.enemies.lastGlint = { t: G.time, e: this, pos: pt };
   }
   // fire the glint once when stateT crosses `at`
   glintAt(at, p, big) { if (!this.glinted && this.stateT >= at) this.glint(p, big); }
@@ -560,7 +562,7 @@ export class Enemy {
     this.stateT += dt;
     this.barT = Math.max(0, this.barT - dt);
     this.flash = Math.max(0, this.flash - dt * 7);
-    this.glintFlash = Math.max(0, this.glintFlash - dt * 6);
+    this.glintFlash = Math.max(0, this.glintFlash - dt * 9);
     this.animate(dt, disabled);
     return true;
   }
@@ -593,7 +595,7 @@ export class Enemy {
     if (shocked) { const p = rand() * 0.35; r += p; g += p; b += p * 0.3; }
     if (this.telegraph) { const p = 0.3 + Math.sin(G.time * 30) * 0.25; r += p; g += p * 0.1; }
     if (this.vulnerable) { const p = 0.2 + Math.sin(G.time * 10) * 0.15; r += p; g += p * 0.8; }
-    r += this.flash * 1.4 + this.glintFlash * 0.5; g += this.flash * 1.4 + this.glintFlash * 0.45; b += this.flash * 1.4 + this.glintFlash * 0.35;
+    r += this.flash * 1.4 + this.glintFlash * 0.32; g += this.flash * 1.4 + this.glintFlash * 0.28; b += this.flash * 1.4 + this.glintFlash * 0.2;
     for (const m of this.rig.mats || []) m.emissive.setRGB(r, g, b);
     if (disabled && frozen) return;
     const s = this.animState ? this.animState() : { speed: this.curSpeed, grounded: !this.airborne };
@@ -1575,16 +1577,24 @@ class Watcher extends Enemy {
         this.headYaw = clamp(this.relYaw(a), -1.9, 1.9);
         this.charge = 1;
         const eye = this.eyePos();
-        const ex = this.pos.x + Math.sin(a) * S.R, ez = this.pos.z + Math.cos(a) * S.R;
+        let ex = this.pos.x + Math.sin(a) * S.R, ez = this.pos.z + Math.cos(a) * S.R;
         const end = new THREE.Vector3(ex, G.world.ground(ex, ez, eye.y + 5) + 0.3, ez);
+        // walls and terrain block the beam: hiding behind cover works
+        {
+          const L = eye.distanceTo(end), n = Math.ceil(L / 0.8);
+          for (let i = 3; i <= n; i++) {
+            tmp.lerpVectors(eye, end, i / n);
+            if (G.world.col.pointHit(tmp.x, tmp.y, tmp.z, 0.2) || tmp.y < G.world.h(tmp.x, tmp.z) - 0.05) { end.copy(tmp); ex = end.x; ez = end.z; break; }
+          }
+        }
         S.b.set(eye, end);
         // damage: player near the ground segment (jump/glide over it, blink through, or hide)
         const Pp = P.pos;
         const ax = this.pos.x, az = this.pos.z, dx = ex - ax, dz = ez - az;
         const tt = clamp(((Pp.x - ax) * dx + (Pp.z - az) * dz) / (dx * dx + dz * dz), 0, 1);
         const dd = Math.hypot(Pp.x - (ax + dx * tt), Pp.z - (az + dz * tt));
-        const airborne = Pp.y - G.world.ground(Pp.x, Pp.z) > 1.2;
-        if (!S.hit && dd < 1.0 && tt > 0.1 && !airborne && P.blinkT <= 0 && !P.dead) { S.hit = true; P.damage(Math.round(this.def.dmg * 1.4 * this.dmgMul), { dir: new THREE.Vector3(-dz, 0, dx).normalize(), knock: 9 }); G.vfx.burst(P.center(), 'fire', 12, { speed: 4 }); }
+        const by = lerp(eye.y, end.y, tt) - Pp.y; // beam height relative to the player's feet
+        if (!S.hit && dd < 1.0 && by > -0.35 && by < 1.9 && P.blinkT <= 0 && !P.dead) { S.hit = true; P.damage(Math.round(this.def.dmg * 1.4 * this.dmgMul), { dir: new THREE.Vector3(-dz, 0, dx).normalize(), knock: 9 }); G.vfx.burst(P.center(), 'fire', 12, { speed: 4 }); }
         if (rand() < 0.9) G.vfx.burst(end, 'fire', 2, { speed: 2, size: 0.8 });
         if (rand() < 0.5) G.vfx.burst(end, 'ember', 2, { speed: 3 });
         if (rand() < 0.4) G.vfx.burst(tmp.set(ax + dx * rand(), end.y, az + dz * rand()), 'trail', 1, { el: 'gold', size: 0.6, spread: 0.3 });
@@ -2092,6 +2102,7 @@ export class EnemyManager {
     this.bosses = [];
     this.tokens = 0; this.maxTokens = 2;
     this.lastShot = -99;
+    this.lastGlint = null; // { t, e, pos } — most recent dangerous-attack glint
     this.pickups = [];
     this.camps = CAMPS.map((c) => ({ ...c, members: [], spawned: false, cleared: false }));
     this.checkT = 0;

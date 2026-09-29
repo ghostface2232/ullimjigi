@@ -278,7 +278,7 @@ export class World {
         G.vfx.burst(fl.pos, 'fire', 24, { speed: 3 }); G.vfx.burst(fl.pos, 'ember', 12);
         G.vfx.flash(fl.pos, 0xff8a3a, 40, 12, 0.6);
         if (tgt.onLit) tgt.onLit(tgt);
-      } else if ((el === 'frost' || el === 'wind') && tgt.lit && !tgt.permanent) {
+      } else if ((el === 'frost' || el === 'wind' || el === 'water') && tgt.lit && !tgt.permanent) {
         tgt.lit = fl.lit = false;
         b.userData.coal.material = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.15, 0.1, 0.1) });
         G.vfx.burst(fl.pos, 'smoke', 8); G.audio.play('fizzle', { pos: fl.pos });
@@ -389,7 +389,7 @@ export class World {
 
   buildLandmarks() {
     // Lake willow (hairpin), meadow lone tree + bench (flower book)
-    const willow = makeTree('oak', 21, { trunkH: 3.6, size: 2.1, light: 0xb7d86a, dark: 0x4c8a40, squash: 1.1 });
+    const willow = makeTree('willow', 21, { trunkH: 3.0, size: 2.1, light: 0xb7d86a, dark: 0x4c8a40 });
     this.place(willow, -49, 82, 0.4); this.col.addCircle(-49, 82, 0.6, -10, 30);
     const lone = makeTree('oak', 77, { trunkH: 3.4, size: 2.2, light: 0xe0c060, dark: 0x8a7a3a });
     this.place(lone, POI.meadow.x, POI.meadow.z, 0); this.col.addCircle(POI.meadow.x, POI.meadow.z, 0.6, -10, 30);
@@ -470,7 +470,7 @@ export class World {
   update(dt, camPos, playerPos) {
     U.time.value = G.time;
     U.wind.value = 1 + Math.sin(G.time * 0.3) * 0.35 + Math.sin(G.time * 1.1) * 0.15;
-    this.sky.update(dt, playerPos);
+    this.sky.update(dt, playerPos, 1, camPos);
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);
     const n = this.sky.night;

@@ -4,18 +4,18 @@ import { toon, fresnelMat, glowMat, U } from '../render/materials.js';
 import { mulberry32 } from '../core/util.js';
 
 export const MAT = {
-  stone: toon(0xb8ad9a, { flat: true, rim: 0.2 }),
-  stoneDark: toon(0x8b8377, { flat: true, rim: 0.2 }),
-  stoneBlue: toon(0x9aa3ad, { flat: true, rim: 0.25 }),
-  plaster: toon(0xf2e4c6, { rim: 0.2 }),
-  timber: toon(0x6a4a34, { rim: 0.15 }),
-  wood: toon(0x9c7250, { rim: 0.2 }),
-  woodLight: toon(0xc49a6c, { rim: 0.2 }),
-  roofRed: toon(0xb85a3e, { flat: true, rim: 0.25, side: THREE.DoubleSide }),
-  roofTeal: toon(0x3f8088, { flat: true, rim: 0.25, side: THREE.DoubleSide }),
-  roofBlue: toon(0x4f68a8, { flat: true, rim: 0.25, side: THREE.DoubleSide }),
-  roofPlum: toon(0x7d5690, { flat: true, rim: 0.25, side: THREE.DoubleSide }),
-  roofMora: toon(0x3a3f86, { flat: true, rim: 0.45, side: THREE.DoubleSide }),
+  stone: toon(0xb8ad9a, { flat: true, rim: 0.2, tex: 'stone' }),
+  stoneDark: toon(0x8b8377, { flat: true, rim: 0.2, tex: 'stone' }),
+  stoneBlue: toon(0x9aa3ad, { flat: true, rim: 0.25, tex: 'stone' }),
+  plaster: toon(0xf2e4c6, { rim: 0.2, tex: 'plaster' }),
+  timber: toon(0x6a4a34, { rim: 0.15, tex: 'wood' }),
+  wood: toon(0x9c7250, { rim: 0.2, tex: 'planks' }),
+  woodLight: toon(0xc49a6c, { rim: 0.2, tex: 'planks' }),
+  roofRed: toon(0xb85a3e, { flat: true, rim: 0.25, side: THREE.DoubleSide, tex: 'roof' }),
+  roofTeal: toon(0x3f8088, { flat: true, rim: 0.25, side: THREE.DoubleSide, tex: 'roof' }),
+  roofBlue: toon(0x4f68a8, { flat: true, rim: 0.25, side: THREE.DoubleSide, tex: 'roof' }),
+  roofPlum: toon(0x7d5690, { flat: true, rim: 0.25, side: THREE.DoubleSide, tex: 'roof' }),
+  roofMora: toon(0x3a3f86, { flat: true, rim: 0.45, side: THREE.DoubleSide, tex: 'roof' }),
   bronze: toon(0xc79a4c, { rim: 0.9, emissive: 0x2a1a04 }),
   gold: toon(0xf0c860, { rim: 1, emissive: 0x5a3a08 }),
   cloth: toon(0xd8c8a8, { side: THREE.DoubleSide }),
@@ -24,9 +24,14 @@ export const MAT = {
   straw: toon(0xd9b86a, { rim: 0.2 }),
   dark: toon(0x2a2420),
   iron: toon(0x4a4a50, { rim: 0.5 }),
-  ruin: toon(0xa8a092, { flat: true, rim: 0.2 }),
-  ruinMoss: toon(0x7f9a6a, { flat: true, rim: 0.2 }),
-  hushRock: toon(0x3a3444, { flat: true, rim: 0.6 }),
+  ruin: toon(0xa8a092, { flat: true, rim: 0.2, tex: 'stone' }),
+  ruinMoss: toon(0x7f9a6a, { flat: true, rim: 0.2, tex: 'stone' }),
+  hushRock: toon(0x3a3444, { flat: true, rim: 0.6, tex: 'rock' }),
+  door: toon(0x6e4a30, { rim: 0.15, tex: 'planks' }),
+  shutter: toon(0x3f8088, { rim: 0.2, tex: 'planks' }),
+  // untextured variants for moving parts (world-space detail would swim)
+  timberMoving: toon(0x6a4a34, { rim: 0.15 }),
+  clothMoving: toon(0xd8c8a8, { side: THREE.DoubleSide, noAO: true }),
 };
 export const windowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.1, 0.5) });
 export const flameMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(4, 2.2, 0.7), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -39,8 +44,56 @@ function mesh(geo, mat, x = 0, y = 0, z = 0, parent, o = {}) {
   if (parent) parent.add(m);
   return m;
 }
-export const box = (w, h, d, mat, x, y, z, p, o) => mesh(new THREE.BoxGeometry(w, h, d), mat, x, y, z, p, o);
+
+// Chamfered box: bevelled edges catch the rim/key light so blocks stop
+// reading as raw primitives. Flat normals, cached per size.
+const chamferCache = new Map();
+export function chamferBox(w, h, d, bevel) {
+  const b = bevel ?? Math.min(0.06, Math.min(w, h, d) * 0.18);
+  const key = `${w.toFixed(3)}|${h.toFixed(3)}|${d.toFixed(3)}|${b.toFixed(3)}`;
+  let g = chamferCache.get(key);
+  if (g) return g;
+  const x = w / 2, y = h / 2, z = d / 2;
+  const pos = [];
+  // corner vertex on the face perpendicular to axis ax, inset by b along the other two axes
+  const V = (sx, sy, sz, ax) => [sx * (x - (ax === 0 ? 0 : b)), sy * (y - (ax === 1 ? 0 : b)), sz * (z - (ax === 2 ? 0 : b))];
+  const tri = (a, c, e) => { pos.push(...a, ...c, ...e); };
+  const quad = (a, c, e, f) => { tri(a, c, e); tri(a, e, f); };
+  const S = [-1, 1];
+  for (const s of S) {
+    quad(V(s, -1, -1, 0), V(s, 1, -1, 0), V(s, 1, 1, 0), V(s, -1, 1, 0));
+    quad(V(-1, s, -1, 1), V(-1, s, 1, 1), V(1, s, 1, 1), V(1, s, -1, 1));
+    quad(V(-1, -1, s, 2), V(1, -1, s, 2), V(1, 1, s, 2), V(-1, 1, s, 2));
+  }
+  for (const sy of S) for (const sz of S) quad(V(-1, sy, sz, 1), V(1, sy, sz, 1), V(1, sy, sz, 2), V(-1, sy, sz, 2));
+  for (const sx of S) for (const sz of S) quad(V(sx, -1, sz, 0), V(sx, 1, sz, 0), V(sx, 1, sz, 2), V(sx, -1, sz, 2));
+  for (const sx of S) for (const sy of S) quad(V(sx, sy, -1, 0), V(sx, sy, 1, 0), V(sx, sy, 1, 1), V(sx, sy, -1, 1));
+  for (const sx of S) for (const sy of S) for (const sz of S) tri(V(sx, sy, sz, 0), V(sx, sy, sz, 1), V(sx, sy, sz, 2));
+  // orient every triangle outward (the solid is convex and centred)
+  for (let i = 0; i < pos.length; i += 9) {
+    const ax = pos[i], ay = pos[i + 1], az = pos[i + 2];
+    const e1 = [pos[i + 3] - ax, pos[i + 4] - ay, pos[i + 5] - az], e2 = [pos[i + 6] - ax, pos[i + 7] - ay, pos[i + 8] - az];
+    const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+    const cx = (ax + pos[i + 3] + pos[i + 6]) / 3, cy = (ay + pos[i + 4] + pos[i + 7]) / 3, cz = (az + pos[i + 5] + pos[i + 8]) / 3;
+    if (n[0] * cx + n[1] * cy + n[2] * cz < 0) {
+      for (let k = 0; k < 3; k++) { const t = pos[i + 3 + k]; pos[i + 3 + k] = pos[i + 6 + k]; pos[i + 6 + k] = t; }
+    }
+  }
+  g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
+  chamferCache.set(key, g);
+  return g;
+}
+export const box = (w, h, d, mat, x, y, z, p, o) => mesh(chamferBox(w, h, d), mat, x, y, z, p, o);
 export const cyl = (rt, rb, h, seg, mat, x, y, z, p, o) => mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat, x, y, z, p, o);
+// Beam between two points on a wall. axis 'z': wall facing ±z (beam in XY at z=off); 'x': wall facing ±x (beam in ZY at x=off)
+function beam(a0, y0, a1, y1, t, depth, mat, off, axis, parent) {
+  const da = a1 - a0, dy = y1 - y0, L = Math.hypot(da, dy);
+  if (axis === 'z') return box(L, t, depth, mat, (a0 + a1) / 2, (y0 + y1) / 2, off, parent, { rz: Math.atan2(dy, da) });
+  return box(depth, t, L, mat, off, (y0 + y1) / 2, (a0 + a1) / 2, parent, { rx: Math.atan2(-dy, da) });
+}
 
 function gable(w, d, h, over) {
   const hw = w / 2 + over, hd = d / 2 + over;
@@ -51,15 +104,15 @@ function gable(w, d, h, over) {
   ];
   roof.setAttribute('position', new THREE.Float32BufferAttribute(r, 3));
   roof.computeVertexNormals();
-  const gh = h * (1 - (w / 2) / hw) * 0 + h;
+  const gh = h * (1 - over / hw * 0.2);
   const gab = new THREE.BufferGeometry();
   const g = [
-    -w / 2, 0, d / 2, w / 2, 0, d / 2, 0, gh * (1 - over / hw * 0.2), d / 2,
-    w / 2, 0, -d / 2, -w / 2, 0, -d / 2, 0, gh * (1 - over / hw * 0.2), -d / 2,
+    -w / 2, 0, d / 2, w / 2, 0, d / 2, 0, gh, d / 2,
+    w / 2, 0, -d / 2, -w / 2, 0, -d / 2, 0, gh, -d / 2,
   ];
   gab.setAttribute('position', new THREE.Float32BufferAttribute(g, 3));
   gab.computeVertexNormals();
-  return { roof, gab };
+  return { roof, gab, hw, hd, gh };
 }
 
 // ------------------------------------------------------------------
@@ -68,41 +121,80 @@ export function house(opts = {}) {
   const g = new THREE.Group();
   const w = opts.w ?? 6, d = opts.d ?? 5, wallH = opts.h ?? 3.4;
   const roofMat = opts.roof ?? [MAT.roofRed, MAT.roofTeal, MAT.roofBlue, MAT.roofPlum][Math.floor(rnd() * 4)];
+  const B0 = 0.6, yMid = B0 + wallH * 0.55, yTop = B0 + wallH;
+  // stone plinth with irregular corner quoins
   box(w + 0.3, 0.8, d + 0.3, MAT.stone, 0, 0.2, 0, g);
-  box(w, wallH, d, MAT.plaster, 0, 0.6 + wallH / 2, 0, g);
-  // timber frame
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(0.2, wallH, 0.2, MAT.timber, sx * w / 2, 0.6 + wallH / 2, sz * d / 2, g);
-  box(w + 0.1, 0.18, 0.12, MAT.timber, 0, 0.6 + wallH * 0.55, d / 2 + 0.02, g);
-  box(w + 0.1, 0.18, 0.12, MAT.timber, 0, 0.6 + wallH * 0.55, -d / 2 - 0.02, g);
-  box(0.12, 0.18, d + 0.1, MAT.timber, w / 2 + 0.02, 0.6 + wallH * 0.55, 0, g);
-  box(0.12, 0.18, d + 0.1, MAT.timber, -w / 2 - 0.02, 0.6 + wallH * 0.55, 0, g);
-  box(w + 0.1, 0.2, d + 0.1, MAT.timber, 0, 0.6 + wallH, 0, g);
-  // roof
-  const rh = opts.roofH ?? w * 0.45;
-  const { roof, gab } = gable(w, d, rh, 0.55);
-  const rm = mesh(roof, roofMat, 0, 0.6 + wallH, 0, g);
-  const gm = mesh(gab, MAT.plaster, 0, 0.6 + wallH, 0, g);
-  void rm; void gm;
-  box(0.25, 0.25, d + 1.2, MAT.timber, 0, 0.6 + wallH + rh + 0.02, 0, g);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    for (let k = 0; k < 2; k++) {
+      const qw = 0.5 + rnd() * 0.2, qd = 0.45 + rnd() * 0.2;
+      box(k ? qd : qw, 0.34 + rnd() * 0.06, k ? qw : qd, MAT.stoneDark, sx * (w / 2 + 0.1) - sx * (k ? 0.05 : 0.1), 0.02 + k * 0.36, sz * (d / 2 + 0.1) - sz * (k ? 0.1 : 0.05), g, { ry: (rnd() - 0.5) * 0.12 });
+    }
+  }
+  box(w, wallH, d, MAT.plaster, 0, B0 + wallH / 2, 0, g);
+  // timber frame: sill, corner posts, mid rail, top plate
+  for (const sz of [-1, 1]) box(w + 0.14, 0.2, 0.14, MAT.timber, 0, B0 + 0.1, sz * (d / 2 + 0.03), g);
+  for (const sx of [-1, 1]) box(0.14, 0.2, d + 0.14, MAT.timber, sx * (w / 2 + 0.03), B0 + 0.1, 0, g);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(0.2, wallH, 0.2, MAT.timber, sx * w / 2, B0 + wallH / 2, sz * d / 2, g);
+  box(w + 0.1, 0.18, 0.12, MAT.timber, 0, yMid, d / 2 + 0.02, g);
+  box(w + 0.1, 0.18, 0.12, MAT.timber, 0, yMid, -d / 2 - 0.02, g);
+  box(0.12, 0.18, d + 0.1, MAT.timber, w / 2 + 0.02, yMid, 0, g);
+  box(0.12, 0.18, d + 0.1, MAT.timber, -w / 2 - 0.02, yMid, 0, g);
+  box(w + 0.1, 0.2, d + 0.1, MAT.timber, 0, yTop, 0, g);
   // door (front +z)
   const doorX = (rnd() - 0.5) * (w - 2.4);
-  box(1.1, 2.0, 0.15, MAT.dark, doorX, 0.6 + 1.0, d / 2 + 0.05, g);
-  box(1.4, 0.12, 0.6, MAT.timber, doorX, 0.6 + 2.2, d / 2 + 0.3, g);
+  // diagonal braces: lower band near the corners, knee braces up top on the side walls
+  const bl = Math.min(1.1, w * 0.18);
+  for (const sx of [-1, 1]) {
+    const x0 = sx * (w / 2 - 0.12), x1 = sx * (w / 2 - 0.12 - bl);
+    if (Math.abs(doorX - (x0 + x1) / 2) > 0.55 + bl / 2 + 0.1) beam(x0, B0 + 0.2, x1, yMid - 0.08, 0.13, 0.09, MAT.timber, d / 2 + 0.035, 'z', g);
+    beam(x0, B0 + 0.2, x1, yMid - 0.08, 0.13, 0.09, MAT.timber, -d / 2 - 0.035, 'z', g);
+  }
+  const bd = Math.min(1.0, d * 0.2);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const z0 = sz * (d / 2 - 0.12), z1 = sz * (d / 2 - 0.12 - bd);
+    beam(z0, B0 + 0.2, z1, yMid - 0.08, 0.13, 0.09, MAT.timber, sx * (w / 2 + 0.035), 'x', g);
+    beam(z0, yTop - 0.12, z1, yMid + 0.1, 0.12, 0.09, MAT.timber, sx * (w / 2 + 0.035), 'x', g);
+  }
+  // roof with fascia and barge boards
+  const rh = opts.roofH ?? w * 0.45;
+  const gb = gable(w, d, rh, 0.55);
+  mesh(gb.roof, roofMat, 0, yTop, 0, g);
+  mesh(gb.gab, MAT.plaster, 0, yTop, 0, g);
+  box(0.25, 0.25, d + 1.2, MAT.timber, 0, yTop + rh + 0.02, 0, g);
+  for (const sx of [-1, 1]) box(0.12, 0.2, gb.hd * 2 + 0.1, MAT.timber, sx * gb.hw, yTop - 0.06, 0, g);
+  const slope = Math.atan2(rh, gb.hw), L = Math.hypot(gb.hw, rh);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(L + 0.1, 0.2, 0.1, MAT.timber, sx * gb.hw / 2, yTop + rh / 2 - 0.02, sz * (gb.hd + 0.02), g, { rz: -sx * slope });
+  // gable king posts + small vents
+  for (const sz of [-1, 1]) {
+    box(0.14, gb.gh * 0.85, 0.08, MAT.timber, 0, yTop + gb.gh * 0.42, sz * (d / 2 + 0.03), g);
+    box(0.34, 0.3, 0.06, windowMat, 0.45, yTop + gb.gh * 0.35, sz * (d / 2 + 0.02), g, { cast: false });
+  }
+  // door with frame, handle, awning and step
+  box(1.1, 2.0, 0.1, MAT.door, doorX, B0 + 1.0, d / 2 + 0.05, g);
+  for (const sx of [-1, 1]) box(0.14, 2.14, 0.16, MAT.timber, doorX + sx * 0.62, B0 + 1.07, d / 2 + 0.06, g);
+  box(1.4, 0.16, 0.18, MAT.timber, doorX, B0 + 2.1, d / 2 + 0.07, g);
+  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 4), MAT.bronze); knob.position.set(doorX + 0.36, B0 + 1.0, d / 2 + 0.13); g.add(knob);
+  box(1.4, 0.12, 0.6, MAT.timber, doorX, B0 + 2.3, d / 2 + 0.3, g);
   box(1.6, 0.25, 0.8, MAT.stoneDark, doorX, 0.2, d / 2 + 0.55, g);
-  // windows
-  const winY = 0.6 + wallH * 0.62;
+  // windows: glass, frame, cross mullions, lintel, sill, shutters, flower box
+  const winY = B0 + wallH * 0.62;
+  const shutter = opts.shutter ?? MAT.shutter;
   const addWin = (x, z, ry) => {
     const wg = new THREE.Group(); wg.position.set(x, winY, z); wg.rotation.y = ry; g.add(wg);
-    box(0.9, 0.9, 0.1, windowMat, 0, 0, 0.02, wg, { cast: false });
-    box(1.1, 0.12, 0.2, MAT.timber, 0, -0.52, 0.08, wg);
-    box(0.08, 0.95, 0.14, MAT.timber, 0, 0, 0.07, wg);
-    box(0.4, 1.0, 0.06, opts.shutter ?? MAT.roofTeal, -0.7, 0, 0.1, wg);
-    box(0.4, 1.0, 0.06, opts.shutter ?? MAT.roofTeal, 0.7, 0, 0.1, wg);
+    box(0.9, 0.9, 0.06, windowMat, 0, 0, 0.0, wg, { cast: false });
+    for (const sy of [-1, 1]) box(1.08, 0.1, 0.14, MAT.timber, 0, sy * 0.5, 0.05, wg);
+    for (const sx of [-1, 1]) box(0.1, 1.0, 0.14, MAT.timber, sx * 0.5, 0, 0.05, wg);
+    box(0.06, 0.9, 0.1, MAT.timber, 0, 0, 0.05, wg);
+    box(0.9, 0.06, 0.1, MAT.timber, 0, 0.02, 0.05, wg);
+    box(1.3, 0.16, 0.2, MAT.timber, 0, 0.62, 0.08, wg);
+    box(1.2, 0.1, 0.26, MAT.stoneDark, 0, -0.6, 0.1, wg);
+    box(0.42, 1.0, 0.05, shutter, -0.74, 0, 0.1, wg, { ry: 0.25 });
+    box(0.42, 1.0, 0.05, shutter, 0.74, 0, 0.1, wg, { ry: -0.25 });
     if (rnd() < 0.6) {
-      box(1.0, 0.25, 0.35, MAT.wood, 0, -0.68, 0.22, wg);
-      for (let i = 0; i < 4; i++) {
-        const f = new THREE.Mesh(new THREE.IcosahedronGeometry(0.14, 0), toon([0xff7a9a, 0xffd25a, 0xffffff, 0xb08aff][i % 4]));
-        f.position.set(-0.35 + i * 0.23, -0.5, 0.25); wg.add(f);
+      box(1.0, 0.25, 0.32, MAT.wood, 0, -0.77, 0.24, wg);
+      for (let i = 0; i < 6; i++) {
+        const f = new THREE.Mesh(new THREE.IcosahedronGeometry(i % 2 ? 0.1 : 0.13, 0), i % 2 ? toon(0x4f8a3a) : toon([0xff7a9a, 0xffd25a, 0xffffff, 0xb08aff][(i >> 1) % 4]));
+        f.position.set(-0.38 + i * 0.15, -0.58 + (i % 2) * -0.04, 0.25 + (i % 3) * 0.03); wg.add(f);
       }
     }
   };
@@ -111,18 +203,26 @@ export function house(opts = {}) {
   addWin(0, -d / 2 - 0.01, Math.PI);
   addWin(w / 2 + 0.01, 0, Math.PI / 2);
   if (w > 5.5) addWin(-w / 2 - 0.01, 0, -Math.PI / 2);
-  // chimney
+  // chimney with cap
   let chimney = null;
   if (opts.chimney !== false) {
     const cx = w * 0.25 * (rnd() < 0.5 ? -1 : 1), cz = -d * 0.2;
-    const cy = 0.6 + wallH + rh * 0.55;
-    box(0.7, rh * 0.9 + 0.8, 0.7, MAT.stoneDark, cx, cy, cz, g);
+    const cy = yTop + rh * 0.55;
+    const ch = rh * 0.9 + 0.8;
+    box(0.7, ch, 0.7, MAT.stoneDark, cx, cy, cz, g);
+    box(0.9, 0.16, 0.9, MAT.stone, cx, cy + ch / 2 + 0.02, cz, g);
     chimney = new THREE.Vector3(cx, cy + rh * 0.45 + 0.5, cz);
   }
-  // porch barrels / crates
+  // porch barrels / crates / woodpile
   if (rnd() < 0.6) cyl(0.35, 0.3, 0.8, 10, MAT.wood, w / 2 + 0.7, 0.4, d / 2 - 0.3, g);
   if (rnd() < 0.5) box(0.7, 0.7, 0.7, MAT.woodLight, -w / 2 - 0.6, 0.35, d / 2 - 0.5, g, { ry: 0.3 });
-  g.userData = { w: w + 0.4, d: d + 0.4, height: 0.6 + wallH + rh, chimney };
+  if (rnd() < 0.5) {
+    for (let i = 0; i < 8; i++) {
+      const row = i < 4 ? 0 : i < 7 ? 1 : 2, k = i < 4 ? i : i < 7 ? i - 4 : 0;
+      cyl(0.12, 0.12, 1.2, 6, MAT.timber, -w / 2 - 0.22 - k * 0.23 - row * 0.115, 0.72 + row * 0.2, -d / 2 + 1.2, g, { rx: Math.PI / 2 });
+    }
+  }
+  g.userData = { w: w + 0.4, d: d + 0.4, height: B0 + wallH + rh, chimney };
   return g;
 }
 
@@ -318,7 +418,7 @@ export function windWheel() {
   const cols = [MAT.clothRed, MAT.cloth, MAT.clothBlue, MAT.cloth];
   for (let i = 0; i < 4; i++) {
     const arm = new THREE.Group(); arm.rotation.z = (i / 4) * Math.PI * 2; rotor.add(arm);
-    box(0.08, 1.4, 0.06, MAT.timber, 0, 0.75, 0, arm);
+    box(0.08, 1.4, 0.06, MAT.timberMoving, 0, 0.75, 0, arm);
     const sail = box(0.5, 1.1, 0.03, cols[i], 0.28, 0.85, 0.02, arm);
     sail.rotation.y = 0.3;
   }
@@ -331,15 +431,18 @@ export function windWheel() {
 export function windmill() {
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 3.2, 9, 8), MAT.plaster);
-  body.position.y = 4.5; body.castShadow = true; g.add(body);
+  body.position.y = 4.5; body.castShadow = true; body.receiveShadow = true; g.add(body);
+  cyl(3.35, 3.45, 0.9, 8, MAT.stone, 0, 0.3, 0, g);
+  cyl(2.35, 2.35, 0.25, 8, MAT.timber, 0, 9.0, 0, g);
   const roof = new THREE.Mesh(new THREE.ConeGeometry(2.8, 3, 8), MAT.roofRed); roof.position.y = 10.5; roof.castShadow = true; g.add(roof);
   box(1, 2, 0.2, MAT.dark, 0, 1.4, 3.05, g, { rx: -0.1 });
   const rotor = new THREE.Group(); rotor.position.set(0, 8.2, 3.0); g.add(rotor);
-  cyl(0.3, 0.3, 0.6, 8, MAT.timber, 0, 0, 0, rotor, { rx: Math.PI / 2 });
+  cyl(0.3, 0.3, 0.6, 8, MAT.timberMoving, 0, 0, 0, rotor, { rx: Math.PI / 2 });
   for (let i = 0; i < 4; i++) {
     const arm = new THREE.Group(); arm.rotation.z = (i / 4) * Math.PI * 2; rotor.add(arm);
-    box(0.2, 6, 0.15, MAT.timber, 0, 3, 0.3, arm);
-    box(1.4, 4.6, 0.05, MAT.cloth, 0.8, 3.6, 0.35, arm);
+    box(0.2, 6, 0.15, MAT.timberMoving, 0, 3, 0.3, arm);
+    box(1.4, 4.6, 0.05, MAT.clothMoving, 0.8, 3.6, 0.35, arm);
+    for (let k = 0; k < 4; k++) box(1.5, 0.06, 0.08, MAT.timberMoving, 0.8, 1.6 + k * 1.3, 0.38, arm);
   }
   g.userData = { rotor };
   return g;
@@ -347,7 +450,7 @@ export function windmill() {
 
 export function well() {
   const g = new THREE.Group();
-  const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.4, 1.1, 14, 1, true), toon(0xb8ad9a, { flat: true, side: THREE.DoubleSide }));
+  const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.4, 1.1, 14, 1, true), toon(0xb8ad9a, { flat: true, side: THREE.DoubleSide, tex: 'stone' }));
   ring.position.y = 0.55; ring.castShadow = true; g.add(ring);
   cyl(1.1, 1.1, 0.05, 14, new THREE.MeshBasicMaterial({ color: 0x1a3a4a }), 0, 0.7, 0, g);
   for (const sx of [-1, 1]) box(0.18, 2.4, 0.18, MAT.timber, sx * 1.2, 1.7, 0, g);

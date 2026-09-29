@@ -122,8 +122,13 @@ export class Companion {
     if (!this.active) return;
     const P = G.player;
     let target;
+    const other = G.dialogue && G.dialogue.active ? G.dialogue.lastOther : null;
     if (this.override) target = this.override;
-    else {
+    else if (other && other !== this && !this.talking && G.mode !== 'free') {
+      // in conversation: step aside to the player's outer side, away from the over-the-shoulder camera
+      const dx = other.pos.x - P.pos.x, dz = other.pos.z - P.pos.z, dl = Math.hypot(dx, dz) || 1;
+      target = new THREE.Vector3(P.pos.x - (dz / dl) * 1.5 - (dx / dl) * 0.4, P.pos.y + 1.7 + Math.sin(G.time * 1.4) * 0.1, P.pos.z + (dx / dl) * 1.5 - (dz / dl) * 0.4);
+    } else {
       const cr = G.cameraRig;
       const bx = Math.sin(P.yaw), bz = Math.cos(P.yaw);
       const rx = Math.cos(cr.yaw), rz = -Math.sin(cr.yaw);
@@ -150,7 +155,11 @@ export class Companion {
   }
   say(text, once = null, dur) {
     if (!this.active) return;
-    if (once) { if (this.said.has(once)) return; this.said.add(once); }
+    if (once) {
+      // persisted through the story so one-time lines don't repeat after loading a save
+      if (G.story) { if (!G.story.once('c:' + once)) return; } else if (this.said.has(once)) return;
+      this.said.add(once);
+    }
     G.hud.companion(text, dur);
     G.audio.play('fox', { gap: 1 });
   }

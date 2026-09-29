@@ -17,6 +17,7 @@ import { Player } from './player.js';
 import { Dialogue } from './dialogue.js';
 import { HUD } from './hud.js';
 import { Story } from './story.js';
+import { Skills } from './skills.js';
 import { fillName } from '../core/util.js';
 
 const SAVE_KEY = 'ullimjigi_save_v1';
@@ -79,6 +80,7 @@ export class Game {
     G.spells = new Spells();
     G.enemies = new EnemyManager();
     G.npcs = new NPCs();
+    G.skills = new Skills();
     G.player = new Player(G.scene);
     G.companion = new Companion();
     G.dialogue = new Dialogue();
@@ -124,8 +126,10 @@ export class Game {
       bells: { ch: 'bells', flags: [...pro, ...vil], els: ['arcane', 'fire', 'wind'], lv: 4, pos: [8, 24] },
       frost: { ch: 'bells', flags: [...pro, ...vil], els: ['arcane', 'fire', 'wind'], lv: 5, pos: [-30, -140] },
       storm: { ch: 'bells', flags: [...pro, ...vil, 'f_guard', 'f_open', 'f_echo', 'f_boss', 'f_learn', 'frostBell'], els: ['arcane', 'fire', 'wind', 'frost'], lv: 6, pos: [-150, -24] },
-      mora: { ch: 'mora', flags: [...pro, ...vil, ...bel], els: ['arcane', 'fire', 'wind', 'frost', 'storm'], lv: 8, pos: [-16, 128] },
-      rift: { ch: 'rift', flags: [...pro, ...vil, ...bel, ...mor], els: ['arcane', 'fire', 'wind', 'frost', 'storm'], lv: 10, pos: [96, -90] },
+      mora: { ch: 'mora', flags: [...pro, ...vil, ...bel, 'water_learn'], els: ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'], lv: 8, pos: [-16, 128] },
+      rift: { ch: 'rift', flags: [...pro, ...vil, ...bel, ...mor, 'water_learn'], els: ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'], lv: 10, pos: [96, -90] },
+      lake: { ch: 'bells', flags: [...pro, ...vil], els: ['arcane', 'fire', 'wind'], lv: 4, pos: [-34, 52] },
+      skills: { ch: 'mora', flags: [...pro, ...vil, ...bel, 'water_learn'], els: ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'], lv: 12, pos: [4, 60] },
     }[preset];
     if (!P_) { this.startPlay(new Story(), null); return; }
     const flags = {}; P_.flags.forEach((f) => (flags[f] = true));
@@ -133,6 +137,9 @@ export class Game {
     P.unlocked = new Set(P_.els); P.element = P_.els[P_.els.length - 1]; P.prevElement = P_.els[P_.els.length - 2];
     P.level = P_.lv; P.maxHp = 20 + Math.floor(P_.lv / 2) * 4; P.hp = P.maxHp; P.maxMana = 100 + (P_.lv - 1) * 6; P.mana = P.maxMana;
     for (const L of Object.values(G.world.lanterns)) L.setLit(true);
+    G.skills.points = Skills.expected(P_.lv, story);
+    G.skills.earned = G.skills.points;
+    if (preset === 'skills') G.skills.gauge = 100;
     G.world.sky.setHour(10);
     this.startPlay(story, { player: { pos: P_.pos, yaw: 0 } });
   }
@@ -200,6 +207,8 @@ export class Game {
       case 'settings-close': this.closeMenu(); if (G.state === 'play' && this.prevMenu === 'pause') this.openMenu('pause'); break;
       case 'resume': this.closeMenu(); break;
       case 'journal': this.closeMenu(); this.openMenu('journal'); break;
+      case 'skills': this.closeMenu(); this.openMenu('skills'); break;
+      case 'skills-reset': G.hud.skillReset(); break;
       case 'save': this.save(false); break;
       case 'title': this.save(true); location.reload(); break;
     }
@@ -225,10 +234,11 @@ export class Game {
     if (name === 'settings') $('#settings').classList.remove('hidden');
     if (name === 'map') { G.hud.drawMap(); $('#map').classList.remove('hidden'); }
     if (name === 'journal') { G.hud.drawJournal(this.jTab || 'quests'); $('#journal').classList.remove('hidden'); }
+    if (name === 'skills') { $('#skills').classList.remove('hidden'); G.hud.openSkills(); }
   }
   closeMenu() {
     if (!this.menu) return;
-    for (const id of ['#pause', '#settings', '#map', '#journal']) $(id).classList.add('hidden');
+    for (const id of ['#pause', '#settings', '#map', '#journal', '#skills']) $(id).classList.add('hidden');
     this.menu = null;
     G.paused = false;
     G.audio.play('ui_close');
@@ -282,12 +292,15 @@ export class Game {
     P.maxMana = d.player.maxMana; P.mana = P.maxMana; P.maxStamina = d.player.maxStamina; P.stamina = P.maxStamina;
     P.unlocked = new Set(d.player.unlocked); P.element = d.player.element; P.prevElement = d.player.prev;
     if (d.player.hat) P.setHat(true);
+    const story0 = new Story(d.story);
+    if (d.skills) G.skills.load(d.skills);
+    else { G.skills.points = Skills.expected(P.level, story0); G.skills.earned = G.skills.points; this.migratedSkills = true; }
     for (const id of d.lanterns || []) if (G.world.lanterns[id]) G.world.lanterns[id].setLit(true);
     this.respawn = d.respawn ? G.world.lanterns[d.respawn] : null;
     G.world.sky.setHour(d.hour ?? 9);
-    const story = new Story(d.story);
     const f = $('#fade'); f.style.transition = 'opacity 0.1s'; f.style.opacity = 1;
-    this.startPlay(story, d);
+    this.startPlay(story0, d);
+    if (this.migratedSkills) setTimeout(() => G.hud.banner('새로운 울림', '울림 나무', `지금까지의 여정으로 <b>울림점 ${G.skills.points}점</b>을 모았다.<br><kbd>K</kbd> 울림 나무에서 속성마다 새로운 노래를 익힐 수 있다.`, '#f1d48a', 6000), 2500);
   }
 
   startPlay(story, d) {
@@ -319,6 +332,7 @@ export class Game {
       lanterns: Object.values(G.world.lanterns).filter((l) => l.lit).map((l) => l.id),
       respawn: this.respawn ? this.respawn.id : null,
       story: G.story.save(),
+      skills: G.skills.save(),
     };
     if (!d.player.pos) delete d.player.pos;
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(d)); } catch (e) { console.warn(e); }
@@ -476,22 +490,29 @@ export class Game {
     // global keys
     if (G.state === 'play') {
       if (this.menu) {
-        if (I.hit('Escape') || (this.menu === 'map' && I.hit('KeyM')) || (this.menu === 'journal' && (I.hit('Tab') || I.hit('KeyJ')))) { const m = this.menu; this.closeMenu(); if (m === 'settings' && this.prevMenu === 'pause') this.openMenu('pause'); }
+        if (I.hit('Escape') || (this.menu === 'map' && I.hit('KeyM')) || (this.menu === 'journal' && (I.hit('Tab') || I.hit('KeyJ'))) || (this.menu === 'skills' && I.hit('KeyK'))) { const m = this.menu; this.closeMenu(); if (m === 'settings' && this.prevMenu === 'pause') this.openMenu('pause'); }
       } else if (G.mode === 'free' && !G.player.dead) {
         if (I.hit('Escape')) this.openMenu('pause');
         else if (I.hit('KeyM')) this.openMenu('map');
         else if (I.hit('Tab') || I.hit('KeyJ')) this.openMenu('journal');
+        else if (I.hit('KeyK')) this.openMenu('skills');
       }
     }
     // timers
     for (let i = this.timers.length - 1; i >= 0; i--) if (G.time >= this.timers[i].t) { const t = this.timers[i]; this.timers.splice(i, 1); try { t.fn(); } catch (e) { console.error(e); } }
 
     const P = G.player;
+    if (G.slowmo > 0 && !G.paused) G.slowmo = Math.max(0, G.slowmo - raw);
+    const sm = G.slowmo > 0 ? 0.25 : 1;
+    const gu = G.renderer.grade.uniforms;
+    G.slowK = (G.slowK || 0) + ((G.slowmo > 0 ? Math.min(1, G.slowmo * 2) : 0) - (G.slowK || 0)) * Math.min(1, raw * 8);
+    if (gu.uSlowmo) gu.uSlowmo.value = G.slowK;
+    if (G.audio.ready) G.audio.setMuffle(G.slowK * 0.85);
     if (G.state === 'play') {
       if (dt > 0) {
         P.update(dt, I);
         G.spells.update(dt);
-        G.enemies.update(dt);
+        G.enemies.update(dt * sm);
         G.npcs.update(dt);
         G.companion.update(dt);
         if (G.story) G.story.update(dt);

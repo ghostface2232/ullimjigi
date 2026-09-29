@@ -46,6 +46,16 @@ export class Dialogue {
     this.cur = null;
     this.depth = 0;
     this.box.addEventListener('mousedown', (e) => { if (e.button === 0) G.input.mouse.pressed.add(0); });
+    // backlog + skip affordances
+    this.log = [];
+    this.keysEl = document.createElement('div'); this.keysEl.className = 'dlg-keys';
+    this.keysEl.innerHTML = '<span><kbd>L</kbd> 지난 대사</span><span class="dlg-skip"><kbd>Esc</kbd> 누르고 있기: 빨리 넘기기<i></i></span>';
+    this.box.appendChild(this.keysEl);
+    this.skipBar = this.keysEl.querySelector('.dlg-skip i');
+    this.logEl = document.createElement('div'); this.logEl.id = 'dlg-log'; this.logEl.className = 'hidden';
+    document.getElementById('ui').appendChild(this.logEl);
+    this.logOpen = false;
+    this.tw = null;
   }
 
   begin(opts = {}) {
@@ -62,6 +72,9 @@ export class Dialogue {
     this.depth = Math.max(0, this.depth - 1);
     if (this.depth > 0) return;
     this.active = false;
+    this.tw = null; this.ffwd = false;
+    if (this.actors) { for (const r of this.actors) { r.setExpression && r.setExpression('neutral'); r.lookAt && r.lookAt(null); r.gesture && r.gestureName === 'crossArms' && r.gesture(null); } this.actors.clear(); }
+    if (this.logOpen) this.toggleLog(false);
     G.mode = 'free';
     this.lb.classList.remove('on');
     this.box.classList.add('hidden');
@@ -90,13 +103,50 @@ export class Dialogue {
     if (dist < 0.4) { dir.set(Math.sin(G.player.yaw), 0, Math.cos(G.player.yaw)); dist = 1; }
     dir.normalize();
     const right = new THREE.Vector3(-dir.z, 0, dir.x);
-    const back = Math.max(1.5, Math.min(3, dist * 0.45 + 1.3));
-    const cam = from.clone().addScaledVector(dir, -back).addScaledVector(right, 1.25 * side);
-    cam.y = Math.max(from.y, sub.y) + 1.85;
+    // Over-the-shoulder: the listener sits at the frame edge, the speaker's face near centre.
+    const back = Math.max(1.2, Math.min(2.4, dist * 0.35 + 1.0));
+    const cam = from.clone().addScaledVector(dir, -back).addScaledVector(right, 1.9 * side);
+    cam.y = Math.max(from.y, sub.y) + Math.min(1.8, headH * 0.98 + 0.12);
     const g = G.world.ground(cam.x, cam.z, cam.y + 2);
-    cam.y = Math.max(cam.y, g + 1.3);
-    const look = sub.clone(); look.y += headH * 0.86;
-    G.cameraRig.setCine(cam, look);
+    cam.y = Math.max(cam.y, g + 1.2);
+    const look = sub.clone(); look.y += headH * 0.9;
+    look.addScaledVector(right, 0.35 * side);
+    this.moveCam(cam, look);
+  }
+
+  // Blend between dialogue shots instead of hard-cutting, then drift gently
+  // toward the speaker while the line plays. Story code that calls
+  // G.cameraRig.setCine directly takes over (detected in update()).
+  moveCam(cam, look) {
+    const R = G.cameraRig;
+    const blend = R.mode === 'cine' && R.cine.k > 0.6 && R.cine.pos.distanceTo(cam) > 0.3;
+    this.tw = { p0: R.cine.pos.clone(), l0: R.cine.look.clone(), p1: cam.clone(), l1: look.clone(), t: blend ? 0 : 1, dur: 0.65, drift: 0 };
+    if (!blend) R.setCine(cam, look);
+    this.twLast = R.cine.pos.clone();
+  }
+  updateCam(dt) {
+    const tw = this.tw, R = G.cameraRig;
+    if (!tw || R.mode !== 'cine') return;
+    if (this.twLast && R.cine.pos.distanceToSquared(this.twLast) > 1e-6) { this.tw = null; return; } // someone else took the camera
+    tw.t = Math.min(1, tw.t + dt / tw.dur);
+    const k = tw.t * tw.t * (3 - 2 * tw.t);
+    tw.drift = Math.min(1, tw.drift + dt / 9);
+    const push = 0.07 * tw.drift * tw.drift;
+    const p = tw.p0.clone().lerp(tw.p1, k);
+    p.lerp(tw.l1, push);
+    const l = tw.l0.clone().lerp(tw.l1, k);
+    R.cine.pos.copy(p); R.cine.look.copy(l);
+    this.twLast = R.cine.pos.clone();
+  }
+
+  toggleLog(v = !this.logOpen) {
+    this.logOpen = v;
+    this.logEl.classList.toggle('hidden', !v);
+    if (v) {
+      this.logEl.innerHTML = `<div class="lg-frame"><div class="lg-title">지난 대사</div><div class="lg-body">${this.log.map((l) => `<div class="lg-row ${l.narr ? 'narr' : ''}">${l.name ? `<b>${l.name}</b>` : ''}<p>${l.html}</p></div>`).join('')}</div><div class="lg-close"><kbd>L</kbd> 닫기</div></div>`;
+      const b = this.logEl.querySelector('.lg-body'); b.scrollTop = b.scrollHeight;
+      G.audio.play('page');
+    }
   }
 
   frameOn(obj, opts = {}) {
@@ -108,7 +158,7 @@ export class Dialogue {
       return;
     }
     this.lastOther = obj;
-    this.shot(P.pos, obj, opts.side ?? 1);
+    this.shot(P.pos, obj, opts.side ?? -1); // left shoulder: keeps the staff (right hand) out of frame
   }
 
   say(who, text, opts = {}) {
@@ -118,6 +168,14 @@ export class Dialogue {
     for (const n of G.npcs.list) n.talking = false;
     if (G.companion) G.companion.talking = false;
     if (obj && obj !== G.player) obj.talking = true;
+    // acting: facial expression, one-shot gesture, and gaze toward the player
+    const rig = obj && obj.rig;
+    if (rig && obj !== G.player) {
+      this.actors = this.actors || new Set(); this.actors.add(rig);
+      if (opts.expr && rig.setExpression) rig.setExpression(opts.expr);
+      if (opts.gesture && rig.gesture) rig.gesture(opts.gesture);
+      if (rig.lookAt && opts.look !== false) rig.lookAt(opts.lookAt || G.player.center().setY(G.player.pos.y + 1.55));
+    }
     if (obj && opts.cam !== false) this.frameOn(obj, opts);
     this.box.classList.remove('hidden');
     this.nameEl.textContent = name;
@@ -125,6 +183,8 @@ export class Dialogue {
     this.choicesEl.innerHTML = '';
     this.nextEl.classList.remove('on');
     const parsed = parse(fillName(text, G.playerName));
+    this.log.push({ name, html: render(parsed, parsed.total), narr: who === 'narr' || who === 'sign' });
+    if (this.log.length > 80) this.log.shift();
     return new Promise((res) => {
       this.cur = { parsed, n: 0, t: 0, voice: sp.voice, res, done: false, blip: 0, hold: opts.hold ?? 0, auto: opts.auto };
       this.textEl.innerHTML = '';
@@ -163,6 +223,15 @@ export class Dialogue {
 
   update(dt) {
     const I = G.input;
+    this.updateCam(dt);
+    if (!this.active && !this.cur && !this.choosing) return;
+    if (I.pressed.has('KeyL')) { this.toggleLog(); I.consume('KeyL'); }
+    if (this.logOpen) { if (I.pressed.has('Escape')) this.toggleLog(false); I.consume('KeyE'); I.consume('Space'); I.mouse.pressed.delete(0); return; }
+    // hold Esc to fast-forward (stops at choices)
+    const held = I.heldFor('Escape');
+    this.ffwd = held > 0.6;
+    this.skipBar.style.width = `${Math.min(1, held / 0.6) * 100}%`;
+    this.keysEl.classList.toggle('ff', this.ffwd);
     if (this.choosing) {
       const c = this.choosing;
       for (let i = 0; i < c.n; i++) if (I.pressed.has('Digit' + (i + 1))) return c.pick(i);
@@ -175,6 +244,7 @@ export class Dialogue {
     if (!c) return;
     if (!c.done) {
       c.t -= dt;
+      if (this.ffwd) c.n = c.parsed.total - 1;
       const adv = I.advance();
       if (adv && c.n > 2) { c.n = c.parsed.total; I.consume('KeyE'); I.consume('Space'); I.mouse.pressed.delete(0); }
       while (c.t <= 0 && c.n < c.parsed.total) {
@@ -194,6 +264,7 @@ export class Dialogue {
       if (c.n >= c.parsed.total) { c.done = true; c.wait = c.hold; this.nextEl.classList.add('on'); }
     } else {
       c.wait -= dt;
+      if (this.ffwd) { c.ffT = (c.ffT || 0) + dt; if (c.ffT > 0.06) this.finish(); return; }
       if (c.auto !== undefined) { c.auto -= dt; if (c.auto <= 0) this.finish(); return; }
       if (c.wait <= 0 && I.advance()) { I.consume('KeyE'); I.consume('Space'); I.mouse.pressed.delete(0); G.audio.play('page'); this.finish(); }
     }

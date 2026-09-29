@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { G, ELEMENTS } from '../core/context.js';
 import { makeHumanoid, CHAR } from './characters.js';
 import { BOLT, HEAVY, WEAVE_COST, WEAVE_CD, weaveInfo } from './spells.js';
+import { ULT_COST } from './skills.js';
 import { clamp, damp, angleDamp, lerp, randRange } from '../core/util.js';
 import { PAL } from '../render/vfx.js';
 import { toon, addOutline } from '../render/materials.js';
@@ -36,7 +37,7 @@ export class Player {
     this.lockTarget = null;
     this.dead = false;
     this.sprinting = false; this.gliding = false; this.swimming = false;
-    this.blinkT = 0; this.blinkDir = new THREE.Vector3(); this.airBlink = true;
+    this.blinkT = 0; this.blinkDir = new THREE.Vector3(); this.airBlink = 1; this.blinkAt = -99; this.dodgeCD = 0; this.dodged = false;
     this.shiftT = 0;
     this.stepT = 0;
     this.regenT = 0; this.lastHurt = -99;
@@ -83,9 +84,8 @@ export class Player {
 
   // --------------------------------------------------------------
   aimRayPoint(maxD = 80) {
-    const cam = G.cameraRig.cam;
-    const o = cam.position.clone();
-    const d = new THREE.Vector3(); cam.getWorldDirection(d);
+    // unshaken view ray, so camera shake/kick never nudges the aim
+    const { o, d } = G.cameraRig.aimRay();
     // start the ray at the player's depth so enemies behind the player aren't hit
     const skip = Math.max(0, tmp.subVectors(this.pos, o).dot(d));
     return { o, d, skip };
@@ -161,7 +161,7 @@ export class Player {
 
     // --- element selection & casting
     if (act) {
-      const keys = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'];
+      const keys = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6'];
       keys.forEach((k, i) => { if (input.hit(k)) this.selectElement(ELEMENTS[i]); });
       if (input.mouse.wheel) {
         const list = ELEMENTS.filter((e) => this.unlocked.has(e));
@@ -175,10 +175,13 @@ export class Player {
         if (input.mHit(2) && this.cd.heavy <= 0) this.castHeavy();
         else if (input.mHit(2)) G.hud.cooldownFlash('heavy');
         if (input.hit('KeyQ')) this.castWeave();
+        if (input.hit('KeyF')) this.castUlt();
       }
     }
     this.aimZoom = act && input.mDown(2);
-    for (const k in this.cd) this.cd[k] = Math.max(0, this.cd[k] - dt);
+    const cdRate = G.slowmo > 0 ? 2.5 : 1;
+    for (const k in this.cd) this.cd[k] = Math.max(0, this.cd[k] - dt * cdRate);
+    this.dodgeCD = Math.max(0, this.dodgeCD - dt);
     this.castHold = Math.max(0, this.castHold - dt);
     if (G.spells.channel) this.castHold = 0.3;
     if (this.lockTarget && (!this.lockTarget.alive || this.lockTarget.pos.distanceTo(this.pos) > 40)) this.lockTarget = null;
@@ -191,11 +194,12 @@ export class Player {
     const accel = this.grounded ? 14 : 5;
     if (this.blinkT > 0) {
       this.blinkT -= dt;
-      this.vel.x = this.blinkDir.x * 42; this.vel.z = this.blinkDir.z * 42;
+      const bs = G.skills && G.skills.has('w_dash') ? 58 : 42;
+      this.vel.x = this.blinkDir.x * bs; this.vel.z = this.blinkDir.z * bs;
       if (this.blinkT <= 0) { this.vel.x *= 0.25; this.vel.z *= 0.25; }
       if (Math.random() < 0.9) G.vfx.burst(tmp2.copy(this.pos).setY(this.pos.y + 1), 'trail', 3, { el: this.element, spread: 0.4, size: 0.5, life: 0.4 });
     } else if (this.gliding) {
-      const gs = 9;
+      const gs = G.skills && G.skills.has('w_tailwind') ? 11.3 : 9;
       this.vel.x = damp(this.vel.x, move.x * gs + (moving ? 0 : Math.sin(this.yaw) * 5), 2.5, dt);
       this.vel.z = damp(this.vel.z, move.z * gs + (moving ? 0 : Math.cos(this.yaw) * 5), 2.5, dt);
     } else {
@@ -204,7 +208,7 @@ export class Player {
     }
 
     // --- jump / glide
-    if (this.grounded) { this.coyote = 0.12; this.airBlink = true; } else this.coyote -= dt;
+    if (this.grounded) { this.coyote = 0.12; this.airBlink = G.skills && G.skills.has('w_dash') ? 2 : 1; } else this.coyote -= dt;
     if (act && input.hit('Space')) this.jumpBuf = 0.15; else this.jumpBuf -= dt;
     if (this.jumpBuf > 0 && this.coyote > 0 && !this.swimming) {
       this.vel.y = 9.6; this.grounded = false; this.coyote = 0; this.jumpBuf = 0;
@@ -270,7 +274,7 @@ export class Player {
     // --- stamina
     let drain = 0;
     if (this.sprinting) drain = 16;
-    if (this.gliding) drain = 7.5;
+    if (this.gliding) drain = G.skills && G.skills.has('w_tailwind') ? 4.5 : 7.5;
     if (this.swimming && moving) drain = 6;
     if (drain) { this.stamina -= drain * dt; this.staminaUse = 1.2; }
     else if (this.grounded || this.swimming) this.stamina += (this.exhausted ? 22 : 34) * dt * (this.staminaUse > 0 ? 0 : 1);
@@ -285,7 +289,8 @@ export class Player {
 
     // --- mana & hp regen
     this.manaDelay -= dt;
-    if (this.manaDelay <= 0) this.mana = Math.min(this.maxMana, this.mana + dt * (10 + this.level * 0.6));
+    const flow = 1 + 0.2 * (G.skills ? G.skills.r('a_flow') : 0);
+    if (this.manaDelay <= 0) this.mana = Math.min(this.maxMana, this.mana + dt * (10 + this.level * 0.6) * flow);
     this.invuln = Math.max(0, this.invuln - dt);
     this.barrier = Math.max(0, this.barrier - dt);
     const inCombat = G.enemies.inCombat();
@@ -347,9 +352,19 @@ export class Player {
 
   tryBlink(dir) {
     if (this.blinkT > 0 || this.exhausted || this.stamina < 18 || this.swimming) return;
-    if (!this.grounded && !this.airBlink) return;
-    if (!this.grounded) this.airBlink = false;
-    this.stamina -= 22; this.staminaUse = 0.6;
+    if (!this.grounded && this.airBlink <= 0) return;
+    if (!this.grounded) this.airBlink--;
+    const dash = G.skills && G.skills.has('w_dash');
+    this.stamina -= dash ? 15 : 22; this.staminaUse = 0.6;
+    this.blinkAt = G.time;
+    if (G.skills && G.skills.has('a_afterimage')) {
+      const at = this.center();
+      G.later(() => {
+        G.vfx.burst(at, 'arcane', 24, { speed: 6 }); G.vfx.ring(at.clone().setY(at.y - 0.9), PAL.arcane.glow, 3.4, 0.35, { thick: 0.3 });
+        G.audio.play('impact_arcane', { pos: at });
+        for (const e of G.spells.enemiesIn(at, 2.6)) G.combat.hit(e, { dmg: this.power() * 0.9, el: 'arcane', pos: e.center(), dir: tmp.subVectors(e.center(), at).setY(0).normalize().clone(), knock: 6, source: 'player', hitstop: 0.03 });
+      }, 120);
+    }
     const d = dir ? dir.clone().normalize() : new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
     this.blinkDir.copy(d);
     this.blinkT = 0.16;
@@ -381,6 +396,7 @@ export class Player {
   }
 
   spend(cost) {
+    if (G.slowmo > 0 && cost < 10) return true;
     if (this.mana < cost) { G.hud.manaShort(); G.audio.play('mana_empty', { gap: 0.3 }); return false; }
     this.mana -= cost; this.manaDelay = 0.9; return true;
   }
@@ -426,9 +442,44 @@ export class Player {
     if (G.story) G.story.onCast('weave', info.key);
   }
 
+  castUlt() {
+    const K = G.skills;
+    const el = this.element;
+    const id = K && K.ultFor(el);
+    if (!id) { G.hud.toast(K && Object.keys(K.ranks).some((k) => k.endsWith('_ult')) ? '이 속성의 궁극기를 아직 익히지 못했다. <kbd>K</kbd> 울림 나무' : '궁극기는 울림 나무(<kbd>K</kbd>) 각 속성의 끝에서 익힐 수 있다.'); return; }
+    if (K.gauge < ULT_COST) { G.hud.ultShort && G.hud.ultShort(); G.audio.play('mana_empty', { gap: 0.3 }); return; }
+    K.gauge = 0;
+    this.castHold = 1.4;
+    this.rig.flick();
+    this.invuln = Math.max(this.invuln, 0.6);
+    G.spells.ult(el, this.staffTip(), this.aimPoint(), this.power(), this);
+    this.stats.casts++;
+    if (G.story && G.story.onCast) G.story.onCast('ult', el);
+  }
+
+  // Perfect dodge: an attack connecting during blink i-frames triggers "울림 가속" (slow motion)
+  perfectDodge(o) {
+    if (this.dodgeCD > 0) return;
+    this.dodgeCD = 5;
+    const dur = 2.6 + (G.skills && G.skills.has('a_afterimage') ? 1.5 : 0);
+    G.slowmo = dur; G.slowmoMax = dur;
+    G.audio.play('perfect_dodge');
+    G.hud.floatText(this.center().add(new THREE.Vector3(0, 0.6, 0)), '완벽 회피!', '#bfe8ff', 'react');
+    G.vfx.burst(this.center(), 'star', 1, { el: 'white', size: 3.2 });
+    G.vfx.ring(this.pos, PAL.white.core, 7, 0.5, { thick: 0.15, alpha: 0.6 });
+    G.renderer.grade.uniforms.uImpact.value = Math.max(G.renderer.grade.uniforms.uImpact.value, 0.45);
+    G.hitstop = Math.max(G.hitstop, 0.05);
+    if (G.skills) G.skills.charge(12);
+    this.invuln = Math.max(this.invuln, 0.5);
+    this.stamina = Math.min(this.maxStamina, this.stamina + 20);
+    if (G.story && G.story.once('perfect1')) G.hud.hint('<b>완벽 회피</b> — 공격이 닿기 직전 <kbd>Shift</kbd> 순간이동으로 피하면 울림이 가속한다<br><small>잠시 적이 느려지고, 기본 마법의 마나가 들지 않으며, 재사용 대기가 빨라진다</small>', 8);
+  }
+
   // --------------------------------------------------------------
   damage(amount, o = {}) {
     if (this.dead || G.mode !== 'free' || G.state !== 'play') return;
+    this.dodged = false;
+    if (!o.fall && (this.blinkT > 0 || G.time - this.blinkAt < 0.3)) { this.dodged = true; this.perfectDodge(o); return; }
     if (!o.fall && this.invuln > 0) return;
     let a = amount;
     if (this.barrier > 0) a = Math.max(1, Math.round(a * 0.6));
@@ -466,18 +517,19 @@ export class Player {
 
   addXP(n) {
     this.xp += n;
-    let up = false;
+    let up = 0;
     while (this.xp >= xpNeed(this.level)) {
       this.xp -= xpNeed(this.level);
       this.level++;
-      up = true;
+      up++;
       this.maxMana += 6;
       if (this.level % 2 === 0) this.maxHp += 4;
     }
     if (up) {
       this.hp = this.maxHp; this.mana = this.maxMana;
       G.audio.play('levelup');
-      G.hud.banner('LEVEL UP', `울림이 깊어졌다 — Lv ${this.level}`, `마법의 위력이 강해졌다.${this.level % 2 === 0 ? ' 생명력의 그릇이 늘었다.' : ''}`, '#f1d48a');
+      if (G.skills) G.skills.gain(2 * up);
+      G.hud.banner('LEVEL UP', `울림이 깊어졌다 — Lv ${this.level}`, `마법의 위력이 강해졌다.${this.level % 2 === 0 ? ' 생명력의 그릇이 늘었다.' : ''}<br><b style="color:#f1d48a">울림점 +${2 * up}</b> · <kbd>K</kbd> 울림 나무에서 새 노래를 익히자`, '#f1d48a');
       G.vfx.burst(this.center(), 'soul', 30, { el: 'gold' });
       G.vfx.ring(this.pos, PAL.gold.core, 4, 0.8, { thick: 0.2 });
       G.hud.updateHearts();

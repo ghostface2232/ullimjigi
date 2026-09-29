@@ -325,7 +325,7 @@ class MothRig extends CreatureRig {
     }
     const lift = Math.sin(ph) * 0.02;
     this.body.position.y = Math.sin(t * 5) * 0.05 + lift;
-    rot(B.body, s.dive ? 0.5 : Math.sin(t * 2) * 0.15 + clamp(this.velL.z * 0.04, -0.3, 0.3), 0, clamp(-this.yawRate * 0.12, -0.5, 0.5));
+    rot(B.body, (s.dive ? 0.5 : Math.sin(t * 2) * 0.15 + clamp(this.velL.z * 0.04, -0.3, 0.3)) - this.hurtSp.x * 0.1, 0, clamp(-this.yawRate * 0.12, -0.5, 0.5) + this.hurtSp.x * 0.06);
     rot(B.abd, Math.sin(t * 3.1) * 0.12 - 0.05, Math.sin(t * 2.2) * 0.1, 0);
     rot(B.abd2, Math.sin(t * 3.1 - 0.7) * 0.15, Math.sin(t * 2.2 - 0.5) * 0.12, 0);
     rot(B.head, Math.sin(t * 1.7) * 0.1, Math.sin(t * 1.1) * 0.2, 0);
@@ -559,7 +559,7 @@ class WatcherRig extends CreatureRig {
     rot(B.head, this.hp, this.hy, 0);
     const c = s.charge ?? 0;
     B.eye.scale.set(1 + c * 0.35, (1 + c * 0.35) * (s.dead ? 0.3 : 1), 1);
-    rot(B.body, 0, 0, s.stagger ? Math.sin(t * 5) * 0.08 : 0);
+    rot(B.body, -this.hurtSp.x * 0.015, 0, (s.stagger ? Math.sin(t * 5) * 0.08 : 0) + this.hurtSp.x * 0.01);
     this.root.updateMatrixWorld(true);
   }
 }

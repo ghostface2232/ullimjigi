@@ -698,6 +698,8 @@ export class VFX {
     this.crowns = [];
     for (let i = 0; i < 6; i++) this.crowns.push({ m: makeCrown(scene), busy: false });
     this.debris = new Debris(scene);
+    this.spikePool = [];
+    this.orbPool = {};
     this.distort = new Distort();
     if (G.renderer && G.renderer.distortScene) this.distort.bind(G.renderer.distortScene);
 
@@ -750,6 +752,7 @@ export class VFX {
     add(this.slashes[0].m.material, this.slashes[0].m.geometry);
     add(this.crowns[0].m.material, this.crowns[0].m.geometry);
     add(this.iceMat, spikeGeo(0)); add(this.iceMatT, this.crystalGeo);
+    const sp = this._spike(false); if (sp) { add(sp.material, spikeGeo(0)); sp.userData.busy = false; }
     for (const pool of [this.debris.rock, this.debris.ice, this.debris.ember]) { const im = new THREE.InstancedMesh(pool.im.geometry, pool.im.material, 1); im.position.set(0, -500, 0); im.frustumCulled = false; sc.add(im); }
     if (this.distort.scene) { const m = new THREE.Mesh(this.distort.quad, this.distort.base); m.position.set(0, -500, 0); m.frustumCulled = false; sc.add(m); }
     const done = () => { sc.clear(); };
@@ -1084,18 +1087,47 @@ export class VFX {
     return m;
   }
   disposeOrb(m) { this.scene.remove(m); m.material.dispose(); if (m.userData.halo) m.userData.halo.material.dispose(); }
+  // pooled orbs for frequent short-lived pickups (mana motes): same look, no per-use material churn
+  acquireOrb(el, size = 0.3, o = {}) {
+    const key = `${el}|${size}|${o.halo ?? 0}|${o.haloI ?? 0}`;
+    const list = this.orbPool[key] || (this.orbPool[key] = []);
+    let m = list.find((x) => !x.userData.busy);
+    if (!m) { m = this.orb(el, size, o); m.userData.poolKey = key; list.push(m); }
+    m.userData.busy = true; m.visible = true; m.scale.setScalar(size);
+    return m;
+  }
+  releaseOrb(m) { if (m.userData.poolKey) { m.userData.busy = false; m.visible = false; } else this.disposeOrb(m); }
 
   // ---------------- ice crystal (spell ice spike) ----------------
   // Hexagonal ice spike that erupts with a cold inner glow, cools, cracks and
   // shatters into tumbling ice shards. o: width, life, tiltX/tiltZ, transparent, quiet
+  // spike meshes + materials are pooled: a frost lance raises dozens at once
+  _spike(transparent) {
+    let m = this.spikePool.find((x) => !x.userData.busy && x.userData.transparent === transparent);
+    if (!m) {
+      if (this.spikePool.length >= 72) return null;
+      const mat = crystalMaterial({ ice: true, color: 0x8fd0ff, glow: 0x6fc4ff, intensity: 1.0, transparent, opacity: transparent ? 0.82 : 1, seed: rand() * 10, nocache: true });
+      m = new THREE.Mesh(spikeGeo(0), mat);
+      m.castShadow = true; m.visible = false;
+      m.userData.transparent = transparent;
+      this.scene.add(m);
+      this.spikePool.push(m);
+    }
+    m.userData.busy = true;
+    return m;
+  }
   crystal(pos, height = 2, o = {}) {
-    const mat = crystalMaterial({ ice: true, color: 0x8fd0ff, glow: 0x6fc4ff, intensity: 1.0, transparent: !!o.transparent, opacity: o.transparent ? 0.82 : 1, seed: rand() * 10, nocache: true });
-    const m = new THREE.Mesh(spikeGeo(Math.floor(rand() * 4)), mat);
+    const m = this._spike(!!o.transparent);
+    if (!m) return null;
+    const u = m.material.uniforms;
+    m.geometry = spikeGeo(Math.floor(rand() * 4));
+    if (u.uSeed) u.uSeed.value = rand() * 10;
+    if (u.uFlash) u.uFlash.value = 0;
+    if (u.uIntensity) u.uIntensity.value = 1.4;
     m.position.copy(pos); m.position.y -= height * 0.12;
     m.rotation.set(randRange(-0.2, 0.2) + (o.tiltX || 0), rand() * Math.PI * 2, randRange(-0.2, 0.2) + (o.tiltZ || 0));
-    m.castShadow = true;
     m.scale.set(0.001, 0.001, 0.001);
-    this.scene.add(m);
+    m.visible = true;
     let t = 0;
     const life = o.life ?? 1.4;
     const w = (o.width ?? height * 0.45), hh = height * 0.98;
@@ -1103,7 +1135,6 @@ export class VFX {
       this.sparks(tmpV4.copy(pos).setY(pos.y + 0.2), UPV, Math.min(8, 2 + height * 2), { el: 'frost', spread: 0.8, speed: 7, grav: 12, life: 0.35, w: 0.035 });
       this.chunks(pos, 'rock', Math.min(4, 1 + Math.round(height)), { speed: 5, up: 0.9, size: 0.1 });
     }
-    const u = mat.uniforms;
     this.fx.push({
       update: (dt) => {
         t += dt;
@@ -1119,7 +1150,8 @@ export class VFX {
           this.burst(c, 'ice', 6, { spread: height * 0.4 });
           this.burst(c, 'frostmist', 1, { spread: height * 0.3, size: 0.6 });
           this.chunks(c, 'ice', Math.min(10, 3 + Math.round(height * 2)), { speed: 5, up: 0.6, size: 0.08 + height * 0.05, jitter: w * 0.5 });
-          this.scene.remove(m); mat.dispose();
+          m.visible = false; m.userData.busy = false;
+          if (u.uFlash) u.uFlash.value = 0;
           return false;
         }
         return true;

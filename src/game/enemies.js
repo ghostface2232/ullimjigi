@@ -2214,7 +2214,7 @@ export class EnemyManager {
   }
   makePickup(pos, kind, o = {}) {
     if (kind === 'mana') {
-      const m = G.vfx.orb('frost', 0.075, { halo: 0.62, haloI: 0.7 });
+      const m = G.vfx.acquireOrb('frost', 0.075, { halo: 0.62, haloI: 0.7 });
       m.position.copy(pos);
       const a = ((o.i || 0) / (o.n || 1)) * Math.PI * 2 + randRange(-0.4, 0.4), sp = randRange(3.2, 5.2);
       const v = new THREE.Vector3(Math.cos(a) * sp, randRange(3.2, 5.4), Math.sin(a) * sp);
@@ -2233,7 +2233,7 @@ export class EnemyManager {
   removePickup(i) {
     const p = this.pickups[i];
     if (p.rib) p.rib.release();
-    if (p.orb) G.vfx.disposeOrb(p.m); else G.scene.remove(p.m);
+    if (p.orb) G.vfx.releaseOrb(p.m); else G.scene.remove(p.m);
     this.pickups.splice(i, 1);
   }
   absorbPickup(p, pc) {

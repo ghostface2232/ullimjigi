@@ -331,6 +331,24 @@ export function blob(S, mat, w, o) {
   return { part, idx };
 }
 
+// Front surface depth of a sculpted part at (x, y): inverse-distance blend of
+// the nearest front-half vertices (for seating features on curved surfaces).
+export function zAt(part, x, y) {
+  const P = part.p;
+  let zc = 0;
+  for (let k = 2; k < P.length; k += 3) zc += P[k];
+  zc /= P.length / 3;
+  const near = [[1e9, 0], [1e9, 0], [1e9, 0], [1e9, 0]];
+  for (let k = 0; k < P.length; k += 3) {
+    if (P[k + 2] < zc) continue;
+    const d = (P[k] - x) ** 2 + (P[k + 1] - y) ** 2;
+    if (d < near[3][0]) { near[3] = [d, P[k + 2]]; near.sort((a, b) => a[0] - b[0]); }
+  }
+  let ws = 0, z = 0;
+  for (const [d, zz] of near) { const w = 1 / (Math.sqrt(d) + 1e-4); ws += w; z += w * zz; }
+  return z / ws;
+}
+
 // Thick cloth sheet: outer surface fn(u, v, out), inner surface offset by
 // `thick` along -normal (normal oriented away from inside(p)). Closes the
 // hem (v = 1), sides (u = 0/1, unless wrap) and optionally the top edge.

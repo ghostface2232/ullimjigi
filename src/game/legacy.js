@@ -441,7 +441,7 @@ function makeAshlingOld(variant = 'normal') {
   return rig;
 }
 
-export function makeWailer() {
+function makeWailerOld() {
   const root = new THREE.Group();
   const mats = [];
   const mask = EM(0xe8e0d0, { rim: 0.9 }); mats.push(mask);
@@ -573,7 +573,7 @@ const OOZE = {
   frost: { body: 0x7ec8f0, glow: 0xe0fbff, emi: 0x1a5a80 },
   water: { body: 0x2f7ae0, glow: 0xa8e4ff, emi: 0x08285e },
 };
-export function makeOoze(variant = 'ash', size = 1) {
+function makeOozeOld(variant = 'ash', size = 1) {
   const C = OOZE[variant];
   const root = new THREE.Group();
   const body = new THREE.Group(); root.add(body);
@@ -615,7 +615,7 @@ export function makeOoze(variant = 'ash', size = 1) {
 // ------------------------------------------------------------------
 // 재나방 — ash moth
 // ------------------------------------------------------------------
-export function makeMoth() {
+function makeMothOld() {
   const root = new THREE.Group();
   const body = new THREE.Group(); root.add(body);
   const bm = EM(0x3a3240, { rim: 0.9 });

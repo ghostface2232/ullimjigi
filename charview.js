@@ -30,7 +30,7 @@ ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground)
 const NPC = ['player', 'mora', 'bau', 'dodam', 'isol', 'danbi', 'villagerA', 'villagerB', 'villagerC', 'seha', 'kael'];
 const EN = {
   ashling: () => C.makeAshling('normal'), ashlingFrost: () => C.makeAshling('frost'), wailer: () => C.makeWailer(), brute: () => C.makeBrute('normal'),
-  bruteFrost: () => C.makeBrute('frost'), knight: () => C.makeKnight(false), ooze: () => C.makeOoze('ash'), oozeFire: () => C.makeOoze('fire'), moth: () => C.makeMoth(),
+  bruteFrost: () => C.makeBrute('frost'), knight: () => C.makeKnight(false), ooze: () => C.makeOoze('ash'), oozeFire: () => C.makeOoze('fire'), oozeFrost: () => C.makeOoze('frost'), oozeWater: () => C.makeOoze('water'), moth: () => C.makeMoth(),
   shield: () => C.makeShieldBearer(), archer: () => C.makeArcher(), rootHand: () => C.makeRootHand(), watcher: () => C.makeWatcher(),
 };
 function make(key) {
@@ -61,7 +61,7 @@ for (const k of keys) {
     const w = Math.max(0.6, box.max.x - box.min.x) * 1.05 + 0.25;
     r.key = k; r.state = {};
     r.root.rotation.y = views ? (+views.split(',')[i] * Math.PI) / 180 : +(q.get('yaw') || 0) * Math.PI / 180;
-    r.root.position.set(x + w / 2, k === 'fox' || k === 'wailer' || k === 'moth' ? 1.2 : 0, 0);
+    r.root.position.set(x + w / 2, k === 'fox' || k === 'wailer' ? 1.3 : k === 'moth' ? 0.6 : 0, 0);
     r.root.traverse((o) => { if (o.isMesh && !o.userData.isOutline) o.castShadow = true; });
     x += w;
     scene.add(r.root); rigs.push(r);

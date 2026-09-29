@@ -7,7 +7,7 @@
 - **스택**: Three.js r186 + Vite 8. 런타임 의존성은 `three` 하나뿐입니다.
 - **에셋**: 모델, 텍스처, 효과음, 음악을 모두 코드로 생성합니다. 외부 파일은 `public/fonts/`의 폰트뿐입니다.
 - **언어**: UI와 대사는 모두 한국어입니다. 코드 식별자와 주석은 영어입니다.
-- **규모**: `src/` 아래 약 20,400줄, 36개 파일.
+- **규모**: `src/` 아래 약 24,000줄, 45개 파일.
 
 ```bash
 npm install
@@ -35,12 +35,15 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | `core/` | `context.js` | 전역 `G`, 설정, 속성 목록(`ELEMENTS` 6종, `EL_INFO`, `EL_SVG`) |
 | | `util.js` | 수학, 시드 노이즈, 조사 처리(`josa`, `fillName`) |
 | | `input.js` | 키보드·마우스, 포인터 고정, 프레임 단위 눌림 판정 |
-| | `audio.js` | WebAudio 합성 효과음 라이브러리(`S.*`), 공간 음향, 환경음 |
+| | `audio.js` | WebAudio 합성 엔진: 공간 음향(거리 고역 감쇠), 근거리·원거리 두 잔향, 리미터, 환경음, 반복음(`loop`), `OfflineAudioContext` 사전 렌더 변주 |
+| | `sfx/*.js` | 효과음 레시피(`spells`·`combat`·`ui`·`legacy`), 반복음(`loops`), 미리 만든 소리 질감(`textures`), 사전 렌더 목록(`registry`) |
 | | `music.js` | 분위기별 절차적 음악(`MOODS`), 주제 선율 `THEME` |
-| `render/` | `renderer.js` | 렌더러, MSAA 컴포저, 블룸, 색보정·충격 패스(`grade`) |
+| `render/` | `renderer.js` | 렌더러, MSAA 컴포저, 화면 굴절 패스(`distort`: 충격파·열기 아지랑이), 블룸, 색보정·충격 패스(`grade`) |
 | | `materials.js` | 툰 재질(`toon`), 림 라이트, 바람 흔들림, 외곽선, 발광 재질 |
-| | `particles.js` | CPU 시뮬레이션 + GPU 포인트 스프라이트 파티클 |
-| | `vfx.js` | 파티클 프리셋, 조명 풀, 링, 룬 원진, 번개, 얼음, 회오리, 광선, 경고 표시. 속성별 레시피(`cast`·`impact`·`explode`·`strike`·`react`·`kill`·`dodge`·`ultCast`), 속도 방향 불꽃(`sparks`), 투사체 궤적(`ribbon`), 지형을 따르는 바닥 흔적(`decal`: 그을음·서리·물웅덩이·번개 자국 등), 충격 구체·빛기둥(`shock`·`pillar`), 잔여 효과(`linger`) |
+| | `particles.js` | CPU 시뮬레이션 + GPU 포인트 스프라이트 파티클. 모양 15종(불꽃 혀·흩어지는 연기·물방울·눈송이·잎·룬·전기 불꽃·거품 등), 3단 색 변화(`color`→`color2`→`color1`), 크기 곡선(`ease`), 소용돌이 난류 |
+| | `fxmesh.js` | 메시 이펙트 부품: 노이즈로 일렁이며 침식되는 구체(`SPHERE_LOOK`: 불·연기·김·흙먼지·물·서리·비전·플라스마·번개·바람·먹구름), 초승달 베기(`slash`), 물보라 벽(`crown`), 물리 파편(`Debris`: 바위·얼음·불똥), 화면 굴절 물체(`Distort`) |
+| | `crystal.js` | 수정 재질(`crystalMaterial`: 면 분할, 가짜 굴절, 내부 발광, 반짝임, 얼음 변형)과 모양(`crystalGeometry`: 기둥·군집·보석·조각), 후광 스프라이트 |
+| | `vfx.js` | 파티클 프리셋, 조명 풀, 링, 룬 원진, 프랙탈 번개, 얼음 가시, 회오리, 광선, 경고 표시. 구체(`sphere`)·베기(`slash`)·물보라(`crownSplash`)·파편(`chunks`)·바람 선(`windLine`·`gustLines`)·굴절(`distort.ring`·`shell`·`haze`)·시전 모으기(`charge`)·습득 연출(`learn`). 속성별 레시피(`cast`·`impact`·`explode`·`strike`·`react`·`kill`·`dodge`·`ultCast`), 속도 방향 불꽃(`sparks`), 투사체 궤적(`ribbon`), 지형을 따르는 바닥 흔적(`decal`: 그을음·서리·물웅덩이·번개 자국 등), 충격 구체·빛기둥(`shock`·`pillar`), 잔여 효과(`linger`) |
 | `world/` | `layout.js` | 랜드마크 좌표(`POI`), 길(`PATHS`), 지역(`REGIONS`) |
 | | `terrain.js` | 높이맵 지형, 채색, 높이·법선·레이캐스트 조회 |
 | | `sky.js` · `water.js` · `grass.js` | 하늘과 낮밤, 물, 풀(청크 단위 스트리밍) |
@@ -78,6 +81,14 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - `toon(color, opts)`는 같은 인자면 캐시된 재질을 돌려줍니다. **캐시된 재질을 직접 수정하지 마세요.** 개별로 바꿔야 하면 `{ nocache: true }`를 주세요. 적은 피격 번쩍임 때문에 모두 개별 재질입니다.
 - 블룸 임계값이 1.35(선형 HDR)입니다. 빛나야 하는 것만 이 값을 넘기세요. 눈·설원처럼 밝은 표면의 알베도를 1 가까이 두면 화면이 하얗게 날아갑니다.
 
+
+### 이펙트와 소리
+- 이펙트는 가능하면 풀을 쓰는 `G.vfx` 함수로 만듭니다. 새 `Mesh`·재질을 매번 만들면 첫 사용 때 셰이더 컴파일로 끊기니, 새 부품을 풀에 넣었다면 `VFX.prewarm()`에도 추가하세요.
+- 구체(`sphere(look, pos, o)`)는 `dur <= 0`이면 `end()`를 부를 때까지 유지되고, `follow`에 벡터를 주면 따라갑니다. 투사체 핵은 `mini: true` 풀(16개)을 쓰고, 모자라면 프레넬 구로 대신합니다.
+- 화면 굴절(`G.vfx.distort`)은 별도 장면에 그려 반해상도 목표에 오프셋을 쓰고, 활성 물체가 없으면 패스가 꺼집니다. 그래픽 품질 '낮음'에서는 만들지 않습니다.
+- 고유 마법은 `WINDUP`(속성별 0.1~0.2초) 동안 지팡이 끝에 힘을 모은 뒤(`charge_<속성>` 소리, `vfx.charge`) 그 순간의 조준점으로 나갑니다(`Spells.heavyRelease`).
+- 계속 나는 소리는 `G.audio.loop(name, { pos, v, max })`로 만들고 매 프레임 `set(pos)`, 끝날 때 `stop(fade)`를 부릅니다. 엔진이 준비되지 않았으면 아무것도 하지 않는 핸들이 돌아옵니다. `spells.js`의 `sndLoop()`를 쓰면 됩니다.
+- 큰 마법의 마무리 소리는 `blast_<속성>`, 궁극기는 `ult_boom`(속성을 주면 `blast_<속성>`을 겹침)입니다. 같은 순간에 둘을 겹치지 않도록 `Spells.explode(..., { quiet: true })`를 쓰세요.
 ### 정적 메시 합치기 (`World.bakeStatics`)
 - 부팅 시 씬 최상위 Group 안의 툰 메시를 재질·구역별로 하나로 합칩니다(드로우콜 약 1,450 → 500).
 - **움직이거나 재질이 바뀌는 부분은 그 Group의 `userData`에 Object3D(또는 배열)로 넣어야 합치기에서 빠집니다.** 예: 종 `bell`, 풍차 `rotor`, 성소 `crystal`·`seal`. 상호작용 대상(`world.targets`)의 `obj`도 제외됩니다.

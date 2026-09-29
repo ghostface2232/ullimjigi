@@ -9,6 +9,7 @@
 //   rendered into the renderer's distortion target
 import * as THREE from 'three';
 import { U, toon } from './materials.js';
+import { crystalMaterial, crystalGeometry } from './crystal.js';
 import { G } from '../core/context.js';
 
 export const SNOISE = /* glsl */ `
@@ -421,9 +422,9 @@ export class Debris {
     rock.computeVertexNormals();
     const rockMat = toon(0xffffff, { nocache: true, rim: 0.2, noAO: true });
     this.rock = new DebrisPool(scene, rock, rockMat, 220, { color: true, shadow: true });
-    const shard = new THREE.OctahedronGeometry(1, 0); shard.scale(0.45, 1.25, 0.32);
-    this.iceMat = iceMaterial({ glow: 0.35 });
-    this.ice = new DebrisPool(scene, shard.toNonIndexed(), this.iceMat, 220, { shadow: true });
+    const shard = crystalGeometry('shard', { seed: 5 }).clone(); shard.translate(0, -0.9, 0); shard.scale(0.9, 0.9, 0.9);
+    this.iceMat = crystalMaterial({ ice: true, color: 0x9fd8ff, glow: 0x6fc4ff, intensity: 0.8, nocache: true });
+    this.ice = new DebrisPool(scene, shard, this.iceMat, 220, { shadow: true });
     const ember = new THREE.OctahedronGeometry(1, 0);
     this.ember = new DebrisPool(scene, ember, new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: true }), 160, { color: true, glow: true });
   }

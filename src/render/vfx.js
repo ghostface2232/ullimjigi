@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { Particles } from './particles.js';
 import { fresnelMat, toon, U } from './materials.js';
 import { FXU, SPHERE_LOOK, Debris, Distort, iceMaterial, iceSpikeGeometry, makeSphere, applyLook, makeSlash, makeCrown } from './fxmesh.js';
+import { crystalMaterial, crystalGeometry } from './crystal.js';
 import { G } from '../core/context.js';
 import { randRange, rand, easeOutBack, clamp, mulberry32 } from '../core/util.js';
 
@@ -29,6 +30,8 @@ const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), tmpV3 = new THREE
 const UPV = new THREE.Vector3(0, 1, 0);
 const tmpQ = new THREE.Quaternion();
 const _m4 = new THREE.Matrix4();
+// spell ice spike: 6-sided prism, base at y=0, radius 0.5, about 2 units tall
+const spikeGeo = (v) => crystalGeometry('prism', { sides: 6, radius: 0.5, height: 1.35, tip: 0.65, jitter: 0.22, seed: 31 + v * 7 });
 const tmpC = new THREE.Color();
 const _sd = new THREE.Vector3(), _tan = new THREE.Vector3(), _dir = new THREE.Vector3();
 const FLASH_K = 0.55;
@@ -650,8 +653,8 @@ export class VFX {
     this.crystalGeo = new THREE.OctahedronGeometry(1, 0);
     this.crystalGeo.scale(0.45, 1, 0.45);
     this.crystalGeo.translate(0, 0.9, 0);
-    this.iceMat = iceMaterial({ glow: 0.12 });
-    this.iceMatT = iceMaterial({ glow: 0.25, transparent: true, alpha: 0.82 });
+    this.iceMat = crystalMaterial({ ice: true, color: 0x9fd8ff, glow: 0x6fc4ff, intensity: 0.5, nocache: true });
+    this.iceMatT = crystalMaterial({ ice: true, color: 0x9fd8ff, glow: 0x6fc4ff, intensity: 0.6, transparent: true, opacity: 0.8, depthWrite: false, nocache: true });
     this.cylGeo = new THREE.CylinderGeometry(1, 1, 1, 16, 1, true);
     this.cylGeo.translate(0, 0.5, 0);
 
@@ -746,7 +749,7 @@ export class VFX {
     add(this.spheres[0].m.material, this.spheres[0].m.geometry);
     add(this.slashes[0].m.material, this.slashes[0].m.geometry);
     add(this.crowns[0].m.material, this.crowns[0].m.geometry);
-    add(this.iceMat, iceSpikeGeometry(0)); add(this.iceMatT, this.crystalGeo);
+    add(this.iceMat, spikeGeo(0)); add(this.iceMatT, this.crystalGeo);
     for (const pool of [this.debris.rock, this.debris.ice, this.debris.ember]) { const im = new THREE.InstancedMesh(pool.im.geometry, pool.im.material, 1); im.position.set(0, -500, 0); im.frustumCulled = false; sc.add(im); }
     if (this.distort.scene) { const m = new THREE.Mesh(this.distort.quad, this.distort.base); m.position.set(0, -500, 0); m.frustumCulled = false; sc.add(m); }
     const done = () => { sc.clear(); };
@@ -1084,16 +1087,16 @@ export class VFX {
   // Hexagonal ice spike that erupts with a cold inner glow, cools, cracks and
   // shatters into tumbling ice shards. o: width, life, tiltX/tiltZ, transparent, quiet
   crystal(pos, height = 2, o = {}) {
-    const mat = iceMaterial({ glow: 1.4, transparent: !!o.transparent, alpha: o.transparent ? 0.82 : 1 });
-    const m = new THREE.Mesh(iceSpikeGeometry(Math.floor(rand() * 4)), mat);
-    m.position.copy(pos);
+    const mat = crystalMaterial({ ice: true, color: 0x8fd0ff, glow: 0x6fc4ff, intensity: 1.0, transparent: !!o.transparent, opacity: o.transparent ? 0.82 : 1, seed: rand() * 10, nocache: true });
+    const m = new THREE.Mesh(spikeGeo(Math.floor(rand() * 4)), mat);
+    m.position.copy(pos); m.position.y -= height * 0.12;
     m.rotation.set(randRange(-0.2, 0.2) + (o.tiltX || 0), rand() * Math.PI * 2, randRange(-0.2, 0.2) + (o.tiltZ || 0));
     m.castShadow = true;
     m.scale.set(0.001, 0.001, 0.001);
     this.scene.add(m);
     let t = 0;
     const life = o.life ?? 1.4;
-    const w = (o.width ?? height * 0.45) * 0.5, hh = height * 1.9;
+    const w = (o.width ?? height * 0.45), hh = height * 0.98;
     if (!o.quiet) {
       this.sparks(tmpV4.copy(pos).setY(pos.y + 0.2), UPV, Math.min(8, 2 + height * 2), { el: 'frost', spread: 0.8, speed: 7, grav: 12, life: 0.35, w: 0.035 });
       this.chunks(pos, 'rock', Math.min(4, 1 + Math.round(height)), { speed: 5, up: 0.9, size: 0.1 });
@@ -1102,17 +1105,18 @@ export class VFX {
     this.fx.push({
       update: (dt) => {
         t += dt;
-        u.uGlow.value = 0.12 + 0.8 * Math.exp(-t * 5);
+        // fresh ice glows from within and cools; it flashes white as it cracks, then shatters
+        if (u.uIntensity) u.uIntensity.value = 0.5 + 0.9 * Math.exp(-t * 4.5);
         if (t < 0.14) {
           const k = easeOutBack(t / 0.14);
           m.scale.set(w * k, hh * k, w * k);
-        } else if (t > life - 0.22 && t <= life) {
-          u.uCrack.value = (t - (life - 0.22)) / 0.22;
+        } else if (t > life - 0.2 && t <= life) {
+          if (u.uFlash) u.uFlash.value = (t - (life - 0.2)) / 0.2 * 0.8;
         } else if (t > life) {
-          const c = m.position.clone().add(tmpV.set(0, hh * 0.4, 0));
+          const c = m.position.clone().add(tmpV.set(0, hh, 0));
           this.burst(c, 'ice', 6, { spread: height * 0.4 });
           this.burst(c, 'frostmist', 1, { spread: height * 0.3, size: 0.6 });
-          this.chunks(c, 'ice', Math.min(10, 3 + Math.round(height * 2)), { speed: 5, up: 0.6, size: 0.08 + height * 0.05, jitter: w });
+          this.chunks(c, 'ice', Math.min(10, 3 + Math.round(height * 2)), { speed: 5, up: 0.6, size: 0.08 + height * 0.05, jitter: w * 0.5 });
           this.scene.remove(m); mat.dispose();
           return false;
         }
@@ -1903,14 +1907,16 @@ export class VFX {
         if (near) { this.decal(g, 'rune', r * 0.8, { dur: 2.6 }); this.linger(g, 'arcane', r * 0.5, 1.6); }
         break;
       case 'frost':
-        this.sphere('frost', pos, { r0: r * 0.2, r1: r * 0.95, dur: 0.45, grow: 3, erodeAt: 0.2, alpha: 0.7, add: true });
+        this.sphere('frost', pos, { r0: r * 0.2, r1: r * 0.95, dur: 0.6, grow: 3, erodeAt: 0.25, alpha: 0.75 });
         this.burst(pos, 'ice', 24 * k, { speed: 10 });
         this.chunks(pos, 'ice', Math.round(12 * k), { speed: 10, up: 0.7 });
         this.burst(pos, 'frostmist', 10, { spread: r * 0.4, size: 1.4 });
         this.burst(pos, 'snowflake', 14, { spread: r * 0.4 });
         if (near) {
           this.decal(g, 'frost', r); this.linger(g, 'frost', r * 0.6, 3);
-          for (let i = 0; i < 6; i++) { const a = (i / 6) * 6.28 + rand() * 0.5, rr = r * randRange(0.35, 0.7); this.crystal(tmpV.set(g.x + Math.cos(a) * rr, g.y, g.z + Math.sin(a) * rr).clone(), randRange(0.5, 0.9) * k, { life: 1.1, quiet: true, tiltX: Math.sin(a) * 0.5, tiltZ: -Math.cos(a) * 0.5 }); }
+          for (let i = 0; i < 9; i++) { const a = (i / 9) * 6.28 + rand() * 0.4, rr = r * randRange(0.3, 0.75); this.crystal(tmpV.set(g.x + Math.cos(a) * rr, g.y, g.z + Math.sin(a) * rr).clone(), randRange(0.8, 1.4) * k, { width: randRange(0.6, 0.9) * k, life: randRange(1.0, 1.4), quiet: true, tiltX: Math.sin(a) * 0.55, tiltZ: -Math.cos(a) * 0.55 }); }
+          this.crystal(g.clone(), 1.6 * k, { width: 1.1 * k, life: 1.5, quiet: true });
+          this.burst(g, 'frostmist', 8, { spread: r * 0.6, size: 1.6 });
         }
         break;
       case 'storm':

@@ -555,7 +555,8 @@ export class Spells {
     const V = G.vfx, A = G.audio;
     const c = pos.clone();
     V.explode(el, c, r);
-    if (o.big || r >= 4.5) A.play('blast_' + el, { pos: c });
+    if (o.quiet) { /* caller plays its own payoff */ }
+    else if (o.big || r >= 4.5) A.play('blast_' + el, { pos: c });
     else {
       A.play(el === 'water' ? 'splash' : 'explosion', { pos: c, v: r < 3 ? 0.7 : 1 });
       if (el === 'water') A.play('explosion', { pos: c, v: 0.5 });
@@ -790,7 +791,7 @@ export class Spells {
           if (rand() < dt * 40) V.burst(opos, 'ember', 1, { speed: 6 });
         }, () => {
           if (sun) sun.end(); if (orb) G.vfx.disposeOrb(orb); if (light) V.releaseLight(light); if (rib) rib.release(); if (haze) haze.end(); snd.stop(0.2);
-          this.explode(tp.clone().setY(tp.y + 0.6), 7, P * 6, 'fire', { shake: 0.95, lift: 9, knock: 16, big: true });
+          this.explode(tp.clone().setY(tp.y + 0.6), 7, P * 6, 'fire', { shake: 0.95, lift: 9, knock: 16, quiet: true });
           V.sphere('sun', tp.clone().setY(tp.y + 1.5), { r0: 2, r1: 8.5, dur: 1.1, grow: 3, erodeAt: 0.25, alpha: 1, rise: 2 });
           V.ring(tp, PAL.fire.core, 16, 1, { thick: 0.08 });
           V.pillar(tp, PAL.fire.glow, 2.6, 22, 0.7, { core: PAL.fire.core, alpha: 0.7 });
@@ -899,7 +900,7 @@ export class Spells {
         this.vortex(tp, {
           r: 11, dur: 4, pull: 11, el: 'water', dmg: P * 0.25, every: 0.4, scale: 1.8, flat: 0.55, alpha: 0.38,
           onEnd: () => {
-            this.explode(tp.clone().setY(tp.y + 0.8), 7, P * 5, 'water', { shake: 0.8, lift: 9, knock: 12, big: true });
+            this.explode(tp.clone().setY(tp.y + 0.8), 7, P * 5, 'water', { shake: 0.8, lift: 9, knock: 12, quiet: true });
             V.ring(tp, PAL.water.core, 14, 0.8, { thick: 0.1 });
             V.pillar(tp, PAL.water.glow, 2.8, 16, 0.8, { core: PAL.water.core, alpha: 0.6 });
             V.crownSplash(tp, 7, { dur: 1.1, h: 6 });

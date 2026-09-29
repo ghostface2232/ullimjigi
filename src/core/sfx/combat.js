@@ -150,3 +150,27 @@ bake('react_prism', { dur: 2.0, n: 2, stereo: true, lo: true, order: 2, fn(out) 
   this.wide(out, (o) => this.noise({ out: o, type: 'highpass', f: 4000, f2: 9000, d: 0.6, v: 0.08 }));
   this.wide(out, (o) => this.noise({ out: o, buf: 'tinkle', type: 'highpass', f: 3000, d: 1.0, v: 0.35 }));
 } }, { vol: 0.85, rev: 0.6 });
+
+// a lingering field turns into something else: ground-deep "whomp", rising swirl and a
+// two-note pentatonic lift (reads as "the battlefield changed", distinct from reactions)
+bake('field_mix', { dur: 1.3, n: 3, lo: true, order: 2, fn(out, i) {
+  const ch = [[74, 81], [76, 83], [78, 86]][i % 3];
+  this.boom(out, { f: 95, f2: 42, d: 0.35, v: 0.3 });
+  this.whoosh(out, { f: 250, f2: 1800, q: 1, a: 0.03, d: 0.45, v: 0.22 });
+  this.noise({ out, buf: 'fizz', type: 'highpass', f: 2500, a: 0.02, d: 0.5, v: 0.14 });
+  this.fm({ out, f: mtof(ch[0]), ratio: 2, idx: 0.7, dm: 0.1, t: 0.03, d: 0.6, v: 0.03 });
+  this.fm({ out, f: mtof(ch[1]), ratio: 2, idx: 0.7, dm: 0.1, t: 0.11, d: 0.7, v: 0.03 });
+} }, { vol: 0.8, rev: 0.5 });
+
+// charged basic spell: the staff fills up (hold), then chimes when ready
+bake('charge_hold', { dur: 0.9, n: 2, order: 1, fn(out) {
+  this.swell(out, { f: 300, f2: 2400, q: 1.2, d: 0.7, v: 0.16 });
+  this.swell(out, { buf: 'tinkle', type: 'highpass', f: 2500, f2: 5000, d: 0.7, v: 0.12 });
+  this.tone({ out, f: 110, f2: 220, a: 0.65, d: 0.08, v: 0.06 });
+} }, { vol: 0.8, rev: 0.25 });
+bake('charge_ready', { dur: 0.9, n: 2, order: 1, fn(out, i) {
+  const n = i % 2 ? 90 : 86;
+  this.click(out, 0.08, 6000);
+  this.glass(out, mtof(n), { d: 0.6, v: 0.03, bright: 0.8 });
+  this.fm({ out, f: mtof(n + 7), ratio: 3.01, idx: 0.8, dm: 0.05, t: 0.02, d: 0.45, v: 0.022 });
+} }, { vol: 0.9, rev: 0.4 });

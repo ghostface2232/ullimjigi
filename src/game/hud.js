@@ -1,9 +1,10 @@
 // DOM HUD: vitals, compass, spell bar, world-anchored labels, banners, map & journal.
 import * as THREE from 'three';
 import { G, ELEMENTS, EL_INFO, EL_SVG } from '../core/context.js';
-import { BOLT, HEAVY, WEAVE, weaveInfo, WEAVE_CD, WEAVE_COST, ultInfo } from './spells.js';
+import { BOLT, HEAVY, CHARGED, WEAVE, weaveInfo, WEAVE_CD, WEAVE_COST, ultInfo } from './spells.js';
 import { TREES, TREE_ORDER, NODES, ULTS, ULT_COST, TIER_GATE, SIG, WEAVE_NODE, isTechnique, treeColor } from './skills.js';
 import { REACTIONS } from './combat.js';
+import { FIELD_MIX, FIELDS } from './fields.js';
 import { xpNeed } from './player.js';
 import { wrapAngle, clamp, fillName, josa } from '../core/util.js';
 import { LANTERNS, MEMORIES } from '../world/world.js';
@@ -226,6 +227,11 @@ export class HUD {
   }
   chainEnd(n, xp) { if (this.chainEl) { this.chainEl.innerHTML = `<span class="cn">${n}</span><span class="cl">연쇄 반응 · +${xp} XP</span>`; this.chainEl.classList.add('out'); } }
   discovered(r) {
+    if (r.startsWith('f:')) {
+      const m = FIELD_MIX[r.slice(2)];
+      if (m) this.toast(`<span style="color:${m.color}">땅의 흔적 변화 발견 — <b>${m.name}</b></span> · ${m.desc}`, 5200);
+      return;
+    }
     const info = REACTIONS[r];
     if (!info) return;
     this.toast(`<span style="color:${info.color}">새로운 반응 발견 — <b>${info.name}</b></span> · ${info.desc}`, 5200);
@@ -233,6 +239,17 @@ export class HUD {
   cooldownFlash(k) {
     const n = k === 'weave' ? this.el.weaveSlot : this.el.heavySlot;
     n.animate([{ transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'none' }], { duration: 200 });
+  }
+  // charged basic spell: a ring around the crosshair fills while the button is held
+  chargeRing(k, ready, el, affordable = true) {
+    let r = this.chargeEl;
+    if (!r) { r = this.chargeEl = document.createElement('div'); r.className = 'ch-charge'; this.el.crosshair.appendChild(r); }
+    if (k <= 0) { r.classList.remove('on', 'ready', 'short'); return; }
+    r.style.setProperty('--k', k.toFixed(3));
+    r.style.setProperty('--c', EL_INFO[el]?.css ?? '#fff');
+    r.classList.add('on');
+    r.classList.toggle('ready', ready);
+    r.classList.toggle('short', !affordable);
   }
   castPulse() { const c = this.el.crosshair; c.classList.remove('cast'); void c.offsetWidth; c.classList.add('cast'); }
   castName(name, els, big = false) {
@@ -475,6 +492,8 @@ export class HUD {
       if (st.chill > 0 || st.frozen > 0) s += `<i style="color:${EL_INFO.frost.css}${st.frozen > 0 ? ';box-shadow:0 0 8px #fff' : ''}"></i>`;
       if (st.shock > 0) s += `<i style="color:${EL_INFO.storm.css}"></i>`;
       if (st.wet > 0) s += `<i style="color:#4a8aff"></i>`;
+      if (st.electro > 0) s += `<i style="color:${EL_INFO.storm.css};box-shadow:0 0 6px ${EL_INFO.storm.css}"></i>`;
+      if (st.steam > 0) s += `<i style="color:#e8f4ff;opacity:.8"></i>`;
       if (b._s !== s) { b._st.innerHTML = s; b._s = s; }
       if (b._ar) b._ar.style.opacity = st.armorBroken > 0 ? 0 : 1;
     }
@@ -601,7 +620,7 @@ export class HUD {
         const u = P.unlocked.has(e);
         const ult = ultInfo(e);
         const hasUlt = K && K.ultFor(e);
-        h += `<div class="jsp ${u ? '' : 'locked'}"><div class="ic" style="color:${EL_INFO[e].css}">${EL_SVG[e]}</div><div><h4 style="color:${EL_INFO[e].css}">${u ? EL_INFO[e].name + '의 노래' : '??? 의 노래'}${u && K ? `<small>울림 나무 ${K.spentIn(e)}점</small>` : ''}</h4>${u ? `<p>${EL_INFO[e].desc}</p><p><b>좌클릭 · ${BOLT[e].name}</b>${BOLT[e].cost ? ` (마나 ${BOLT[e].cost})` : ''} — ${BOLT[e].desc}</p>${K && !K.has(SIG[e]) ? `<p style="opacity:.6"><b>우클릭 · ${HEAVY[e].name}</b> (마나 ${HEAVY[e].cost}) — 아직 익히지 못한 기술. 울림 나무(<kbd>K</kbd>) ${EL_INFO[e].name}의 뿌리에서 울림점 ${NODES[SIG[e]].cost}점으로 익히거나, 레벨이 오를 때 <b>울림의 갈림길</b>에서 고를 수 있다.</p>` : `<p><b>우클릭 · ${HEAVY[e].name}</b> (마나 ${HEAVY[e].cost} · 재사용 ${HEAVY[e].cd}초) — ${HEAVY[e].desc}</p>`}<p style="opacity:${hasUlt ? 1 : 0.5}"><b>F · ${ult.name}</b> ${hasUlt ? '' : '(울림 나무 끝에서 익힐 수 있다)'} — ${ult.desc(1).replace('궁극기 (F). ', '')}</p>` : '<p>아직 배우지 못한 노래.</p>'}</div></div>`;
+        h += `<div class="jsp ${u ? '' : 'locked'}"><div class="ic" style="color:${EL_INFO[e].css}">${EL_SVG[e]}</div><div><h4 style="color:${EL_INFO[e].css}">${u ? EL_INFO[e].name + '의 노래' : '??? 의 노래'}${u && K ? `<small>울림 나무 ${K.spentIn(e)}점</small>` : ''}</h4>${u ? `<p>${EL_INFO[e].desc}</p><p><b>좌클릭 · ${BOLT[e].name}</b>${BOLT[e].cost ? ` (마나 ${BOLT[e].cost})` : ''} — ${BOLT[e].desc}</p><p><b>좌클릭 누르고 있다가 떼기 · ${CHARGED[e].name}</b> (마나 ${CHARGED[e].cost}) — ${CHARGED[e].desc}</p>${K && !K.has(SIG[e]) ? `<p style="opacity:.6"><b>우클릭 · ${HEAVY[e].name}</b> (마나 ${HEAVY[e].cost}) — 아직 익히지 못한 기술. 울림 나무(<kbd>K</kbd>) ${EL_INFO[e].name}의 뿌리에서 울림점 ${NODES[SIG[e]].cost}점으로 익히거나, 레벨이 오를 때 <b>울림의 갈림길</b>에서 고를 수 있다.</p>` : `<p><b>우클릭 · ${HEAVY[e].name}</b> (마나 ${HEAVY[e].cost} · 재사용 ${HEAVY[e].cd}초) — ${HEAVY[e].desc}</p>`}<p style="opacity:${hasUlt ? 1 : 0.5}"><b>F · ${ult.name}</b> ${hasUlt ? '' : '(울림 나무 끝에서 익힐 수 있다)'} — ${ult.desc(1).replace('궁극기 (F). ', '')}</p>` : '<p>아직 배우지 못한 노래.</p>'}</div></div>`;
       }
       const wk = !K || K.has(WEAVE_NODE);
       h += `<div class="jsec">엮기 (Q) — 지금 속성 + 직전 속성 · 마나 ${WEAVE_COST} · 재사용 ${WEAVE_CD}초</div>${wk ? '' : `<p style="opacity:.7">아직 익히지 못한 기술. 두 가지 속성을 깨우친 뒤 울림 나무(<kbd>K</kbd>) 조화의 뿌리 <b>두 노래 엮기</b>를 익히면 쓸 수 있다.</p>`}<div class="react-grid" style="opacity:${wk ? 1 : 0.6}">`;
@@ -618,6 +637,16 @@ export class HUD {
         h += `<div class="cx ${d ? '' : 'unk'}"><span class="cx-els">${ic(r.els[0])}<i>+</i>${ic(r.els[1])}</span><span><b style="color:${d ? r.color : '#8a8478'}">${d ? r.name : '??? '}</b> — ${r.desc}</span></div>`;
       }
       h += '</div>';
+      // lingering fields and what a second element turns them into
+      const fm = Object.entries(FIELD_MIX);
+      h += `<div class="jsec">땅의 흔적 — 불길·서리밭·물웅덩이·김·대전된 땅에 다른 속성을 더하면 모습이 바뀐다 · ${fm.filter(([k]) => disc.has('f:' + k)).length} / ${fm.length} 발견</div><div class="react-grid codex">`;
+      for (const [k, m] of fm) {
+        const d = disc.has('f:' + k);
+        const [from, by] = k.includes('+') ? k.split('+') : k.startsWith('whirl:') ? [null, k.slice(6)] : [null, 'arcane'];
+        const src = from ? `<span class="cx-f" style="color:${FIELDS[from].color}">${FIELDS[from].name}</span>` : k.startsWith('whirl:') ? '<span class="cx-any">◎</span>' : '<span class="cx-any">✦</span>';
+        h += `<div class="cx ${d ? '' : 'unk'}"><span class="cx-els">${src}<i>+</i>${ic(by)}</span><span><b style="color:${d ? m.color : '#8a8478'}">${d ? m.name : '??? '}</b> — ${m.desc}</span></div>`;
+      }
+      h += '</div>';
       body.innerHTML = h;
     } else if (tab === 'memories') {
       let h = `<div class="jsec">모라의 기억 — 골짜기에 두고 온 것들</div>`;
@@ -630,7 +659,7 @@ export class HUD {
     } else {
       const rows = [
         ['W A S D', '이동'], ['마우스', '시점 · 조준 (화면 클릭 시 마우스 고정)'], ['Shift 누르기', '달리기'], ['Shift 짧게', '순간이동 (회피, 무적 시간)'],
-        ['Space', '점프 / 공중에서 누르고 있기: 활공'], ['좌클릭', '기본 마법 (누르고 있으면 연사)'], ['우클릭', '고유 마법 (울림 나무에서 익힌 속성만)'], ['Q', '엮기: 현재 속성 + 직전 속성 (조화 · 두 노래 엮기)'],
+        ['Space', '점프 / 공중에서 누르고 있기: 활공'], ['좌클릭', '기본 마법 (누르고 있다가 떼면 모아 쏘기)'], ['우클릭', '고유 마법 (울림 나무에서 익힌 속성만)'], ['Q', '엮기: 현재 속성 + 직전 속성 (조화 · 두 노래 엮기)'],
         ['F', '궁극기 (울림 게이지가 가득 찼을 때)'], ['1 ~ 6 / 휠', '속성 전환'], ['T / 휠 클릭', '대상 고정'], ['E', '대화 · 조사 · 상호작용'], ['M', '지도 (등석 클릭: 빠른 이동)'], ['Tab / J', '여정 · 마법서'], ['K', '울림 나무 (스킬 트리)'], ['1 / 2 / 3', '울림의 갈림길에서 고르기 (레벨업 후)'], ['Esc', '일시 정지'],
       ];
       body.innerHTML = `<div class="jsec" style="text-align:center">조작</div><div class="ctrl-grid">${rows.map(([k, v]) => `<kbd>${k}</kbd><span>${v}</span>`).join('')}</div>

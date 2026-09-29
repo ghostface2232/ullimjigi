@@ -439,7 +439,7 @@ export class Props {
       fern: T([fern(rnd)], ground, { shadow: false, cell: 240, tint: 0.1 }),
       reeds: T([reeds(rnd)], ground, { shadow: false, cell: 240, tint: 0.08 }),
       mushroom: T([mushrooms(rnd)], small, { shadow: false, cell: 240, tint: 0.05 }),
-      log: T([fallenLog(rnd)], solid, { cell: 240 }),
+      log: T([fallenLog(rnd)], solid, { cell: 240, shadow: false }),
       pebbles: T([pebbles(rnd)], small, { shadow: false, cell: 240, tint: 0.12 }),
       rock: T([rock(rnd), rock(rnd), rock(rnd, false)], rockMat, { tint: 0.1 }),
     };

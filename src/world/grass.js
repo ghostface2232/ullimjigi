@@ -178,7 +178,7 @@ export class Grass {
     this.scene = scene; this.terrain = terrain;
     this.chunk = 16;
     this.radius = 64;
-    this.flowerRadius = 40;
+    this.flowerRadius = 30;
     this.chunks = new Map();
     this.base = tuftGeometry(mulberry32(777));
     this.flowerBase = flowerGeometry();
@@ -199,14 +199,14 @@ export class Grass {
     const opts = { uniforms: this.uni, vertexShader: VS, fragmentShader: FS, fog: true, lights: true, side: THREE.DoubleSide };
     this.mat = new THREE.ShaderMaterial(opts);
     this.flowerMat = new THREE.ShaderMaterial({ ...opts, defines: { FLOWER: 1 } });
-    this.density = 3.0;
+    this.density = 2.6;
     this.tmpC = new THREE.Color();
   }
 
   setQuality(q) {
     this.radius = q === 'high' ? 64 : q === 'medium' ? 50 : 34;
-    this.density = q === 'high' ? 3.0 : q === 'medium' ? 2.2 : 1.3;
-    this.flowerRadius = q === 'low' ? 24 : 40;
+    this.density = q === 'high' ? 2.6 : q === 'medium' ? 2.0 : 1.2;
+    this.flowerRadius = q === 'low' ? 20 : 30;
     this.uni.uFade.value = this.radius;
     for (const c of this.chunks.values()) this.disposeChunk(c);
     this.chunks.clear();

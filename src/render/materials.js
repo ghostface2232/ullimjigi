@@ -278,7 +278,7 @@ function toonLightsBegin() {
 const LIGHTS_PRE = `
   _cloudSh = cloudShadowAt( vDWP );
   #ifdef TOON_FOLIAGE
-    _ndlOff = ( _dn( vDWP * 1.7 ) - 0.5 ) * 0.8 + ( _dn( vDWP * 5.0 ) - 0.5 ) * 0.25;
+    _ndlOff = ( _dn( vDWP * 1.9 ) - 0.5 ) * 0.9;
   #endif
   #ifdef TOON_SOFT
     _ndlOff = ( _dn( vDWP * 0.3 ) - 0.5 ) * 0.25;
@@ -362,6 +362,7 @@ const SURFACE_FRAG = `
     // dominant-plane coords: (across, along) with 'along' vertical on walls
     vec2 _uv = _top ? _p.xz : vec2(_an.x > _an.z ? _p.z : _p.x, _p.y);
     float _above = groundAbove(_p);
+    float _leafN = 0.5;
     #if defined( TEX_PLASTER )
     {
       float mott = texture2D(uNoiseTex, _uv * 0.11).g;
@@ -437,7 +438,12 @@ const SURFACE_FRAG = `
         diffuseColor.rgb *= mix(1.0, mix(0.7, 1.08, smoothstep(0.3, 0.62, f)), brown);
       }
       float green = smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
-      diffuseColor.rgb *= mix(1.0, 0.84 + 0.3 * _dn(_p * 3.7), green);
+      #ifdef LEAFY_EDGE
+        _leafN = _dn(_p * 3.3);
+      #else
+        _leafN = _dn(_p * 3.7);
+      #endif
+      diffuseColor.rgb *= mix(1.0, 0.84 + 0.3 * _leafN, green);
     }
     #endif
     #ifdef LEAFY_EDGE
@@ -447,7 +453,11 @@ const SURFACE_FRAG = `
       float green = smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
       if (green > 0.5) {
         float e = 1.0 - abs(dot(normal, normalize(vViewPosition)));
-        float lf = _dn(_p * 3.3) * 0.55 + _dn(_p * 9.0) * 0.45;
+        #ifdef TEX_BARK
+          float lf = _leafN * 0.55 + _dn(_p * 9.0) * 0.45;
+        #else
+          float lf = _dn(_p * 3.3) * 0.55 + _dn(_p * 9.0) * 0.45;
+        #endif
         if (lf < (e - 0.4) * 1.6) discard;
         diffuseColor.rgb *= 1.0 - 0.18 * smoothstep(0.55, 0.3, lf) * smoothstep(0.2, 0.6, e);
       }

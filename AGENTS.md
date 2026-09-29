@@ -7,7 +7,7 @@
 - **스택**: Three.js r186 + Vite 8. 런타임 의존성은 `three` 하나뿐입니다.
 - **에셋**: 모델, 텍스처, 효과음, 음악을 모두 코드로 생성합니다. 외부 파일은 `public/fonts/`의 폰트뿐입니다.
 - **언어**: UI와 대사는 모두 한국어입니다. 코드 식별자와 주석은 영어입니다.
-- **규모**: `src/` 아래 약 11,400줄, 31개 파일.
+- **규모**: `src/` 아래 약 13,500줄, 32개 파일.
 
 ```bash
 npm install
@@ -25,14 +25,14 @@ npx vite build           # 문법·번들 오류 확인용으로 가장 빠름
 
 ```
 Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRig
-→ Combat → Spells → EnemyManager → NPCs → Player → Companion → Dialogue → HUD
+→ Combat → Spells → EnemyManager → NPCs → Skills → Player → Companion → Dialogue → HUD
 ```
 
-프레임 갱신 순서(`Game.update`): 타이머(`G.later`) → Player → Spells → Enemies → NPCs → Companion → Story → Dialogue → 상호작용 → Camera → World → VFX → Audio/Music → HUD → 렌더.
+프레임 갱신 순서(`Game.update`): 타이머(`G.later`) → 울림 가속(`G.slowmo`) → Player → Spells → Enemies(울림 가속 중엔 dt × 0.25) → NPCs → Companion → Story → Dialogue → 상호작용 → Camera → World → VFX → Audio/Music → HUD → 렌더.
 
 | 폴더 | 파일 | 역할 |
 |---|---|---|
-| `core/` | `context.js` | 전역 `G`, 설정, 속성 목록(`ELEMENTS`, `EL_INFO`, `EL_SVG`) |
+| `core/` | `context.js` | 전역 `G`, 설정, 속성 목록(`ELEMENTS` 6종, `EL_INFO`, `EL_SVG`) |
 | | `util.js` | 수학, 시드 노이즈, 조사 처리(`josa`, `fillName`) |
 | | `input.js` | 키보드·마우스, 포인터 고정, 프레임 단위 눌림 판정 |
 | | `audio.js` | WebAudio 합성 효과음 라이브러리(`S.*`), 공간 음향, 환경음 |
@@ -50,13 +50,14 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | `game/` | `game.js` | 부팅, 타이틀, 메인 루프, 메뉴, 저장·불러오기, 사망, 등석, 음악 선택 |
 | | `player.js` | 이동(달리기·순간이동·점프·활공·수영), 시전, 능력치 |
 | | `camera.js` | 어깨 너머 카메라, 지형 충돌, 흔들림, 대상 고정, 컷씬 카메라 |
-| | `spells.js` | 기본 마법, 고유 마법, 엮기, 투사체, 지속 효과 영역 |
-| | `combat.js` | 피해 계산, 상태 이상, 원소 반응 |
+| | `spells.js` | 기본 마법, 고유 마법, 엮기, 궁극기, 투사체, 지속 효과 영역(`field`·`vortex`·`wave`) |
+| | `combat.js` | 피해 계산, 상태 이상, 원소 반응(`pickReaction`), 연쇄 반응, 울림 나무 수정치 |
+| | `skills.js` | 울림 나무(스킬 트리) 데이터 `TREES`, 울림점, 궁극기 게이지, 반응 도감 |
 | | `enemies.js` | 적 정의(`DEF`), 레벨 단계, AI 클래스, 보스, 무리(`CAMPS`), 드롭 |
 | | `characters.js` | 절차적 캐릭터 리그와 애니메이션, 적 몸체 |
 | | `npcs.js` · `dialogue.js` | NPC와 보름(동료), 대화창(타자 효과·목소리·선택지) |
 | | `story.js` | 장별 스크립트, 퀘스트, 곁가지, NPC 대화 분기, 이벤트 훅 |
-| | `hud.js` | HUD 전반, 지도, 여정·마법서 |
+| | `hud.js` | HUD 전반, 지도, 여정·마법서(반응 도감), 울림 나무 화면 |
 
 ## 반드시 지킬 규칙
 
@@ -66,6 +67,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 
 ### 시간
 - 게임 로직의 지연은 `G.later(fn, ms)`를 쓰세요. 게임 시간 기준이라 일시정지와 적중 정지를 따릅니다. `setTimeout`은 UI 연출에만 씁니다.
+- `G.slowmo`(실제 시간 초)가 남아 있는 동안 적과 적 투사체는 1/4 속도로 움직입니다. 적 로직에서 `setTimeout`을 쓰면 이 감속을 따르지 않으니 상태 타이머나 `G.later`를 쓰세요.
 - `G.time`은 게임 시간(적중 정지 중 느려짐), `G.realTime`은 실제 시간입니다.
 
 ### 재질과 발광
@@ -85,6 +87,17 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
   - `source`: `'player'`(치명타·피드백 있음), `'enemy'`, `'dot'`(숫자만), `'env'`, `'fall'`
 - 반응은 `Combat.resolve` 한 곳에서 처리합니다. 연쇄 피해에는 `noReact: true`를 붙여 무한 연쇄를 막으세요.
 - 적이 아닌 대상(예: 최종 보스의 결계판 `Plate`)은 `receive(h)`를 구현하면 `hit()`이 그쪽으로 넘깁니다.
+
+### 울림 나무 (스킬)
+- 노드는 `skills.js`의 `TREES`에 데이터로 추가합니다: `{ id, name, tier, col, max, cost, req, kind, desc(r) }`. `req`는 **하나만** 익혀도 되는 선행 목록, `tier`는 나무에 쓴 점수 조건(`TIER_GATE`)과 화면 위치를, `col`(0~2)은 가로 위치를 정합니다. 조화 노드는 `els: [속성, 속성]`을 씁니다.
+- 효과는 쓰는 쪽에서 `G.skills.r(id)`(단계) 또는 `G.skills.has(id)`로 조회합니다. `spells.js`·`combat.js`는 파일 안의 `R(id)` 도우미를 씁니다. 수치를 바꾸면 `desc`와 [docs/DESIGN.md](docs/DESIGN.md#울림-나무-스킬-트리)도 함께 고치세요.
+- 궁극기는 `kind: 'ult'`이고 `ULTS`에 속성별로 등록합니다. 구현은 `Spells.ult(el, …)`.
+- 울림점 지급은 `G.skills.gain(n, 이유)`로 합니다. 이유 문자열은 알림에 그대로 나옵니다.
+
+### 원소 반응 추가
+1. `combat.js`의 `REACTIONS`에 `{ name, color, els: [상태, 발동 속성], desc }`를 넣습니다(`els`는 반응 도감 아이콘).
+2. `pickReaction()`에 조건을, `resolve()`의 `switch`에 효과를 추가합니다. 연쇄 피해에는 `noReact: true`.
+3. 보름의 첫 반응 대사는 `story.js`의 `onReaction`에 넣습니다.
 
 ### 적 추가
 1. `enemies.js`의 `DEF`에 항목을 추가합니다(`name`, `hp`, `dmg`, `speed`, `radius`, `height`, `xp`, `aggro`, `resist`, `make`).
@@ -108,7 +121,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 인물별 말투는 [docs/DESIGN.md](docs/DESIGN.md#인물과-말투)를 따르세요. 한 인물의 말투가 흔들리면 몰입이 크게 깨집니다.
 
 ### 저장
-- `localStorage`의 `ullimjigi_save_v1`(진행)과 `ullimjigi_settings`(설정)를 씁니다.
+- `localStorage`의 `ullimjigi_save_v1`(진행)과 `ullimjigi_settings`(설정)를 씁니다. 울림 나무는 `skills` 필드(단계, 남은 점수, 게이지, 반응 도감)에 들어갑니다. `skills`가 없는 이전 저장은 `Skills.expected()`로 점수를 계산해 지급합니다.
 - 저장 형식을 바꾸면 기존 저장과 호환되는지 확인하세요. `Story.load`는 없는 필드에 기본값을 넣어 줍니다.
 
 ## 테스트 방법
@@ -124,7 +137,9 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | `frost` | 서리봉 성소 앞 |
 | `storm` | 천둥 고원 앞 (서리 완료) |
 | `mora` | 3장 |
-| `rift` | 4장 (틈 입구 근처) |
+| `rift` | 4장 (틈 입구 근처, 물 포함 6속성) |
+| `lake` | 2장, 물의 노래를 얻기 전 거울 호숫가 |
+| `skills` | 3장, 6속성·Lv 12·울림점 22점·게이지 가득 (스킬 테스트용) |
 | `continue` | 저장 불러오기 |
 
 `?dev` 모드는 `requestAnimationFrame` 대신 16ms 타이머로 루프를 돕니다. **브라우저 창이 가려져 있으면 rAF가 멈추기 때문입니다.** 일반 모드(타이틀부터)는 창이 보이는 상태에서만 확인할 수 있습니다.
@@ -133,6 +148,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 `window.__G`로 게임 상태에 접근할 수 있습니다.
 - **입력 흉내**: `G.input.keys.add('KeyW')`(누르고 있기), `G.input.pressed.add('KeyE')`(한 번 누르기), `G.input.mouse.pressed.add(0)`(클릭)
 - **조준**: `G.player.lockTarget = 적`으로 대상을 고정하면 자동으로 조준됩니다.
+- **스킬**: `G.skills.learn('wa_ult')`, `G.skills.points += 10`, `G.skills.gauge = 100` 후 `G.player.castUlt()`. 울림 가속은 `G.player.tryBlink(); G.player.damage(1)`로 확인합니다.
 - **성능**: `G.game.perf`에서 프레임별 갱신·렌더 시간, 드로우콜, 삼각형 수를 봅니다.
 - **스크립트 도구 제한**: 브라우저 자동화 도구는 한 번에 약 45초까지만 실행됩니다. 긴 전투 테스트는 백그라운드 루프로 돌리고 결과를 `window`에 담아 따로 확인하세요.
 

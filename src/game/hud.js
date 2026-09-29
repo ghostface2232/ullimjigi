@@ -395,7 +395,9 @@ export class HUD {
       if (!b) {
         b = document.createElement('div');
         b.className = 'ebar' + (e.elite ? ' elite' : '');
-        b.innerHTML = `<div class="en">${e.name || ''}</div><div class="elv"><span>Lv ${e.level}</span><span class="st"></span></div><div class="etrack"><div class="efill"></div></div>${e.armor ? '<div class="armor"></div>' : ''}`;
+        const weak = Object.entries(e.resist || {}).filter(([k, v]) => v >= 1.2 && EL_INFO[k]).map(([k]) => `<i class="wk" style="color:${EL_INFO[k].css}" title="약점">${EL_SVG[k]}</i>`).join('');
+        const imm = (e.immune || []).filter((k) => EL_INFO[k]).map((k) => `<i class="wk im" style="color:${EL_INFO[k].css}" title="면역">${EL_SVG[k]}</i>`).join('');
+        b.innerHTML = `<div class="en">${e.name || ''}</div><div class="elv"><span>Lv ${e.level}</span><span class="st"></span><span class="wks">${weak}${imm}</span></div><div class="etrack"><div class="efill"></div></div>${e.armor ? '<div class="armor"></div>' : ''}`;
         this.el.bars.appendChild(b); this.barPool.set(e, b);
         b._fill = b.querySelector('.efill'); b._st = b.querySelector('.st'); b._ar = b.querySelector('.armor');
       }

@@ -389,7 +389,7 @@ export class World {
 
   buildLandmarks() {
     // Lake willow (hairpin), meadow lone tree + bench (flower book)
-    const willow = makeTree('oak', 21, { trunkH: 3.6, size: 2.1, light: 0xb7d86a, dark: 0x4c8a40, squash: 1.1 });
+    const willow = makeTree('willow', 21, { trunkH: 3.0, size: 2.1, light: 0xb7d86a, dark: 0x4c8a40 });
     this.place(willow, -49, 82, 0.4); this.col.addCircle(-49, 82, 0.6, -10, 30);
     const lone = makeTree('oak', 77, { trunkH: 3.4, size: 2.2, light: 0xe0c060, dark: 0x8a7a3a });
     this.place(lone, POI.meadow.x, POI.meadow.z, 0); this.col.addCircle(POI.meadow.x, POI.meadow.z, 0.6, -10, 30);

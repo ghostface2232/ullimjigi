@@ -2,7 +2,7 @@
 // landmarks, vertex-painted in a BotW-like palette.
 import * as THREE from 'three';
 import { createNoise2D, fbm, ridged, smoothstep, lerp, segDist, clamp } from '../core/util.js';
-import { toon } from '../render/materials.js';
+import { toon, U } from '../render/materials.js';
 import { PATHS, POI } from './layout.js';
 
 const hex = (h) => new THREE.Color(h);
@@ -44,6 +44,22 @@ export class Terrain {
       }
     }
     this.buildMesh();
+    this.buildHeightTexture();
+  }
+
+  // Heightmap for shaders (ground-contact AO, grime, soft particles).
+  buildHeightTexture() {
+    const N = this.N, data = new Uint16Array(N * N);
+    for (let i = 0; i < N * N; i++) data[i] = THREE.DataUtils.toHalfFloat(this.h[i]);
+    const t = new THREE.DataTexture(data, N, N, THREE.RedFormat, THREE.HalfFloatType);
+    t.minFilter = t.magFilter = THREE.LinearFilter;
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+    t.generateMipmaps = false;
+    t.needsUpdate = true;
+    this.heightTex = t;
+    U.heightTex.value = t;
+    // uv = (xz + half) * (N-1)/(N*size) + 0.5/N  (texel centres on grid vertices)
+    U.heightP.value.set(this.half, (N - 1) / (N * this.size), 0.5 / N, 0);
   }
 
   pathInfo(x, z) {

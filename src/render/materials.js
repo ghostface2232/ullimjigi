@@ -16,6 +16,10 @@ export const U = {
   // Fraction of the key light that still reaches surfaces facing away from it
   // (tinted cool: BotW shadows are bluish, not grey)
   shadeTint: { value: new THREE.Color(0.3, 0.36, 0.52) },
+  // Terrain heightmap (HalfFloat, set by Terrain) for ground-contact AO and
+  // grime: uv = (xz + x) * y + z
+  heightTex: { value: null },
+  heightP: { value: new THREE.Vector4(240, 1 / 480, 0, 0) },
 };
 
 // ---------------------------------------------------------------------------
@@ -327,11 +331,143 @@ const TERRAIN_FRAG = `
   }
 `;
 
+// World-space procedural surface detail, chosen per material with opts.tex.
+// Subtle on purpose: breaks up flat toon fills without fighting the style.
+// Also: ground-contact AO + grime from the terrain heightmap.
+const SURFACE_PARS = `
+uniform sampler2D uHeightTex;
+uniform vec4 uHeightP;
+vec2 _hash2(vec2 p){ p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3))); return fract(sin(p) * 43758.5453); }
+vec3 _voro(vec2 x){
+  vec2 n = floor(x), f = fract(x);
+  float f1 = 8.0, f2 = 8.0, id = 0.0;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 g = vec2(float(i), float(j));
+    vec2 o = _hash2(n + g) * 0.76 + 0.12;
+    vec2 r = g + o - f; float d = dot(r, r);
+    if (d < f1) { f2 = f1; f1 = d; id = _hash2(n + g + 17.0).x; } else if (d < f2) f2 = d;
+  }
+  return vec3(sqrt(f1), sqrt(f2), id);
+}
+float groundAbove(vec3 p){
+  return p.y - texture2D(uHeightTex, (p.xz + uHeightP.x) * uHeightP.y + uHeightP.z).r;
+}
+`;
+const SURFACE_FRAG = `
+  {
+    vec3 _wn = transformNormalByInverseViewMatrix(normal, viewMatrix);
+    vec3 _an = abs(_wn);
+    vec3 _p = vDWP;
+    bool _top = _an.y > max(_an.x, _an.z);
+    // dominant-plane coords: (across, along) with 'along' vertical on walls
+    vec2 _uv = _top ? _p.xz : vec2(_an.x > _an.z ? _p.z : _p.x, _p.y);
+    float _above = groundAbove(_p);
+    #if defined( TEX_PLASTER )
+    {
+      float mott = texture2D(uNoiseTex, _uv * 0.11).g;
+      float brush = texture2D(uNoiseTex, _uv * vec2(0.45, 0.12) + 0.3).b;
+      diffuseColor.rgb *= 0.93 + 0.12 * mott + 0.06 * (brush - 0.5);
+      float gr = 1.0 - smoothstep(0.05, 0.75 + mott * 0.5, _above);
+      diffuseColor.rgb *= mix(vec3(1.0), vec3(0.8, 0.74, 0.66), gr * 0.55);
+    }
+    #elif defined( TEX_WOOD ) || defined( TEX_PLANKS )
+    {
+      vec2 g = _top ? _p.zx : _uv;
+      float fw = fwidth(g.x) * 30.0;
+      float grain = texture2D(uNoiseTex, vec2(g.x * 1.1, g.y * 0.05)).b;
+      float st = sin(grain * 60.0 + g.x * 9.0) * 0.5 + 0.5;
+      float detail = 1.0 - smoothstep(0.4, 1.2, fw);
+      diffuseColor.rgb *= 0.92 + (0.12 * st - 0.05) * detail + 0.08 * (texture2D(uNoiseTex, g * 0.15).a - 0.5);
+      #ifdef TEX_PLANKS
+        float pk = fract(g.x / 0.24);
+        float seam = smoothstep(0.0, 0.05, pk) * smoothstep(1.0, 0.95, pk);
+        float pid = fract(sin(floor(g.x / 0.24) * 12.9898) * 43758.5453);
+        diffuseColor.rgb *= mix(1.0, (0.62 + 0.38 * seam) * (0.92 + 0.14 * pid), detail);
+      #endif
+      diffuseColor.rgb *= 1.0 - 0.25 * (1.0 - smoothstep(0.0, 0.6, _above));
+    }
+    #elif defined( TEX_STONE )
+    {
+      vec2 suv = _top ? _uv * 1.5 : _uv * vec2(1.35, 2.3);
+      vec3 v = _voro(suv);
+      float fw = fwidth(suv.x) + fwidth(suv.y);
+      float detail = 1.0 - smoothstep(0.25, 0.8, fw);
+      float mortar = smoothstep(0.035, 0.11, v.y - v.x);
+      float tone = 0.86 + 0.22 * v.z;
+      vec3 hue = mix(vec3(1.03, 1.0, 0.95), vec3(0.95, 0.98, 1.04), fract(v.z * 7.3));
+      float bump = 0.94 + 0.08 * smoothstep(0.0, 0.4, v.x);
+      diffuseColor.rgb *= mix(vec3(0.95), hue * tone * mix(0.6, 1.0, mortar) * bump, detail);
+      float moss = smoothstep(0.55, 0.85, texture2D(uNoiseTex, _p.xz * 0.05 + _p.y * 0.02).g) * (0.4 + 0.6 * (1.0 - smoothstep(0.0, 1.6, _above)));
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.62, 0.8, 0.45), moss * 0.55 * (_top ? 1.0 : 0.6));
+    }
+    #elif defined( TEX_ROOF )
+    {
+      vec3 rd = normalize(cross(_wn, vec3(0.0, 1.0, 0.0)) + vec3(1e-4, 0.0, 0.0));
+      float along = dot(_p, rd);
+      float rc = _p.y / 0.2;
+      float row = floor(rc), fr = fract(rc);
+      float cc = along / 0.36 + row * 0.5;
+      float fc = fract(cc);
+      float fw = fwidth(rc) + fwidth(cc);
+      float detail = 1.0 - smoothstep(0.35, 0.9, fw);
+      float tid = fract(sin(dot(vec2(row, floor(cc)), vec2(12.9898, 78.233))) * 43758.5453);
+      float lip = mix(1.06, 0.7, smoothstep(0.62, 1.0, fr));
+      float gap = 1.0 - 0.22 * (1.0 - smoothstep(0.0, 0.07, min(fc, 1.0 - fc)));
+      diffuseColor.rgb *= mix(vec3(1.0), vec3(lip * gap * (0.9 + 0.18 * tid)), detail);
+      float moss = smoothstep(0.58, 0.85, texture2D(uNoiseTex, _p.xz * 0.08).g);
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.34, 0.38, 0.2) * dot(diffuseColor.rgb, vec3(0.5)) * 1.6, moss * 0.35);
+    }
+    #elif defined( TEX_ROCK )
+    {
+      vec3 w = _an / (_an.x + _an.y + _an.z);
+      float cr = texture2D(uNoiseTex, _p.zy * 0.3).b * w.x + texture2D(uNoiseTex, _p.xz * 0.3).b * w.y + texture2D(uNoiseTex, _p.xy * 0.3).b * w.z;
+      float fw = fwidth(cr) * 8.0;
+      float crack = (1.0 - smoothstep(0.0, 0.02 + fw, abs(cr - 0.5))) * (1.0 - smoothstep(0.5, 1.5, fw));
+      float grain = texture2D(uNoiseTex, _uv * 1.2).a;
+      diffuseColor.rgb *= (0.9 + 0.16 * grain) * (1.0 - 0.3 * crack);
+      float moss = smoothstep(0.45, 0.8, _wn.y + (texture2D(uNoiseTex, _p.xz * 0.15).g - 0.5) * 0.6);
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.33, 0.1), moss * 0.5);
+    }
+    #elif defined( TEX_BARK )
+    {
+      float brown = smoothstep(0.0, 0.035, diffuseColor.r - diffuseColor.g);
+      if (brown > 0.0) {
+        float a = (_an.x > _an.z ? _p.z : _p.x) * 2.2;
+        float f = texture2D(uNoiseTex, vec2(a, _p.y * 0.12)).b;
+        diffuseColor.rgb *= mix(1.0, mix(0.7, 1.08, smoothstep(0.3, 0.62, f)), brown);
+      }
+      float green = smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
+      diffuseColor.rgb *= mix(1.0, 0.84 + 0.3 * _dn(_p * 3.7), green);
+    }
+    #endif
+    #ifdef LEAFY_EDGE
+    {
+      // ragged, leafy crown silhouettes: cut away noisy bits where the
+      // (smoothed) foliage normal turns away from the viewer
+      float green = smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
+      if (green > 0.5) {
+        float e = 1.0 - abs(dot(normal, normalize(vViewPosition)));
+        float lf = _dn(_p * 3.3) * 0.55 + _dn(_p * 9.0) * 0.45;
+        if (lf < (e - 0.4) * 1.6) discard;
+        diffuseColor.rgb *= 1.0 - 0.18 * smoothstep(0.55, 0.3, lf) * smoothstep(0.2, 0.6, e);
+      }
+    }
+    #endif
+    #ifdef TOON_GROUND_AO
+    {
+      float ao = (1.0 - smoothstep(0.0, 0.6, _above)) * step(-0.8, _above);
+      diffuseColor.rgb *= mix(vec3(1.0), vec3(0.62, 0.66, 0.74), ao);
+    }
+    #endif
+  }
+  #include <lights_toon_fragment>`;
+
 const cache = new Map();
 
 /**
  * Create (or reuse) a toon material.
- * opts: { emissive, emissiveIntensity, rim, vertexColors, flat, side, transparent, opacity, sway, swayBase, terrain, key }
+ * opts: { emissive, emissiveIntensity, rim, vertexColors, flat, side, transparent, opacity, sway, swayBase, terrain, key,
+ *         foliage (bool), leafy (ragged crown edges), tex ('plaster'|'wood'|'planks'|'stone'|'roof'|'rock'|'bark'), noAO (bool) }
  */
 export function toon(color = 0xffffff, opts = {}) {
   const key = opts.nocache ? null : JSON.stringify([color, opts]);
@@ -365,6 +501,7 @@ export function patch(m, opts = {}) {
   const isTerrain = !!opts.terrain;
   const hasSway = (opts.sway ?? 0) > 0;
   const foliage = opts.foliage ?? hasSway;
+  const texKind = opts.tex || '';
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uDissolve = dissolve;
     sh.uniforms.uDissolveColor = dissolveColor;
@@ -378,14 +515,20 @@ export function patch(m, opts = {}) {
     sh.uniforms.uCloud = U.cloud;
     sh.uniforms.uSunW = U.sunDir;
     sh.uniforms.uShadeTint = U.shadeTint;
+    sh.uniforms.uHeightTex = U.heightTex;
+    sh.uniforms.uHeightP = U.heightP;
     let fs = sh.fragmentShader;
     const isToon = fs.includes('#include <lights_toon_pars_fragment>');
     let defs = '';
     if (isToon) {
       if (isTerrain) defs += '#define TOON_SOFT\n';
       else if (foliage) defs += '#define TOON_FOLIAGE\n';
-      fs = fs.replace('#include <lights_toon_pars_fragment>', TOON_LIGHT_PARS)
+      if (opts.leafy) defs += '#define LEAFY_EDGE\n';
+      if (!isTerrain && !opts.noAO) defs += '#define TOON_GROUND_AO\n';
+      if (texKind) defs += `#define TEX_${texKind.toUpperCase()}\n`;
+      fs = fs.replace('#include <lights_toon_pars_fragment>', TOON_LIGHT_PARS + SURFACE_PARS)
         .replace('#include <lights_fragment_begin>', LIGHTS_PRE + toonLightsBegin());
+      if (!isTerrain) fs = fs.replace('#include <lights_toon_fragment>', SURFACE_FRAG);
     } else {
       fs = 'uniform sampler2D uNoiseTex;\n' + fs;
     }
@@ -398,7 +541,7 @@ export function patch(m, opts = {}) {
       sh.fragmentShader = TERRAIN_FRAG_PARS + sh.fragmentShader.replace('#include <color_fragment>', TERRAIN_FRAG);
     }
   };
-  m.customProgramCacheKey = () => `toon2|${hasSway}|${isTerrain}|${foliage}`;
+  m.customProgramCacheKey = () => `toon3|${hasSway}|${isTerrain}|${foliage}|${texKind}|${!!opts.noAO}|${!!opts.leafy}`;
   return m;
 }
 

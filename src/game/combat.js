@@ -428,7 +428,7 @@ export class Combat {
     st.frozen = dur + (t.boss ? 0 : 0.6 * R('i_deep'));
     G.audio.play('freeze', { pos: t.center() });
     G.vfx.burst(t.center(), 'frostmist', 8);
-    if (!st.ice && t.pos) {
+    if (!st.ice && t.pos && t.rig) {
       const g = new THREE.Group();
       const n = 6;
       for (let i = 0; i < n; i++) {
@@ -457,7 +457,7 @@ export class Combat {
 
   bubble(t, dur) {
     const st = t.st;
-    if (!st || t.boss) return;
+    if (!st || t.boss || !t.rig) return;
     st.bubble = Math.max(st.bubble, dur);
     if (!st.bubbleMesh) {
       st.bubbleMesh = G.vfx.orb('water', Math.max(t.radius, t.height * 0.5) * 1.35);

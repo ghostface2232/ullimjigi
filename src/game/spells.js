@@ -550,7 +550,7 @@ export class Spells {
       for (const e of near) {
         hit.add(e);
         G.combat.hit(e, { dmg: o.dmg, el: o.el, pos: e.center(), dir: dir.clone(), knock: o.knock, lift: o.lift, heavy: true, status: 1.4, source: 'player', noReact: o.noReact });
-        if (o.frost && e.alive && e.st) G.combat.freeze(e, e.boss ? 1 : 3.5);
+        if (o.frost && e.alive && e.st && e.rig) G.combat.freeze(e, e.boss ? 1 : 3.5);
         if (o.bubble && first && e.alive) { G.combat.bubble(e, o.bubble); first = false; }
       }
       this.eatEnemyShots(pos.clone().setY(pos.y + 1.2), o.half + 0.5, o.reflect, o.P);
@@ -655,7 +655,7 @@ export class Spells {
         for (let i = 0; i < 18; i++) { const a = (i / 18) * Math.PI * 2, r = randRange(4, 11); const p = feet.clone().add(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r)); p.y = G.world.ground(p.x, p.z, feet.y + 3); V.crystal(p, randRange(1.5, 3.2), { life: 2.1 }); }
         const frozen = [];
         for (const e of this.enemiesIn(player.center(), 12)) {
-          if (e.boss) G.combat.addChill(e, 3); else { G.combat.freeze(e, 4); frozen.push(e); }
+          if (e.boss || !e.rig) G.combat.addChill(e, 3); else { G.combat.freeze(e, 4); frozen.push(e); }
         }
         G.later(() => {
           V.ring(player.pos, PAL.frost.core, 15, 0.5, { thick: 0.3 });
@@ -782,7 +782,7 @@ export class Spells {
           for (const e of this.enemies) {
             if (!e.alive || !e.hittable || e.boss) continue;
             const to = tmp.subVectors(pos, e.pos); to.y = 0; const d = to.length();
-            if (d < 7 && d > 0.5) { e.pull(to.normalize().multiplyScalar(dt * 9)); }
+            if (d < 7 && d > 0.5 && e.pull) { e.pull(to.normalize().multiplyScalar(dt * 9)); }
           }
           if (z.tick <= 0) {
             z.tick = 0.25;

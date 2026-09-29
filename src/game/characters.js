@@ -361,7 +361,7 @@ export function makeFox() {
     const tip = new THREE.Mesh(sph(0.06, 8, 6), glowMat(0x9ff4ff, 2.5)); tip.position.z = -0.14; par.add(tip);
     tails.push(segs);
   }
-  const aura = new THREE.Mesh(sph(0.55, 16, 12), fresnelMat(0x0a2a3a, 0x7ae8ff, { intensity: 0.8, power: 2.5 }));
+  const aura = new THREE.Mesh(sph(0.42, 16, 12), fresnelMat(0x000000, 0x7ae8ff, { intensity: 0.28, power: 3 }));
   body.add(aura);
   const rig = { root, body, head, tails, t: 0 };
   rig.update = (dt, s = {}) => {

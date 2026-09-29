@@ -63,7 +63,7 @@ export class Renderer {
     const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false }));
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.NeutralToneMapping ?? THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 1.0;
+    r.toneMappingExposure = 0.92;
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFShadowMap;
     this.scene = new THREE.Scene();
@@ -85,7 +85,7 @@ export class Renderer {
     this.composer = new EffectComposer(r, rt);
     this.renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(this.renderPass);
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.5, 0.55, 0.86);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.42, 0.5, 1.35);
     this.composer.addPass(this.bloom);
     this.grade = new ShaderPass(GradeShader);
     this.composer.addPass(this.grade);

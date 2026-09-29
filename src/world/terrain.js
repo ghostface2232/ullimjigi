@@ -11,7 +11,7 @@ const P = {
   dry: hex(0xc2bd66), dirt: hex(0xb89468), dirtDark: hex(0x8c6f4f),
   rock: hex(0x928a7e), rockDark: hex(0x6b655e), rockWarm: hex(0xa8957c),
   sand: hex(0xe0cf9c), wetSand: hex(0xa8986e),
-  snow: hex(0xf0f5fa), snowShade: hex(0xcad8e8),
+  snow: hex(0xc9d4e2), snowShade: hex(0x9fb0c6),
   ash: hex(0x564d60), ashLight: hex(0x7a6f86),
   plaza: hex(0xc0b29a),
 };

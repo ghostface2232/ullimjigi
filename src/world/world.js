@@ -1,6 +1,7 @@
 // Composes the whole Hanui Vale: terrain, sky, water, grass, props,
 // architecture, interactables, element targets and ambient life.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { G } from '../core/context.js';
 import { Terrain } from './terrain.js';
 import { Sky } from './sky.js';
@@ -72,6 +73,57 @@ export class World {
     this.buildMemories();
     this.ambT = 0;
     this.region = null;
+    onProgress(0.72, '돌을 다듬는 중…');
+    this.bakeStatics();
+  }
+
+  // Merge static building meshes per material into a few big meshes (draw-call reduction)
+  bakeStatics() {
+    const skip = new Set();
+    const markSkip = (o) => { if (o && o.isObject3D) o.traverse((c) => skip.add(c)); };
+    const roots = this.scene.children.filter((c) => c.isGroup && !c.userData.noBake);
+    for (const r of roots) {
+      for (const v of Object.values(r.userData || {})) {
+        if (Array.isArray(v)) v.forEach(markSkip); else markSkip(v);
+      }
+    }
+    for (const t of this.targets) markSkip(t.obj);
+    const buckets = new Map();
+    const CELL = 140;
+    for (const r of roots) {
+      r.updateMatrixWorld(true);
+      r.traverse((m) => {
+        if (!m.isMesh || skip.has(m) || m.isInstancedMesh || m.userData.isOutline) return;
+        const mat = m.material;
+        if (!mat || !mat.isMeshToonMaterial || mat.transparent || (mat.userData.sway && mat.userData.sway.value > 0)) return;
+        if (m.children.some((c) => !c.userData.isOutline)) return;
+        const wp = m.getWorldPosition(new THREE.Vector3());
+        const key = mat.uuid + '|' + Math.floor(wp.x / CELL) + ',' + Math.floor(wp.z / CELL) + '|' + (m.castShadow ? 1 : 0);
+        if (!buckets.has(key)) buckets.set(key, { mat, cast: m.castShadow, list: [] });
+        buckets.get(key).list.push(m);
+      });
+    }
+    let merged = 0;
+    for (const b of buckets.values()) {
+      if (b.list.length < 2) continue;
+      const geos = [];
+      for (const m of b.list) {
+        let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+        for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+        if (!g.attributes.normal) g.computeVertexNormals();
+        g.applyMatrix4(m.matrixWorld);
+        geos.push(g);
+      }
+      const geo = mergeGeometries(geos, false);
+      if (!geo) continue;
+      const mesh = new THREE.Mesh(geo, b.mat);
+      mesh.castShadow = b.cast; mesh.receiveShadow = true;
+      mesh.matrixAutoUpdate = false;
+      this.scene.add(mesh);
+      for (const m of b.list) m.parent.remove(m);
+      merged += b.list.length;
+    }
+    this.bakedCount = merged;
   }
 
   h(x, z) { return this.terrain.height(x, z); }
@@ -287,6 +339,7 @@ export class World {
     for (let i = 0; i < 26; i++) {
       const a = rnd() * Math.PI * 2, r = 15 + rnd() * 14;
       const x = POI.frost.x + Math.cos(a) * r, z = POI.frost.z + Math.sin(a) * r;
+      if (this.terrain.pathInfo(x, z).d < 6) continue;
       const c = new THREE.Mesh(G.vfx.crystalGeo, G.vfx.iceMat);
       const s = 0.8 + rnd() * 2.2;
       c.scale.set(s * 0.8, s * 1.4, s * 0.8);

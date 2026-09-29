@@ -57,6 +57,12 @@ export class NPC {
   update(dt) {
     if (!this.visible) return;
     const P = G.player;
+    const far = Math.hypot(P.pos.x - this.pos.x, P.pos.z - this.pos.z);
+    const lod = far < 95 || this.talking;
+    if (this.root.visible !== lod) this.root.visible = lod;
+    if (!lod) return;
+    const ol = far < 22;
+    if (this._ol !== ol) { this._ol = ol; this.root.traverse((o) => { if (o.userData.isOutline) o.visible = ol; }); }
     this.speed = 0;
     if (this.walkTarget) {
       const dx = this.walkTarget.x - this.pos.x, dz = this.walkTarget.z - this.pos.z;

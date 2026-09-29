@@ -461,8 +461,12 @@ export class Game {
     if (G.paused) dt = 0;
     G.dt = dt;
     G.time += dt;
+    const t0 = performance.now();
     try { this.update(dt, raw); } catch (e) { console.error(e); }
+    const t1 = performance.now();
+    const inf = G.renderer.renderer.info; inf.autoReset = false; inf.reset();
     try { G.renderer.render(raw); } catch (e) { console.error(e); }
+    this.perf = { update: t1 - t0, render: performance.now() - t1, calls: G.renderer.renderer.info.render.calls, tris: G.renderer.renderer.info.render.triangles };
     G.input.endFrame();
   }
 

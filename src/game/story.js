@@ -646,14 +646,14 @@ export class Story {
     if (!this.flag('f_boss')) {
       await this.bossFight(() => {
         const lv = G.enemies.levelFor(1) + 1;
-        const b = G.enemies.spawn('bruteFrost', V(S.pos.x, 0, S.pos.z - 3), lv, { elite: true, name: '서리무덤 파수꾼', leash: 999, hpMul: 1.4 });
+        const b = G.enemies.spawn('bruteFrost', V(S.pos.x, 0, S.pos.z + 2.2), lv, { elite: true, name: '서리무덤 파수꾼', leash: 999, hpMul: 1.6 });
         b.aggro();
         G.vfx.burst(b.center(), 'frostmist', 30, { size: 2 }); G.vfx.burst(b.center(), 'hush', 20, { size: 1.5 });
         G.audio.play('boss_roar', { pos: b.pos });
         G.hud.bossBar(b, '서리무덤 파수꾼 — 잊힌 성소의 파수꾼');
-        const adds = [G.enemies.spawn('ashlingFrost', V(S.pos.x + 5, 0, S.pos.z + 3), lv - 1), G.enemies.spawn('ashlingFrost', V(S.pos.x - 5, 0, S.pos.z + 3), lv - 1)];
+        const adds = [G.enemies.spawn('ashlingFrost', V(S.pos.x + 5, 0, S.pos.z - 2), lv - 1), G.enemies.spawn('ashlingFrost', V(S.pos.x - 5, 0, S.pos.z - 2), lv - 1)];
         adds.forEach((e) => e.aggro());
-        this.cSay('서리무덤이다! 저놈에겐 서리가 통하지 않는다. 불로 녹이거라!', null, 5);
+        this.cSay('서리무덤이다! 저놈의 얼음 갑옷엔 서리가 통하지 않는다. 불로 태워서 갑옷을 녹이거라!', null, 6);
         return b;
       }, S.pos, 30);
       this.set('f_boss');
@@ -765,12 +765,12 @@ export class Story {
       let first = true;
       const knight = await this.bossFight(async () => {
         const lv = G.enemies.levelFor(1) + 1;
-        const k = G.enemies.spawn('knight', V(S.pos.x, 0, S.pos.z - 2.5), lv);
-        k.pos.y = S.y + 0.8; k.yaw = 0;
+        const k = G.enemies.spawn('knight', V(S.pos.x + 3.2, 0, S.pos.z + 0.5), lv);
+        k.pos.y = S.y + 0.8; k.yaw = Math.PI / 2;
         if (first) {
           first = false;
           await this.conv(async () => {
-            G.cameraRig.setCine(V(S.pos.x + 3, S.y + 3, S.pos.z + 4), V(S.pos.x, S.y + 2, S.pos.z - 2.5));
+            G.cameraRig.setCine(V(S.pos.x + 8.5, S.y + 3, S.pos.z + 3.5), V(S.pos.x + 3.2, S.y + 2, S.pos.z + 0.5));
             G.audio.play('dissolve', { pos: k.pos });
             G.vfx.burst(k.center(), 'hush', 30, { size: 1.5 });
             await this.say('kaelShadow', '…돌아… 가라…', { cam: false });

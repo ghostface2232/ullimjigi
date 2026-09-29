@@ -41,8 +41,8 @@ export class Enemy {
     this.level = level; this.elite = !!opts.elite;
     this.tier = def.boss ? 0 : tierOf(level);
     this.name = opts.name || ((this.elite ? pick(EPITHETS) + ' ' : '') + TIERS[this.tier].pre + def.name);
-    const hpMul = 1 + 0.24 * (level - 1);
-    this.maxHp = Math.round(def.hp * hpMul * (this.elite ? 2.2 : 1) * (opts.hpMul ?? 1));
+    const hpMul = 1 + 0.18 * (level - 1);
+    this.maxHp = Math.round(def.hp * hpMul * (this.elite ? 1.8 : 1) * (opts.hpMul ?? 1));
     this.hp = this.maxHp;
     this.dmgMul = (1 + 0.12 * (level - 1)) * (this.elite ? 1.3 : 1);
     this.radius = def.radius * (this.elite ? 1.15 : 1); this.height = def.height * (this.elite ? 1.15 : 1);
@@ -116,6 +116,7 @@ export class Enemy {
   }
   stagger(t) {
     this.releaseToken();
+    if (this.armor) this.st.armorBroken = Math.max(this.st.armorBroken, 6);
     this.setState('stagger'); this.staggerT = t;
     if (t > 1.5) { this.vulnerable = true; G.hud.floatText(this.center(), '빈틈!', '#ffd86a'); }
   }
@@ -231,6 +232,12 @@ export class Enemy {
       const dx = this.pos.x - o.pos.x, dz = this.pos.z - o.pos.z;
       const d = Math.hypot(dx, dz), m = this.radius + o.radius + 0.2;
       if (d < m && d > 0.001) { const push = (m - d) * 0.5; this.pos.x += (dx / d) * push; this.pos.z += (dz / d) * push; }
+    }
+    {
+      const P = G.player.pos;
+      const dx = this.pos.x - P.x, dz = this.pos.z - P.z;
+      const d = Math.hypot(dx, dz), m = this.radius + 0.42;
+      if (d < m && d > 0.001 && Math.abs(this.pos.y - P.y) < 1.8) { this.pos.x += (dx / d) * (m - d); this.pos.z += (dz / d) * (m - d); }
     }
     W.col.resolve(this.pos, this.radius, this.height);
     this.stateT += dt;
@@ -408,6 +415,7 @@ class Brute extends Enemy {
     this.slamCD = 1; this.chargeCD = 4;
   }
   update(dt) {
+    if (this.type === 'bruteFrost' && this.st.burn > 0) this.st.armorBroken = Math.max(this.st.armorBroken, 0.6);
     const broken = this.st.armorBroken > 0;
     if (this.rig.armor) this.rig.armor.forEach((a, i) => { a.visible = !broken || i % 3 === 2; });
     if (broken && !this._wasBroken) { G.vfx.burst(this.center(), 'dust', 14, { speed: 6, color: new THREE.Color(0.5, 0.48, 0.45) }); G.audio.play('brute_slam', { pos: this.pos }); G.hud.floatText(this.center(), '갑옷 파괴!', '#ffd86a'); }
@@ -817,7 +825,7 @@ class Plate {
     this.heart = heart; this.ward = ward; this.idx = idx; this.n = n;
     this.alive = true; this.hittable = true;
     this.radius = 1.3; this.height = 2;
-    this.maxHp = Math.round(90 * (1 + 0.24 * (heart.level - 1))); this.hp = this.maxHp;
+    this.maxHp = Math.round(90 * (1 + 0.18 * (heart.level - 1))); this.hp = this.maxHp;
     this.st = newStatus(); this.level = heart.level; this.name = `${WARD[ward].name}의 결계`;
     this.pos = new THREE.Vector3();
     const g = new THREE.CylinderGeometry(1.2, 1.2, 0.35, 6); g.rotateX(Math.PI / 2);
@@ -871,7 +879,7 @@ class Heart {
     this.boss = true; this.type = 'heart'; this.name = '이름 삼킨 자'; this.def = { xp: 0, name: '이름 삼킨 자', boss: true };
     this.level = level;
     this.center0 = center.clone();
-    this.maxHp = Math.round(2400 * (1 + 0.24 * (level - 1))); this.hp = this.maxHp;
+    this.maxHp = Math.round(2000 * (1 + 0.18 * (level - 1))); this.hp = this.maxHp;
     this.alive = true; this.hittable = false; this.radius = 1.9; this.height = 3;
     this.st = newStatus(); this.resist = {}; this.armor = 0; this.freezeAt = 10; this.freezeTime = 1.5;
     this.pos = center.clone().setY(center.y + 6); this.home = this.pos.clone();

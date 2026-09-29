@@ -91,7 +91,7 @@ function pine(rnd, snowy = false) {
   const tr = new THREE.CylinderGeometry(0.14, 0.3, 2.2, 6);
   tr.translate(0, 1.1, 0);
   parts.push(prep(tr, (v, c) => c.set(0x5a4030)));
-  const dark = hc(0x2c5a43), light = hc(0x4e8a5c), snow = hc(0xf2f6fa);
+  const dark = hc(0x2c5a43), light = hc(0x4e8a5c), snow = hc(0xcdd8e4);
   const tiers = 4;
   for (let i = 0; i < tiers; i++) {
     const r = 2.2 - i * 0.45, h = 2.4 - i * 0.25;
@@ -244,7 +244,7 @@ export class Props {
   }
 
   buildMeshes() {
-    const CELL = 96, dummy = new THREE.Object3D();
+    const CELL = 160, dummy = new THREE.Object3D();
     this.meshes = [];
     for (const [name, t] of Object.entries(this.types)) {
       const buckets = new Map();

@@ -222,7 +222,7 @@ export class VFX {
   // ---------------- rune circle ----------------
   circle(pos, color, size = 2, dur = 1, o = {}) {
     const mat = new THREE.MeshBasicMaterial({
-      map: o.alt ? this.runeTex2 : this.runeTex, color: (color instanceof THREE.Color ? color.clone() : new THREE.Color(color)).multiplyScalar(o.intensity ?? 1.6),
+      map: o.alt ? this.runeTex2 : this.runeTex, color: (color instanceof THREE.Color ? color.clone() : new THREE.Color(color)).multiplyScalar(o.intensity ?? 1.05),
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, opacity: 0,
     });
     const m = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
@@ -413,7 +413,7 @@ export class VFX {
       grp, alpha: 0, done: false,
       update: (dt) => {
         h.alpha = h.done ? Math.max(0, h.alpha - dt * 2.5) : Math.min(1, h.alpha + dt * 4);
-        for (const m of mats) m.uniforms.uAlpha.value = h.alpha * (o.alpha ?? 0.9);
+        for (const m of mats) m.uniforms.uAlpha.value = h.alpha * (o.alpha ?? 0.5);
         grp.rotation.y += dt * 6;
         if (h.done && h.alpha <= 0) { this.scene.remove(grp); grp.traverse((c) => c.geometry && c.geometry.dispose()); mats.forEach((m) => m.dispose()); return false; }
         return true;

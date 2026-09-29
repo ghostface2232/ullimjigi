@@ -1,5 +1,5 @@
 // Keyboard + mouse input with pointer lock and per-frame edge detection.
-const BLOCK = new Set(['Space', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyQ', 'KeyE', 'KeyF', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'KeyM', 'KeyJ', 'KeyT']);
+const BLOCK = new Set(['Space', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyQ', 'KeyE', 'KeyF', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'KeyM', 'KeyJ', 'KeyT']);
 
 export class Input {
   constructor(canvas) {

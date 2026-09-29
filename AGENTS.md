@@ -113,11 +113,16 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
   - `this.wait(cond)`: 매 프레임 조건 검사
   - `this.sleep(sec)`: 게임 시간 기준 대기
   - `this.conv(async () => {...})`: 대화 모드 진입과 종료를 감쌈
+  - `this.scriptedWave(spawnFn, center, radius)`: 스크립트 전투 한 파. 플레이어가 쓰러지면 남은 적을 지우고 다시 생성합니다. 적이 모두 죽어야 끝나는 전투는 반드시 이것으로 감싸세요.
+  - `this.bossFight(make, center, radius, tip)`: 보스전. 쓰러지면 보스를 초기화하고, 다시 다가가기 전에 보름이 `tip`을 말합니다.
+- 체크포인트: `set()`, `done()`, 기억·씨앗·보고 같은 진행이 일어나면 `this.dirty`가 서고, 플레이어가 전투 밖·지상·자유 상태가 되는 순간 자동 저장합니다. 새 진행 지점을 만들면 `this.dirty = true`를 잊지 마세요.
+- 보름의 `cSay(text, onceKey)` 1회성 대사는 `Story.saidOnce`에 `c:` 접두어로 저장됩니다.
 - NPC에게 말을 걸면 항상 `talkNPC(id)`로 들어옵니다. 메인 스토리 → 곁가지 → 일상 대화 순으로 분기합니다.
 - 대사 표기:
   - `*강조*`: 금색 강조
   - `[텍스트|fire]`: 속성 색 (`fire`/`frost`/`storm`/`wind`/`arcane`)
   - `{n}`, `{n:이}`, `{n:을}`, `{n:아}` 등: 플레이어 이름 + 받침에 맞는 조사
+- 대화창: <kbd>L</kbd> 지난 대사, <kbd>Esc</kbd> 길게 누르기로 빨리 넘기기(선택지에서는 멈춤). 화자가 바뀌면 카메라가 0.65초 동안 블렌드되고 말하는 동안 천천히 다가갑니다. 컷씬에서 `G.cameraRig.setCine`을 직접 부르면 대화 카메라는 자동으로 손을 뗍니다.
 - 인물별 말투는 [docs/DESIGN.md](docs/DESIGN.md#인물과-말투)를 따르세요. 한 인물의 말투가 흔들리면 몰입이 크게 깨집니다.
 
 ### 저장

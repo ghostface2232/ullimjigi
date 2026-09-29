@@ -31,7 +31,7 @@ export class Story {
 
   // ------------------------------------------------------------ state
   flag(k) { return !!this.flags[k]; }
-  set(k, v = true) { this.flags[k] = v; }
+  set(k, v = true) { this.flags[k] = v; this.dirty = true; }
   count(k, d = 0) { return this.counters[k] ?? d; }
   inc(k, n = 1) { this.counters[k] = this.count(k) + n; return this.counters[k]; }
   seedCount() { return this.seeds.size; }
@@ -105,7 +105,7 @@ export class Story {
   done(id, reward) {
     const q = this.quests[id];
     if (!q || q.state === 'done') return;
-    q.state = 'done'; q.obj = ''; q.markers = [];
+    q.state = 'done'; q.obj = ''; q.markers = []; this.dirty = true;
     G.audio.play('quest_done');
     G.hud.banner('여정 완료', q.title, reward || '', '#f1d48a', 3000);
     if (this.track === id) this.track = null;
@@ -236,6 +236,8 @@ export class Story {
 
   update(dt) {
     if (this.dead) return;
+    // checkpoint: save once the player is back in free play after any story progress
+    if (this.dirty && G.mode === 'free' && !G.player.dead && !G.bossActive && G.player.grounded && !G.enemies.inCombat()) { this.dirty = false; G.game.save(true); }
     for (let i = this.waiters.length - 1; i >= 0; i--) {
       const w = this.waiters[i];
       let r = false;
@@ -292,7 +294,7 @@ export class Story {
         await this.say('mora', '…아니지. 아니야. {n:아}. 이 할미 정신 좀 보렴. 네 어미 이름이 왜 자꾸 입에 붙는지.');
         const c = await this.choose(['괜찮아요, 할머니.', '…엄마 얘기 해 주세요.']);
         if (c === 0) await this.say('mora', '그래, 그래. 넌 늘 괜찮다고 하지. 그 말버릇도 제 어미를 꼭 닮았구나.');
-        else await this.say('mora', '허허, 아침부터 옛날이야기를 조르는 게냐. …나중에. 오늘 일을 다 마치면 들려주마. 약속하지.');
+        else { this.set('askedMother'); await this.say('mora', '허허, 아침부터 옛날이야기를 조르는 게냐. …나중에. 오늘 일을 다 마치면 들려주마. 약속하지.'); }
         await this.say('mora', '자, 오늘이 무슨 날인지는 잊지 않았겠지? *첫 울림*을 시험하는 날이란다.');
         await this.say('mora', '이 할미가 네 나이 땐 벌써 참새 떼를 불꽃으로 몰고 다녔지. …흠흠, 그건 자랑할 일이 아니었구나.');
         await this.say('mora', '우선 몸부터 풀자꾸나. 저기 빛나는 표식 세 개를 차례로 밟고 오너라.');
@@ -390,15 +392,12 @@ export class Story {
       this.obj('q_morning', '허깨비들을 물리치기');
       const lv = 1;
       const wave = (defs) => defs.map(([t, x, z]) => { const e = G.enemies.spawn(t, V(x, 0, z), lv); e.aggro(); G.vfx.burst(e.center(), 'hush', 10, { size: 1 }); return e; });
-      let es = wave([['ashling', 10, 124], ['ashling', 4, 120], ['ashling', 16, 130]]);
-      await this.wait(() => es.every((e) => !e.alive));
+      const yard = V(8, 0, 126);
+      await this.scriptedWave(() => wave([['ashling', 10, 124], ['ashling', 4, 120], ['ashling', 16, 130]]), yard, 45);
       await this.sleep(1.2);
-      this.cSay && null;
       G.hud.bark(mora, '또 온다! 이번엔 섞여 있구나!');
-      es = wave([['ooze', 12, 124], ['ashling', 2, 118], ['wailer', 16, 132]]);
-      await this.sleep(1.5);
-      this.hint('<b>울음탈</b>은 멀리서 구체를 쏜다 — 마법으로 구체를 맞혀 없앨 수 있다<br><b>잿물</b>은 쓰러뜨리면 둘로 갈라진다', 8);
-      await this.wait(() => G.enemies.list.filter((e) => e.alive && !e.boss).length === 0 && es.every((e) => !e.alive));
+      G.later(() => this.hint('<b>울음탈</b>은 멀리서 구체를 쏜다 — 마법으로 구체를 맞혀 없앨 수 있다<br><b>잿물</b>은 쓰러뜨리면 둘로 갈라진다', 8), 1500);
+      await this.scriptedWave(() => wave([['ooze', 12, 124], ['ashling', 2, 118], ['wailer', 16, 132]]), yard, 45);
       this.set('p_fight');
       await this.sleep(1.5);
     }
@@ -528,9 +527,12 @@ export class Story {
       i++;
       this.obj('q_bell', `해 질 녘, 마을을 지키기 (${i}/3)`);
       this.cSay(w.say);
-      const es = w.units.map(([t, x, z]) => spawnAt(t, x, z));
+      if (i === 1 && this.once('dodge_tut')) G.later(() => {
+        this.cSay('잘 보거라, 꼬마. 놈이 덤벼드는 바로 그 순간 몸을 비키면— 세상이 잠시 느려지느니라. 이 몸의 바람이 네 편이니까.', null, 7);
+        this.hint(`적의 공격이 닿기 직전 ${KBD('Shift')} 짧게: 순간이동 — 딱 맞추면 <b>완벽 회피</b><br><small>잠시 적이 느려지고, 기본 마법에 마나가 들지 않는다</small>`, 10);
+      }, 2500);
       if (i === 3) this.hint('<b>불잿물</b>은 쓰러질 때 폭발한다 — 적들 가까이에서 터뜨려라', 7);
-      await this.wait(() => es.every((e) => !e.alive) && G.enemies.list.filter((e) => e.alive).length === 0);
+      await this.scriptedWave(() => w.units.map(([t, x, z]) => spawnAt(t, x, z)), V(4, 0, 16), 80);
       await this.sleep(1.5);
     }
   }
@@ -657,7 +659,7 @@ export class Story {
         adds.forEach((e) => e.aggro());
         this.cSay('서리무덤이다! 저놈의 얼음 갑옷엔 서리가 통하지 않는다. 불로 태워서 갑옷을 녹이거라!', null, 6);
         return b;
-      }, S.pos, 30);
+      }, S.pos, 30, '서리무덤은 불타는 동안만 갑옷이 녹느니라. 불을 먼저 붙이고, 그다음에 쏟아부어라. 내려찍기는 붉은 원을 보고 피하거라.');
       this.set('f_boss');
       G.skills.gain(2, '서리무덤 파수꾼을 쓰러뜨렸다');
     }
@@ -786,7 +788,7 @@ export class Story {
         G.hud.bossBar(k, '무명의 기사 — 이름을 빼앗긴 자');
         this.cSay('녀석은 번개를 먹고 자랐다, 번개는 잘 안 통한다! 불태우거나 얼려라!', null, 5);
         return k;
-      }, S.pos, 34);
+      }, S.pos, 34, '기사의 세 번째 베기는 땅을 울린다. 충격파는 뛰어넘거나 순간이동으로 빠져나가거라. 얼려 두면 한동안 꼼짝 못 하느니라.');
       this.set('s_boss');
       G.skills.gain(2, '무명의 기사를 쓰러뜨렸다');
       await this.kaelScene(S, knight);
@@ -837,7 +839,22 @@ export class Story {
     G.npcs.list.splice(G.npcs.list.indexOf(kael), 1); delete G.npcs.map.kael;
   }
 
-  async bossFight(make, center, radius) {
+  // Scripted fight that restarts cleanly if the player falls: leftover enemies are
+  // cleared and the wave is spawned again once the player is back on their feet.
+  async scriptedWave(spawn, center, radius = 70) {
+    for (;;) {
+      const es = spawn();
+      const inArea = () => G.enemies.list.filter((e) => e.alive && !e.boss && e.pos && Math.hypot(e.pos.x - center.x, e.pos.z - center.z) < radius);
+      const res = await this.wait(() => (es.every((e) => !e.alive) && inArea().length === 0 ? 'win' : G.player.dead ? 'lose' : null));
+      if (res === 'win') return;
+      for (const e of [...G.enemies.list]) if (e.alive && !e.boss && e.pos && Math.hypot(e.pos.x - center.x, e.pos.z - center.z) < radius && e.remove) e.remove();
+      await this.wait(() => !G.player.dead && G.mode === 'free');
+      await this.sleep(1.5);
+      this.cSay(pick(['다시 오는구나. 이번엔 숨 고르고 하거라.', '괜찮다, 꼬마. 한 번 넘어졌다고 노래가 끝나는 건 아니니라.', '놈들이 다시 몰려온다! 이번엔 이 몸 말을 잘 듣거라.']));
+    }
+  }
+
+  async bossFight(make, center, radius, tip = null) {
     for (;;) {
       const boss = await make();
       G.bossActive = true;
@@ -848,6 +865,8 @@ export class Story {
       G.hud.bossBar(null);
       for (const e of [...G.enemies.list]) if (e.alive && e.pos && e.pos.distanceTo(center) < radius + 10 && e.remove) e.remove();
       await this.wait(() => !G.player.dead && G.mode === 'free');
+      await this.sleep(1.2);
+      if (tip) this.cSay(tip, null, 7);
       await this.wait(() => this.near(center.x, center.z, 7) && G.mode === 'free');
     }
   }
@@ -897,6 +916,7 @@ export class Story {
       await this.say('mora', '세 번째 종 말이다. …그건 성소에 있는 게 아니란다.');
       await this.say('mora', '셋째 종은 *사람*이야. 골짜기의 노래를 기억하는 모든 사람. 오십 년 전엔 그게 나 하나뿐이었지. 그래서 그렇게 무거웠던 게야.');
       await this.say('mora', '고요는 잊힌 것들이 모여 생긴 슬픔이란다. 싸워서 없앨 수 있는 게 아니야. 기억해 줘야 해. …함께.');
+      await this.say('mora', '*노래는 한 사람만 기억하는 게 아니란다.* 네 어미가 떠나던 날 밤, 이 할미가 해 준 말이지. …정작 나는 그 말을 잊고, 오십 년을 혼자 짊어졌구나.');
       await this.say('mora', '마을 사람들에게 가서 잊힌 이름들을 들려주렴. 카엘. 세하. 그리고 이 할미 이름도— 언젠가 내가 나를 잊거든.');
       await this.say('mora', '그러고 나서 틈으로 가거라. 이번엔 혼자 문을 붙들지 말고. …약속해 주겠니?');
       await this.choose(['약속할게요.']);
@@ -968,7 +988,7 @@ export class Story {
       G.hud.bossBar(h, '이름 삼킨 자 — 고요의 심장');
       G.audio.play('boss_roar', { pos: h.core.position });
       return h;
-    }, R.center, 40);
+    }, R.center, 40, '서두르지 마라. 결계의 색부터 보거라. 불에는 서리, 서리에는 불, 번개에는 바람, 바람에는 번개. 광선은 뛰어넘을 수 있느니라.');
     await this.endingScene(heart);
   }
 
@@ -990,6 +1010,7 @@ export class Story {
       await this.say('kael', '문이 버티지 못한다. 심장이 깨어난다.');
       await this.say('seha', '들어, {n}. 심장은 결계로 스스로를 감싸. 결계마다 다른 노래가 필요해.');
       await this.say('seha', '[불|fire]에는 [서리|frost]를, [서리|frost]에는 [불|fire]을, [번개|storm]에는 [바람|wind]을, [바람|wind]에는 [번개|storm]를.');
+      if (G.player.unlocked.has('water')) await this.say('seha', '…어? 너, 물의 노래도 아는구나. 호숫가에서 내가 부르던 거. 그럼 [불|fire]의 결계엔 [물|water]도 통할 거야.');
       await this.say('kael', '결계가 모두 깨지면 심장이 드러난다. 그때가 기회다. 가진 노래를 모두 쏟아부어라.');
       await this.say('boreum', '…드디어로구나. 꼬마, 이 몸의 꼬리를 걸고 말하건대— 넌 혼자가 아니니라.');
     });
@@ -1045,6 +1066,19 @@ export class Story {
       for (let k = 0; k < 3; k++) { G.audio.play('bell', { pos: G.player.pos.clone().add(V(0, 0, -30)), f: [146.8, 196, 220][k] }); await this.sleep(1.4); void tps; }
       await this.say('mora', '…그래, 그거야. 그거였어.');
       await this.say('mora', '고마워요. 누군지는 모르겠지만… 꼭, 오래 알던 사람 같네.');
+      await this.say('mora', '이 노래는요, 우리 딸이 좋아하던 노래예요. 세하라고… 늘 조금씩 틀리게 부르는 버릇이 있었지요.');
+      await this.say('mora', '우습죠. 그 애 얼굴은 흐릿한데, 그 애가 틀리던 음은 이렇게 또렷해요.');
+      if (this.flag('askedMother')) await this.say('narr', '오늘 일을 다 마치면 들려주겠다던 이야기. 할머니는 약속을 지켰다. 누구에게 지키는지도 모른 채.');
+      if (this.flag('promiseKael')) {
+        const k = await this.choose(['(카엘이라는 이름을 들려준다)', '(말없이 곁에 앉는다)']);
+        if (k === 0) {
+          this.set('keptPromise');
+          await this.say('mora', '카엘…');
+          await this.say('mora', '처음 듣는 이름인데, 이상하게 마음이 따뜻해지네요. 좋은 사람이었나 봐요.');
+          await this.say('mora', '…그래요. 좋은 사람이었을 거예요. 끝까지 멋있는 척하는.');
+        } else await this.say('narr', '말하지 않아도 괜찮을 것 같았다. 노래가 대신 전해 줄 테니까.');
+      }
+      await this.say('mora', '누가 그러더라고요. 노래는 한 사람만 기억하는 게 아니라고. …누가 그랬더라.');
       await this.say('boreum', '…늙은 여우 할멈. 잘 자거라. 내일도 이 몸이 깨워 주마.');
       void mora;
     });
@@ -1109,7 +1143,7 @@ export class Story {
       this.set('v_bau');
     });
     if (id === 'isol' && ch === 'village' && this.flag('v_bau') && !this.flag('v_isol')) return this.conv(async () => {
-      await this.say('isol', '실례합니다만— 방금 "종"이라고 하셨습니까? 아, 먼저 인사를. 저는 이솔. 왕립 학술원 소속… 이었던, 현재는 독립 연구자입니다.');
+      await this.say('isol', '실례합니다만— 바우 영감님과 종 이야기를 나누시는 걸 들었습니다. 아, 먼저 인사를. 저는 이솔. 왕립 학술원 소속… 이었던, 현재는 독립 연구자입니다.');
       await this.say('isol', '제 연구 주제는 *고요*입니다. 네, 그 고요요. 기억에서 떨어져 나간 존재가 울림을 잃고 잿빛이 되는 현상.');
       await this.say('isol', '참고로 말씀드리자면, 학계에서는 대부분 전설로 취급합니다. 덕분에 제 연구비도 전설이 되었지요. 하하… 하.');
       await this.say('isol', '제 가설은 이렇습니다. 이 골짜기의 종들은 단순한 종이 아니라 *기억의 닻*이다. 누군가 종을 울릴 때마다, 골짜기 전체가 스스로를 "기억해 내는" 겁니다.');
@@ -1239,7 +1273,7 @@ export class Story {
   }
   takeMemory(m) {
     m.taken = true; m.g.visible = false;
-    this.memories[m.id] = 'have';
+    this.memories[m.id] = 'have'; this.dirty = true;
     G.skills.gain(1, '모라의 기억을 찾았다');
     G.audio.play('pickup'); G.audio.play('echo', { pos: m.pos });
     G.vfx.burst(m.pos, 'soul', 30, { el: 'arcane' });
@@ -1251,6 +1285,9 @@ export class Story {
   async deliverMemories() {
     const ids = Object.keys(this.memories).filter((k) => this.memories[k] === 'have');
     G.game.musicOverride = 'memory';
+    if (this.chapter === 'mora' || this.chapter === 'post') await this.conv(async () => {
+      await this.say('narr', '물건을 건네자, 흐릿하던 할머니의 눈빛이 잠시 또렷해진다.');
+    });
     for (const id of ids) {
       await this.conv(async () => {
         if (id === 'hairpin') {
@@ -1260,7 +1297,8 @@ export class Story {
           await this.say('mora', '…그 애는 가끔 나보다 어른 같았어.');
         } else if (id === 'book') {
           await this.say('mora', '노을 들판의 그 나무 아래서… 이 책에 꽃을 누르던 사람이 있었지.');
-          await this.say('mora', '이름이… 이름이 분명 있었는데. 첫 장에 적어 두었는데, 번졌구나.');
+          if (this.memories.badge === 'given') await this.say('mora', '첫 장에 적어 둔 이름은 번졌지만… 괜찮아. 이젠 안단다. 카엘이었지. 휘장을 보고 되찾은 이름을, 이 책이 다시 붙들어 주는구나.');
+          else await this.say('mora', '이름이… 이름이 분명 있었는데. 첫 장에 적어 두었는데, 번졌구나.');
           await this.say('mora', '우스운 사람이었어. 기사면서 꽃 이름은 나보다 더 많이 알았지. "모라, 이건 물망초야. 나를 잊지 말라는 뜻이래."');
           await this.say('mora', '…그래 놓고. 그래 놓고 제가 먼저 잊혀 버렸지.');
         } else if (id === 'musicbox') {
@@ -1268,7 +1306,8 @@ export class Story {
           await this.say('mora', '그 애는 돌아오지 않았어. 너를 내 품에 맡기고, "금방 올게, 엄마" 하고서.');
           await this.say('mora', '떠나기 전날 밤에 그 애가 묻더라. "엄마가 이 노래를 잊으면 어떡해?"');
           await this.say('mora', '그래서 말해 줬단다. *"노래는 한 사람만 기억하는 게 아니란다."*');
-          await this.say('mora', '…그 말을 한 게 나였는데. 정작 나는 혼자 기억하려고만 했구나.');
+          if (this.flag('m_talk')) await this.say('mora', '…요전에 너한테도 이 말을 했었지? 후후. 이번엔 이 할미가 잊지 않았구나.');
+          else await this.say('mora', '…그 말을 한 게 나였는데. 정작 나는 혼자 기억하려고만 했구나.');
         } else if (id === 'badge') {
           await this.say('mora', '…카엘.');
           await this.say('mora', '카엘. 그래, 그 이름이었어. 어떻게 이걸 잊을 수 있었을까. 오십 년을 매일 부르던 이름을.');
@@ -1276,7 +1315,7 @@ export class Story {
           await this.say('mora', '바보 같은 사람. 끝까지 멋있는 척은.');
         }
       });
-      this.memories[id] = 'given';
+      this.memories[id] = 'given'; this.dirty = true;
       G.player.addXP(35);
     }
     G.game.musicOverride = null;
@@ -1319,7 +1358,7 @@ export class Story {
       await this.say('isol', '약소하지만, 연구비에서 떼어 드리는 사례입니다. …네, 연구비가 거의 없긴 합니다만.');
     });
     G.player.addXP(80 * n);
-    this.counters.bountyNew = 0;
+    this.counters.bountyNew = 0; this.dirty = true;
     this.updateBounty();
   }
 
@@ -1402,7 +1441,7 @@ export class Story {
 
   takeSeed(s) {
     s.taken = true; s.g.visible = false;
-    this.seeds.add(s.i);
+    this.seeds.add(s.i); this.dirty = true;
     const n = this.seeds.size;
     G.audio.play('seed', { m: THEME_NOTES[(n - 1) % THEME_NOTES.length] });
     G.vfx.burst(s.orb.getWorldPosition(new THREE.Vector3()), 'soul', 30, { el: 'heal' });

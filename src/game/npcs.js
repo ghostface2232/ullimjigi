@@ -150,7 +150,11 @@ export class Companion {
   }
   say(text, once = null, dur) {
     if (!this.active) return;
-    if (once) { if (this.said.has(once)) return; this.said.add(once); }
+    if (once) {
+      // persisted through the story so one-time lines don't repeat after loading a save
+      if (G.story) { if (!G.story.once('c:' + once)) return; } else if (this.said.has(once)) return;
+      this.said.add(once);
+    }
     G.hud.companion(text, dur);
     G.audio.play('fox', { gap: 1 });
   }

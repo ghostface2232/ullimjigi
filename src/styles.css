@@ -443,3 +443,21 @@ button, .tbtn, .dlg-choice, .jr-tabs button, input[type=range], select, input[ty
 .ebar .elv .wk svg { width: 100%; height: 100%; }
 .ebar .elv .wk.im { opacity: 0.55; position: relative; }
 .ebar .elv .wk.im::after { content: ''; position: absolute; left: -1px; right: -1px; top: 50%; height: 1.5px; background: #ff5a6a; transform: rotate(-35deg); }
+.dlg-text .water { color: #5aa2ff; }
+.dlg-keys { position: absolute; left: 44px; bottom: -24px; display: flex; gap: 18px; font-size: 11px; color: var(--ink-dim); letter-spacing: 0.05em; text-shadow: 0 1px 3px #000; }
+.dlg-keys kbd { font-family: var(--latin); font-size: 10px; padding: 0 5px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 4px; color: var(--gold); margin-right: 3px; }
+.dlg-skip { position: relative; padding-bottom: 3px; }
+.dlg-skip i { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--gold); box-shadow: 0 0 6px var(--gold); }
+.dlg-keys.ff .dlg-skip { color: var(--gold); }
+#dlg-log { position: absolute; inset: 0; z-index: 14; display: flex; align-items: center; justify-content: center; background: rgba(4, 6, 10, 0.82); backdrop-filter: blur(4px); pointer-events: auto; }
+.lg-frame { width: min(760px, 90vw); height: min(640px, 82vh); display: flex; flex-direction: column; border-top: 1px solid var(--panel-edge); border-bottom: 1px solid var(--panel-edge); background: linear-gradient(180deg, rgba(18, 20, 26, 0.92), rgba(10, 12, 16, 0.94)); }
+.lg-title { font-family: var(--blade); color: var(--gold); letter-spacing: 0.25em; text-align: center; padding: 16px 0 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+.lg-body { flex: 1; overflow-y: auto; padding: 18px 40px; }
+.lg-row { margin: 0 0 14px; }
+.lg-row b { display: block; font-family: var(--blade); font-weight: 400; font-size: 13px; color: var(--gold); letter-spacing: 0.1em; }
+.lg-row p { font-family: var(--serif); font-size: 16px; line-height: 1.7; color: #f0eadc; }
+.lg-row p em { font-style: normal; color: var(--gold); }
+.lg-row.narr p { font-style: italic; color: #cfc8b6; text-align: center; }
+.lg-row .fire { color: var(--fire); } .lg-row .frost { color: var(--frost); } .lg-row .storm { color: var(--storm); } .lg-row .wind { color: var(--wind); } .lg-row .arcane { color: var(--arcane); } .lg-row .water { color: #5aa2ff; }
+.lg-close { text-align: center; font-size: 12px; color: var(--ink-dim); padding: 10px; }
+.lg-close kbd { font-family: var(--latin); border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 4px; padding: 0 5px; color: var(--gold); }

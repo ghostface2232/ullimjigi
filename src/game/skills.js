@@ -161,6 +161,7 @@ export class Skills {
     const n = NODES[id];
     this.points -= n.cost;
     this.ranks[id] = this.r(id) + 1;
+    if (G.story) G.story.dirty = true;
     G.audio.play('skill_learn');
     if (n.kind === 'ult' && this.r(id) === 1) G.hud.toast(`궁극기 <b>${n.name}</b> — <kbd>F</kbd> 로 쓴다 (울림 게이지가 가득 찼을 때)`, 5000);
     G.hud.updateSpells && G.hud.updateSpells();

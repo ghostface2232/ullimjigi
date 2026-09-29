@@ -470,7 +470,7 @@ export class World {
   update(dt, camPos, playerPos) {
     U.time.value = G.time;
     U.wind.value = 1 + Math.sin(G.time * 0.3) * 0.35 + Math.sin(G.time * 1.1) * 0.15;
-    this.sky.update(dt, playerPos);
+    this.sky.update(dt, playerPos, 1, camPos);
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);
     const n = this.sky.night;

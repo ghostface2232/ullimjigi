@@ -1,7 +1,7 @@
 // Story director: chapters, quests, dialogue and world events.
 // Each chapter is an async script that resumes from saved flags.
 import * as THREE from 'three';
-import { G, EL_INFO } from '../core/context.js';
+import { G, EL_INFO, ELEMENTS } from '../core/context.js';
 import { NPC, makeCat, makeGhost } from './npcs.js';
 import { makeHumanoid, CHAR } from './characters.js';
 import { POI, regionAt } from '../world/layout.js';
@@ -1435,7 +1435,7 @@ export class Story {
     G.vfx.burst(G.player.center(), 'soul', 50, { el });
     G.vfx.ring(G.player.pos, PAL[el].core, 6, 1, { thick: 0.2 });
     G.vfx.circle(G.player.pos, PAL[el].glow, 3, 2, { spin: 2 });
-    G.hud.banner('새로운 노래', `${EL_INFO[el].name}의 노래`, desc + `<br><small>${['arcane', 'fire', 'wind', 'frost', 'storm'].indexOf(el) + 1}번 키로 선택</small>`, EL_INFO[el].css, 4500);
+    G.hud.banner('새로운 노래', `${EL_INFO[el].name}의 노래`, desc + `<br><small>${ELEMENTS.indexOf(el) + 1}번 키로 선택</small>`, EL_INFO[el].css, 4500);
     await this.sleep(0.5);
   }
 

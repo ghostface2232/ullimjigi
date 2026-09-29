@@ -1106,7 +1106,7 @@ export class Spells {
   // ============================================================
   update(dt) {
     const V = G.vfx;
-    const slow = G.slowmo > 0 ? 0.2 : 1;
+    const slow = G.slowmo > 0 ? 0.25 : 1;
     for (let i = this.list.length - 1; i >= 0; i--) {
       const p = this.list[i];
       if (!p) continue;

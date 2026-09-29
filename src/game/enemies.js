@@ -1556,7 +1556,7 @@ class Watcher extends Enemy {
           if (this.line) { this.line.done = true; this.line = null; }
           const a0 = Math.atan2(this.aimAt.x - this.pos.x, this.aimAt.z - this.pos.z);
           const dir = rand() < 0.5 ? 1 : -1;
-          this.sweep = { b: G.vfx.beam('gold', { width: 0.9 }), a0: a0 - dir * 0.75, a1: a0 + dir * 0.75, t: 0, dur: this.elite ? 1.4 : 1.8, hit: false, R: Math.max(12, Math.min(26, d + 8)) };
+          this.sweep = { b: G.vfx.beam('gold', { width: 0.9 }), a0: a0 - dir * 0.75, a1: a0 + dir * 0.75, t: 0, dur: this.elite ? 1.4 : 1.8, hit: false, R: Math.max(12, Math.min(26, d + 8)), D: Math.max(4, Math.hypot(this.aimAt.x - this.pos.x, this.aimAt.z - this.pos.z)) };
           G.audio.play('beam', { pos: this.pos, d: this.sweep.dur });
           this.setState('beamSweep');
         }
@@ -1572,7 +1572,9 @@ class Watcher extends Enemy {
         this.charge = 1;
         const eye = this.eyePos();
         let ex = this.pos.x + Math.sin(a) * S.R, ez = this.pos.z + Math.cos(a) * S.R;
-        const end = new THREE.Vector3(ex, G.world.ground(ex, ez, eye.y + 5) + 0.3, ez);
+        // slope the beam through waist height at the aimed range; the terrain march below cuts it where it meets the ground
+        const ay = G.world.ground(this.pos.x + Math.sin(a) * S.D, this.pos.z + Math.cos(a) * S.D, eye.y + 5) + 0.75;
+        const end = new THREE.Vector3(ex, eye.y + (ay - eye.y) * (S.R / S.D), ez);
         // walls and terrain block the beam: hiding behind cover works
         {
           const L = eye.distanceTo(end), n = Math.ceil(L / 0.8);
@@ -1588,7 +1590,7 @@ class Watcher extends Enemy {
         const tt = clamp(((Pp.x - ax) * dx + (Pp.z - az) * dz) / (dx * dx + dz * dz), 0, 1);
         const dd = Math.hypot(Pp.x - (ax + dx * tt), Pp.z - (az + dz * tt));
         const by = lerp(eye.y, end.y, tt) - Pp.y; // beam height relative to the player's feet
-        if (!S.hit && dd < 1.0 && by > -0.35 && by < 1.9 && P.blinkT <= 0 && !P.dead) { S.hit = true; P.damage(Math.round(this.def.dmg * 1.4 * this.dmgMul), { dir: new THREE.Vector3(-dz, 0, dx).normalize(), knock: 9 }); G.vfx.burst(P.center(), 'fire', 12, { speed: 4 }); }
+        if (!S.hit && dd < 1.0 && by > -0.35 && by < 1.9 && !P.dead) { S.hit = true; P.damage(Math.round(this.def.dmg * 1.4 * this.dmgMul), { dir: new THREE.Vector3(-dz, 0, dx).normalize(), knock: 9 }); if (!P.dodged) G.vfx.burst(P.center(), 'fire', 12, { speed: 4 }); }
         if (rand() < 0.9) G.vfx.burst(end, 'fire', 2, { speed: 2, size: 0.8 });
         if (rand() < 0.5) G.vfx.burst(end, 'ember', 2, { speed: 3 });
         if (rand() < 0.4) G.vfx.burst(tmp.set(ax + dx * rand(), end.y, az + dz * rand()), 'trail', 1, { el: 'gold', size: 0.6, spread: 0.3 });
@@ -1770,7 +1772,7 @@ class Knight extends Enemy {
       r += speed * dt;
       const P = G.player;
       const dd = Math.hypot(P.pos.x - center.x, P.pos.z - center.z);
-      if (!hit && Math.abs(dd - r) < 0.9 && P.pos.y - G.world.ground(P.pos.x, P.pos.z) < 0.6 && P.blinkT <= 0) { hit = true; this.hurtPlayer(this.def.dmg, 8); }
+      if (!hit && Math.abs(dd - r) < 0.9 && P.pos.y - G.world.ground(P.pos.x, P.pos.z) < 0.6) { hit = true; this.hurtPlayer(this.def.dmg, 8); }
       if (Math.random() < 0.8) { const a = Math.random() * Math.PI * 2; G.vfx.burst(tmp.set(center.x + Math.cos(a) * r, center.y + 0.3, center.z + Math.sin(a) * r), 'electric', 1, { speed: 2 }); }
     });
   }
@@ -1999,7 +2001,7 @@ class Heart {
             r += sp * dt;
             const P = G.player;
             const dd = Math.hypot(P.pos.x - c.x, P.pos.z - c.z);
-            if (!hit && Math.abs(dd - r) < 1 && P.pos.y - G.world.ground(P.pos.x, P.pos.z) < 0.6 && P.blinkT <= 0) { hit = true; P.damage(Math.round(4 * (1 + 0.12 * (this.level - 1))), { dir: new THREE.Vector3(P.pos.x - c.x, 0, P.pos.z - c.z).normalize(), knock: 8 }); }
+            if (!hit && Math.abs(dd - r) < 1 && P.pos.y - G.world.ground(P.pos.x, P.pos.z) < 0.6) { hit = true; P.damage(Math.round(4 * (1 + 0.12 * (this.level - 1))), { dir: new THREE.Vector3(P.pos.x - c.x, 0, P.pos.z - c.z).normalize(), knock: 8 }); }
             if (Math.random() < 0.9) { const a = Math.random() * Math.PI * 2; G.vfx.burst(tmp.set(c.x + Math.cos(a) * r, c.y + 0.4, c.z + Math.sin(a) * r), 'hush', 1, { size: 0.6, spread: 0.2 }); }
           });
         }, 700);
@@ -2048,7 +2050,7 @@ class Heart {
             const px = ax + dx * tt, pz = az + dz * tt;
             const dd = Math.hypot(P.pos.x - px, P.pos.z - pz);
             const airborne = P.pos.y - G.world.ground(P.pos.x, P.pos.z) > 1.1;
-            if (dd < 1.1 && !airborne && tt > 0.08 && P.blinkT <= 0) P.damage(Math.round(3 * (1 + 0.12 * (this.level - 1))), { dir: new THREE.Vector3(-dz, 0, dx).normalize(), knock: 8 });
+            if (dd < 1.1 && !airborne && tt > 0.08) P.damage(Math.round(3 * (1 + 0.12 * (this.level - 1))), { dir: new THREE.Vector3(-dz, 0, dx).normalize(), knock: 8 });
             if (Math.random() < 0.8) G.vfx.burst(end, 'hush', 1, { size: 0.8 });
             if (Math.random() < 0.8) G.vfx.burst(tmp.set(ax + dx * Math.random(), end.y, az + dz * Math.random()), 'trail', 1, { el: 'arcane', size: 0.6, spread: 0.3 });
           }

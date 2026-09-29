@@ -106,19 +106,19 @@ export class Combat {
       case 'melt':
         dmg *= 2.2 * (R('h_thermal') ? 1.4 : 1); st.frozen = 0; st.chill = 0; st.wet = 5; st.wetFrozen = false; applyStatus = false;
         this.breakIce(t);
-        V.burst(c, 'steam', 10, { size: 0.8 }); V.burst(c, 'ice', 10); V.burst(c, 'fire', 14, { speed: 4 });
-        A.play('melt', { pos: c }); hs = 0.09; shake = 0.3;
+        V.react('melt', c);
+        A.play('melt', { pos: c }); A.play('steam', { pos: c, v: 0.5 }); hs = 0.09; shake = 0.3;
         break;
       case 'evaporate':
         dmg *= 1.6; st.wet = 0; applyStatus = false;
-        V.burst(c, 'steam', 12, { size: 0.9 }); A.play('steam', { pos: c }); hs = 0.07;
+        V.react('evaporate', c); A.play('steam', { pos: c }); A.play('sizzle', { pos: c, d: 0.4 }); hs = 0.07;
         break;
       case 'thermal': {
         const big = R('h_thermal');
         dmg *= 1.8 * (big ? 1.4 : 1); st.burn = 0; applyStatus = false;
         const rr = big ? 5 : 3.5;
-        V.burst(c, 'steam', 14); V.ring(c, PAL.frost.glow, rr + 0.5, 0.4, { y: -0.8 }); V.flash(c, 0xbfe8ff, 50, 12, 0.3);
-        A.play('steam', { pos: c });
+        V.react('thermal', c, { r: rr });
+        A.play('react_thermal', { pos: c });
         for (const o of this.others(t, c, rr)) this.hit(o, { dmg: P * 0.8, el: 'frost', noReact: true, pos: o.center(), dir: tmp.subVectors(o.center(), c).normalize().clone(), knock: 6 });
         hs = 0.09; shake = 0.3;
         break;
@@ -128,8 +128,9 @@ export class Combat {
         const perma = R('h_permafrost');
         this.freeze(t, 3.2 * (perma ? 2 : 1));
         if (perma) st.wetFrozen = true;
-        V.burst(c, 'ice', 14, { speed: 5 }); V.burst(c, 'frostmist', 6);
-        hs = 0.08;
+        V.react('flashfreeze', c);
+        A.play('react_flashfreeze', { pos: c });
+        hs = 0.08; shake = 0.2;
         break;
       }
       case 'shatter': {
@@ -138,9 +139,7 @@ export class Combat {
         st.frozen = 0; st.chill = 0; st.armorBroken = 8; st.wetFrozen = false; applyStatus = el === 'storm' ? false : applyStatus;
         this.breakIce(t, true);
         const rr = 4.2 * (1 + 0.25 * br);
-        V.burst(c, 'ice', 36, { speed: 11, size: 1.4 }); V.burst(c, 'frostmist', 10); V.burst(c, 'star', 1, { size: 5, el: 'frost' });
-        V.ring(c, PAL.frost.core, rr + 0.8, 0.45, { y: -0.8, thick: 0.25 });
-        V.flash(c, 0xd8f6ff, 90, 16, 0.35);
+        V.react('shatter', c, { r: rr });
         A.play('shatter', { pos: c });
         for (const o of this.others(t, c, rr)) this.hit(o, { dmg: P * 1.0, el: 'frost', noReact: true, pos: o.center(), knock: 8 });
         hs = 0.14; shake = 0.55; impact(0.6);
@@ -161,14 +160,15 @@ export class Combat {
         for (const o of chained) {
           const oc = o.center();
           V.lightning(from, oc, { width: 0.12, dur: 0.35, branches: 1 });
+          V.lightning(from, oc, { width: 0.04, dur: 0.22, branches: 0, jag: 0.2, segs: 10, color: PAL.water.core, glow: PAL.water.glow });
           o.st.wet = 0; o.st.stun = Math.max(o.st.stun, 1.5);
           this.hit(o, { dmg: P * 1.2, el: 'storm', noReact: true, pos: oc, hitstop: 0 });
           this.electrify(o, eDmg, 4);
           V.burst(oc, 'electric', 14);
           from = oc;
         }
-        V.burst(c, 'electric', 20); V.burst(c, 'water', 10, { speed: 4 }); V.flash(c, 0xffe86a, 60, 14, 0.3);
-        A.play('chain', { pos: c });
+        V.react('conduct', c);
+        A.play('chain', { pos: c }); A.play('splash', { pos: c, v: 0.5 });
         hs = 0.1; shake = 0.35;
         break;
       }
@@ -176,8 +176,7 @@ export class Combat {
         const oc = R('s_overload');
         dmg *= 2.2 * (1 + 0.25 * oc); st.burn = 0; st.armorBroken = 8; applyStatus = false;
         const rr = 5 * (1 + 0.2 * oc);
-        V.burst(c, 'fire', 30, { speed: 7 }); V.burst(c, 'electric', 20); V.burst(c, 'ember', 16);
-        V.ring(c, PAL.fire.glow, rr + 0.5, 0.5, { y: -0.8, thick: 0.3 }); V.flash(c, 0xffa040, 90, 16, 0.4);
+        V.react('overload', c, { r: rr });
         A.play('overload', { pos: c });
         for (const o of this.others(t, c, rr)) this.hit(o, { dmg: P * 1.5, el: 'fire', noReact: true, pos: o.center(), dir: tmp.subVectors(o.center(), c).normalize().clone(), knock: 14, lift: 5 });
         h.knock = (h.knock || 0) + 12; h.lift = 5;
@@ -192,11 +191,12 @@ export class Combat {
         dmg *= 1.4;
         const cr = R('w_carrier');
         const rr = 7 * (1 + 0.3 * cr);
-        V.burst(c, 'fire', 24, { speed: 6 }); V.burst(c, 'wind', 16, { radius: 1.5 });
-        A.play('impact_fire', { pos: c });
+        V.react('firestorm', c, { r: rr });
+        A.play('react_firestorm', { pos: c });
         const lit = [];
         for (const o of this.others(t, c, rr)) {
           V.burst(o.center(), 'fire', 10);
+          V.lightning(c, o.center(), { color: PAL.fire.core, glow: PAL.fire.glow, width: 0.1, dur: 0.25, branches: 0, jag: 0.08, segs: 8 });
           this.ignite(o, 5 + 2 * cr, P * (0.2 + 0.05 * cr));
           this.hit(o, { dmg: P * 0.6, el: 'fire', noReact: true, pos: o.center(), hitstop: 0 });
           lit.push(o);
@@ -215,9 +215,9 @@ export class Combat {
       case 'blizzard': {
         dmg *= 1.3;
         const cr = R('w_carrier');
-        V.burst(c, 'frostmist', 14, { size: 1.2 }); V.burst(c, 'ice', 14);
-        A.play('freeze', { pos: c });
-        for (const o of this.others(t, c, 7 * (1 + 0.3 * cr))) { this.addChill(o, 2 + cr); this.hit(o, { dmg: P * 0.4, el: 'frost', noReact: true, pos: o.center(), hitstop: 0 }); }
+        V.react('blizzard', c, { r: 7 * (1 + 0.3 * cr) });
+        A.play('react_blizzard', { pos: c });
+        for (const o of this.others(t, c, 7 * (1 + 0.3 * cr))) { V.sparks(c, tmp.subVectors(o.center(), c).normalize(), 5, { el: 'frost', spread: 0.15, speed: 18, grav: 0, life: 0.35, w: 0.035 }); this.addChill(o, 2 + cr); this.hit(o, { dmg: P * 0.4, el: 'frost', noReact: true, pos: o.center(), hitstop: 0 }); }
         hs = 0.07;
         break;
       }
@@ -225,22 +225,22 @@ export class Combat {
         dmg *= 1.3;
         const cr = R('w_carrier');
         for (const o of this.others(t, c, 7 * (1 + 0.3 * cr))) { V.lightning(c, o.center(), { width: 0.08, dur: 0.25, branches: 0 }); o.st.shock = 3 + cr; o.st.stun = Math.max(o.st.stun, 0.6); this.hit(o, { dmg: P * 0.5, el: 'storm', noReact: true, pos: o.center(), hitstop: 0 }); }
-        A.play('chain', { pos: c });
+        V.react('stormspread', c, { r: 7 * (1 + 0.3 * cr) });
+        A.play('react_stormspread', { pos: c });
         break;
       }
       case 'extinguish': {
         dmg *= 0.5; st.burn = 0; applyStatus = true;
-        V.burst(c, 'steam', 14, { size: 1 }); V.burst(c, 'smoke', 4, { size: 0.8 });
-        A.play('fizzle', { pos: c }); A.play('steam', { pos: c, v: 0.6 });
+        V.react('extinguish', c);
+        A.play('react_extinguish', { pos: c }); A.play('fizzle', { pos: c });
         this.steamCloud(c, t);
         hs = 0.04;
         break;
       }
       case 'scald': {
         dmg *= 1.6; st.burn = 0; applyStatus = true;
-        V.burst(c, 'steam', 26, { size: 1.4, spread: 1.5 }); V.burst(c, 'water', 16, { speed: 7 }); V.burst(c, 'fire', 10, { speed: 5 });
-        V.ring(c, PAL.white.core, 5, 0.45, { y: -0.8, thick: 0.25 }); V.flash(c, 0xfff0e0, 60, 14, 0.3);
-        A.play('steam', { pos: c }); A.play('explosion', { pos: c, v: 0.45 });
+        V.react('scald', c, { r: 3.5 });
+        A.play('react_scald', { pos: c }); A.play('steam', { pos: c, v: 0.6 });
         for (const o of this.others(t, c, 3.5)) this.hit(o, { dmg: P * 0.8, el: 'fire', noReact: true, noStatus: true, pos: o.center(), dir: tmp.subVectors(o.center(), c).normalize().clone(), knock: 7, lift: 3 });
         this.steamCloud(c, t);
         hs = 0.1; shake = 0.35; impact(0.35);
@@ -249,25 +249,23 @@ export class Combat {
       case 'shortcircuit': {
         dmg *= 1.4; st.stun = Math.max(st.stun, 0.8); applyStatus = true;
         this.electrify(t, P * 0.18 * (1 + 0.4 * R('s_conduct')), 3);
-        V.burst(c, 'electric', 22, { speed: 6 }); V.burst(c, 'water', 10);
-        for (let i = 0; i < 3; i++) V.lightning(c, c.clone().add(tmp.set(randRange(-1.6, 1.6), randRange(-1, 1.4), randRange(-1.6, 1.6))), { width: 0.05, dur: 0.2, branches: 0 });
-        A.play('impact_storm', { pos: c }); A.play('fizzle', { pos: c });
+        V.react('shortcircuit', c);
+        A.play('react_shortcircuit', { pos: c }); A.play('fizzle', { pos: c });
         hs = 0.08; shake = 0.25;
         break;
       }
       case 'superconduct': {
         dmg *= 1.6; st.armorBroken = 8; applyStatus = true;
-        V.burst(c, 'ice', 16, { speed: 6 }); V.burst(c, 'electric', 18, { speed: 6 });
-        V.ring(c, PAL.frost.core, 3.5, 0.35, { y: -0.8, thick: 0.25 }); V.flash(c, 0xd9f0ff, 60, 12, 0.3);
-        A.play('shatter', { pos: c, v: 0.6 }); A.play('impact_storm', { pos: c });
+        V.react('superconduct', c);
+        A.play('react_superconduct', { pos: c }); A.play('impact_storm', { pos: c });
         hs = 0.1; shake = 0.3;
         break;
       }
       case 'monsoon': {
         dmg *= 1.2;
-        V.burst(c, 'water', 30, { speed: 9 }); V.burst(c, 'splash', 12, { speed: 6 }); V.burst(c, 'wind', 12, { radius: 1.2 });
-        A.play('splash', { pos: c });
-        for (const o of this.others(t, c, 6)) { o.st.wet = Math.max(o.st.wet, R('wa_soak') ? 12 : 7); V.burst(o.center(), 'water', 8); }
+        V.react('monsoon', c, { r: 6 });
+        A.play('react_monsoon', { pos: c }); A.play('splash', { pos: c });
+        for (const o of this.others(t, c, 6)) { o.st.wet = Math.max(o.st.wet, R('wa_soak') ? 12 : 7); V.burst(o.center(), 'water', 8); V.sparks(c, tmp.subVectors(o.center(), c).normalize(), 4, { el: 'water', spread: 0.2, speed: 14, grav: 6, life: 0.4 }); }
         hs = 0.06;
         break;
       }
@@ -275,7 +273,8 @@ export class Combat {
         const ec = R('a_echo');
         dmg *= [1.3, 1.55, 1.8][ec];
         if (ec) { if (st.burn > 0) st.burn += ec; if (st.shock > 0) st.shock += ec; if (st.wet > 0) st.wet += ec; if (st.frozen > 0) st.frozen += ec * 0.5; if (st.electro > 0) st.electro += ec; }
-        V.burst(c, 'arcane', 8);
+        V.react('resonance', c);
+        A.play('react_resonance', { pos: c, gap: 0.08 });
         if (R('h_prism')) {
           let n = 0;
           if (st.burn > 0) { n++; st.burn = 0; V.burst(c, 'fire', 12, { speed: 5 }); }
@@ -284,8 +283,8 @@ export class Combat {
           if (st.wet > 0) { n++; st.wet = 0; V.burst(c, 'water', 12, { speed: 5 }); }
           if (n) {
             dmg *= 1 + 0.3 * n;
-            V.ring(c, PAL.arcane.core, 3 + n, 0.4, { y: -0.8, thick: 0.25 }); V.burst(c, 'star', 1, { el: 'arcane', size: 3 + n });
-            A.play('impact_arcane', { pos: c }); hs = 0.06 + n * 0.02; shake = 0.15 + n * 0.08;
+            V.react('prism', c, { r: 3 + n });
+            A.play('react_prism', { pos: c }); hs = 0.06 + n * 0.02; shake = 0.15 + n * 0.08;
           }
         }
         break;
@@ -293,7 +292,7 @@ export class Combat {
     }
 
     // airborne bonus
-    if (t.airborne && h.source === 'player') { dmg *= 1.3; if (!reaction && h.heavy) reaction = 'airborne'; }
+    if (t.airborne && h.source === 'player') { dmg *= 1.3; if (!reaction && h.heavy) { reaction = 'airborne'; V.react('airborne', c); } }
 
     // apply status of element
     if (applyStatus && !h.noStatus) this.applyStatus(t, el, h.status ?? 1, P);
@@ -318,7 +317,7 @@ export class Combat {
 
     // feedback
     if (h.source !== 'enemy' && h.source !== 'dot') {
-      G.hitstop = Math.max(G.hitstop, hs);
+      G.hitstop = Math.max(G.hitstop, hs + (crit ? 0.025 : 0));
       G.cameraRig.shake(shake);
       G.hud.damage(c, dmg, el, crit, reaction);
       if (reaction && REACTIONS[reaction]) {
@@ -328,15 +327,26 @@ export class Combat {
       if (reaction && G.story) G.story.onReaction(reaction);
       if (reaction && G.player) G.player.stats.reactions++;
       if (reaction && reaction !== 'airborne' && byPlayer) this.chainUp(reaction);
-      A.play('hit_flesh', { pos: c, v: h.heavy ? 1 : 0.7 });
-      V.burst(pos, 'spark', h.heavy ? 14 : 7, { el });
-      V.burst(pos, 'star', 1, { el, size: h.heavy ? 3.5 : 2, life: 0.12 });
+      const big = !!h.heavy || !!reaction;
+      A.play('hit', { pos: c, el, heavy: big, v: h.heavy ? 1 : 0.8, gap: 0.03 });
+      if (crit) A.play('crit', { pos: c, gap: 0.05 });
+      const hd = h.dir || (G.camera ? tmp.subVectors(c, G.camera.position).normalize() : null);
+      V.hit(pos, hd, el, { heavy: big, crit });
+      if (byPlayer && G.cameraRig.kick) {
+        G.cameraRig.kick(hd, (reaction ? 0.3 : h.heavy ? 0.2 : 0.06) + (crit ? 0.1 : 0));
+        if (reaction && shake >= 0.3 && G.cameraRig.punchFov) G.cameraRig.punchFov(1.5 + shake * 3);
+      }
       if (byPlayer && K()) K().charge(reaction ? 7 : h.heavy ? 2.5 : 1.2);
     }
     t.onHit && t.onHit(h, dmg, reaction);
     if (t.hp <= 0) {
       t.hp = 0;
       if (h.source !== 'enemy') { G.hitstop = Math.max(G.hitstop, 0.09); G.cameraRig.shake(0.2); }
+      if (byPlayer) {
+        A.play('kill', { pos: c, gap: 0.06 });
+        V.kill(c, el);
+        if (h.source !== 'dot' && G.cameraRig.kick) G.cameraRig.kick(h.dir || tmp.subVectors(c, G.camera.position).normalize(), 0.25);
+      }
       if (byPlayer) this.onKill(t);
       this.popBubble(t);
       t.die(h);
@@ -380,6 +390,7 @@ export class Combat {
       const P = G.player.power();
       V.burst(c, 'ice', 30, { speed: 10, size: 1.2 }); V.ring(c, PAL.frost.core, 5, 0.4, { y: -0.8, thick: 0.25 });
       G.audio.play('shatter', { pos: c, v: 0.7 });
+      V.sparks(c, null, 20, { pal: PAL.frost, speed: 18, grav: 10, life: 0.5, w: 0.05 });
       for (const o of this.others(t, c, 4.5)) { this.hit(o, { dmg: P, el: 'frost', noReact: true, pos: o.center(), knock: 6, hitstop: 0 }); this.addChill(o, 2); }
     }
   }
@@ -428,6 +439,8 @@ export class Combat {
     st.frozen = dur + (t.boss ? 0 : 0.6 * R('i_deep'));
     G.audio.play('freeze', { pos: t.center() });
     G.vfx.burst(t.center(), 'frostmist', 8);
+    G.vfx.burst(t.center(), 'shard', 6, { speed: 4 });
+    if (t.pos && t.rig) G.vfx.decal(t.pos, 'frost', Math.max(1.2, t.radius * 2.2), { dur: Math.min(12, dur + 2) });
     if (!st.ice && t.pos && t.rig) {
       const g = new THREE.Group();
       const n = 6;
@@ -471,7 +484,9 @@ export class Combat {
     const st = t.st;
     if (!st || !st.bubbleMesh) return;
     G.vfx.burst(t.center(), 'water', 24, { speed: 6 }); G.vfx.burst(t.center(), 'splash', 8);
-    G.audio.play('splash', { pos: t.center() });
+    G.vfx.crown(t.center(), 18, { speed: 7 });
+    if (t.pos) G.vfx.decal(t.pos, 'wet', 2.2);
+    G.audio.play('splash', { pos: t.center() }); G.audio.play('impact_water', { pos: t.center() });
     G.vfx.disposeOrb(st.bubbleMesh); st.bubbleMesh = null; st.bubble = 0;
   }
 

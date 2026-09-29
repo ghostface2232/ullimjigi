@@ -670,7 +670,15 @@ export class HumanRig extends Rig {
     q.hipsPY += lk * 0.03 * (0.6 + this.landImpulse);
     q.spinex -= lk * 0.08; q.headx += lk * 0.05; q.armLz -= lk * 0.08; q.armRz += lk * 0.08;
     // --- head look
-    const lookY = clamp((s.lookYaw ?? this.lookYaw) + this.idleLook, -1.1, 1.1), lookP = clamp(this.lookPitch, -0.5, 0.5);
+    let lyaw = s.lookYaw ?? this.lookYaw, lpitch = this.lookPitch;
+    if (this.lookPoint) {
+      // head turns toward a world point (dialogue partner, camera, ...)
+      const lp = this.lookPoint;
+      const dx = lp.x - e[12], dz = lp.z - e[14];
+      lyaw = wrapA(Math.atan2(dx, dz) - yaw);
+      lpitch = -Math.atan2(lp.y - (e[13] + this.height * 0.92), Math.hypot(dx, dz) + 1e-3);
+    }
+    const lookY = clamp(lyaw + this.idleLook, -1.1, 1.1), lookP = clamp(lpitch, -0.5, 0.5);
     this.headYaw = damp(this.headYaw ?? 0, lookY * (1 - lie), 7, dt);
     this.headPitch = damp(this.headPitch ?? 0, lookP, 7, dt);
     q.heady += this.headYaw * 0.7; q.necky += this.headYaw * 0.3; q.chesty += this.headYaw * 0.12;

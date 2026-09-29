@@ -13,9 +13,15 @@
 //   rig.hurt(), rig.flick(kind)  hit flinch; cast release ('bolt'|'heavy'|'weave'|'ult')
 //   rig.lookYaw/lookPitch   head look (radians, relative to the body)
 //   rig.p.{hips, torso, head, legL/R, shinL/R, armL/R, foreL/R, handL/R, staff, gem, tip}
-//     p.torso is a carry anchor that follows the chest; its local frame matches the
-//     character's root frame at rest (so `torso.add(obj); obj.position.set(0.22, 1.62, -0.05)`
-//     puts obj on the right shoulder). p.head is centered in the head.
+//     p.torso is a carry anchor that follows the chest, oriented like the root at rest and
+//     offset so y = 1.62 is shoulder height for any build (the cat rides at (0.22, 1.62, -0.05):
+//     the left shoulder, since a character's left is +X). p.head is centered in the head.
+//   Enemy extras: p.swordEdge (knight), armor[] (brute rocks), eyeTip (watcher), p.foreR.
+//
+// MODULES: charkit.js (sculpt/skin/IK/verlet toolkit), humanoid.js + humanrig.js (people),
+//   creatures.js (fox, cat, CreatureRig), enemybodies.js / enemycreatures.js (enemies).
+//   Geometry is built once per type and shared; bones, materials and springs are per instance.
+//   Secondary motion and foot IK run only near the camera (rig.lod).
 //
 // EXPRESSIONS & GESTURES (humanoids; safe no-ops on other rigs)
 //   rig.setExpression(name, holdSec?)   blend (~0.25 s) to a facial expression and keep it
@@ -25,7 +31,8 @@
 //       'nod', 'shake', 'bow', 'point', 'laugh', 'sigh', 'shrug', 'handToChest', 'wave',
 //       'think', 'beckon', 'lookAround', 'crossArms' (crossArms holds until cleared by
 //       gesture(null)). opts: { speed, amp }. Returns duration in seconds.
-//   rig.lookAt(worldPos | null)         eyes + head track a world point (dialogue camera etc.)
+//   rig.lookAt(worldPos | null)         eyes + head track a world point (dialogue partner, camera);
+//       null returns to state.lookYaw / rig.lookYaw.
 //   rig.expression / rig.gestureName    current values
 //   While `talk` is true and the dialogue box is typing, the mouth flaps and small beat
 //   gestures play automatically.

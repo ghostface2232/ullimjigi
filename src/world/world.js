@@ -278,7 +278,7 @@ export class World {
         G.vfx.burst(fl.pos, 'fire', 24, { speed: 3 }); G.vfx.burst(fl.pos, 'ember', 12);
         G.vfx.flash(fl.pos, 0xff8a3a, 40, 12, 0.6);
         if (tgt.onLit) tgt.onLit(tgt);
-      } else if ((el === 'frost' || el === 'wind') && tgt.lit && !tgt.permanent) {
+      } else if ((el === 'frost' || el === 'wind' || el === 'water') && tgt.lit && !tgt.permanent) {
         tgt.lit = fl.lit = false;
         b.userData.coal.material = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.15, 0.1, 0.1) });
         G.vfx.burst(fl.pos, 'smoke', 8); G.audio.play('fizzle', { pos: fl.pos });

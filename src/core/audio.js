@@ -676,3 +676,70 @@ S.dissolve = function (o) {
   const out = this.bus(o.pos, 1, 0.6); if (!out) return;
   this.noise({ out, f: 2000, f2: 500, q: 1, a: 0.3, d: 1.2, v: 0.2 });
 };
+
+// ----- enemies (overhaul) -----
+// Bright "ting" right before a dangerous enemy attack lands (BotW-style glint)
+S.enemy_glint = function (o) {
+  const out = this.bus(o.pos, 1, 0.45); if (!out) return;
+  this.tone({ out, f: 2640, f2: 3520, d: 0.35, v: 0.07 });
+  this.tone({ out, type: 'triangle', f: 5280, d: 0.22, v: 0.03 });
+  this.noise({ out, type: 'highpass', f: 7000, d: 0.12, v: 0.06 });
+};
+S.shield_clang = function (o) {
+  const out = this.bus(o.pos, 1, 0.3); if (!out) return;
+  this.tone({ out, f: 210, f2: 120, d: 0.18, v: 0.4 });
+  [820, 1330, 1960, 2710].forEach((f, i) => this.tone({ out, type: 'triangle', f: f * randRange(0.97, 1.03), d: 0.5 - i * 0.08, v: 0.06 }));
+  this.noise({ out, f: 3200, q: 4, d: 0.07, v: 0.35 });
+};
+S.shield_break = function (o) {
+  const out = this.bus(o.pos, 1, 0.4); if (!out) return;
+  this.tone({ out, f: 140, f2: 45, d: 0.4, v: 0.6 });
+  this.noise({ out, type: 'lowpass', f: 1800, f2: 200, d: 0.5, v: 0.45 });
+  [640, 990, 1450].forEach((f, i) => this.tone({ out, type: 'triangle', f, f2: f * 0.8, t: i * 0.05, d: 0.6, v: 0.05 }));
+  this.crackle(out, 10, 0.35, 0.14, 1800);
+};
+S.arrow_draw = function (o) {
+  const out = this.bus(o.pos, 0.9, 0.2); if (!out) return;
+  this.noise({ out, f: 500, f2: 1600, q: 5, a: 0.5, d: 0.25, v: 0.12 });
+  this.tone({ out, type: 'sawtooth', f: 180, f2: 260, a: 0.55, d: 0.2, v: 0.02 });
+};
+S.arrow_loose = function (o) {
+  const out = this.bus(o.pos, 1, 0.3); if (!out) return;
+  this.tone({ out, type: 'triangle', f: 330, f2: 180, d: 0.18, v: 0.18 });
+  this.noise({ out, f: 1200, f2: 4200, q: 1.5, d: 0.16, v: 0.3 });
+  this.tone({ out, f: 1760, f2: 1400, d: 0.25, v: 0.03 });
+};
+S.burrow = function (o) {
+  const out = this.bus(o.pos, 0.9, 0.2); if (!out) return;
+  this.noise({ out, buf: 'brown', type: 'lowpass', f: 320, f2: 140, a: 0.1, d: o.d || 0.7, v: 0.5 });
+  this.crackle(out, 6, 0.5, 0.06, 900);
+};
+S.root_burst = function (o) {
+  const out = this.bus(o.pos, 1, 0.35); if (!out) return;
+  this.tone({ out, f: 95, f2: 35, d: 0.45, v: 0.8 });
+  this.noise({ out, type: 'lowpass', f: 1400, f2: 160, d: 0.6, v: 0.55 });
+  for (let i = 0; i < 8; i++) this.noise({ out, t: Math.random() * 0.25, d: 0.05, v: 0.16, f: randRange(500, 1800), q: 3 });
+};
+S.enemy_panic = function (o) {
+  const out = this.bus(o.pos, 0.8, 0.3); if (!out) return;
+  const bp = this.filter('bandpass', 1400, 5, out);
+  for (let i = 0; i < 3; i++) this.tone({ out: bp, type: 'sawtooth', f: randRange(560, 680), f2: randRange(820, 980), t: i * 0.13, d: 0.12, v: 0.2 });
+};
+S.body_fall = function (o) {
+  const out = this.bus(o.pos, o.v || 1, 0.2); if (!out) return;
+  this.tone({ out, f: 120, f2: 40, d: 0.25, v: 0.5 });
+  this.noise({ out, type: 'lowpass', f: 700, f2: 150, d: 0.3, v: 0.35 });
+};
+S.enemy_dissolve = function (o) {
+  const out = this.bus(o.pos, o.v || 1, 0.6); if (!out) return;
+  this.noise({ out, type: 'highpass', f: 2600, f2: 6000, a: 0.15, d: 0.9, v: 0.12 });
+  this.noise({ out, f: 1400, f2: 380, q: 1, a: 0.2, d: 1.0, v: 0.16 });
+  const base = [74, 77, 81, 84];
+  for (let i = 0; i < 3; i++) this.note(out, base[i + (Math.random() < 0.5 ? 0 : 1)], 0.2 + i * 0.12, 0.035, 1.3);
+};
+S.sentinel_charge = function (o) {
+  const out = this.bus(o.pos, 1, 0.5); if (!out) return;
+  this.tone({ out, f: 220, f2: 880, a: 0.05, d: o.d || 1.1, v: 0.08 });
+  this.tone({ out, f: 223, f2: 890, a: 0.05, d: o.d || 1.1, v: 0.08 });
+  this.noise({ out, type: 'highpass', f: 3000, f2: 7000, a: 0.3, d: o.d || 1.1, v: 0.05 });
+};

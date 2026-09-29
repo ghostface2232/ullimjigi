@@ -238,8 +238,8 @@ export class Player {
       // hot air over wildfire (and other heat sources) carries a glider up
       const lift = G.env ? G.env.liftAt(this.pos.x, this.pos.y, this.pos.z) : 0;
       if (lift > 0.02) {
-        if (this.gliding) { this.vel.y += GRAV * dt * Math.min(1, lift * 1.5); this.vel.y = damp(this.vel.y, 4 + 12 * lift, 3.5, dt); }
-        else if (!this.grounded) this.vel.y += 9 * lift * dt;
+        if (this.gliding) { this.vel.y += GRAV * dt * Math.min(0.85, lift); this.vel.y = damp(this.vel.y, 1 + 4.5 * lift, 2.2, dt); }
+        else if (!this.grounded) this.vel.y += 4 * lift * dt;
         if (this.gliding && G.story && G.story.once('updraft1')) G.hud.toast('뜨거운 바람이 몸을 들어 올린다!');
       }
       this.vel.y = Math.max(this.vel.y, -42);

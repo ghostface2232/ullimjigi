@@ -179,8 +179,9 @@ export class Wildfire {
     }
     if (heat <= 0) return 0;
     const above = y - this.T.h[i0];
-    if (above > 26) return 0;
-    return Math.min(1, heat / 2.2) * (1 - Math.max(0, above - 14) / 12);
+    // a modest column: strong near the flames, gone by ~12 m
+    if (above > 12) return 0;
+    return Math.min(1, heat / 2.6) * (1 - Math.max(0, above - 6) / 6);
   }
 
   update(dt, camPos, playerPos) {

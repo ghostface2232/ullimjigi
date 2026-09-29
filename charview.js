@@ -91,7 +91,7 @@ function render() { renderer.render(scene, cam); }
 let tris = 0;
 const info = {};
 for (const r of rigs) {
-  let n = 0; r.root.traverse((o) => { if (o.isMesh && o.visible && o.geometry) { const g = o.geometry; const c = g.index ? g.index.count / 3 : g.attributes.position.count / 3; n += c; } });
+  let n = 0; r.root.traverse((o) => { if (o.isMesh && o.visible && o.geometry) { const g = o.geometry; const c = (g.index ? Math.min(g.index.count, g.drawRange.count) : g.attributes.position.count) / 3; n += c; } });
   info[r.key] = Math.round(n);
 }
 // simulate one rig for n steps: st(t) -> state, mv: velocity [vx, vz] (moves the root), yawRate

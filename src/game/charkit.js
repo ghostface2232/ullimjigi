@@ -698,21 +698,56 @@ export function ghostSkinMat(color = 0xbfe8ff, alpha = 0.55) {
 
 // ---------------------------------------------------------------------------
 // Instance a built type: bones + SkinnedMesh (+ outline) under `parent`.
+// One SkinnedMesh per material group (sharing attributes, index and skeleton),
+// so every mesh has a single material: callers flash `emissive`, dissolve via
+// `userData.dissolve` and hide glow meshes per material.
+function groupGeos(built) {
+  if (built.parts) return built.parts;
+  const g = built.geo;
+  built.parts = g.groups.map((gr) => {
+    const p = new THREE.BufferGeometry();
+    for (const k in g.attributes) p.setAttribute(k, g.attributes[k]);
+    p.setIndex(g.index);
+    p.setDrawRange(gr.start, gr.count);
+    p.boundingSphere = g.boundingSphere;
+    return p;
+  });
+  return built.parts;
+}
 export function instance(parent, def, built, mats, o = {}) {
   const inst = def.instance();
   parent.add(inst.root);
   parent.updateMatrixWorld(true);
   const skeleton = new THREE.Skeleton(inst.bones);
-  const mesh = new THREE.SkinnedMesh(built.geo, built.mats.map((k) => mats[k]));
-  parent.add(mesh);
-  mesh.updateMatrixWorld(true);
-  mesh.bind(skeleton, mesh.matrixWorld);
-  mesh.castShadow = true;
-  mesh.boundingSphere = new THREE.Sphere(built.geo.boundingSphere.center.clone(), built.geo.boundingSphere.radius * 1.5 + 0.3);
-  mesh.frustumCulled = true;
+  const parts = groupGeos(built);
+  const bs = new THREE.Sphere(built.geo.boundingSphere.center.clone(), built.geo.boundingSphere.radius * 1.5 + (o.bsPad ?? 0.3));
+  const meshes = [];
+  const byGroup = {};
+  built.mats.forEach((k, i) => {
+    if (!mats[k]) return;
+    const mesh = new THREE.SkinnedMesh(parts[i], mats[k]);
+    mesh.name = k;
+    parent.add(mesh);
+    mesh.updateMatrixWorld(true);
+    mesh.bind(skeleton, mesh.matrixWorld);
+    mesh.castShadow = o.shadow ?? true;
+    mesh.boundingSphere = bs;
+    meshes.push(mesh); byGroup[k] = mesh;
+  });
+  const mesh = byGroup[o.main] || meshes[0];
   let outline = null;
-  if (o.outline) outline = skinOutline(mesh, o.outline, o.outlineColor);
-  return { ...inst, skeleton, mesh, outline };
+  if (o.outline) {
+    // one hull for the whole body (full geometry), bound to the same skeleton
+    const full = built.fullOl || (built.fullOl = built.geo);
+    const ol = new THREE.SkinnedMesh(full, full.attributes.olw ? olMat(o.outlineColor ?? 0x1a1410, o.outline) : outlineMat(o.outlineColor ?? 0x1a1410, o.outline));
+    ol.bind(skeleton, mesh.bindMatrix);
+    ol.castShadow = false; ol.receiveShadow = false;
+    ol.userData.isOutline = true;
+    ol.boundingSphere = bs;
+    parent.add(ol);
+    outline = ol;
+  }
+  return { ...inst, skeleton, mesh, meshes, byGroup, outline };
 }
 
 // ---------------------------------------------------------------------------

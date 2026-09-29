@@ -249,9 +249,17 @@ export class World {
     }
     // path markers: three small lantern posts for movement tutorial
     this.runMarkers = [];
-    for (const [x, z] of [[-4, 138], [-10, 130], [0, 124]]) {
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.08, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.3, 0.6), transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    for (const [x, z] of [[-2, 136], [-18, 137], [-20, 145.5]]) {
+      const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.3, 0.6), transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.08, 24), mat);
       m.position.set(x, this.h(x, z) + 0.06, z); this.scene.add(m);
+      const beamGeo = new THREE.CylinderGeometry(0.35, 0.8, 7, 16, 1, true); beamGeo.translate(0, 3.5, 0);
+      const bcol = new Float32Array(beamGeo.attributes.position.count * 3);
+      for (let i = 0; i < beamGeo.attributes.position.count; i++) { const k = 1 - beamGeo.attributes.position.getY(i) / 7; bcol[i * 3] = k; bcol[i * 3 + 1] = k; bcol[i * 3 + 2] = k; }
+      beamGeo.setAttribute('color', new THREE.BufferAttribute(bcol, 3));
+      const bmat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.55, 0.45, 0.2), vertexColors: true, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+      const beam = new THREE.Mesh(beamGeo, bmat); m.add(beam);
+      this.anims.push(() => { beam.rotation.y += 0.01; beam.scale.x = beam.scale.z = 1 + Math.sin(G.time * 3 + x) * 0.08; bmat.opacity = mat.opacity * (0.75 + Math.sin(G.time * 2.4 + x) * 0.25); });
       this.runMarkers.push({ mesh: m, x, z, done: false });
     }
   }

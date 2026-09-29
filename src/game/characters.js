@@ -574,9 +574,9 @@ export function makeKnight(spectral = false) {
 // 잿물 — ash ooze (slime). variant: ash | fire | frost
 // ------------------------------------------------------------------
 const OOZE = {
-  ash: { body: 0x2e2a38, glow: 0xc9a0ff, emi: 0x120a1a },
-  fire: { body: 0x6a2410, glow: 0xff7a2a, emi: 0x5a1804 },
-  frost: { body: 0x6a9ac0, glow: 0x9fe8ff, emi: 0x1a4a6a },
+  ash: { body: 0x4a3a66, glow: 0xd8b0ff, emi: 0x1c1030 },
+  fire: { body: 0xd8502a, glow: 0xffc040, emi: 0x6a1a04 },
+  frost: { body: 0x7ec8f0, glow: 0xe0fbff, emi: 0x1a5a80 },
 };
 export function makeOoze(variant = 'ash', size = 1) {
   const C = OOZE[variant];
@@ -590,12 +590,13 @@ export function makeOoze(variant = 'ash', size = 1) {
     p.setXYZ(i, x * n, (y < 0 ? y * 0.55 : y) * n, z * n);
   }
   geo.computeVertexNormals();
-  const mat = EM(C.body, { rim: 1.1, emissive: C.emi, transparent: true, opacity: 0.88 });
+  const mat = EM(C.body, { rim: 1.6, emissive: C.emi, transparent: true, opacity: 0.8 });
   const blob = new THREE.Mesh(geo, mat); blob.position.y = 0.36; blob.castShadow = true; body.add(blob);
   const glow = new THREE.MeshBasicMaterial({ color: new THREE.Color(C.glow).multiplyScalar(2.4) });
   const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2, 1), glow); core.position.y = 0.34; body.add(core);
   const eyes = [];
-  for (const sx of [-1, 1]) { const e = new THREE.Mesh(sph(1, 8, 6), glow); e.scale.set(0.05, 0.08, 0.03); e.position.set(sx * 0.17, 0.5, 0.52); body.add(e); eyes.push(e); }
+  for (const sx of [-1, 1]) { const e = new THREE.Mesh(sph(1, 8, 6), glow); e.scale.set(0.07, 0.1, 0.04); e.position.set(sx * 0.19, 0.52, 0.54); e.rotation.z = sx * 0.4; body.add(e); eyes.push(e); }
+  const mouth = new THREE.Mesh(sph(1, 8, 6), new THREE.MeshBasicMaterial({ color: 0x10060a })); mouth.scale.set(0.16, 0.05, 0.04); mouth.position.set(0, 0.34, 0.58); body.add(mouth);
   // drips
   const drips = [];
   for (let i = 0; i < 5; i++) {

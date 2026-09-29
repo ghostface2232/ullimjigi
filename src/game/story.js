@@ -8,7 +8,9 @@ import { POI, regionAt } from '../world/layout.js';
 import { MEMORIES } from '../world/world.js';
 import { THEME_NOTES } from '../core/music.js';
 import { PAL } from '../render/vfx.js';
-import { pick, randRange, rand, fillName, clamp, lerp } from '../core/util.js';
+import { HEAVY } from './spells.js';
+import { SIG, WEAVE_NODE } from './skills.js';
+import { pick, randRange, rand, fillName, clamp, lerp, josa } from '../core/util.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const GV = (x, dy, z) => new THREE.Vector3(x, G.world.h(x, z) + dy, z); // ground-relative
@@ -213,6 +215,8 @@ export class Story {
 
   // ------------------------------------------------------------ main loop
   start() {
+    // the fireball is Mora's gift in the prologue: make sure it stays learned on any save past that point
+    if (this.flag('p_heavy') && G.skills && !G.skills.has('f_sig')) G.skills.grant('f_sig', { silent: true });
     this.setupNPCs();
     G.world.sky.hush = this.hushBase;
     // restore lantern states handled by game
@@ -365,9 +369,14 @@ export class Story {
       await this.sleep(0.8);
       await this.conv(async () => {
         await this.say('mora', '따뜻하구나. …이 탑에 불이 이렇게 환하게 켜진 게 얼마 만인지.');
-        await this.say('mora', '마지막이다. 불의 노래를 *크게* 불러 보렴. 오른손에 힘을 모아서— 저 허수아비 영감들에게!');
+        await this.say('mora', '마지막이다. 불의 노래는 작게 부르는 법과 *크게* 부르는 법이 따로 있단다. 크게 부르는 건… 이 할미가 네 나이 때 처음 익힌 기술이지.', { expr: 'smile' });
+        await this.say('mora', '오른손에 힘을 모아서— 저 허수아비 영감들에게! 잘 보고 따라 해 보렴.', { gesture: 'point' });
       });
-      this.hint(`${KBD('우클릭')} 고유 마법 — [화염구] · 마나를 소모합니다`, 10);
+      if (!G.skills.has('f_sig')) {
+        G.skills.grant('f_sig', { quiet: true, sound: 'skill_unlock_active' });
+        G.hud.banner('새로운 기술', HEAVY.fire.name, `화염을 고르고 ${KBD('우클릭')} — 거대한 불덩이를 던져 넓게 불태운다<br><small>마나 ${HEAVY.fire.cost} · 재사용 ${HEAVY.fire.cd}초 · 다른 속성의 고유 마법은 울림 나무에서 하나씩 익힌다</small>`, EL_INFO.fire.css, 4600);
+      }
+      this.hint(`${KBD('우클릭')} 고유 마법 — <b style="color:${EL_INFO.fire.css}">${HEAVY.fire.name}</b> · 마나 ${HEAVY.fire.cost} 소모<br><small>마나는 싸우는 동안 천천히 차오른다 — 아껴 쓰자</small>`, 10);
       this.obj('q_morning', '허수아비에게 화염구 날리기', W.training.dummies.map((d) => ({ x: d.pos.x, z: d.pos.z, h: 3 })));
       let ok = false;
       for (const d of W.training.dummies) d.onHit = (el) => { if (el === 'fire' && G.time - (this.heavyFireT || -9) < 3.5) ok = true; };
@@ -544,7 +553,8 @@ export class Story {
       await this.say('boreum', '약속대로다. 이 몸의 노래를 빌려주마. *하늬바람*이니라. 흐르는 것은 막을 수 없느니.');
     });
     await this.unlockElement('wind', '흐르는 노래. 적을 띄우고 밀어내며, 불과 한기를 퍼뜨린다.');
-    this.hint(`${KBD('3')} 바람 · ${KBD('Q')} <b>엮기</b> — 직전에 쓰던 속성과 지금 속성을 엮어 강력한 마법을 쓴다<br><small>예: 화염 → 바람으로 바꾼 뒤 Q = 화염 회오리</small>`, 12);
+    if (G.skills.has(WEAVE_NODE)) this.hint(`${KBD('3')} 바람 · ${KBD('Q')} <b>엮기</b> — 직전에 쓰던 속성과 지금 속성을 엮어 강력한 마법을 쓴다<br><small>예: 화염 → 바람으로 바꾼 뒤 Q = 화염 회오리 · 고유 마법 <b>${HEAVY.wind.name}</b>은 울림 나무에서 익힌다</small>`, 12);
+    else this.hint(`${KBD('3')} 바람 · 고유 마법 <b>${HEAVY.wind.name}</b>${josa(HEAVY.wind.name, '와').slice(HEAVY.wind.name.length)} <b>엮기</b>는 울림 나무(${KBD('K')})나 울림의 갈림길에서 익힌다<br><small>조화의 뿌리 「두 노래 엮기」를 익히면 ${KBD('Q')}로 두 속성을 엮는다 — 예: 화염 → 바람 = 화염 회오리</small>`, 12);
     await this.sleep(1);
     await this.conv(async () => {
       await this.say('boreum', '자, 이제 종을 울려 보자꾸나. 네 울림과 이 몸의 바람을 실어서.');
@@ -1417,7 +1427,7 @@ export class Story {
     this.hint(`${KBD('6')} 물 · 젖은 적에게 [번개] → <b>감전 연쇄</b>와 감전 지속 피해 · 젖은 적에게 [서리] → <b>순간 빙결</b><br><small>불타는 적에게 물을 끼얹으면 <b>소화</b> — 불은 꺼지지만 피해가 절반으로 준다</small>`, 12);
     this.done('q_lake', '물의 노래를 얻었다.');
     await this.sleep(1.5);
-    this.cSay('물의 노래라… 세하가 두고 간 것이 서리만은 아니었나 보구나. 울림 나무(K)에 물의 갈래가 새로 돋았을 게다.', null, 6);
+    this.cSay(G.skills.has(SIG.water) ? '물의 노래라… 세하가 두고 간 것이 서리만은 아니었나 보구나. 울림 나무(K)에 물의 갈래가 새로 돋았을 게다.' : '물의 노래라… 세하가 두고 간 것이 서리만은 아니었나 보구나. 울림 나무(K)에 물의 갈래가 새로 돋았을 게다. 뿌리의 *해일*부터 익혀 보거라.', null, 7);
   }
 
   async readGrave() {
@@ -1435,7 +1445,15 @@ export class Story {
     G.vfx.burst(G.player.center(), 'soul', 50, { el });
     G.vfx.ring(G.player.pos, PAL[el].core, 6, 1, { thick: 0.2 });
     G.vfx.circle(G.player.pos, PAL[el].glow, 3, 2, { spin: 2 });
-    G.hud.banner('새로운 노래', `${EL_INFO[el].name}의 노래`, desc + `<br><small>${ELEMENTS.indexOf(el) + 1}번 키로 선택</small>`, EL_INFO[el].css, 4500);
+    // signature spells are techniques now: say where to learn this one (the prologue fireball is granted by Mora)
+    const K = G.skills, sig = SIG[el];
+    let learn = '';
+    if (K && sig && !K.has(sig) && !(el === 'fire' && !this.flag('p_heavy'))) {
+      learn = K.points >= 1
+        ? `<br><small>고유 마법 <b>${HEAVY[el].name}</b> — 지금 ${KBD('K')} 울림 나무에서 바로 익힐 수 있다 (울림점 1)</small>`
+        : `<br><small>고유 마법 <b>${HEAVY[el].name}</b> — 다음 레벨업의 <b>울림의 갈림길</b>이나 ${KBD('K')} 울림 나무에서 익힐 수 있다</small>`;
+    }
+    G.hud.banner('새로운 노래', `${EL_INFO[el].name}의 노래`, desc + `<br><small>${ELEMENTS.indexOf(el) + 1}번 키로 선택</small>` + learn, EL_INFO[el].css, learn ? 5600 : 4500);
     await this.sleep(0.5);
   }
 

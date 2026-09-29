@@ -139,6 +139,8 @@ export class Game {
     for (const L of Object.values(G.world.lanterns)) L.setLit(true);
     G.skills.points = Skills.expected(P_.lv, story);
     G.skills.earned = G.skills.points;
+    // techniques must be learned now; presets get the ones their story point implies for free
+    G.skills.grantBasics();
     if (preset === 'skills') G.skills.gauge = 100;
     G.world.sky.setHour(10);
     this.startPlay(story, { player: { pos: P_.pos, yaw: 0 } });
@@ -209,6 +211,8 @@ export class Game {
       case 'journal': this.closeMenu(); this.openMenu('journal'); break;
       case 'skills': this.closeMenu(); this.openMenu('skills'); break;
       case 'skills-reset': G.hud.skillReset(); break;
+      case 'cr-keep': G.hud.crKeep(); break;
+      case 'cr-tree': G.hud.crTree(); break;
       case 'save': this.save(false); break;
       case 'title': this.save(true); location.reload(); break;
     }
@@ -228,17 +232,30 @@ export class Game {
     this.ignoreUnlock = true;
     G.input.exitLock();
     G.paused = true;
-    G.audio.play('ui_open');
+    G.audio.play(name === 'crossroads' ? (G.audio.S && G.audio.S.levelup_open ? 'levelup_open' : 'ui_open') : 'ui_open');
     $('#click-to-play').classList.add('hidden');
     if (name === 'pause') $('#pause').classList.remove('hidden');
     if (name === 'settings') $('#settings').classList.remove('hidden');
     if (name === 'map') { G.hud.drawMap(); $('#map').classList.remove('hidden'); }
     if (name === 'journal') { G.hud.drawJournal(this.jTab || 'quests'); $('#journal').classList.remove('hidden'); }
     if (name === 'skills') { $('#skills').classList.remove('hidden'); G.hud.openSkills(); }
+    if (name === 'crossroads') $('#crossroads').classList.remove('hidden');
+  }
+  // Level-up crossroads: opens once the player is safe (free play, out of combat, on the ground)
+  openCrossroads() {
+    const K = G.skills;
+    if (!K.offer().length) { K.cross = 0; return; }
+    this.openMenu('crossroads');
+    if (!G.hud.openCrossroads()) { K.cross = 0; this.closeMenu(); }
+  }
+  crossroadsSafe() {
+    const P = G.player;
+    return G.state === 'play' && !this.menu && G.mode === 'free' && !P.dead && !this.busy && !G.paused
+      && !G.enemies.inCombat() && !G.bossActive && G.slowmo <= 0 && P.grounded && !P.swimming && P.blinkT <= 0;
   }
   closeMenu() {
     if (!this.menu) return;
-    for (const id of ['#pause', '#settings', '#map', '#journal', '#skills']) $(id).classList.add('hidden');
+    for (const id of ['#pause', '#settings', '#map', '#journal', '#skills', '#crossroads']) $(id).classList.add('hidden');
     this.menu = null;
     G.paused = false;
     G.audio.play('ui_close');
@@ -293,13 +310,15 @@ export class Game {
     P.unlocked = new Set(d.player.unlocked); P.element = d.player.element; P.prevElement = d.player.prev;
     if (d.player.hat) P.setHat(true);
     const story0 = new Story(d.story);
-    if (d.skills) G.skills.load(d.skills);
-    else { G.skills.points = Skills.expected(P.level, story0); G.skills.earned = G.skills.points; this.migratedSkills = true; }
+    let techMigrated = false;
+    if (d.skills) techMigrated = G.skills.load(d.skills);
+    else { G.skills.points = Skills.expected(P.level, story0); G.skills.earned = G.skills.points; G.skills.grantBasics(); this.migratedSkills = true; }
     for (const id of d.lanterns || []) if (G.world.lanterns[id]) G.world.lanterns[id].setLit(true);
     this.respawn = d.respawn ? G.world.lanterns[d.respawn] : null;
     G.world.sky.setHour(d.hour ?? 9);
     const f = $('#fade'); f.style.transition = 'opacity 0.1s'; f.style.opacity = 1;
     this.startPlay(story0, d);
+    if (techMigrated) setTimeout(() => G.hud.toast('울림 나무가 새로 자랐다 — 뿌리에 <b>기술</b>이 돋았다. 이미 쓰던 고유 마법과 엮기는 그대로 익힌 채다.', 6000), 3000);
     if (this.migratedSkills) setTimeout(() => G.hud.banner('새로운 울림', '울림 나무', `지금까지의 여정으로 <b>울림점 ${G.skills.points}점</b>을 모았다.<br><kbd>K</kbd> 울림 나무에서 속성마다 새로운 노래를 익힐 수 있다.`, '#f1d48a', 6000), 2500);
   }
 
@@ -363,7 +382,7 @@ export class Game {
     }
     this.respawn = L;
     G.player.heal(G.player.maxHp);
-    G.player.mana = G.player.maxMana;
+    G.player.refillMana();
     G.audio.play('heal');
     G.vfx.burst(G.player.center(), 'heal', 20);
     G.dialogue.begin();
@@ -489,7 +508,11 @@ export class Game {
     const I = G.input;
     // global keys
     if (G.state === 'play') {
-      if (this.menu) {
+      if (this.menu === 'crossroads') {
+        if (I.hit('Escape')) G.hud.crKeep();
+        else if (I.hit('KeyK')) G.hud.crTree();
+        else ['Digit1', 'Digit2', 'Digit3'].forEach((k, i) => { if (I.hit(k)) G.hud.crPick(i); });
+      } else if (this.menu) {
         if (I.hit('Escape') || (this.menu === 'map' && I.hit('KeyM')) || (this.menu === 'journal' && (I.hit('Tab') || I.hit('KeyJ'))) || (this.menu === 'skills' && I.hit('KeyK'))) { const m = this.menu; this.closeMenu(); if (m === 'settings' && this.prevMenu === 'pause') this.openMenu('pause'); }
       } else if (G.mode === 'free' && !G.player.dead) {
         if (I.hit('Escape')) this.openMenu('pause');
@@ -498,6 +521,11 @@ export class Game {
         else if (I.hit('KeyK')) this.openMenu('skills');
       }
     }
+    // pending level-up crossroads: wait for a calm moment (and for the level-up banner to finish)
+    if (G.skills && G.skills.cross > 0 && G.state === 'play') {
+      this.crCalm = this.crossroadsSafe() ? (this.crCalm || 0) + raw : 0;
+      if (this.crCalm > 2.2 && (!G.hud.bannerBusy || this.crCalm > 5)) { this.crCalm = 0; this.openCrossroads(); }
+    } else this.crCalm = 0;
     // timers
     for (let i = this.timers.length - 1; i >= 0; i--) if (G.time >= this.timers[i].t) { const t = this.timers[i]; this.timers.splice(i, 1); try { t.fn(); } catch (e) { console.error(e); } }
 

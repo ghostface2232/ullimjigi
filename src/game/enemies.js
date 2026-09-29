@@ -2092,6 +2092,7 @@ export const CAMPS = [
   { id: 'eliteNorth', x: 40, z: -150, units: ['bruteFrost', 'ashlingFrost'], names: ['눈먼 파수꾼', null], elite: true, gate: 'bounty', bounty: 3 },
 ];
 
+const tmpP = new THREE.Vector3(), side = new THREE.Vector3();
 export class EnemyManager {
   constructor() {
     this.list = [];
@@ -2189,18 +2190,49 @@ export class EnemyManager {
     for (const c of this.camps) { c.members = []; c.spawned = false; }
   }
 
+  // Mana motes: normal 3 × 5, heavies (brute/watcher/boss) 5 × 6, elites 6 × 6.
+  // They burst out, hover for a beat, then home in on an accelerating curve.
   drop(pos, e) {
-    const n = e.base === 'brute' || e.type === 'watcher' ? 4 : 2;
-    for (let i = 0; i < n; i++) this.pickups.push(this.makePickup(pos, 'mana'));
+    const heavy = e.base === 'brute' || e.type === 'watcher' || e.boss;
+    const [n, v] = e.elite ? [6, 6] : heavy ? [5, 6] : [3, 5];
+    for (let i = 0; i < n; i++) this.pickups.push(this.makePickup(pos, 'mana', { v, i, n }));
     if (rand() < (e.elite || e.type === 'watcher' ? 0.8 : 0.25)) this.pickups.push(this.makePickup(pos, 'heal'));
   }
-  makePickup(pos, kind) {
-    const m = new THREE.Mesh(G.vfx.orbGeo, glowMat(kind === 'heal' ? 0x7aff8a : 0x6cc6ff, 2.2));
-    m.scale.setScalar(kind === 'heal' ? 0.2 : 0.1);
+  makePickup(pos, kind, o = {}) {
+    if (kind === 'mana') {
+      const m = G.vfx.orb('frost', 0.075, { halo: 0.62, haloI: 0.7 });
+      m.position.copy(pos);
+      const a = ((o.i || 0) / (o.n || 1)) * Math.PI * 2 + randRange(-0.4, 0.4), sp = randRange(3.2, 5.2);
+      const v = new THREE.Vector3(Math.cos(a) * sp, randRange(3.2, 5.4), Math.sin(a) * sp);
+      const live = this.pickups.filter((p) => p.rib).length;
+      const rib = live < 12 && G.vfx.ribbon ? G.vfx.ribbon({ el: 'frost', width: 0.075, life: 0.24, follow: m.position }) : null;
+      // hover a little longer for later motes so they stream in one after another
+      return { m, kind, v, t: 0, val: o.v || 5, rib, home: 0.55 + (o.i || 0) * 0.07 + randRange(0, 0.08), ph: rand() * 6.28, orb: true };
+    }
+    const m = new THREE.Mesh(G.vfx.orbGeo, glowMat(0x7aff8a, 2.2));
+    m.scale.setScalar(0.2);
     m.position.copy(pos);
     G.scene.add(m);
     const v = new THREE.Vector3(randRange(-3, 3), randRange(3, 6), randRange(-3, 3));
-    return { m, kind, v, t: 0 };
+    return { m, kind, v, t: 0, home: 0.6, ph: 0 };
+  }
+  removePickup(i) {
+    const p = this.pickups[i];
+    if (p.rib) p.rib.release();
+    if (p.orb) G.vfx.disposeOrb(p.m); else G.scene.remove(p.m);
+    this.pickups.splice(i, 1);
+  }
+  absorbPickup(p, pc) {
+    const P = G.player;
+    if (p.kind === 'heal') { P.heal(2); G.audio.play('heal'); G.hud.floatText(pc, '+♥', '#8fff9a', 'heal'); return; }
+    // streak of motes → rising pitch
+    this.moteN = G.realTime - (this.moteT || -9) < 0.45 ? Math.min(12, (this.moteN || 0) + 1) : 0;
+    this.moteT = G.realTime;
+    P.gainMana(p.val, { src: 'orb', n: this.moteN });
+    if (G.audio.S && G.audio.S.mana_orb) G.audio.play('mana_orb', { n: this.moteN, gap: 0.03 });
+    else G.audio.play('pickup', { gap: 0.05 });
+    G.vfx.burst(pc, 'star', 1, { el: 'frost', size: 0.9, size1: 0.1, life: 0.16 });
+    G.vfx.burst(pc, 'trail', 3, { el: 'frost', spread: 0.35, size: 0.18, life: 0.3 });
   }
 
   update(dt) {
@@ -2213,30 +2245,43 @@ export class EnemyManager {
       if (alive === false && this.list[i] === e) this.list.splice(i, 1);
     }
     this.tokens = Math.max(0, this.tokens);
-    // pickups
+    // pickups: burst out → hover → accelerate home
     const P = G.player;
     for (let i = this.pickups.length - 1; i >= 0; i--) {
       const p = this.pickups[i];
       p.t += dt;
       const pc = P.center();
-      const d = p.m.position.distanceTo(pc);
-      if (p.t > 0.5 && d < 7) {
-        p.v.lerp(pc.sub(p.m.position).normalize().multiplyScalar(14), Math.min(1, dt * 6));
+      const pos = p.m.position;
+      const d = pos.distanceTo(pc);
+      const gy = G.world.ground(pos.x, pos.z, pos.y) + 0.55;
+      if (p.t < 0.32) {
+        // burst out
+        p.v.y -= 9 * dt; p.v.multiplyScalar(1 - dt * 2.2);
+        if (pos.y < gy) { pos.y = gy; p.v.y = Math.abs(p.v.y) * 0.3; }
+      } else if (p.t < p.home || d > 26 || P.dead) {
+        // hover / wait: drift to a gentle bob above the ground
+        p.v.multiplyScalar(Math.max(0, 1 - dt * 6));
+        const ty = Math.max(gy, pos.y) + Math.sin(G.time * 3 + p.ph) * 0.12;
+        pos.y += (ty - pos.y) * Math.min(1, dt * 4);
       } else {
-        p.v.y -= 12 * dt;
-        const gy = G.world.ground(p.m.position.x, p.m.position.z, p.m.position.y) + 0.4;
-        if (p.m.position.y < gy) { p.m.position.y = gy; p.v.set(p.v.x * 0.5, Math.abs(p.v.y) * 0.3, p.v.z * 0.5); }
-        p.v.x *= 1 - dt * 2; p.v.z *= 1 - dt * 2;
+        // home in on an accelerating, slightly curving path
+        const k = p.t - p.home;
+        const sp = Math.min(34, 3 + k * k * 70 + k * 10);
+        const dir = tmpP.subVectors(pc, pos).normalize();
+        side.set(-dir.z, 0.35, dir.x).multiplyScalar(Math.max(0, 1 - k * 2.5) * Math.sin(p.ph) * sp * 0.6);
+        p.v.lerp(dir.multiplyScalar(sp).add(side), Math.min(1, dt * (4 + k * 18)));
       }
-      p.m.position.addScaledVector(p.v, dt);
-      if (Math.random() < dt * 10) G.vfx.burst(p.m.position, 'trail', 1, { el: p.kind === 'heal' ? 'heal' : 'frost', size: 0.2 });
-      if ((p.t > 0.5 && d < 0.9) || p.t > 20) {
-        if (p.t <= 20) {
-          if (p.kind === 'heal') { P.heal(2); G.audio.play('heal'); G.hud.floatText(pc, '+♥', '#8fff9a', 'heal'); }
-          else { P.mana = Math.min(P.maxMana, P.mana + 7); G.audio.play('pickup', { gap: 0.05 }); }
-        }
-        G.scene.remove(p.m);
-        this.pickups.splice(i, 1);
+      pos.addScaledVector(p.v, dt);
+      if (p.orb) {
+        const pulse = 1 + Math.sin(G.time * 14 + p.ph) * 0.18;
+        p.m.scale.setScalar(0.075 * pulse * (p.t < 0.12 ? p.t / 0.12 : 1));
+        if (Math.random() < dt * 14) G.vfx.burst(pos, 'trail', 1, { el: 'frost', size: 0.16, spread: 0.05, life: 0.3 });
+        if (!p.rib && Math.random() < dt * 4) G.vfx.burst(pos, 'star', 1, { el: 'frost', size: 0.35, size1: 0.02, life: 0.2 });
+      } else if (Math.random() < dt * 10) G.vfx.burst(pos, 'trail', 1, { el: 'heal', size: 0.2 });
+      const got = p.t > p.home && d < 0.85;
+      if (got || p.t > 25) {
+        if (got) this.absorbPickup(p, pc);
+        this.removePickup(i);
       }
     }
   }

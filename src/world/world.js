@@ -12,6 +12,7 @@ import { Colliders } from './collision.js';
 import { POI, regionAt } from './layout.js';
 import * as B from './buildings.js';
 import { U } from '../render/materials.js';
+import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
 import { rand, randRange, mulberry32 } from '../core/util.js';
 
 const tmp = new THREE.Vector3();
@@ -342,19 +343,31 @@ export class World {
       const a = (i / 3) * Math.PI * 2 + Math.PI / 2;
       fs.braziers.push(this.makeBrazier(POI.frost.x + Math.cos(a) * 14, POI.frost.z + Math.sin(a) * 14, 'fbrazier'));
     }
-    // ice crystals around frost shrine
+    // ice crystal clusters around frost shrine: three cluster shapes, one instanced draw each
     const rnd = mulberry32(5);
+    const iceMat = crystalMaterial({ ice: true, color: 0xcdeeff, glow: 0x7fd4ff, intensity: 0.55, seed: 2 });
+    const iceGeos = [0, 1, 2].map((k) => crystalGeometry('cluster', { seed: 500 + k * 17, count: [7, 5, 9][k] }));
+    const iceXf = [[], [], []];
+    const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(), e4 = new THREE.Euler();
     for (let i = 0; i < 26; i++) {
       const a = rnd() * Math.PI * 2, r = 15 + rnd() * 14;
       const x = POI.frost.x + Math.cos(a) * r, z = POI.frost.z + Math.sin(a) * r;
       if (this.terrain.pathInfo(x, z).d < 6) continue;
-      const c = new THREE.Mesh(G.vfx.crystalGeo, G.vfx.iceMat);
       const s = 0.8 + rnd() * 2.2;
-      c.scale.set(s * 0.8, s * 1.4, s * 0.8);
-      c.position.set(x, this.h(x, z) - 0.3, z); c.rotation.set((rnd() - 0.5) * 0.6, rnd() * 3, (rnd() - 0.5) * 0.6);
-      c.castShadow = true; this.scene.add(c);
+      e4.set((rnd() - 0.5) * 0.4, rnd() * 6.28, (rnd() - 0.5) * 0.4);
+      m4.compose(tmp.set(x, this.h(x, z) - 0.3, z), q4.setFromEuler(e4), new THREE.Vector3(s * 1.15, s * 1.3, s * 1.15));
+      iceXf[i % 3].push(m4.clone());
       if (s > 1.4) this.col.addCircle(x, z, s * 0.35, -10, this.h(x, z) + s * 2);
     }
+    iceXf.forEach((list, k) => {
+      if (!list.length) return;
+      const im = new THREE.InstancedMesh(iceGeos[k], iceMat, list.length);
+      list.forEach((mx, j) => im.setMatrixAt(j, mx));
+      im.instanceMatrix.needsUpdate = true;
+      im.computeBoundingSphere();
+      im.castShadow = true; im.receiveShadow = false;
+      this.scene.add(im);
+    });
     const ss = mk('storm', POI.storm, true);
     ss.wheels = [];
     for (let i = 0; i < 3; i++) {
@@ -418,24 +431,32 @@ export class World {
   }
 
   buildSeeds() {
-    const geo = new THREE.IcosahedronGeometry(0.22, 0);
+    // luminous seed crystal above a glowing sprout
+    const geo = crystalGeometry('prism', { double: true, sides: 5, radius: 0.55, tip: 0.6, seed: 17 });
+    const mat = crystalMaterial({ color: 0xdcffb0, glow: 0xb8ff70, intensity: 1.25, seed: 4 });
+    const sproutMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.45, 1.1, 0.55) });
     SEEDS.forEach(([x, z], i) => {
       const y = this.h(x, z);
-      const g = new THREE.Group(); g.position.set(x, y, z);
-      const sprout = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.6, 5), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.6, 1.6, 0.8) }));
+      const g = new THREE.Group(); g.position.set(x, y, z); g.userData.noBake = true;
+      const sprout = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.6, 5), sproutMat);
       sprout.position.y = 0.3; g.add(sprout);
-      const orb = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 2.4, 1.2) }));
+      const orb = new THREE.Mesh(geo, mat);
+      orb.scale.setScalar(0.2); orb.rotation.z = 0.12;
       orb.position.y = 0.9; g.add(orb);
+      orb.add(crystalGlowSprite(0xb8ff70, 9, { intensity: 0.32 }));
       this.scene.add(g);
       this.seeds.push({ i, x, z, y, g, orb, taken: false, humT: rand() * 4 });
     });
   }
 
   buildMemories() {
+    const memMat = crystalMaterial({ color: 0xf0e4ff, glow: 0xd0b0ff, intensity: 1.35, seed: 6 });
     for (const [id, m] of Object.entries(MEMORIES)) {
       const y = this.h(m.x, m.z);
       const g = new THREE.Group(); g.position.set(m.x, y + 0.5, m.z);
-      const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.2, 3.2) }));
+      const core = new THREE.Mesh(crystalGeometry('gem', { seed: 3 }), memMat);
+      core.scale.setScalar(0.2); core.rotation.x = 0.35;
+      core.add(crystalGlowSprite(0xd8c0ff, 8, { intensity: 0.35 }));
       g.add(core);
       const halo = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.03, 6, 20), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.8, 1.6, 2.4) }));
       g.add(halo);

@@ -5,6 +5,7 @@ import { newStatus } from './combat.js';
 import { makeAshling, makeWailer, makeBrute, makeKnight, makeOoze, makeMoth, makeShieldBearer, makeArcher, makeRootHand, makeWatcher } from './characters.js';
 import { fresnelMat, glowMat, toon } from '../render/materials.js';
 import { PAL } from '../render/vfx.js';
+import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
 import { clamp, damp, angleDamp, randRange, rand, pick, wrapAngle, lerp, josa } from '../core/util.js';
 import { regionAt } from '../world/layout.js';
 
@@ -1860,11 +1861,22 @@ class Heart {
     this.st = newStatus(); this.resist = {}; this.armor = 0; this.freezeAt = 10; this.freezeTime = 1.5;
     this.pos = center.clone().setY(center.y + 6); this.home = this.pos.clone();
     this.core = new THREE.Group();
-    const crystal = new THREE.Mesh(new THREE.IcosahedronGeometry(1.6, 1), fresnelMat(0x1a0a2a, 0xb080ff, { intensity: 1.6, power: 1.3, normal: true }));
-    crystal.material.depthWrite = true;
+    // dark faceted heart-stone with a violet core that burns brighter when exposed
+    const crystal = new THREE.Mesh(crystalGeometry('gem', { sides: 7, table: 0.5, crown: 0.62, pavilion: 0.95, seed: 66 }), crystalMaterial({ color: 0x3a2458, glow: 0xb080ff, intensity: 1.2, rim: 1.3, seed: 5, nocache: true }));
+    crystal.scale.set(1.6, 1.9, 1.6); crystal.rotation.x = Math.PI;
     this.core.add(crystal);
-    const inner = new THREE.Mesh(new THREE.IcosahedronGeometry(0.8, 0), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.5, 1.6, 3.5) }));
+    // shards orbiting the heart (spun by `inner`) and a soft violet halo
+    const inner = new THREE.Group();
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const sh = new THREE.Mesh(crystalGeometry('shard', { seed: 700 + i }), crystal.material);
+      sh.scale.setScalar(0.45 + (i % 3) * 0.12);
+      sh.position.set(Math.cos(a) * 2.5, (i % 2 ? 0.5 : -0.6), Math.sin(a) * 2.5);
+      sh.rotation.set(Math.PI + (i % 2 ? 0.4 : -0.3), a, (i % 2 ? 0.3 : -0.4));
+      inner.add(sh);
+    }
     this.core.add(inner);
+    this.core.add(crystalGlowSprite(0xa070ff, 9, { intensity: 0.4 }));
     this.tendrils = [];
     for (let i = 0; i < 8; i++) {
       const t = new THREE.Mesh(new THREE.ConeGeometry(0.25, 4, 5), toon(0x2a2236, { rim: 1, nocache: true }));
@@ -1922,8 +1934,10 @@ class Heart {
     this.flash = Math.max(0, this.flash - dt * 5);
     this.barT = 5;
     const breathe = 1 + Math.sin(G.time * 2) * 0.05;
-    this.crystal.material.uniforms.uIntensity.value = 1.6 + this.flash * 2 + (this.exposed > 0 ? 0.8 + Math.sin(G.time * 10) * 0.4 : 0);
-    this.inner.rotation.y += dt * 2; this.inner.rotation.x += dt;
+    const cu = this.crystal.material.uniforms;
+    cu.uIntensity.value = 1.2 + this.flash * 0.8 + (this.exposed > 0 ? 0.9 + Math.sin(G.time * 10) * 0.4 : 0);
+    cu.uFlash.value = this.flash * 0.6;
+    this.inner.rotation.y += dt * 0.9;
     this.crystal.rotation.y -= dt * 0.4;
     this.tendrils.forEach((t, i) => {
       const a = t.userData.a + this.spin * 0.3;

@@ -54,7 +54,11 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | | `combat.js` | 피해 계산, 상태 이상, 원소 반응(`pickReaction`), 연쇄 반응, 울림 나무 수정치 |
 | | `skills.js` | 울림 나무(스킬 트리) 데이터 `TREES`, 울림점, 궁극기 게이지, 반응 도감 |
 | | `enemies.js` | 적 정의(`DEF`), 레벨 단계, AI 클래스, 보스, 무리(`CAMPS`), 드롭 |
-| | `characters.js` | 절차적 캐릭터 리그와 애니메이션, 적 몸체 |
+| | `characters.js` | 캐릭터 팩토리 모음(재수출)과 리그 계약·표정/몸짓 API 설명 |
+| | `charkit.js` | 조각 도구(`tube`·`blob`·`sheet`), 뼈대 정의 `SkelDef`, 자동 스킨 가중치, 그린 얼굴·재 균열·줄무늬 재질, 스킨 외곽선, 2본 IK, 베를레 사슬(`Chain`) |
+| | `humanoid.js` · `humanrig.js` | 사람형 몸·옷·머리카락·모자·소품 조각(`CHAR` 항목별로 한 번 생성), 사람형 리그(발 디딤 IK, 상태 블렌딩, 표정, 몸짓), `makeGhost` |
+| | `creatures.js` | 비사람형 리그 바탕 `CreatureRig`, 보름(`makeFox`), 누룽지(`makeCat`) |
+| | `enemybodies.js` · `enemycreatures.js` | 적 몸체: 사람형 리그 위(허깨비·돌무덤·기사·방패지기·사수)와 생물 리그(울음탈·잿물·재나방·뿌리손·망루지기) |
 | | `npcs.js` · `dialogue.js` | NPC와 보름(동료), 대화창(타자 효과·목소리·선택지) |
 | | `story.js` | 장별 스크립트, 퀘스트, 곁가지, NPC 대화 분기, 이벤트 훅 |
 | | `hud.js` | HUD 전반, 지도, 여정·마법서(반응 도감), 울림 나무 화면 |
@@ -101,7 +105,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 
 ### 적 추가
 1. `enemies.js`의 `DEF`에 항목을 추가합니다(`name`, `hp`, `dmg`, `speed`, `radius`, `height`, `xp`, `aggro`, `resist`, `make`).
-2. `characters.js`에 몸체 생성 함수를 만듭니다. `rig.mats`(개별 툰 재질, 피격 번쩍임용)와 `rig.glowMats`(레벨 단계 색이 입혀지는 발광 재질)를 반드시 채우세요.
+2. `enemybodies.js`(사람형) 또는 `enemycreatures.js`(생물형)에 몸체 생성 함수를 만들고 `characters.js`에서 재수출합니다. `rig.mats`(개별 툰 재질, 피격 번쩍임·디졸브용)와 `rig.glowMats`(레벨 단계 색이 입혀지는 발광 재질)를 반드시 채우세요. 몸은 재질 그룹마다 스킨 메시 하나로 나뉘므로 메시마다 재질이 하나입니다. 발광 재질은 `glowBasic()`으로 만들면 디졸브 중간에 숨겨지고, 재 균열 재질(`crackMat`)에 그 색 객체를 넘기면 균열도 단계 색을 따릅니다.
 3. 행동이 다르면 `Enemy`를 상속한 클래스를 만들고 `EnemyManager.spawn()` 분기에 추가합니다.
 4. 필드에 배치하려면 `CAMPS`에 넣습니다.
 

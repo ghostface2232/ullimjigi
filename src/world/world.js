@@ -10,6 +10,7 @@ import { Grass } from './grass.js';
 import { Weather } from './weather.js';
 import { Wildfire } from './wildfire.js';
 import { Env } from './env.js';
+import { WorldObjects } from './objects.js';
 import { Props, makeTree } from './props.js';
 import { Colliders } from './collision.js';
 import { POI, regionAt } from './layout.js';
@@ -82,6 +83,7 @@ export class World {
     this.region = null;
     onProgress(0.72, '돌을 다듬는 중…');
     this.bakeStatics();
+    this.objects = new WorldObjects(scene, this);
   }
 
   // Merge static building meshes per material into a few big meshes (draw-call reduction)
@@ -515,7 +517,7 @@ export class World {
     U.time.value = G.time;
     U.wind.value = 1 + Math.sin(G.time * 0.3) * 0.35 + Math.sin(G.time * 1.1) * 0.15;
     this.weather.update(dt, camPos, playerPos);
-    if (G.player) this.fire.update(dt, camPos, playerPos);
+    if (G.player) { this.fire.update(dt, camPos, playerPos); this.objects.update(dt, playerPos); }
     this.sky.update(dt, playerPos, 1, camPos);
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);

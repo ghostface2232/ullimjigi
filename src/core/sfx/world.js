@@ -66,3 +66,38 @@ S.fire_catch = function (o) {
   this.noise({ out, buf: 'crackle', f: 2600, q: 0.7, t: 0.05, d: 0.6, v: 0.3 });
   this.sub(out, { f: 90, f2: 50, d: 0.25, v: 0.12 });
 };
+
+// ---- loose objects ----
+// powder fuse: spitting hiss that rises
+S.fuse_hiss = function (o) {
+  const out = this.bus(o.pos, 0.9, 0.12); if (!out) return;
+  this.noise({ out, type: 'highpass', f: 3500, f2: 6000, a: 0.02, d: 1.1, v: 0.12 });
+  this.noise({ out, buf: 'crackle', f: 4200, q: 0.8, d: 1.1, v: 0.18 });
+};
+// crate smashed: splintering crack and falling planks
+S.crate_break = function (o) {
+  const out = this.bus(o.pos, 0.95, 0.15); if (!out) return;
+  this.tone({ out, f: 220, f2: 90, d: 0.08, v: 0.14 });
+  this.noise({ out, f: 1500, q: 1.2, d: 0.12, v: 0.2 });
+  for (let i = 0; i < 4; i++) { this.tone({ out, f: R(260, 420), f2: R(120, 180), t: 0.08 + i * R(0.05, 0.1), d: 0.06, v: 0.06 }); this.noise({ out, f: R(900, 1600), q: 1.5, t: 0.08 + i * 0.07, d: 0.05, v: 0.06 }); }
+};
+S.crate_knock = function (o) {
+  const out = this.bus(o.pos, 0.7, 0.08); if (!out) return;
+  this.tone({ out, f: R(180, 240), f2: 110, d: 0.07, v: 0.1 });
+  this.noise({ out, f: 1100, q: 1.4, d: 0.05, v: 0.06 });
+};
+// heavy stone landing or striking something
+S.boulder_thud = function (o) {
+  const out = this.bus(o.pos, 1, 0.2); if (!out) return;
+  this.sub(out, { f: 75, f2: 36, d: 0.35, v: 0.4 });
+  this.noise({ out, buf: 'brown', type: 'lowpass', f: 500, d: 0.3, v: 0.3 });
+  this.noise({ out, buf: 'pink', f: 1400, q: 0.9, d: 0.12, v: 0.1 });
+};
+// stone rolling over ground: low grinding rumble with gravel crunch
+L.loop_roll = function (inp) {
+  const r = this.lbuf(inp, { buf: 'brown', type: 'lowpass', f: 180, q: 0.8, v: 0.5 });
+  this.lfo(r.fl.frequency, { f: 3.1, depth: 50 });
+  const g = this.lbuf(inp, { buf: 'crackle', f: 1200, q: 0.7, v: 0.22 });
+  this.lfo(g.fl.frequency, { f: 0.9, depth: 300 });
+  return { dop: true };
+};

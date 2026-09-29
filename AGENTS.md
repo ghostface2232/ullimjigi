@@ -49,7 +49,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | | `sky.js` · `water.js` · `grass.js` | 하늘과 낮밤, 물, 풀(청크 단위 스트리밍) |
 | | `props.js` · `buildings.js` | 나무·바위 인스턴싱, 건물 생성 함수 |
 | | `collision.js` | 원·박스 충돌체와 밟을 수 있는 발판 |
-| | `weather.js` · `wildfire.js` · `env.js` | 날씨(비·뇌우·눈, 벼락), 들불 격자 시뮬레이션과 상승 기류, 마법↔환경 디스패처 `G.env` |
+| | `weather.js` · `wildfire.js` · `env.js` · `objects.js` | 날씨(비·뇌우·눈, 벼락), 들불 격자 시뮬레이션과 상승 기류, 마법↔환경 디스패처 `G.env`, 물리 소품(화약 통·상자·바위) |
 | | `world.js` | 위 모든 것의 배치, 등석·씨앗·기억 물건, 정적 메시 합치기, 환경 연출 |
 | `game/` | `game.js` | 부팅, 타이틀, 메인 루프, 메뉴, 저장·불러오기, 사망, 등석, 음악 선택 |
 | | `player.js` | 이동(달리기·순간이동·점프·활공·수영), 시전, 능력치 |
@@ -109,6 +109,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - **들불**(`G.world.fire`): 지형 격자(2m)마다 연료(풀 비율)·상태(풀/타는 중/그을림)를 둡니다. 0.12초마다 이웃으로 번지며, 바람 방향·오르막일수록 빠르고 비에 약합니다. 동시에 타는 칸은 최대 900, 마을 광장은 연료가 없습니다. 탄 자리는 2.5~4분 뒤 다시 자랍니다. 번짐 지도(`U.burnTex`, R=그을림 G=불길)를 지형·풀 셰이더가 읽습니다.
   - 타는 칸 위 12m까지 약한 상승 기류가 생겨 활공하면 조금 떠오릅니다(`env.liftAt` → `player`). 불 위에 서 있으면 0.35초마다 피해, 적은 화염 피해.
   - `fire.ignite(x, z, r)`, `fire.extinguish(x, z, r)`, `fire.fan(x, z, dirX, dirZ, r)`.
+- **물리 소품**(`world/objects.js`, `G.world.objects`): 화약 통·상자·바위를 종류별 InstancedMesh 하나로 그립니다. 각 물체는 `world.targets`에 등록되어(`id: 'prop'`) 모든 마법의 `baseHit(el, src)`를 받습니다. 원소별 밀기(`PUSH`), 화염·번개 → 화약 통 도화선(1.1초, 연쇄 0.28초) → `Spells.explode` 반경 5.2, 상자는 3번 맞으면 부서져 마나 방울(불에 타면 3초 뒤 재), 바위는 경사를 따라 구르며 적을 치고 물에 빠지면 가라앉습니다. 멈추면 잠들어 계산하지 않고, 사라진 것은 플레이어가 45m 밖에 있을 때 제자리에 다시 생깁니다. 배치는 `place()`(야영지마다 통 2·상자 1·오르막 바위 1).
 - **환경 디스패처**(`G.env`): 마법이 착탄하면 `G.env.onSpell({ el, pos, r, kind, source })`를 부릅니다. 화염은 풀에 불을 붙이고, 물·서리는 끄고, 바람은 불길을 바람 방향으로 번지게, 번개는 가끔 불씨를 만듭니다. 새 환경 규칙은 여기에 추가하세요.
 
 ### 전투

@@ -9,11 +9,11 @@ import { Water } from './water.js';
 import { Grass } from './grass.js';
 import { Props, makeTree } from './props.js';
 import { Colliders } from './collision.js';
-import { POI, regionAt } from './layout.js';
+import { POI, PATHS, regionAt } from './layout.js';
 import * as B from './buildings.js';
 import { U } from '../render/materials.js';
 import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
-import { rand, randRange, mulberry32 } from '../core/util.js';
+import { rand, randRange, mulberry32, TAU } from '../core/util.js';
 
 const tmp = new THREE.Vector3();
 
@@ -96,7 +96,7 @@ export class World {
       r.traverse((m) => {
         if (!m.isMesh || skip.has(m) || m.isInstancedMesh || m.userData.isOutline) return;
         const mat = m.material;
-        if (!mat || !mat.isMeshToonMaterial || mat.transparent || (mat.userData.sway && mat.userData.sway.value > 0)) return;
+        if (!mat || !(mat.isMeshToonMaterial || mat.userData.bake) || mat.transparent || (mat.userData.sway && mat.userData.sway.value > 0)) return;
         if (m.children.some((c) => !c.userData.isOutline)) return;
         const wp = m.getWorldPosition(new THREE.Vector3());
         const key = mat.uuid + '|' + Math.floor(wp.x / CELL) + ',' + Math.floor(wp.z / CELL) + '|' + (m.castShadow ? 1 : 0);
@@ -170,32 +170,54 @@ export class World {
 
   // ------------------------------------------------------------
   buildVillage() {
-    const V = POI.village, plaza = { x: 6, z: 14 };
+    const plaza = { x: 6, z: 14 };
+    const rnd = mulberry32(88);
     const houses = [
-      { id: 'bau', x: -19, z: 4, w: 7, d: 5.2, roof: B.MAT.roofTeal },
-      { id: 'bakery', x: 20, z: 2, w: 7, d: 6, roof: B.MAT.roofRed },
-      { id: 'dodam', x: -17, z: 32, w: 6, d: 5, roof: B.MAT.roofBlue },
-      { id: 'inn', x: 22, z: 32, w: 8.5, d: 6.5, h: 4.8, roof: B.MAT.roofPlum },
-      { id: 'h5', x: -3, z: 42, w: 6, d: 5, roof: B.MAT.roofRed },
-      { id: 'h6', x: 14, z: 46, w: 5.2, d: 4.6, roof: B.MAT.roofTeal },
-      { id: 'h7', x: -30, z: 18, w: 5.6, d: 4.6, roof: B.MAT.roofPlum },
-      { id: 'h8', x: 31, z: 14, w: 6, d: 5, roof: B.MAT.roofBlue },
-      { id: 'h9', x: -26, z: -8, w: 5, d: 4.4, roof: B.MAT.roofRed },
+      { id: 'bau', x: -19, z: 4, w: 7, d: 5.2, roof: B.MAT.roofTeal, wall: B.MAT.plasterWarm, porch: true },
+      { id: 'bakery', x: 20, z: 2, w: 7, d: 6, roof: B.MAT.roofRed, wall: B.MAT.plaster, sign: 'bread', porch: true },
+      { id: 'dodam', x: -17, z: 32, w: 6, d: 5, roof: B.MAT.roofBlue, wall: B.MAT.plasterSage },
+      { id: 'inn', x: 22, z: 32, w: 8.5, d: 6.5, h: 2.7, floors: 2, roof: B.MAT.roofPlum, wall: B.MAT.plasterWarm, sign: 'inn', dormer: true },
+      { id: 'h5', x: -3, z: 42, w: 6, d: 5, h: 2.7, floors: 2, roof: B.MAT.roofRed, wall: B.MAT.plasterRose },
+      { id: 'h6', x: 14, z: 46, w: 5.2, d: 4.6, roof: B.MAT.roofTeal, wall: B.MAT.plaster },
+      { id: 'h7', x: -30, z: 18, w: 5.6, d: 4.6, roof: B.MAT.roofPlum, wall: B.MAT.plasterRose },
+      { id: 'h8', x: 31, z: 14, w: 6, d: 5, h: 2.7, floors: 2, roof: B.MAT.roofBlue, wall: B.MAT.plasterSage },
+      { id: 'h9', x: -26, z: -8, w: 5, d: 4.4, roof: B.MAT.roofRed, wall: B.MAT.plasterWarm },
     ];
     this.houses = {};
     houses.forEach((hd, i) => {
-      const g = B.house({ w: hd.w, d: hd.d, h: hd.h, roof: hd.roof, seed: 10 + i });
+      const g = B.house({ ...hd, seed: 10 + i });
       const ry = this.faceTo(hd.x, hd.z, plaza.x, plaza.z) + randRange(-0.12, 0.12);
       this.place(g, hd.x, hd.z, ry, -0.2);
       const u = g.userData, by = g.position.y;
-      this.solid(g, { hw: u.w / 2, hd: u.d / 2, top: by + u.height, topFn: (lx) => by + u.eave + u.roofH * Math.max(0, 1 - Math.abs(lx) / u.roofHW) });
+      this.solid(g, { hw: u.w / 2, hd: u.d / 2, top: by + u.height, topFn: (lx, lz) => by + u.roofTop(lx, lz) });
       if (g.userData.chimney) this.chimneys.push(g.localToWorld(g.userData.chimney.clone()));
       this.houses[hd.id] = g;
     });
+    // plaza: flagstone rings around the bell tower with a kerb
+    const pv = new THREE.Group();
+    const bx = POI.bellTower.x, bz = POI.bellTower.z, by0 = this.h(bx, bz);
+    pv.position.set(bx, by0, bz); this.scene.add(pv);
+    const tones = [0xb8ad9a, 0xa89e8c, 0xc2b8a4, 0x9c9282, 0xb0a490];
+    for (let r = 3.8; r < 11.2; r += 0.92) {
+      const n = Math.max(8, Math.round((TAU * r) / (1.05 + rnd() * 0.3)));
+      const a0 = rnd() * TAU;
+      for (let i = 0; i < n; i++) {
+        if (rnd() < 0.04 && r > 9) continue; // a few missing stones at the worn edge
+        const a = a0 + (i / n) * TAU, arc = (TAU * r) / n;
+        const x = Math.cos(a) * r, z = Math.sin(a) * r;
+        const dy = this.h(bx + x, bz + z) - by0;
+        B.pstone(pv, arc * 0.93, 0.1, 0.84, tones[Math.floor(rnd() * tones.length)], x, dy + 0.03 + rnd() * 0.02, z, -a + Math.PI / 2);
+      }
+    }
+    for (let i = 0; i < 64; i++) {
+      const a = (i / 64) * TAU, r = 11.65;
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      B.pstone(pv, (TAU * r) / 64 * 0.96, 0.18, 0.36, 0x8b8377, x, this.h(bx + x, bz + z) - by0 + 0.05, z, -a + Math.PI / 2);
+    }
     // bell tower
     const bt = B.bellTower();
     this.place(bt, POI.bellTower.x, POI.bellTower.z, 0.1);
-    this.solid(bt, { hw: 2.6, hd: 2.6, rot: 0.1 });
+    this.solid(bt, { hw: 2.7, hd: 2.7, rot: 0.1 });
     this.bellTower = bt;
     this.bellSwing = 0;
     this.anims.push((dt) => {
@@ -204,10 +226,11 @@ export class World {
       b.rotation.z = Math.sin(G.time * 3.2) * this.bellSwing;
       bt.userData.glow.material.uniforms.uAlpha.value = Math.min(1, this.bellSwing * 2);
     });
-    // resonance tree
-    const tree = B.resonanceTree();
-    this.place(tree, -8, -2, 0);
+    // resonance tree: a hero broadleaf from the vegetation generator
+    const tree = B.resonanceTree(() => makeTree('oak', 4711, { size: 3.3, trunkH: 5.2, r0: 0.78, limbs: 5, sub: 6, light: 0x9fd05e, dark: 0x3c7a36, deep: 0x285a2c, tip: 0xd2e88a, sway: 0.01, swayBase: 5 }));
+    this.place(tree, -8, -2, 0.4);
     this.solid(tree, { r: 1.5, climb: false, noTop: true });
+    this.col.addPlatform({ type: 'disc', x: -8, z: -2, r: 3.7, top: this.h(-8, -2) + 0.45 });
     this.resTree = tree;
     // windmill
     const wm = B.windmill();
@@ -215,34 +238,85 @@ export class World {
     this.solid(wm, { r: 3.2 });
     this.anims.push((dt) => { wm.userData.rotor.rotation.z += dt * 0.6 * U.wind.value; });
     // well, stalls, benches
-    this.place(B.well(), -4, 16); this.col.addCircle(-4, 16, 1.5, -10, 5);
-    const s1 = B.stall(B.MAT.clothRed); this.place(s1, 15, 9, this.faceTo(15, 9, 6, 14)); this.col.addBox(15, 9, 1.6, 0.8, s1.rotation.y, -10, 3);
-    const s2 = B.stall(B.MAT.clothBlue); this.place(s2, -2, 26, this.faceTo(-2, 26, 6, 14)); this.col.addBox(-2, 26, 1.6, 0.8, s2.rotation.y, -10, 3);
+    this.place(B.well(), -4, 16); this.col.addCircle(-4, 16, 1.5, this.h(-4, 16) - 1, this.h(-4, 16) + 1.2);
+    const s1 = B.stall(B.MAT.clothRed); this.place(s1, 15, 9, this.faceTo(15, 9, 6, 14)); this.col.addBox(15, 9, 1.6, 0.8, s1.rotation.y, -10, this.h(15, 9) + 2.95);
+    const s2 = B.stall(B.MAT.clothBlue); this.place(s2, -2, 26, this.faceTo(-2, 26, 6, 14)); this.col.addBox(-2, 26, 1.6, 0.8, s2.rotation.y, -10, this.h(-2, 26) + 2.95);
     for (const [x, z] of [[-12, 6], [-4, -6], [-12, -8]]) this.place(B.bench(), x, z, this.faceTo(x, z, -8, -2) + Math.PI);
     // fences at village edge
     for (const [x, z, r, l] of [[40, 30, 1.4, 12], [38, 4, 1.8, 10], [-38, 30, 1.7, 10], [-36, 2, 1.3, 12], [10, 58, 0.1, 14]]) this.place(B.fence(l), x, z, r);
-    // crates & barrels clusters
-    const rnd = mulberry32(88);
-    for (let i = 0; i < 14; i++) {
-      const a = rnd() * Math.PI * 2, r = 20 + rnd() * 16;
-      const x = Math.cos(a) * r, z = 20 + Math.sin(a) * r;
-      if (this.col.pointHit(x, this.h(x, z) + 0.5, z, 1.5)) continue;
-      const g = new THREE.Group();
-      if (rnd() < 0.5) B.cyl(0.35, 0.3, 0.8, 10, B.MAT.wood, 0, 0.4, 0, g);
-      else B.box(0.7, 0.7, 0.7, B.MAT.woodLight, 0, 0.35, 0, g);
-      this.place(g, x, z, rnd() * 3);
-      this.col.addCircle(x, z, 0.45, -10, this.h(x, z) + 0.8);
+    // dry-stone walls flanking the north road (the village gate) and at the edges
+    for (const [x, z, r, l] of [[-12, -17, 0.25, 7], [4, -18, -0.2, 7], [-40, 8, 1.45, 6], [42, 20, 1.6, 6]]) {
+      const w = B.stoneWall(l, rnd); this.place(w, x, z, r);
+      this.col.addBox(x, z, l / 2, 0.32, r, -10, this.h(x, z) + w.userData.top);
     }
+    // street lamps (their glass brightens at night with the house windows)
+    const lamps = [[-2, 3], [15, 3.5], [16, 21], [-4, 22.5], [-11, 25], [25, 22], [9, 35], [-8, 36], [-6, -15], [0, -15], [30, 40]];
+    this.lampPosts = [];
+    for (const [x, z] of lamps) {
+      const lp = B.lampPost(rnd); this.place(lp, x, z, this.faceTo(x, z, plaza.x, plaza.z));
+      const c = this.col.addCircle(x, z, 0.25, -10, this.h(x, z) + 3.2); c.climb = false;
+      this.lampPosts.push(lp);
+    }
+    // bunting from the belfry to four lamp posts around the plaza
+    const bt0 = new THREE.Vector3(bx, by0 + 9.6, bz);
+    for (const [x, z] of [[-2, 3], [15, 3.5], [16, 21], [-4, 22.5]]) {
+      const dir = new THREE.Vector3(x - bx, 0, z - bz).normalize();
+      const a = bt0.clone().addScaledVector(dir, 2.6), b = new THREE.Vector3(x, this.h(x, z) + 3.05, z);
+      this.scene.add(B.bunting([a, b], rnd, { sag: 0.9 }));
+    }
+    this.scene.add(B.bunting([new THREE.Vector3(9, this.h(9, 35) + 3.0, 35), new THREE.Vector3(16, this.h(16, 21) + 3.05, 21)], rnd, { sag: 0.7 }));
+    // washing lines behind houses
+    for (const [x, z, r] of [[-23, 38, 0.4], [-35, 24, 1.3], [5, 50, -0.2]]) this.place(B.washingLine(4.5, rnd), x, z, r);
+    // carts, hay, crate & barrel stacks
+    const c1 = B.cart(rnd, { load: 1 }); this.place(c1, 27, 7, 0.7); this.col.addBox(27, 7, 1.3, 0.8, 0.7, -10, this.h(27, 7) + 1.2);
+    const c2 = B.cart(rnd, { load: 0 }); this.place(c2, -25, 25, 2.3); this.col.addBox(-25, 25, 1.3, 0.8, 2.3, -10, this.h(-25, 25) + 1.2);
+    const c3 = B.cart(rnd, { load: 2 }); this.place(c3, 39, 46, 1.2); this.col.addBox(39, 46, 1.3, 0.8, 1.2, -10, this.h(39, 46) + 1.3);
+    const stack = (x, z, ry) => {
+      const g = new THREE.Group();
+      B.crate(g, 0, 0.36, 0, 0.72, 0.1, rnd); B.crate(g, 0.78, 0.33, 0.1, 0.66, -0.15, rnd); B.crate(g, 0.35, 1.05, 0.05, 0.64, 0.4, rnd);
+      B.barrel(g, -0.8, 0, 0.2, rnd); B.barrel(g, -0.55, 0, -0.6, rnd);
+      this.place(g, x, z, ry);
+      this.col.addBox(x, z, 1.25, 0.65, ry, -10, this.h(x, z) + 1.35);
+    };
+    stack(17.8, 11.6, 0.4); stack(-5.2, 28.8, 2.6); stack(26.5, 36.5, -0.9); stack(-20.5, 9.5, 1.8);
+    for (const [x, z, r] of [[36, 47, 0.3], [37.2, 48.6, 1.2], [30, 53, 2.2], [-30, -4, 0.6]]) {
+      const g = new THREE.Group(); B.hayBale(g, 0, 0.3, 0, 1, 0); if (rnd() < 0.6) B.hayBale(g, 0.15, 0.85, 0.05, 0.9, 0.3);
+      this.place(g, x, z, r); this.col.addBox(x, z, 0.6, 0.35, r, -10, this.h(x, z) + 0.6);
+    }
+    // vegetable gardens behind the houses
+    for (const [x, z, r, w, d] of [[-10, 46, 0.2, 3.4, 2.2], [7, 51, -0.3, 3, 2], [-22, -13, 0.5, 3.2, 2.2], [-36, 13, 1.4, 3, 2], [28, 24, 0.9, 2.8, 1.8]]) {
+      this.place(B.gardenPlot(w, d, rnd), x, z, r);
+    }
+    // planters around the plaza and well
+    const pl = new THREE.Group();
+    for (const [x, z] of [[-6.6, 13.5], [-1.5, 18.4], [11.5, 21.5], [0, 2.5]]) B.planter(pl, x, z, rnd, { len: 1.3, wid: 0.7, stone: true });
+    for (const c of pl.children) c.position.y = this.h(c.position.x, c.position.z);
+    this.scene.add(pl);
     // signposts
-    for (const [x, z, r] of [[-2, -6, 0.2], [-26, 10, 1.5], [24, -1, -0.8], [5, 50, 3.1]]) this.place(B.signpost([{ ry: 0.2 }, { ry: -0.5 }]), x, z, r);
-    // plaza platform (bell tower base steps)
+    const signs = [[-2, -6, 0.2, [{ ry: 0.2 }, { ry: -2.5 }]], [-26, 10, 1.5, [{ ry: 0.3 }, { ry: 2.9 }]], [24, -1, -0.8, [{ ry: -0.2 }, { ry: 2.4 }]], [5, 50, 3.1, [{ ry: 0.2 }, { ry: -0.5 }]]];
+    for (const [x, z, r, t] of signs) { this.place(B.signpost(t), x, z, r); this.col.addCircle(x, z, 0.2, -10, this.h(x, z) + 2.6).climb = false; }
+    // landscaping: blossom and shade trees, hedges and flower beds
+    const P = this.props;
+    for (const [x, z, s] of [[-24, 12, 1.0], [27, 25, 0.95], [-9, 39, 0.9], [-33, 30, 1.05], [36, 30, 0.9], [-14, -14, 1.0], [14, -10, 0.95]]) P.add('blossom', x, z, s, { col: 0.4, tall: 4 });
+    for (const [x, z, s] of [[-36, 36, 1.0], [38, -4, 1.1], [-32, -18, 1.05], [33, 42, 0.95], [-38, -2, 1.0], [18, 56, 1.0]]) P.add('oak', x, z, s, { col: 0.45 });
+    for (let i = 0; i < 70; i++) {
+      const a = rnd() * TAU, r = 16 + rnd() * 22;
+      const x = 3 + Math.cos(a) * r, z = 18 + Math.sin(a) * r;
+      if (this.col.pointHit(x, this.h(x, z) + 0.5, z, 1.2) || this.terrain.pathAt(x, z) > 0.3) continue;
+      if (Math.hypot(x - bx, z - bz) < 13) continue;
+      if (rnd() < 0.45) P.add('bush', x, z, 0.6 + rnd() * 0.5);
+      else P.add('flowers', x, z, 0.8 + rnd() * 0.4);
+    }
   }
 
   buildTowerHill() {
     const t = B.moraTower();
     this.place(t, POI.tower.x, POI.tower.z, 0);
     this.solid(t, { r: 4.6 });
-    this.annexCol = this.col.addBox(POI.tower.x - 2, POI.tower.z - 6.2, 2.9, 2.5, 0, -10, 30);
+    const an = t.children.find((c) => c.userData && c.userData.roofTop);
+    const ty = t.position.y;
+    this.annexCol = this.col.addBox(POI.tower.x - 2, POI.tower.z - 6.2, an ? an.userData.w / 2 : 2.9, an ? an.userData.d / 2 : 2.5, 0, -10, ty + (an ? an.userData.height : 6));
+    if (an) this.annexCol.topFn = (lx, lz) => ty + an.userData.roofTop(lx, lz);
     this.tower = t;
     this.anims.push(() => {
       t.userData.chimes.forEach((c, i) => { c.position.y = 16 + Math.sin(G.time * 1.5 + i) * 0.15 - (i % 2) * 0.4; c.rotation.y += 0.02; });
@@ -286,6 +360,40 @@ export class World {
       const beam = new THREE.Mesh(beamGeo, bmat); m.add(beam);
       this.anims.push(() => { beam.rotation.y += 0.01; beam.scale.x = beam.scale.z = 1 + Math.sin(G.time * 3 + x) * 0.08; bmat.opacity = mat.opacity * (0.75 + Math.sin(G.time * 2.4 + x) * 0.25); });
       this.runMarkers.push({ mesh: m, x, z, done: false });
+    }
+    // hill dressing: training-yard furniture, herb garden, lamps, the grave's garden
+    const rnd = mulberry32(21);
+    const wr = B.weaponRack(rnd); this.place(wr, 12.6, 141, -Math.PI / 2); this.col.addBox(12.6, 141, 1.05, 0.25, -Math.PI / 2, -10, this.h(12.6, 141) + 1.3).climb = false;
+    for (const [x, z] of [[12, 134.5], [11.5, 148.5]]) { const st = B.strawTarget(); this.place(st, x, z, this.faceTo(x, z, -6, 142)); this.col.addCircle(x, z, 0.5, -10, this.h(x, z) + 1.9).climb = false; }
+    for (const [x, z, r, l] of [[14.5, 137, Math.PI / 2 + 0.05, 9], [14.2, 148, Math.PI / 2 - 0.08, 7]]) this.place(B.fence(l), x, z, r);
+    for (const [x, z, r] of [[9.5, 152, 0.4], [-31.5, 162, 1.2]]) {
+      const g = new THREE.Group(); B.hayBale(g, 0, 0.3, 0, 1, 0); B.hayBale(g, 1.15, 0.3, 0.1, 1, 0.1); B.hayBale(g, 0.55, 0.85, 0.05, 0.95, -0.2);
+      this.place(g, x, z, r); this.col.addBox(x, z, 1.2, 0.4, r, -10, this.h(x, z) + 1.15);
+    }
+    this.place(B.gardenPlot(3.4, 2.2, rnd), -34, 147.5, 0.4);
+    this.place(B.gardenPlot(2.6, 1.8, rnd), -35.5, 151.5, 0.3);
+    const hp = new THREE.Group();
+    for (const [x, z] of [[-21.3, 150.9], [-21.3, 155.1]]) B.planter(hp, x, z, rnd, { len: 0.8, wid: 0.8, stone: true });
+    for (const c of hp.children) c.position.y = this.h(c.position.x, c.position.z);
+    this.scene.add(hp);
+    for (const [x, z] of [[-17, 141.5], [-12.5, 155.5], [-8, 132]]) {
+      const lp = B.lampPost(rnd); this.place(lp, x, z, this.faceTo(x, z, -14, 146));
+      this.col.addCircle(x, z, 0.25, -10, this.h(x, z) + 3.2).climb = false;
+    }
+    this.place(B.signpost([{ ry: -0.4 }, { ry: 2.6 }]), -9.5, 133.5, 0.6);
+    // Seha's grave sits under a blossom tree in a patch of flowers
+    this.props.add('blossom', -39.5, 132.5, 1.05, { col: 0.4, tall: 4, ry: 0.8 });
+    for (let i = 0; i < 16; i++) {
+      const a = rnd() * TAU, r = 2 + rnd() * 3.5;
+      this.props.add('flowers', POI.grave.x + Math.cos(a) * r, POI.grave.z + Math.sin(a) * r, 0.8 + rnd() * 0.3, { v: [0, 3, 5][i % 3] });
+    }
+    // trees framing the tower on the hill's back side
+    for (const [x, z, t, sc] of [[-40, 158, 'oak', 1.1], [-36, 167, 'birch', 1.0], [-19, 166, 'birch', 0.9], [-44, 147, 'oak', 0.95], [-14, 168, 'oak', 1.0], [-42, 166, 'pine', 0.9]]) this.props.add(t, x, z, sc, { col: 0.42 });
+    for (let i = 0; i < 18; i++) {
+      const a = rnd() * TAU, r = 7 + rnd() * 5;
+      const x = POI.tower.x + Math.cos(a) * r, z = POI.tower.z + Math.sin(a) * r;
+      if (this.col.pointHit(x, this.h(x, z) + 0.5, z, 1)) continue;
+      this.props.add(rnd() < 0.5 ? 'bush' : 'flowers', x, z, 0.7 + rnd() * 0.4);
     }
   }
 
@@ -407,7 +515,13 @@ export class World {
       if (Math.hypot(x - POI.storm.x, z - POI.storm.z) > 46) continue;
       const o = rr() < 0.4 ? B.ruinArch(rr) : B.pillarBroken(2 + rr() * 4, rr);
       this.place(o, x, z, rr() * 3);
-      this.solid(o, { r: 0.7 });
+      if (o.userData.pillars) {
+        // one solid column per side (the arch between them stays open)
+        for (const [lx, top] of o.userData.pillars) {
+          const px = x + Math.cos(o.rotation.y) * lx, pz = z - Math.sin(o.rotation.y) * lx;
+          this.col.addCircle(px, pz, 0.62, -10, o.position.y + top);
+        }
+      } else this.solid(o, { r: 0.7 });
     }
     // Kael's broken shield
     const sh = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.12, 6), B.MAT.bronze);
@@ -421,19 +535,107 @@ export class World {
     this.scene.add(g);
     this.rift = { group: g, y, center: new THREE.Vector3(POI.rift.x, y, POI.rift.z) };
     g.children.forEach((c) => {
-      if (c.geometry && c.geometry.type === 'OctahedronGeometry' && c.scale.y > 5) { const cc = this.col.addCircle(POI.rift.x + c.position.x, POI.rift.z + c.position.z, 1.5, -10, 40); cc.climb = false; cc.noTop = true; }
+      if (c.userData.monolith) { const cc = this.col.addCircle(POI.rift.x + c.position.x, POI.rift.z + c.position.z, 1.5, -10, 40); cc.climb = false; cc.noTop = true; }
     });
+    // gate plinths are solid blocks you can stand on
+    for (const sx of [-1, 1]) this.col.addBox(POI.rift.x + sx * 6.8, POI.rift.z - 14, 2.3, 2.3, 0, -10, y - 0.3 + 1.4);
   }
 
   buildLandmarks() {
-    // Lake willow (hairpin), meadow lone tree + bench (flower book)
-    const willow = makeTree('willow', 21, { trunkH: 3.0, size: 2.1, light: 0xb7d86a, dark: 0x4c8a40 });
-    this.place(willow, -49, 82, 0.4); this.solid(willow, { r: 0.6, climb: false, noTop: true });
-    const lone = makeTree('oak', 77, { trunkH: 3.4, size: 2.2, light: 0xe0c060, dark: 0x8a7a3a });
-    this.place(lone, POI.meadow.x, POI.meadow.z, 0); this.solid(lone, { r: 0.6, climb: false, noTop: true });
-    this.place(B.bench(), POI.meadow.x + 2, POI.meadow.z + 2.6, Math.PI * 0.25 + Math.PI);
+    const rnd = mulberry32(606);
+    const P = this.props;
+    // Lake willow (hairpin): a big weeping willow with stones and flowers at its roots
+    const willow = makeTree('willow', 21, { trunkH: 3.0, size: 2.3, light: 0xb7d86a, dark: 0x4c8a40 });
+    this.place(willow, -49, 82, 0.4); this.solid(willow, { r: 0.7, climb: false, noTop: true });
+    for (let i = 0; i < 10; i++) {
+      const a = rnd() * TAU, r = 3 + rnd() * 4;
+      P.add(i % 3 ? 'flowers' : 'pebbles', -49 + Math.cos(a) * r, 82 + Math.sin(a) * r, 0.9, { v: i % 3 ? 5 : undefined });
+    }
+    // Sunset meadow knoll: a golden lone tree, the bench, a ring of wildflowers
+    const M = POI.meadow;
+    const lone = makeTree('oak', 77, { trunkH: 3.8, size: 2.7, limbs: 4, sub: 6, r0: 0.42, light: 0xf2d06a, dark: 0xc0843a, deep: 0x84522a, tip: 0xf8e6a0, sway: 0.014, swayBase: 3.5 });
+    this.place(lone, M.x, M.z, 0.3); this.solid(lone, { r: 0.7, climb: false, noTop: true });
+    this.place(B.bench(), M.x + 2, M.z + 2.6, Math.PI * 0.25 + Math.PI);
+    for (let i = 0; i < 46; i++) {
+      const a = rnd() * TAU, r = 3.5 + rnd() * 9;
+      const x = M.x + Math.cos(a) * r, z = M.z + Math.sin(a) * r;
+      if (Math.hypot(x - (M.x + 2), z - (M.z + 2.6)) < 1.6) continue;
+      P.add('flowers', x, z, 0.8 + rnd() * 0.5, { v: [1, 4, 2, 0][i % 4] });
+    }
+    for (const [dx, dz, s] of [[-5.5, 3, 0.9], [6, -4, 1.2], [-3, -6.5, 0.7]]) P.add('rock', M.x + dx, M.z + dz, s, { col: 0.8, v: 2 });
     // island tree
-    const it = makeTree('oak', 5, { trunkH: 2.4, size: 1.3 }); this.place(it, POI.island.x + 1.5, POI.island.z - 1, 0);
+    const it = makeTree('oak', 5, { trunkH: 2.4, size: 1.4 }); this.place(it, POI.island.x + 1.5, POI.island.z - 1, 0);
+    // fishing dock on the lake shore by the path's end (walkable platform)
+    {
+      const L = POI.lake;
+      const s = new THREE.Vector3(-40, 0, 44), d = new THREE.Vector3(L.x - s.x, 0, L.z - s.z).normalize();
+      for (let k = 0; k < 40 && this.h(s.x, s.z) > 0.25; k++) s.addScaledVector(d, 0.5);
+      s.addScaledVector(d, -1.6);
+      const len = 10, ry = Math.atan2(d.x, d.z);
+      const dk = B.dock(len, 2.2, rnd);
+      dk.position.set(s.x, 0.55, s.z); dk.rotation.y = ry; this.scene.add(dk);
+      const c = s.clone().addScaledVector(d, len / 2);
+      this.col.addPlatform({ type: 'box', x: c.x, z: c.z, hw: 1.1, hd: len / 2, rot: ry, top: 0.6 });
+      // barrels & a crate of the fisher's things at the dock foot
+      const fg = new THREE.Group(); B.barrel(fg, 0, 0, 0, rnd); B.crate(fg, 0.9, 0.3, 0.2, 0.6, 0.3, rnd);
+      const fx = s.x - d.z * 1.8 - d.x * 0.5, fz = s.z + d.x * 1.8 - d.z * 0.5;
+      this.place(fg, fx, fz, ry); this.col.addCircle(fx, fz, 0.8, -10, this.h(fx, fz) + 0.9);
+    }
+    // roadside furniture: milestones on every road, stone cairns up the frost pass,
+    // broken walls along the western road, dead trees down the ashen slope
+    const zoneClear = (x, z) => Math.hypot(x - POI.village.x, z - POI.village.z) > 44 && Math.hypot(x - POI.towerYard.x, z - POI.towerYard.z) > 26 &&
+      Math.hypot(x - POI.frost.x, z - POI.frost.z) > 30 && Math.hypot(x - POI.storm.x, z - POI.storm.z) > 34 && Math.hypot(x - POI.rift.x, z - POI.rift.z) > 46 &&
+      !LANTERNS.some((l) => Math.hypot(x - l.x, z - l.z) < 5);
+    const along = (path, step, fn) => {
+      let carry = step * 0.5;
+      for (let i = 0; i < path.pts.length - 1; i++) {
+        const [ax, az] = path.pts[i], [bx2, bz2] = path.pts[i + 1];
+        const len = Math.hypot(bx2 - ax, bz2 - az), dx = (bx2 - ax) / len, dz = (bz2 - az) / len;
+        for (let t = carry; t < len; t += step) fn(ax + dx * t, az + dz * t, dx, dz);
+        carry = (carry - len) % step; if (carry < 0) carry += step;
+      }
+    };
+    let side = 1;
+    for (const path of PATHS) {
+      along(path, 42, (x, z, dx, dz) => {
+        side = -side;
+        const ox = x - dz * 4.6 * side, oz = z + dx * 4.6 * side;
+        if (!zoneClear(ox, oz) || this.h(ox, oz) < 0.5) return;
+        this.place(B.milestone(rnd), ox, oz, Math.atan2(dx, dz) + Math.PI / 2 * side);
+        this.col.addCircle(ox, oz, 0.35, -10, this.h(ox, oz) + 1.0);
+      });
+      if (path.id === 'frost') along(path, 26, (x, z, dx, dz) => {
+        if (z > -45) return;
+        side = -side;
+        const ox = x - dz * (5.5 + rnd() * 2) * side, oz = z + dx * (5.5 + rnd() * 2) * side;
+        if (!zoneClear(ox, oz)) return;
+        const h = 1.0 + rnd() * 0.9;
+        this.place(B.cairn(rnd, h), ox, oz, rnd() * 3);
+        this.col.addCircle(ox, oz, 0.45, -10, this.h(ox, oz) + h * 0.8);
+        if (rnd() < 0.6) this.place(B.cairn(rnd, h * 0.5), ox + 0.9, oz + 0.5, rnd() * 3);
+      });
+      if (path.id === 'storm') along(path, 30, (x, z, dx, dz) => {
+        if (x > -55) return;
+        side = -side;
+        const ox = x - dz * (7 + rnd() * 3) * side, oz = z + dx * (7 + rnd() * 3) * side;
+        if (!zoneClear(ox, oz)) return;
+        const l = 3 + rnd() * 3, w = B.stoneWall(l, rnd, { h: 0.6 + rnd() * 0.6 });
+        const r = Math.atan2(dx, dz) + Math.PI / 2 + (rnd() - 0.5) * 0.5;
+        this.place(w, ox, oz, r);
+        this.col.addBox(ox, oz, l / 2, 0.32, r, -10, this.h(ox, oz) + w.userData.top);
+        if (rnd() < 0.5) { const pb = B.pillarBroken(1.5 + rnd() * 2, rnd); this.place(pb, ox + dx * 3, oz + dz * 3, rnd() * 3); this.solid(pb, { r: 0.7 }); }
+      });
+      if (path.id === 'rift') along(path, 18, (x, z, dx, dz) => {
+        if (x < 40) return;
+        side = -side;
+        const ox = x - dz * (6 + rnd() * 6) * side, oz = z + dx * (6 + rnd() * 6) * side;
+        if (Math.hypot(ox - POI.rift.x, oz - POI.rift.z) < 40) return;
+        P.add('dead', ox, oz, 0.8 + rnd() * 0.4, { col: 0.35 });
+      });
+    }
+    // an abandoned, tipped-over cart on the ashen slope
+    const bc = B.cart(rnd, { load: 0 }); this.place(bc, 66, -48, 0.9, -0.1); bc.rotation.z = 0.35; bc.updateMatrixWorld(true);
+    this.col.addBox(66, -48, 1.3, 0.8, 0.9, -10, this.h(66, -48) + 1.3);
   }
 
   buildLanterns() {

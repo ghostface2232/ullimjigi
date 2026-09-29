@@ -556,16 +556,16 @@ function flowers(seed, palIdx) {
     const a = rnd() * TAU, r = rnd() * 0.25;
     blade(M, Math.cos(a) * r, Math.sin(a) * r, 0.25 + rnd() * 0.15, 0.05, Math.cos(a) * 0.2, Math.sin(a) * 0.2, leaf0, leaf1, rnd);
   }
-  const n = 5 + Math.floor(rnd() * 4);
+  const n = 8 + Math.floor(rnd() * 5);
   const col = new THREE.Color();
   for (let i = 0; i < n; i++) {
     const pal = FLOWER_PAL[(palIdx + (rnd() < 0.2 ? 1 : 0)) % FLOWER_PAL.length];
     const pet = hc(pal[0]), ctr = hc(pal[1]);
     const a = rnd() * TAU, r = 0.05 + rnd() * 0.35;
-    const x = Math.cos(a) * r, z = Math.sin(a) * r, h = 0.3 + rnd() * 0.32;
+    const x = Math.cos(a) * r, z = Math.sin(a) * r, h = 0.38 + rnd() * 0.34;
     blade(M, x, z, h, 0.012, Math.cos(a) * 0.08, Math.sin(a) * 0.08, leaf0, leaf1, rnd);
     const hx = x + Math.cos(a) * 0.08, hz = z + Math.sin(a) * 0.08;
-    const fr = 0.07 + rnd() * 0.04;
+    const fr = 0.09 + rnd() * 0.05;
     const tilt = new THREE.Vector3(Math.cos(a) * 0.3, 1, Math.sin(a) * 0.3).normalize();
     const ci = M.vert(V.set(hx, h + 0.015, hz), tilt, col.copy(ctr), 0.5);
     const rot = rnd() * TAU;

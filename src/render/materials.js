@@ -20,6 +20,10 @@ export const U = {
   // grime: uv = (xz + x) * y + z
   heightTex: { value: null },
   heightP: { value: new THREE.Vector4(240, 1 / 480, 0, 0) },
+  // Wildfire burn map on the heightmap grid (same uv as heightTex): R = scorched, G = burning
+  burnTex: { value: (() => { const t = new THREE.DataTexture(new Uint8Array(4), 1, 1); t.needsUpdate = true; return t; })() },
+  // Rain wetness of exposed surfaces, 0..1 (set by Weather)
+  wet: { value: 0 },
 };
 
 // ---------------------------------------------------------------------------
@@ -288,6 +292,8 @@ const LIGHTS_PRE = `
 // Terrain: painterly brush noise, rock strata on steep slopes.
 const TERRAIN_VERT_PARS = `varying vec3 vWPos;\nvarying vec3 vWNrm;\n`;
 const TERRAIN_FRAG_PARS = `
+uniform sampler2D uBurnTex;
+uniform float uWet;
 varying vec3 vWPos;
 varying vec3 vWNrm;
 float _h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -328,6 +334,17 @@ const TERRAIN_FRAG = `
       strata *= 0.95 + 0.1 * chip;
       diffuseColor.rgb *= mix(vec3(1.0), strata, rock * detail);
     }
+    // wildfire: scorched ground (patchy ash) and a hot rim while burning
+    vec2 buv = (vWPos.xz + uHeightP.x) * uHeightP.y + uHeightP.z;
+    vec4 burn = texture2D(uBurnTex, buv);
+    if (burn.r + burn.g > 0.002) {
+      float ashN = _vn(p * 1.3);
+      vec3 ash = mix(vec3(0.16, 0.14, 0.13), vec3(0.34, 0.3, 0.27), ashN);
+      diffuseColor.rgb = mix(diffuseColor.rgb, ash, burn.r * (0.75 + 0.25 * ashN) * (1.0 - rock * 0.6));
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.08, 0.04), burn.g * 0.6);
+    }
+    // rain: darker, more saturated soil and rock
+    diffuseColor.rgb *= 1.0 - uWet * (0.22 + 0.12 * rock);
   }
 `;
 
@@ -527,6 +544,7 @@ export function patch(m, opts = {}) {
     sh.uniforms.uShadeTint = U.shadeTint;
     sh.uniforms.uHeightTex = U.heightTex;
     sh.uniforms.uHeightP = U.heightP;
+    if (isTerrain) { sh.uniforms.uBurnTex = U.burnTex; sh.uniforms.uWet = U.wet; }
     let fs = sh.fragmentShader;
     const isToon = fs.includes('#include <lights_toon_pars_fragment>');
     let defs = '';

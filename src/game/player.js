@@ -227,7 +227,7 @@ export class Player {
         G.audio.play('jump');
         G.vfx.burst(this.pos, 'dust', 4, { speed: 2, size: 0.4 });
       }
-      const wantGlide = act && input.down('Space') && !this.grounded && !this.swimming && this.vel.y < 0 && !this.exhausted && this.stamina > 0 && this.coyote < -0.1;
+      const wantGlide = act && input.down('Space') && !this.grounded && !this.swimming && (this.gliding || this.vel.y < 0) && !this.exhausted && this.stamina > 0 && this.coyote < -0.1;
       if (wantGlide && !this.gliding) { G.audio.play('glide'); this.gliding = true; this.glideCircle = G.vfx.circle(this.pos, PAL[this.element].glow, 1.2, 0, { follow: this.root, offset: new THREE.Vector3(0, 2.6, 0), spin: 2, alpha: 0.7 }); }
       if (!wantGlide && this.gliding) { this.gliding = false; if (this.glideCircle) { this.glideCircle.end(); this.glideCircle = null; } }
 
@@ -235,6 +235,13 @@ export class Player {
       if (this.blinkT <= 0) this.vel.y -= GRAV * dt * (this.updraft > 0 ? 0.3 : 1);
       this.updraft = Math.max(0, this.updraft - dt);
       if (this.gliding) this.vel.y = Math.max(this.vel.y, -2.6);
+      // hot air over wildfire (and other heat sources) carries a glider up
+      const lift = G.env ? G.env.liftAt(this.pos.x, this.pos.y, this.pos.z) : 0;
+      if (lift > 0.02) {
+        if (this.gliding) { this.vel.y += GRAV * dt * Math.min(1, lift * 1.5); this.vel.y = damp(this.vel.y, 4 + 12 * lift, 3.5, dt); }
+        else if (!this.grounded) this.vel.y += 9 * lift * dt;
+        if (this.gliding && G.story && G.story.once('updraft1')) G.hud.toast('뜨거운 바람이 몸을 들어 올린다!');
+      }
       this.vel.y = Math.max(this.vel.y, -42);
       const prevGround = W.ground(this.pos.x, this.pos.z, this.pos.y + 0.6);
 

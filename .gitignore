@@ -3,3 +3,4 @@ dist/
 .DS_Store
 *.log
 ref/
+.claude/worktrees/

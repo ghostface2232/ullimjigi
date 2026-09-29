@@ -7,6 +7,9 @@ import { Terrain } from './terrain.js';
 import { Sky } from './sky.js';
 import { Water } from './water.js';
 import { Grass } from './grass.js';
+import { Weather } from './weather.js';
+import { Wildfire } from './wildfire.js';
+import { Env } from './env.js';
 import { Props, makeTree } from './props.js';
 import { Colliders } from './collision.js';
 import { POI, regionAt } from './layout.js';
@@ -61,6 +64,9 @@ export class World {
     this.sky = new Sky(scene);
     this.water = new Water(scene, this.terrain);
     this.grass = new Grass(scene, this.terrain, this.water);
+    this.weather = new Weather(scene);
+    this.fire = new Wildfire(scene, this.terrain);
+    G.env = new Env(this);
     onProgress(0.45, '숲을 가꾸는 중…');
     this.props = new Props(scene, this.terrain, this.col, G.settings.quality);
     onProgress(0.65, '마을을 짓는 중…');
@@ -508,6 +514,8 @@ export class World {
   update(dt, camPos, playerPos) {
     U.time.value = G.time;
     U.wind.value = 1 + Math.sin(G.time * 0.3) * 0.35 + Math.sin(G.time * 1.1) * 0.15;
+    this.weather.update(dt, camPos, playerPos);
+    if (G.player) this.fire.update(dt, camPos, playerPos);
     this.sky.update(dt, playerPos, 1, camPos);
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);

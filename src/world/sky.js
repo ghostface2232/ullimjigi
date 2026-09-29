@@ -183,6 +183,8 @@ export class Sky {
     this.hour = 7.5;
     this.dayLength = 22 * 60; // seconds per full day
     this.hush = 0;
+    this.overcast = 0; // 0 clear … 1 fully clouded (Weather)
+    this.storm = 0;    // thunderstorm darkness
     this.cloudT = 0;
     this.uni = {
       uTop: { value: new THREE.Color() }, uHorizon: { value: new THREE.Color() }, uBottom: { value: new THREE.Color() },
@@ -243,6 +245,12 @@ export class Sky {
     const night = lerp(a.night, b.night, t);
     u.uNight.value = night;
     u.uHush.value = this.hush;
+    const oc = this.overcast, st = this.storm;
+    u.uCover.value = 0.53 - oc * 0.36;
+    // grey the sky and clouds under heavy cover
+    cT.setRGB(0.52, 0.56, 0.62).multiplyScalar(1 - night * 0.8 - st * 0.35);
+    u.uTop.value.lerp(cT, oc * 0.75); u.uHorizon.value.lerp(cT, oc * 0.6);
+    u.uCloud.value.lerp(cT.multiplyScalar(1.25), oc * 0.7); u.uCloudShade.value.multiplyScalar(1 - oc * 0.35 - st * 0.25);
     u.uCam.value.copy(camPos || center);
 
     // sun path: rises east (+x), sets west (-x), arcs south (+z)
@@ -262,13 +270,16 @@ export class Sky {
     this.sun.target.position.copy(center);
     lerpHex(a.sun, b.sun, t, this.sun.color);
     const hushDim = 1 - this.hush * 0.35;
-    this.sun.intensity = lerp(a.sunI, b.sunI, t) * hushDim;
+    this.sun.intensity = lerp(a.sunI, b.sunI, t) * hushDim * (1 - oc * 0.62 - st * 0.15);
+    u.uSunVis.value *= 1 - oc * 0.85;
     lerpHex(a.hemiS, b.hemiS, t, this.hemi.color);
     lerpHex(a.hemiG, b.hemiG, t, this.hemi.groundColor);
-    this.hemi.intensity = lerp(a.hemiI, b.hemiI, t);
+    this.hemi.intensity = lerp(a.hemiI, b.hemiI, t) * (1 - st * 0.25);
+    this.hemi.color.lerp(cA.set(0x9aa4b4), oc * 0.5);
     lerpHex(a.fog, b.fog, t, this.scene.fog.color);
     if (this.hush > 0) this.scene.fog.color.lerp(cA.set(0x4a4258), this.hush * 0.6);
-    this.scene.fog.density = this.fogBase * (1 + this.hush * 1.4);
+    this.scene.fog.color.lerp(cA.set(0x8c96a4).multiplyScalar(1 - night * 0.75 - st * 0.3), oc * 0.55);
+    this.scene.fog.density = this.fogBase * (1 + this.hush * 1.4 + oc * 0.9 + st * 0.6);
     U.rimColor.value.copy(this.sun.color).multiplyScalar(lerp(a.rim, b.rim, t) * 0.9);
     this.mesh.position.copy(center);
     this.night = night;
@@ -285,11 +296,11 @@ export class Sky {
     this.cloudT += dt;
     const cw = U.cloud.value;
     cw.x = -this.cloudT * 3.2; cw.y = -this.cloudT * 1.3;
-    cw.w = 0.42 * smoothstep(0.05, 0.3, sunUp) * (1 - night);
+    cw.w = 0.42 * smoothstep(0.05, 0.3, sunUp) * (1 - night) * (1 - oc * 0.8);
     // aerial perspective
     FOG.sunDir.x = sunDir.x; FOG.sunDir.y = sunDir.y; FOG.sunDir.z = sunDir.z;
     const golden = 1 - smoothstep(0.15, 0.55, sunUp);
-    const scat = (0.22 + 0.5 * golden) * sunVis * (1 - this.hush * 0.7);
+    const scat = (0.22 + 0.5 * golden) * sunVis * (1 - this.hush * 0.7) * (1 - oc * 0.8);
     FOG.sunColor.x = u.uSunColor.value.r * scat; FOG.sunColor.y = u.uSunColor.value.g * scat; FOG.sunColor.z = u.uSunColor.value.b * scat;
     cT.copy(u.uHorizon.value).lerp(u.uTop.value, 0.18);
     if (this.hush > 0) cT.lerp(cA.set(0x4a4258), this.hush * 0.6);

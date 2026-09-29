@@ -49,6 +49,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | | `sky.js` · `water.js` · `grass.js` | 하늘과 낮밤, 물, 풀(청크 단위 스트리밍) |
 | | `props.js` · `buildings.js` | 나무·바위 인스턴싱, 건물 생성 함수 |
 | | `collision.js` | 원·박스 충돌체와 밟을 수 있는 발판 |
+| | `weather.js` · `wildfire.js` · `env.js` | 날씨(비·뇌우·눈, 벼락), 들불 격자 시뮬레이션과 상승 기류, 마법↔환경 디스패처 `G.env` |
 | | `world.js` | 위 모든 것의 배치, 등석·씨앗·기억 물건, 정적 메시 합치기, 환경 연출 |
 | `game/` | `game.js` | 부팅, 타이틀, 메인 루프, 메뉴, 저장·불러오기, 사망, 등석, 음악 선택 |
 | | `player.js` | 이동(달리기·순간이동·점프·활공·수영), 시전, 능력치 |
@@ -99,6 +100,16 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 가파른 지형(법선 y < 0.64)과 충돌체 벽은 그쪽으로 계속 걸으면 붙잡습니다(`player.tryGrab` → `updateClimb`). 허리 높이(1.45m 미만) 턱은 뛰어넘고, 꼭대기에서는 `startMantle`로 올라섭니다. 등반 중 이동은 기력 10/초, 도약(<kbd>Space</kbd>) 20, 벽 차기(<kbd>S</kbd>+<kbd>Space</kbd>) 12, <kbd>Shift</kbd>는 놓기입니다.
 - 충돌체 윗면은 바닥입니다(`Colliders.surfaceTop`, `World.ground`). 그래서 **충돌체 높이 `h1`은 실제 모양의 꼭대기와 맞아야 합니다.** 건물·지형지물은 `World.solid(obj, { r | hw, hd, top?, topFn?, climb?, noTop? })`로 등록하면 경계 상자에서 높이를 잽니다. 지붕처럼 기운 윗면은 `topFn(lx, lz)`(로컬 좌표), 나무 줄기처럼 올라설 수 없는 것은 `climb: false, noTop: true`를 주세요.
 - `Player.teleport`는 등반·기어오르기·활공 상태를 풉니다. 플레이어 위치를 직접 바꿀 때는 이것을 쓰세요.
+
+### 날씨·들불·환경 (`world/weather.js`, `world/wildfire.js`, `world/env.js`)
+- **날씨**(`G.world.weather`): 지역 기후(`CLIMATE`)에 따라 2.5~5분마다 맑음/흐림/비/뇌우 중 다음 상태를 고르고 25~40초에 걸쳐 바뀝니다. 서리봉(북쪽·고지대)에서는 눈으로 내립니다. 월드가 열리기 전·대화·보스전 중에는 맑음으로 돌아갑니다. 연출에서 고정하려면 `weather.lock('rain')`, 풀려면 `lock(null)`.
+  - 비: 1초마다 적을 젖게 하고(`e.st.wet`), 들불을 약화·소멸, 등반 중 미끄러짐(`player.updateClimb`), 지형·풀이 어두워짐(`U.wet`).
+  - 뇌우: 5~13초마다 근처 높은 충돌체에 벼락(불씨·주변 피해). 번개 속성을 든 채 서 있으면 지팡이에 전기가 모였다가(경고음·불꽃 2.2초) 벼락이 떨어집니다.
+  - 하늘은 `sky.overcast`, `sky.storm`으로 어두워지고 구름이 덮입니다.
+- **들불**(`G.world.fire`): 지형 격자(2m)마다 연료(풀 비율)·상태(풀/타는 중/그을림)를 둡니다. 0.12초마다 이웃으로 번지며, 바람 방향·오르막일수록 빠르고 비에 약합니다. 동시에 타는 칸은 최대 900, 마을 광장은 연료가 없습니다. 탄 자리는 2.5~4분 뒤 다시 자랍니다. 번짐 지도(`U.burnTex`, R=그을림 G=불길)를 지형·풀 셰이더가 읽습니다.
+  - 타는 칸 위 26m까지 상승 기류가 생겨 활공하면 떠오릅니다(`env.liftAt` → `player`). 불 위에 서 있으면 0.35초마다 피해, 적은 화염 피해.
+  - `fire.ignite(x, z, r)`, `fire.extinguish(x, z, r)`, `fire.fan(x, z, dirX, dirZ, r)`.
+- **환경 디스패처**(`G.env`): 마법이 착탄하면 `G.env.onSpell({ el, pos, r, kind, source })`를 부릅니다. 화염은 풀에 불을 붙이고, 물·서리는 끄고, 바람은 불길을 바람 방향으로 번지게, 번개는 가끔 불씨를 만듭니다. 새 환경 규칙은 여기에 추가하세요.
 
 ### 전투
 - 모든 피해는 `G.combat.hit(target, h)`로 넣습니다. `h`의 주요 필드:

@@ -17,6 +17,9 @@ uniform vec3 uCam;
 uniform float uFade;
 uniform float uWind;
 uniform vec4 uBurns[4];
+uniform sampler2D uBurnMap;
+uniform vec4 uHeightP;
+uniform float uWet;
 uniform vec4 uCloud;
 uniform vec3 uSunW;
 uniform sampler2D uNoiseTex;
@@ -43,6 +46,10 @@ void main(){
     p.xz *= iParams.y;
   #endif
   p.y *= iParams.z;
+  // wildfire: burning blades wither, scorched ones are stubble until they grow back
+  vec4 burnS = texture2D(uBurnMap, (iOffset.xz + uHeightP.x) * uHeightP.y + uHeightP.z);
+  float burnK = max(burnS.r, burnS.g);
+  p.y *= 1.0 - burnK * 0.82;
   float c = cos(iParams.x), s = sin(iParams.x);
   p = vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z);
   vec3 wp = iOffset + p;
@@ -68,7 +75,9 @@ void main(){
   wp.xz += bend;
   wp.y -= length(bend) * 0.4 * h;
   vWave = wave * uWind;
-  vColor = iColor;
+  vColor = mix(iColor, vec3(0.13, 0.1, 0.08), burnK * 0.9);
+  vColor = mix(vColor, vec3(1.4, 0.45, 0.08), burnS.g * 0.5 * aBlade.x);
+  vColor *= 1.0 - uWet * 0.16;
   vH = h;
   vBlade = aBlade;
   vec2 q = iOffset.xz + uSunW.xz * ((160.0 - iOffset.y) / max(uSunW.y, 0.25));
@@ -195,6 +204,9 @@ export class Grass {
     this.uni.uCloud = U.cloud;
     this.uni.uSunW = U.sunDir;
     this.uni.uShadeTint = U.shadeTint;
+    this.uni.uBurnMap = U.burnTex;
+    this.uni.uHeightP = U.heightP;
+    this.uni.uWet = U.wet;
     this.uni.uNoiseTex = { value: noiseTexture() };
     const opts = { uniforms: this.uni, vertexShader: VS, fragmentShader: FS, fog: true, lights: true, side: THREE.DoubleSide };
     this.mat = new THREE.ShaderMaterial(opts);

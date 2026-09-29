@@ -442,12 +442,12 @@ export class Spells {
     const sky = tp.clone().add(new THREE.Vector3(randRange(-3, 3), o.big ? 34 : 24, randRange(-3, 3)));
     V.lightning(sky, tp, { width: o.big ? 0.5 : 0.3, dur: o.big ? 0.4 : 0.3, branches: o.big ? 4 : 2, jag: 0.06 });
     if (o.big) V.lightning(sky.clone().add(new THREE.Vector3(2, 0, 1)), tp, { width: 0.2, dur: 0.3, branches: 1, jag: 0.1 });
-    V.strike(tp, r, { big: o.big });
+    V.strike(tp, r, { big: o.big, dim: o.dim });
     A.play('thunder', { pos: tp, gap: o.big ? 0 : 0.15 });
     G.cameraRig.shake(o.big ? 0.55 : 0.25);
     if (o.big && G.cameraRig.punchFov) G.cameraRig.punchFov(2.5);
     const gu = G.renderer.grade.uniforms;
-    gu.uFlash.value = Math.max(gu.uFlash.value, o.big ? 0.18 : 0.08); gu.uFlashColor.value.setRGB(1, 0.95, 0.8);
+    if (!o.dim || o.big) { gu.uFlash.value = Math.max(gu.uFlash.value, o.big ? (o.dim ? 0.06 : 0.1) : 0.04); gu.uFlashColor.value.setRGB(1, 0.95, 0.8); }
     G.world.grass.gust(tp.x, tp.z, 6, 2);
     for (const e of this.enemiesIn(tp.clone().setY(tp.y + 1), r)) {
       G.combat.hit(e, { dmg, el: 'storm', pos: e.center(), dir: tmp.subVectors(e.center(), tp).setY(0).normalize().clone(), knock: 6, lift: 3, heavy: true, status: 2, source: 'player', hitstop: o.big ? 0.1 : 0.05, shake: o.big ? 0.4 : 0.15 });
@@ -676,7 +676,7 @@ export class Spells {
           V.pillar(tp, PAL.fire.glow, 2.6, 22, 0.7, { core: PAL.fire.core, alpha: 0.7 });
           V.decal(tp, 'crack', 6.5, { glow: PAL.fire.glow, dur: 12, glowDur: 3 });
           V.shock(tp.clone().setY(tp.y + 1), PAL.fire.core, 12, 0.6, { alpha: 0.5, flat: 0.5 });
-          const gu = G.renderer.grade.uniforms; gu.uFlash.value = 0.22; gu.uFlashColor.value.setRGB(1, 0.75, 0.45);
+          const gu = G.renderer.grade.uniforms; gu.uFlash.value = Math.max(gu.uFlash.value, 0.14); gu.uFlashColor.value.setRGB(1, 0.75, 0.45);
           A.play('ult_boom', { pos: tp, el: 'fire' });
           G.hitstop = Math.max(G.hitstop, 0.1);
           if (G.cameraRig.punchFov) G.cameraRig.punchFov(6);
@@ -745,7 +745,7 @@ export class Spells {
         break;
       }
       case 'storm': {
-        V.circle(feet, PAL.storm.glow, 8, 3.2, { spin: 1, alpha: 0.4, intensity: 0.55 });
+        V.circle(feet, PAL.storm.glow, 8, 3.2, { spin: 1, alpha: 0.3, intensity: 0.5 });
         A.play('ult_boom', { pos: feet, el: 'storm' });
         let n = 0;
         const z = { t: 0, tick: 0.1 };
@@ -757,7 +757,7 @@ export class Spells {
             const e = cand.length ? pick(cand) : null;
             const p = e ? e.pos.clone() : player.pos.clone().add(new THREE.Vector3(randRange(-12, 12), 0, randRange(-12, 12)));
             p.y = G.world.ground(p.x, p.z, p.y + 3);
-            this.strike(p, P * 2, 2.6, { big: n % 3 === 0 });
+            this.strike(p, P * 2, 2.6, { big: n % 3 === 0, dim: true });
           }
           return n < 10;
         };

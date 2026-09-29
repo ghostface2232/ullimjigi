@@ -29,6 +29,7 @@ const UPV = new THREE.Vector3(0, 1, 0);
 const tmpQ = new THREE.Quaternion();
 const tmpC = new THREE.Color();
 const _sd = new THREE.Vector3(), _tan = new THREE.Vector3();
+const FLASH_K = 0.55;
 const rv = (s) => randRange(-s, s);
 const pal = (el) => PAL[el] || PAL.arcane;
 
@@ -718,6 +719,9 @@ export class VFX {
 
   // ---------------- lights ----------------
   flash(pos, color, intensity = 30, distance = 14, dur = 0.25) {
+    // Flash lights are physically-based point lights; at the old values a single
+    // blast lit the whole screen. Scale down and cap the reach so the glow stays local.
+    intensity *= FLASH_K; distance = Math.min(distance, 22);
     // a flash already burning at (almost) the same spot absorbs this one instead of stacking
     for (const s of this.lights) {
       if (s.held || s.dur <= 0 || s.l.intensity < 1) continue;
@@ -739,7 +743,7 @@ export class VFX {
   holdLight(color, intensity = 18, distance = 10) {
     const s = this.lights.find((s) => !s.held && s.l.intensity < 0.5) || this.lights.find((s) => !s.held);
     if (!s) return null;
-    s.held = true; s.l.color.set(color); s.l.intensity = intensity; s.l.distance = distance; s.peak = intensity; s.dur = 0;
+    intensity *= 0.7; s.held = true; s.l.color.set(color); s.l.intensity = intensity; s.l.distance = distance; s.peak = intensity; s.dur = 0;
     return s;
   }
   releaseLight(s) { if (s) { s.held = false; s.t = 0; s.dur = 0.15; s.peak = s.l.intensity; } }
@@ -1055,7 +1059,17 @@ export class VFX {
       grp, alpha: 0, done: false,
       update: (dt) => {
         h.alpha = h.done ? Math.max(0, h.alpha - dt * 2.5) : Math.min(1, h.alpha + dt * 4);
-        for (const m of mats) m.uniforms.uAlpha.value = h.alpha * (o.alpha ?? 0.5);
+        // when the camera is at/inside the funnel wall (tornados worn by the player), both walls
+        // stack right in front of the lens — fade them so the view stays readable
+        let camK = 1;
+        if (G.camera) {
+          const cp = G.camera.position, gp = grp.position;
+          const d = Math.hypot(cp.x - gp.x, cp.z - gp.z);
+          const hy = clamp((cp.y - gp.y) / (7 * Math.max(0.05, grp.scale.y)), 0, 1);
+          const wall = (1.3 + 1.9 * hy) * grp.scale.x;
+          camK = 0.3 + 0.7 * clamp((d - wall * 0.9) / (wall * 0.8), 0, 1);
+        }
+        for (const m of mats) m.uniforms.uAlpha.value = h.alpha * (o.alpha ?? 0.5) * camK;
         grp.rotation.y += dt * 6;
         // debris and ground dust swirling at the base
         if (!h.done && !o.noDebris) {
@@ -1105,13 +1119,13 @@ export class VFX {
       },
       update: (dt) => {
         h.alpha = h.done ? Math.max(0, h.alpha - dt * 5) : Math.min(1, h.alpha + dt * 10);
-        core.material.opacity = h.alpha; glow.material.opacity = h.alpha * 0.7; outer.material.opacity = h.alpha * 0.6;
+        core.material.opacity = h.alpha; glow.material.opacity = h.alpha * 0.7; outer.material.opacity = h.alpha * 0.4;
         // flare at the muzzle and a spray at the end point
         if (!h.done && h.alpha > 0.3) {
           ft -= dt;
           if (ft <= 0) {
             ft = 0.03;
-            self.burst(a0, 'glow', 1, { el, size: h.width * 5, size1: h.width * 6, life: 0.06, alpha: 0.6 });
+            self.burst(a0, 'glow', 1, { el, size: h.width * 2.4, size1: h.width * 3, life: 0.06, alpha: 0.35 });
             self.burst(b0, 'glow', 1, { el, size: h.width * 7, size1: h.width * 9, life: 0.07, alpha: 0.7 });
             tmpV.subVectors(a0, b0).normalize();
             self.sparks(b0, tmpV, 2, { el, spread: 0.9, speed: 10, life: 0.25 });
@@ -1490,7 +1504,7 @@ export class VFX {
     }
     switch (el) {
       case 'fire':
-        this.burst(pos, 'fire', 34 * k, { speed: 8, spread: 0.8, size: 1.4, alpha: 0.65 });
+        this.burst(pos, 'fire', 24 * k, { speed: 8, spread: 0.8, size: 1.4, alpha: 0.6 });
         this.burst(pos, 'ember', 26 * k, { speed: 10 });
         this.burst(pos, 'smoke', 12 * k, { spread: 1.4, size: 1.7 });
         this.burst(pos.clone().setY(pos.y + 0.5), 'fireball', 7 * k, { r: r * 0.4 });
@@ -1536,7 +1550,7 @@ export class VFX {
     this.burst(tp, 'electric', big ? 30 : 16, { speed: 12 }); this.burst(tp, 'dust', big ? 14 : 6, { speed: 7 });
     this.burst(tp, 'debris', big ? 12 : 5, { speed: 9 });
     if (big) this.burst(tp.clone().setY(tp.y + 1), 'star', 1, { el: 'storm', size: 7 });
-    this.flash(tp.clone().setY(tp.y + 3), 0xfff0a0, big ? 80 : 50, big ? 30 : 18, 0.4);
+    this.flash(tp.clone().setY(tp.y + 3), 0xfff0a0, (big ? 80 : 50) * (o.dim ? 0.5 : 1), big ? 30 : 18, o.dim ? 0.25 : 0.4);
     this.decal(tp, 'char', r * (big ? 1.1 : 0.9), { dur: big ? 9 : 6 });
     if (big) this.decal(tp, 'crack', r * 0.8, { glow: PAL.storm.glow.clone().multiplyScalar(0.8), dur: 8 });
     this.linger(tp, 'storm', r * 0.6, big ? 2.4 : 1.4, { rate: 8 });

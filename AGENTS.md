@@ -104,10 +104,20 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 적이 아닌 대상(예: 최종 보스의 결계판 `Plate`)은 `receive(h)`를 구현하면 `hit()`이 그쪽으로 넘깁니다.
 
 ### 울림 나무 (스킬)
-- 노드는 `skills.js`의 `TREES`에 데이터로 추가합니다: `{ id, name, tier, col, max, cost, req, kind, desc(r) }`. `req`는 **하나만** 익혀도 되는 선행 목록, `tier`는 나무에 쓴 점수 조건(`TIER_GATE`)과 화면 위치를, `col`(0~2)은 가로 위치를 정합니다. 조화 노드는 `els: [속성, 속성]`을 씁니다.
+- 노드는 `skills.js`의 `TREES`에 데이터로 추가합니다: `{ id, name, tier, col, max, cost, req, kind, desc(r) }`. `req`는 **하나만** 익혀도 되는 선행 목록, `tier`는 나무에 쓴 점수 조건(`TIER_GATE = [0, 1, 2, 4, 7]`)과 화면 위치를, `col`(0~2)은 가로 위치를 정합니다. 속성 나무는 5단(0~4), 조화의 나무는 4단(0~3)이고 화면은 나무의 `maxTier`에 맞춰 배치됩니다. 조화 노드는 `els: [속성, 속성]`과 `req: ['h_weave']`를 씁니다.
+- **기술(`kind: 'active'`)**: 각 속성 나무의 0단은 고유 마법을 여는 노드(`SIG` 맵: `a_sig`·`f_sig`·`w_sig`·`i_sig`·`s_sig`·`wa_sig`, `sigOf(el)`)이고, 조화의 0단 `h_weave`(`WEAVE_NODE`)가 엮기를 엽니다. `player.castHeavy`/`castWeave`는 `canHeavy()`/`canWeave()`로 이를 확인합니다. 기술 노드의 이름·설명의 마나·재사용 값은 `spells.js`의 `HEAVY`·`WEAVE_COST`를 **지연해서** 읽습니다(`spells.js`가 `skills.js`를 import하므로 모듈 평가 시점에 읽으면 순환 참조 오류).
+- 이야기 보상이나 이전 저장 이전처럼 점수 없이 익히게 하려면 `G.skills.grant(id, { silent, quiet, sound })`를 씁니다. 받은 노드는 `granted`에 기록되어 "모두 잊기"에서 남고 환급되지 않습니다. `grantBasics()`는 깨우친 속성의 고유 마법과(속성 둘 이상이면) 엮기를 한꺼번에 줍니다.
+- 익힐 때 공통 처리(소리 `skill_learn`/`skill_unlock_active`, `G.vfx.learn(나무, 종류, 위치)` 연출, 알림, HUD 갱신)는 `Skills.afterLearn`에 있습니다.
 - 효과는 쓰는 쪽에서 `G.skills.r(id)`(단계) 또는 `G.skills.has(id)`로 조회합니다. `spells.js`·`combat.js`는 파일 안의 `R(id)` 도우미를 씁니다. 수치를 바꾸면 `desc`와 [docs/DESIGN.md](docs/DESIGN.md#울림-나무-스킬-트리)도 함께 고치세요.
 - 궁극기는 `kind: 'ult'`이고 `ULTS`에 속성별로 등록합니다. 구현은 `Spells.ult(el, …)`.
 - 울림점 지급은 `G.skills.gain(n, 이유)`로 합니다. 이유 문자열은 알림에 그대로 나옵니다.
+- **울림의 갈림길**: 레벨업(`player.addXP`)은 울림점과 함께 `G.skills.cross`를 늘립니다. `Game.update`가 `crossroadsSafe()`(자유 이동·메뉴 없음·전투/대화 아님·지상)가 실제 시간 2.2초 이어지면(스크립트 전투의 파 사이 `sleep`보다 길게) 메뉴 id `'crossroads'`를 엽니다(`Game.openCrossroads` → `HUD.openCrossroads`). 카드는 `Skills.offer(3, seed)`가 고릅니다. <kbd>1</kbd>~<kbd>3</kbd>/클릭은 `HUD.crPick`, <kbd>Esc</kbd>는 `crKeep`(남은 갈림길 모두 넘기고 점수 보관), <kbd>K</kbd>는 `crTree`.
+
+### 마나
+- 소모는 `player.spend(cost)`, 회복은 `player.gainMana(n, { src, n })`로 합니다(HUD 반짝임 포함). 자연 회복은 `manaRegenRate(inCombat)`: 마지막 소모 1.4초 뒤부터 전투 중 `(5 + 0.25 × 레벨) × (1 + 0.25 × a_flow)`, 전투 밖 22/초.
+- 적 처치 마나 방울은 `EnemyManager.drop`/`makePickup`/`absorbPickup`(enemies.js 끝부분)에 있습니다. 반응 +3은 `Combat.resolve`, 완벽 회피 +15는 `player.perfectDodge`.
+- 마법 비용은 `spells.js`(`BOLT[el].cost`, `HEAVY[el].cost`, `WEAVE_COST`)가 원본입니다. HUD·설명에 숫자를 하드코딩하지 마세요.
+- 관련 소리: `mana_orb`(`{ n }` 연속 흡수 수), `mana_low`, `mana_full`, `mana_empty`, `levelup_open`, `skill_pick`, `skill_unlock_active`. 새 이름은 `G.audio.S`에 없으면 기존 소리(`pickup`, `skill_learn`, `ui_open`)로 대체합니다.
 
 ### 원소 반응 추가
 1. `combat.js`의 `REACTIONS`에 `{ name, color, els: [상태, 발동 속성], desc }`를 넣습니다(`els`는 반응 도감 아이콘).
@@ -142,7 +152,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 인물별 말투는 [docs/DESIGN.md](docs/DESIGN.md#인물과-말투)를 따르세요. 한 인물의 말투가 흔들리면 몰입이 크게 깨집니다.
 
 ### 저장
-- `localStorage`의 `ullimjigi_save_v1`(진행)과 `ullimjigi_settings`(설정)를 씁니다. 울림 나무는 `skills` 필드(단계, 남은 점수, 게이지, 반응 도감)에 들어갑니다. `skills`가 없는 이전 저장은 `Skills.expected()`로 점수를 계산해 지급합니다.
+- `localStorage`의 `ullimjigi_save_v1`(진행)과 `ullimjigi_settings`(설정)를 씁니다. 울림 나무는 `skills` 필드(`v: 2`, 단계, 남은 점수, 게이지, 반응 도감, `granted`, 남은 갈림길 `cross`)에 들어갑니다. `skills`가 없는 이전 저장은 `Skills.expected()`로 점수를 계산해 지급하고, `skills.v`가 없거나 2 미만이면 `grantBasics()`로 이미 쓰던 고유 마법과 엮기를 무료로 줍니다. `p_heavy` 플래그가 있으면 `Story.start`가 `f_sig`를 보장합니다.
 - 저장 형식을 바꾸면 기존 저장과 호환되는지 확인하세요. `Story.load`는 없는 필드에 기본값을 넣어 줍니다.
 
 ## 테스트 방법
@@ -160,7 +170,9 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | `mora` | 3장 |
 | `rift` | 4장 (틈 입구 근처, 물 포함 6속성) |
 | `lake` | 2장, 물의 노래를 얻기 전 거울 호숫가 |
-| `skills` | 3장, 6속성·Lv 12·울림점 22점·게이지 가득 (스킬 테스트용) |
+| `skills` | 3장, 6속성·Lv 12·울림점 26점·게이지 가득 (스킬 테스트용) |
+
+`1`을 뺀 프리셋은 깨우친 속성의 고유 마법과 엮기를 무료로 받습니다(`grantBasics`). 갈림길을 보려면 `__G.player.addXP(5000)` 후 자유 이동 상태로 두세요(`village` 프리셋은 시작하자마자 대화가 이어지므로 `skills`가 편합니다).
 | `continue` | 저장 불러오기 |
 
 캐릭터만 따로 보려면 개발 서버에서 `/charview.html`을 엽니다(게임 빌드에는 포함되지 않는 뷰어).
@@ -171,9 +183,10 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 `window.__G`로 게임 상태에 접근할 수 있습니다.
 - **입력 흉내**: `G.input.keys.add('KeyW')`(누르고 있기), `G.input.pressed.add('KeyE')`(한 번 누르기), `G.input.mouse.pressed.add(0)`(클릭)
 - **조준**: `G.player.lockTarget = 적`으로 대상을 고정하면 자동으로 조준됩니다.
-- **스킬**: `G.skills.learn('wa_ult')`, `G.skills.points += 10`, `G.skills.gauge = 100` 후 `G.player.castUlt()`. 울림 가속은 `G.player.tryBlink(); G.player.damage(1)`로 확인합니다.
+- **스킬**: `G.skills.learn('wa_ult')`, `G.skills.grant('i_sig')`, `G.skills.points += 10`, `G.skills.gauge = 100` 후 `G.player.castUlt()`. 울림 가속은 `G.player.tryBlink(); G.player.damage(1)`로 확인합니다.
 - **성능**: `G.game.perf`에서 프레임별 갱신·렌더 시간, 드로우콜, 삼각형 수를 봅니다.
 - **스크립트 도구 제한**: 브라우저 자동화 도구는 한 번에 약 45초까지만 실행됩니다. 긴 전투 테스트는 백그라운드 루프로 돌리고 결과를 `window`에 담아 따로 확인하세요.
+- **헤드리스 스크린숏**: 소프트웨어 렌더링(swiftshader)에서는 스크린숏이 수십 초~수 분 걸릴 수 있습니다. 찍기 직전에 `__G.renderer.render`를 잠시 빈 함수로 바꿨다가 되돌리면 빨라집니다. 전체 화면 `backdrop-filter`나 큰 요소의 무한 애니메이션은 소프트웨어 합성에서 매우 느리니 메뉴 연출에 쓰지 마세요.
 
 ### 성능 기준
 마을 기준으로 드로우콜 약 500-900, 삼각형 약 100만입니다(헤드리스 측정, 식생·조형 캐릭터 포함). 캐릭터는 사람형 6,500-10,000, 일반 적 2,500-10,000 삼각형이며 형태별로 기하를 공유합니다. 이보다 크게 늘어나는 변경은 합치기나 인스턴싱을 검토하세요.

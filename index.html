@@ -57,9 +57,18 @@
       <div id="hud" class="hidden">
         <div id="vitals">
           <div id="hearts"></div>
-          <div id="mana"><div class="mana-fill"></div><div class="mana-ghost"></div></div>
+          <div id="mana">
+            <div class="mana-track">
+              <div class="mana-ghost"></div>
+              <div class="mana-fill"><div class="mana-shine"></div></div>
+              <div class="mana-preview"></div>
+              <i class="mana-tick t-heavy"></i><i class="mana-tick t-weave"></i>
+            </div>
+            <div class="mana-num"><b>100</b><span>/ 100</span></div>
+          </div>
           <div id="xpbar"><div class="xp-fill"></div><span class="xp-lv">Lv 1</span></div>
           <div id="sp-badge" class="hidden"><span class="spd">◆</span>울림점 <b>0</b><kbd>K</kbd></div>
+          <div id="cr-badge" class="hidden"><span class="crg">✦</span><span class="crt">울림의 갈림길<small>전투가 끝나면 고를 수 있다</small></span></div>
         </div>
 
         <div id="compass">
@@ -73,7 +82,7 @@
           <div class="qt-obj"></div>
         </div>
 
-        <div id="crosshair"><div class="ch-dot"></div><div class="ch-ring"></div></div>
+        <div id="crosshair"><div class="ch-dot"></div><div class="ch-ring"></div><div class="ch-note"></div></div>
         <div id="lock-marker" class="hidden"></div>
 
         <div id="stamina">
@@ -88,6 +97,7 @@
             <div class="weave-key">Q</div>
             <div class="weave-icons"></div>
             <div class="weave-name"></div>
+            <div class="slot-cost weave-cost"></div>
             <div class="weave-cd"></div>
           </div>
           <div id="elements"></div>
@@ -97,7 +107,7 @@
               <span class="uk">F</span>
               <span class="un"></span>
             </div>
-            <div id="heavy-slot"><span class="hk">우클릭</span><span class="hn"></span><div class="heavy-cd"></div></div>
+            <div id="heavy-slot"><span class="hk">우클릭</span><span class="hn"></span><span class="slot-cost heavy-cost"></span><div class="heavy-cd"></div></div>
           </div>
         </div>
 
@@ -172,6 +182,25 @@
           <div class="sk-foot">
             <span>클릭: 선택 · 두 번 클릭 / Enter: 익히기 · K · 닫기</span>
             <button class="tbtn small ghost" data-act="skills-reset">모두 잊기 (울림점 되돌리기)</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ LEVEL-UP CROSSROADS ============ -->
+      <div id="crossroads" class="screen hidden">
+        <div class="cr-veil"></div>
+        <div class="cr-frame">
+          <div class="cr-head">
+            <div class="cr-lv"></div>
+            <div class="cr-title">울림의 갈림길</div>
+            <div class="cr-desc"></div>
+            <div class="cr-quote hidden"></div>
+          </div>
+          <div class="cr-cards"></div>
+          <div class="cr-foot">
+            <button class="tbtn small ghost" data-act="cr-keep">울림점으로 간직하기 <kbd>Esc</kbd></button>
+            <span class="cr-pts"></span>
+            <button class="tbtn small ghost" data-act="cr-tree">울림 나무 열기 <kbd>K</kbd></button>
           </div>
         </div>
       </div>

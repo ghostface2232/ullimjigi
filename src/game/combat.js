@@ -327,6 +327,8 @@ export class Combat {
       if (reaction && G.story) G.story.onReaction(reaction);
       if (reaction && G.player) G.player.stats.reactions++;
       if (reaction && reaction !== 'airborne' && byPlayer) this.chainUp(reaction);
+      // reactions feed the mana pool (+3 each) so mixing elements sustains casting
+      if (reaction && reaction !== 'airborne' && h.source === 'player' && G.player && G.player.gainMana) G.player.gainMana(3, { src: 'reaction' });
       const big = !!h.heavy || !!reaction;
       A.play('hit', { pos: c, el, heavy: big, v: h.heavy ? 1 : 0.8, gap: 0.03 });
       if (crit) A.play('crit', { pos: c, gap: 0.05 });

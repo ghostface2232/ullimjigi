@@ -223,7 +223,7 @@ export function house(opts = {}) {
       cyl(0.12, 0.12, 1.2, 6, MAT.timber, -w / 2 - 0.22 - k * 0.23 - row * 0.115, 0.72 + row * 0.2, -d / 2 + 1.2, g, { rx: Math.PI / 2 });
     }
   }
-  g.userData = { w: w + 0.4, d: d + 0.4, height: B0 + wallH + rh, chimney };
+  g.userData = { w: w + 0.4, d: d + 0.4, height: B0 + wallH + rh, chimney, eave: yTop, roofH: rh, roofHW: gb.hw };
   return g;
 }
 

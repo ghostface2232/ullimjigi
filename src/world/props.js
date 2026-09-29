@@ -467,7 +467,12 @@ export class Props {
     const place = (type, x, z, s, colR, dy = 0) => {
       const y = T.height(x, z) + dy;
       this.types[type].list.push({ x, y, z, s, r: rnd() * Math.PI * 2, v: Math.floor(rnd() * this.types[type].geos.length) });
-      if (colR) this.col.addCircle(x, z, colR * s, y - 1, y + 6 * s);
+      if (!colR) return;
+      // rocks are solid lumps you can climb and stand on; trunks only block
+      const isRock = type === 'rock';
+      const c = this.col.addCircle(x, z, colR * s, y - 1, y + (isRock ? 0.72 * s : 6 * s));
+      if (!isRock) { c.climb = false; c.noTop = true; }
+      else c.rock = true;
     };
     const forestAt = (x, z) => smoothstep(0.0, 0.5, fbm(nv, x * 0.012 + 50, z * 0.012, 2));
     const lakeD = (x, z) => Math.hypot(x - POI.lake.x, z - POI.lake.z) / POI.lake.r;

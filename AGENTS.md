@@ -95,6 +95,11 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 투명 재질과 흔들림(`sway`) 재질은 자동으로 제외됩니다.
 - 합칠 필요가 없는 Group에는 `userData.noBake = true`를 주세요.
 
+### 등반과 충돌체
+- 가파른 지형(법선 y < 0.64)과 충돌체 벽은 그쪽으로 계속 걸으면 붙잡습니다(`player.tryGrab` → `updateClimb`). 허리 높이(1.45m 미만) 턱은 뛰어넘고, 꼭대기에서는 `startMantle`로 올라섭니다. 등반 중 이동은 기력 10/초, 도약(<kbd>Space</kbd>) 20, 벽 차기(<kbd>S</kbd>+<kbd>Space</kbd>) 12, <kbd>Shift</kbd>는 놓기입니다.
+- 충돌체 윗면은 바닥입니다(`Colliders.surfaceTop`, `World.ground`). 그래서 **충돌체 높이 `h1`은 실제 모양의 꼭대기와 맞아야 합니다.** 건물·지형지물은 `World.solid(obj, { r | hw, hd, top?, topFn?, climb?, noTop? })`로 등록하면 경계 상자에서 높이를 잽니다. 지붕처럼 기운 윗면은 `topFn(lx, lz)`(로컬 좌표), 나무 줄기처럼 올라설 수 없는 것은 `climb: false, noTop: true`를 주세요.
+- `Player.teleport`는 등반·기어오르기·활공 상태를 풉니다. 플레이어 위치를 직접 바꿀 때는 이것을 쓰세요.
+
 ### 전투
 - 모든 피해는 `G.combat.hit(target, h)`로 넣습니다. `h`의 주요 필드:
   - 필수: `dmg`, `el`
@@ -179,6 +184,9 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 
 `?dev` 모드는 `requestAnimationFrame` 대신 16ms 타이머로 루프를 돕니다. **브라우저 창이 가려져 있으면 rAF가 멈추기 때문입니다.** 일반 모드(타이틀부터)는 창이 보이는 상태에서만 확인할 수 있습니다.
 
+### 테스트 스위치
+주소에 `&god`(피해 없음), `&unseen`(적이 플레이어를 인지하지 않음)을 붙이거나 콘솔에서 `__G.dev.god = true`, `__G.dev.unseen = true`로 켭니다. 이동·등반·연출을 확인할 때 적에게 맞아 쓰러져 등석으로 돌아가는 일을 막아 줍니다. 적의 인지는 모두 `player.seen()`을 거칩니다.
+
 ### 콘솔에서 조작하기
 `window.__G`로 게임 상태에 접근할 수 있습니다.
 - **입력 흉내**: `G.input.keys.add('KeyW')`(누르고 있기), `G.input.pressed.add('KeyE')`(한 번 누르기), `G.input.mouse.pressed.add(0)`(클릭)
@@ -195,7 +203,6 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 실제 마우스 조작감과 소리는 사람이 직접 확인해야 합니다. 자동 테스트로는 오류 없이 실행되는 것까지만 확인했습니다.
 - 보스 밸런스는 회피하지 않는 자동 조작 기준입니다(서리무덤 파수꾼 약 15초, 무명의 기사 약 23초). 사람 기준 목표는 각각 1분 안팎입니다.
 - 적 이동은 충돌체를 밀어내기만 하고 길찾기는 없습니다.
-- 등반은 없습니다. 활공, 순간이동, 공중에서 쓰는 바람 고유 마법(상승 기류)으로 대신합니다.
 - 번들이 약 1.3MB(gzip 386KB) 한 덩어리입니다. 필요하면 코드 분할을 검토하세요.
 - 그래픽 품질 '낮음'은 풀·그림자·소품 수만 줄이고, 새 질감·잎 가장자리 셰이더는 끄지 않습니다. 저사양 대응이 필요하면 여기부터 보세요.
 - 적이 넘어졌다 일어나는 동작은 몸 전체를 기울이는 방식이며 별도의 일어서기 애니메이션은 없습니다.

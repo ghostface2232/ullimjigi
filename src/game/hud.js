@@ -402,7 +402,7 @@ export class HUD {
     this.updateMana();
     const sf = P.stamina / P.maxStamina;
     this.el.stFill.style.strokeDashoffset = 251.3 * (1 - sf);
-    const showSt = sf < 0.995 || P.sprinting || P.gliding;
+    const showSt = sf < 0.995 || P.sprinting || P.gliding || !!P.climbing;
     this.el.stamina.classList.toggle('on', showSt && G.mode === 'free');
     this.el.stamina.classList.toggle('tired', P.exhausted);
     const sp = this.project(v3.set(P.pos.x, P.pos.y + 1.2, P.pos.z));

@@ -143,7 +143,7 @@ export class Story {
     paper.rotation.x = -Math.PI / 2; paper.position.y = 0.9; tb.add(paper);
     for (const sx of [-0.7, 0.7]) for (const sz of [-0.35, 0.35]) { const l = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.85, 0.06), new THREE.MeshToonMaterial({ color: 0x6a4a34 })); l.position.set(sx, 0.42, sz); tb.add(l); }
     tb.position.set(19.3, G.world.h(19.3, 25.2), 25.2); tb.rotation.y = -0.6; G.scene.add(tb);
-    G.world.col.addBox(19.3, 25.2, 0.85, 0.5, -0.6, -10, 30);
+    G.world.col.addBox(19.3, 25.2, 0.85, 0.5, -0.6, -10, G.world.h(19.3, 25.2) + 0.9);
     // cat
     const cat = (this.cat = makeCat());
     cat.pos = V(POI.island.x - 0.8, 0, POI.island.z + 0.6);

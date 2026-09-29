@@ -48,6 +48,9 @@ export class Player {
     this.glideCircle = null;
     this.fallStartY = 0;
     this.carry = null;
+    // climbing: { kind: 'terrain'|'shape', nx, nz, sx, sz (surface point, terrain) } · mantle: ledge pull-up
+    this.climbing = null; this.mantle = null; this.regrabT = 0; this.pushT = 0; this.climbJump = 0;
+    this.climbPhase = 0; this.climbMove = 0; this.slipT = 0;
     this.stats = { casts: 0, bolts: 0, heavies: 0, weaves: 0, reactions: 0 };
     this.hasHat = false;
   }
@@ -58,6 +61,8 @@ export class Player {
   teleport(x, z, yaw) {
     this.pos.set(x, G.world.ground(x, z) + 0.05, z);
     this.vel.set(0, 0, 0);
+    this.climbing = null; this.mantle = null; this.grounded = true;
+    if (this.gliding) { this.gliding = false; if (this.glideCircle) { this.glideCircle.end(); this.glideCircle = null; } }
     if (yaw !== undefined) { this.yaw = yaw; G.cameraRig.faceYaw(yaw); }
     this.root.position.copy(this.pos);
     this.lastSafe.copy(this.pos);
@@ -137,6 +142,8 @@ export class Player {
     G.hud.updateSpells(el);
   }
 
+  // can enemies perceive the player right now?
+  seen() { return !this.dead && G.mode === 'free' && !G.dev.unseen; }
   canAct() { return G.mode === 'free' && !this.dead && G.state === 'play' && !G.paused; }
 
   // --------------------------------------------------------------
@@ -158,7 +165,7 @@ export class Player {
     // shift: tap = blink, hold = sprint
     if (act && input.hit('ShiftLeft')) this.shiftT = 0;
     if (act && input.down('ShiftLeft')) this.shiftT += dt;
-    if (act && input.up('ShiftLeft') && this.shiftT < 0.2) this.tryBlink(moving ? move : null);
+    if (act && input.up('ShiftLeft') && this.shiftT < 0.2) { if (this.climbing) this.letGo(); else if (!this.mantle) this.tryBlink(moving ? move : null); }
     this.sprinting = act && input.down('ShiftLeft') && this.shiftT >= 0.2 && moving && !this.exhausted && this.grounded && !this.swimming && this.castHold <= 0;
 
     // --- element selection & casting
@@ -172,7 +179,7 @@ export class Player {
         this.selectElement(n);
       }
       if (input.hit('KeyT') || input.mHit(1)) this.toggleLock();
-      if (!this.swimming && !G.spells.channel) {
+      if (!this.swimming && !G.spells.channel && !this.climbing && !this.mantle) {
         if (input.mDown(0) && this.cd.bolt <= 0) this.castBolt();
         if (input.mHit(2) && this.cd.heavy <= 0) this.castHeavy();
         else if (input.mHit(2)) G.hud.cooldownFlash('heavy');
@@ -188,96 +195,103 @@ export class Player {
     if (G.spells.channel) this.castHold = 0.3;
     if (this.lockTarget && (!this.lockTarget.alive || this.lockTarget.pos.distanceTo(this.pos) > 40)) this.lockTarget = null;
 
-    // --- horizontal movement
-    let speed = this.swimming ? 3.4 : this.sprinting ? 9.2 : 5.6;
-    if (this.castHold > 0 && this.grounded) speed *= 0.72;
-    if (G.spells.channel) speed *= 0.4;
-    if (this.carry) speed *= 0.9;
-    const accel = this.grounded ? 14 : 5;
-    if (this.blinkT > 0) {
-      this.blinkT -= dt;
-      const bs = G.skills && G.skills.has('w_dash') ? 58 : 42;
-      this.vel.x = this.blinkDir.x * bs; this.vel.z = this.blinkDir.z * bs;
-      if (this.blinkT <= 0) { this.vel.x *= 0.25; this.vel.z *= 0.25; }
-      if (Math.random() < 0.9) G.vfx.burst(tmp2.copy(this.pos).setY(this.pos.y + 1), 'trail', 3, { el: this.element, spread: 0.4, size: 0.5, life: 0.4 });
-    } else if (this.gliding) {
-      const gs = G.skills && G.skills.has('w_tailwind') ? 11.3 : 9;
-      this.vel.x = damp(this.vel.x, move.x * gs + (moving ? 0 : Math.sin(this.yaw) * 5), 2.5, dt);
-      this.vel.z = damp(this.vel.z, move.z * gs + (moving ? 0 : Math.cos(this.yaw) * 5), 2.5, dt);
-    } else {
-      this.vel.x = damp(this.vel.x, move.x * speed, accel, dt);
-      this.vel.z = damp(this.vel.z, move.z * speed, accel, dt);
-    }
-
-    // --- jump / glide
-    if (this.grounded) { this.coyote = 0.12; this.airBlink = G.skills && G.skills.has('w_dash') ? 2 : 1; } else this.coyote -= dt;
-    if (act && input.hit('Space')) this.jumpBuf = 0.15; else this.jumpBuf -= dt;
-    if (this.jumpBuf > 0 && this.coyote > 0 && !this.swimming) {
-      this.vel.y = 9.6; this.grounded = false; this.coyote = 0; this.jumpBuf = 0;
-      G.audio.play('jump');
-      G.vfx.burst(this.pos, 'dust', 4, { speed: 2, size: 0.4 });
-    }
-    const wantGlide = act && input.down('Space') && !this.grounded && !this.swimming && this.vel.y < 0 && !this.exhausted && this.stamina > 0 && this.coyote < -0.1;
-    if (wantGlide && !this.gliding) { G.audio.play('glide'); this.gliding = true; this.glideCircle = G.vfx.circle(this.pos, PAL[this.element].glow, 1.2, 0, { follow: this.root, offset: new THREE.Vector3(0, 2.6, 0), spin: 2, alpha: 0.7 }); }
-    if (!wantGlide && this.gliding) { this.gliding = false; if (this.glideCircle) { this.glideCircle.end(); this.glideCircle = null; } }
-
-    // --- vertical physics
-    if (this.blinkT <= 0) this.vel.y -= GRAV * dt * (this.updraft > 0 ? 0.3 : 1);
-    this.updraft = Math.max(0, this.updraft - dt);
-    if (this.gliding) this.vel.y = Math.max(this.vel.y, -2.6);
-    this.vel.y = Math.max(this.vel.y, -42);
-    const prevGround = W.ground(this.pos.x, this.pos.z, this.pos.y + 0.6);
-
-    const nx = this.pos.x + this.vel.x * dt, nz = this.pos.z + this.vel.z * dt;
-    // steep slope blocking
-    const n = W.terrain.normal(nx, nz, tmp2);
-    const plat = W.col.platformTop(nx, nz, this.pos.y + 0.6);
-    if (n.y < 0.64 && plat < -1e8 && this.grounded && !this.swimming) {
-      const dh = W.h(nx, nz) - W.h(this.pos.x, this.pos.z);
-      if (dh > 0) {
-        const dl = Math.hypot(n.x, n.z) || 1;
-        const dx = n.x / dl, dz = n.z / dl;
-        const into = this.vel.x * dx + this.vel.z * dz;
-        if (into < 0) { this.vel.x -= into * dx; this.vel.z -= into * dz; }
-        this.vel.x += dx * 6 * dt * 10; this.vel.z += dz * 6 * dt * 10;
+    if (this.mantle) this.updateMantle(dt);
+    else if (this.climbing) this.updateClimb(dt, ix, iz, act, input);
+    else {
+      // --- horizontal movement
+      let speed = this.swimming ? 3.4 : this.sprinting ? 9.2 : 5.6;
+      if (this.castHold > 0 && this.grounded) speed *= 0.72;
+      if (G.spells.channel) speed *= 0.4;
+      if (this.carry) speed *= 0.9;
+      const accel = this.grounded ? 14 : 5;
+      if (this.blinkT > 0) {
+        this.blinkT -= dt;
+        const bs = G.skills && G.skills.has('w_dash') ? 58 : 42;
+        this.vel.x = this.blinkDir.x * bs; this.vel.z = this.blinkDir.z * bs;
+        if (this.blinkT <= 0) { this.vel.x *= 0.25; this.vel.z *= 0.25; }
+        if (Math.random() < 0.9) G.vfx.burst(tmp2.copy(this.pos).setY(this.pos.y + 1), 'trail', 3, { el: this.element, spread: 0.4, size: 0.5, life: 0.4 });
+      } else if (this.gliding) {
+        const gs = G.skills && G.skills.has('w_tailwind') ? 11.3 : 9;
+        this.vel.x = damp(this.vel.x, move.x * gs + (moving ? 0 : Math.sin(this.yaw) * 5), 2.5, dt);
+        this.vel.z = damp(this.vel.z, move.z * gs + (moving ? 0 : Math.cos(this.yaw) * 5), 2.5, dt);
+      } else {
+        this.vel.x = damp(this.vel.x, move.x * speed, accel, dt);
+        this.vel.z = damp(this.vel.z, move.z * speed, accel, dt);
       }
-    }
-    this.pos.x += this.vel.x * dt;
-    this.pos.z += this.vel.z * dt;
-    this.pos.y += this.vel.y * dt;
-    W.col.resolve(this.pos, 0.42, 1.8);
-    const rr = Math.hypot(this.pos.x, this.pos.z);
-    if (rr > 214) { this.pos.x *= 214 / rr; this.pos.z *= 214 / rr; }
 
-    // --- ground & water
-    const ground = W.ground(this.pos.x, this.pos.z, this.pos.y + 0.6);
-    const waterDepth = W.water.level - ground;
-    const wasGrounded = this.grounded;
-    if (waterDepth > 1.15 && this.pos.y < W.water.level - 0.9 && this.blinkT <= 0) {
-      if (!this.swimming) { G.audio.play('splash', { pos: this.pos }); G.vfx.burst(this.pos.clone().setY(0.1), 'trail', 16, { el: 'frost', spread: 0.8, size: 0.4 }); }
-      this.swimming = true; this.gliding = false;
-      this.pos.y = damp(this.pos.y, W.water.level - 1.05, 8, dt);
-      this.vel.y = 0; this.grounded = false;
-    } else {
-      this.swimming = false;
-      if (this.pos.y <= ground) {
-        if (!wasGrounded) this.onLand(this.vel.y);
-        this.pos.y = ground; this.vel.y = Math.max(0, this.vel.y);
-        this.grounded = true;
-      } else if (wasGrounded && this.pos.y - ground < 0.45 && this.vel.y <= 0) {
-        this.pos.y = ground; this.vel.y = 0; this.grounded = true; // stick to slopes going down
-      } else this.grounded = false;
+      // --- jump / glide
+      if (this.grounded) { this.coyote = 0.12; this.airBlink = G.skills && G.skills.has('w_dash') ? 2 : 1; } else this.coyote -= dt;
+      if (act && input.hit('Space')) this.jumpBuf = 0.15; else this.jumpBuf -= dt;
+      if (this.jumpBuf > 0 && this.coyote > 0 && !this.swimming) {
+        this.vel.y = 9.6; this.grounded = false; this.coyote = 0; this.jumpBuf = 0;
+        G.audio.play('jump');
+        G.vfx.burst(this.pos, 'dust', 4, { speed: 2, size: 0.4 });
+      }
+      const wantGlide = act && input.down('Space') && !this.grounded && !this.swimming && this.vel.y < 0 && !this.exhausted && this.stamina > 0 && this.coyote < -0.1;
+      if (wantGlide && !this.gliding) { G.audio.play('glide'); this.gliding = true; this.glideCircle = G.vfx.circle(this.pos, PAL[this.element].glow, 1.2, 0, { follow: this.root, offset: new THREE.Vector3(0, 2.6, 0), spin: 2, alpha: 0.7 }); }
+      if (!wantGlide && this.gliding) { this.gliding = false; if (this.glideCircle) { this.glideCircle.end(); this.glideCircle = null; } }
+
+      // --- vertical physics
+      if (this.blinkT <= 0) this.vel.y -= GRAV * dt * (this.updraft > 0 ? 0.3 : 1);
+      this.updraft = Math.max(0, this.updraft - dt);
+      if (this.gliding) this.vel.y = Math.max(this.vel.y, -2.6);
+      this.vel.y = Math.max(this.vel.y, -42);
+      const prevGround = W.ground(this.pos.x, this.pos.z, this.pos.y + 0.6);
+
+      const nx = this.pos.x + this.vel.x * dt, nz = this.pos.z + this.vel.z * dt;
+      // steep slope blocking
+      const n = W.terrain.normal(nx, nz, tmp2);
+      const plat = W.col.platformTop(nx, nz, this.pos.y + 0.6);
+      if (n.y < 0.64 && plat < -1e8 && this.grounded && !this.swimming) {
+        const dh = W.h(nx, nz) - W.h(this.pos.x, this.pos.z);
+        if (dh > 0) {
+          const dl = Math.hypot(n.x, n.z) || 1;
+          const dx = n.x / dl, dz = n.z / dl;
+          const into = this.vel.x * dx + this.vel.z * dz;
+          if (into < 0) { this.vel.x -= into * dx; this.vel.z -= into * dz; }
+          this.vel.x += dx * 6 * dt * 10; this.vel.z += dz * 6 * dt * 10;
+        }
+      }
+      this.pos.x += this.vel.x * dt;
+      this.pos.z += this.vel.z * dt;
+      this.pos.y += this.vel.y * dt;
+      W.col.resolve(this.pos, 0.42, 1.8);
+      const rr = Math.hypot(this.pos.x, this.pos.z);
+      if (rr > 214) { this.pos.x *= 214 / rr; this.pos.z *= 214 / rr; }
+
+      // --- ground & water
+      const ground = W.ground(this.pos.x, this.pos.z, this.pos.y + 0.6);
+      const waterDepth = W.water.level - ground;
+      const wasGrounded = this.grounded;
+      if (waterDepth > 1.15 && this.pos.y < W.water.level - 0.9 && this.blinkT <= 0) {
+        if (!this.swimming) { G.audio.play('splash', { pos: this.pos }); G.vfx.burst(this.pos.clone().setY(0.1), 'trail', 16, { el: 'frost', spread: 0.8, size: 0.4 }); }
+        this.swimming = true; this.gliding = false;
+        this.pos.y = damp(this.pos.y, W.water.level - 1.05, 8, dt);
+        this.vel.y = 0; this.grounded = false;
+      } else {
+        this.swimming = false;
+        if (this.pos.y <= ground) {
+          if (!wasGrounded) this.onLand(this.vel.y);
+          this.pos.y = ground; this.vel.y = Math.max(0, this.vel.y);
+          this.grounded = true;
+        } else if (wasGrounded && this.pos.y - ground < 0.45 && this.vel.y <= 0) {
+          this.pos.y = ground; this.vel.y = 0; this.grounded = true; // stick to slopes going down
+        } else this.grounded = false;
+      }
+      if (this.grounded && !this.swimming && waterDepth < 0.5) {
+        if (G.time % 1 < dt) this.lastSafe.copy(this.pos);
+      }
+      void prevGround;
+      this.tryGrab(dt, move, moving, act);
     }
-    if (this.grounded && !this.swimming && waterDepth < 0.5) {
-      if (G.time % 1 < dt) this.lastSafe.copy(this.pos);
-    }
-    void prevGround;
+    this.regrabT = Math.max(0, this.regrabT - dt);
 
     // --- stamina
     let drain = 0;
     if (this.sprinting) drain = 16;
     if (this.gliding) drain = G.skills && G.skills.has('w_tailwind') ? 4.5 : 7.5;
     if (this.swimming && moving) drain = 6;
+    if (this.climbing && this.climbMove > 0.1) drain = 10;
     if (drain) { this.stamina -= drain * dt; this.staminaUse = 1.2; }
     else if (this.grounded || this.swimming) this.stamina += (this.exhausted ? 22 : 34) * dt * (this.staminaUse > 0 ? 0 : 1);
     this.staminaUse = Math.max(0, (this.staminaUse || 0) - dt);
@@ -285,6 +299,7 @@ export class Player {
       this.stamina = 0;
       if (!this.exhausted) { this.exhausted = true; G.audio.play('mana_empty'); }
       if (this.swimming) this.drown();
+      if (this.climbing) this.letGo(true);
     }
     if (this.exhausted && this.stamina >= this.maxStamina * 0.35) this.exhausted = false;
     this.stamina = Math.min(this.maxStamina, this.stamina);
@@ -303,8 +318,9 @@ export class Player {
     }
 
     // --- facing
-    const aiming = this.castHold > 0 || this.lockTarget || G.spells.channel;
-    if (aiming) {
+    const aiming = !this.climbing && !this.mantle && (this.castHold > 0 || this.lockTarget || G.spells.channel);
+    if (this.climbing) this.yaw = angleDamp(this.yaw, Math.atan2(-this.climbing.nx, -this.climbing.nz), 14, dt);
+    else if (aiming) {
       const ty = this.lockTarget ? Math.atan2(this.lockTarget.pos.x - this.pos.x, this.lockTarget.pos.z - this.pos.z) : Math.atan2(-Math.sin(cr.yaw), -Math.cos(cr.yaw));
       this.yaw = angleDamp(this.yaw, ty, 18, dt);
     } else if (moving || this.gliding) {
@@ -326,7 +342,8 @@ export class Player {
     const aimPitch = aiming ? clamp(-cr.pitch * 0.8 + 0.1, -0.6, 0.6) : 0;
     this.rig.update(dt, {
       speed: this.swimming ? hs : this.grounded ? hs : 0, grounded: this.grounded, vy: this.vel.y,
-      cast: this.castHold > 0, aimPitch, glide: this.gliding, swim: this.swimming, talk: this.talking,
+      cast: this.castHold > 0 && !this.climbing, aimPitch, glide: this.gliding, swim: this.swimming, talk: this.talking,
+      climb: !!this.climbing || !!this.mantle, climbPhase: this.climbPhase, climbMove: this.climbMove, mantle: this.mantle ? this.mantle.t / this.mantle.dur : 0,
     });
     if (this.rig.p.gem) {
       const c = PAL[this.element].core;
@@ -338,6 +355,202 @@ export class Player {
     this.hurtFlash = Math.max(0, (this.hurtFlash || 0) - dt);
     if (this.barrier > 0 && Math.random() < dt * 20) G.vfx.burst(this.center(), 'trail', 1, { el: 'frost', spread: 0.9, size: 0.25 });
     if (this.carry) { this.carry.root.position.set(0.22, 1.62, -0.05); this.carry.update(dt); }
+  }
+
+  // ---------------- climbing ----------------
+  // Any steep cliff (terrain normal.y < 0.64) or solid shape (walls, rocks,
+  // pillars) can be grabbed by pushing into it. Low ledges are vaulted.
+  canGrab() {
+    return !this.swimming && !this.exhausted && this.stamina > 1 && this.regrabT <= 0 && this.blinkT <= 0 && !this.dead;
+  }
+  tryGrab(dt, move, moving, act) {
+    if (!act || !moving || !this.canGrab()) { this.pushT = 0; return; }
+    const W = G.world;
+    const ml = Math.hypot(move.x, move.z) || 1, mx = move.x / ml, mz = move.z / ml;
+    // solid shapes first (buildings, rocks)
+    const w = W.col.wallNear(this.pos.x, this.pos.y, this.pos.z, 0.62, 1.6);
+    if (w && -(mx * w.nx + mz * w.nz) > 0.55) {
+      const rise = w.top - this.pos.y;
+      if (rise > 0.3 && !w.c.noTop && rise < 1.45 && this.pos.y + 0.2 > w.c.h0) {
+        // waist-high ledge: vault over it after a short push
+        this.pushT += dt;
+        const k = this.inset(w.c), tx = w.px - w.nx * k, tz = w.pz - w.nz * k;
+        if (this.pushT > (this.grounded ? 0.08 : 0)) this.startMantle(tx, Math.max(w.top, W.col.topAt(w.c, tx, tz)), tz, 0.32);
+        return;
+      }
+      if (rise >= 1.45) {
+        this.pushT += dt;
+        if (this.pushT > (this.grounded ? 0.12 : 0)) this.startClimb({ kind: 'shape', c: w.c, nx: w.nx, nz: w.nz });
+        return;
+      }
+    }
+    // steep terrain ahead: find where the cliff face crosses chest height
+    let d0 = 0, hit = -1;
+    for (const d of [0.3, 0.55, 0.8, 1.05]) {
+      if (W.h(this.pos.x + mx * d, this.pos.z + mz * d) > this.pos.y + 0.6) { hit = d; break; }
+      d0 = d;
+    }
+    if (hit > 0) {
+      for (let i = 0; i < 5; i++) { const m = (d0 + hit) / 2; if (W.h(this.pos.x + mx * m, this.pos.z + mz * m) > this.pos.y + 0.6) hit = m; else d0 = m; }
+      const sx = this.pos.x + mx * hit, sz = this.pos.z + mz * hit;
+      const n = W.terrain.normal(sx, sz, tmp2);
+      const hl = Math.hypot(n.x, n.z) || 1, nhx = n.x / hl, nhz = n.z / hl;
+      if (n.y < 0.64 && -(mx * nhx + mz * nhz) > 0.5 && W.col.platformTop(sx, sz, this.pos.y + 0.6) < -1e8) {
+        this.pushT += dt;
+        if (this.pushT > (this.grounded ? 0.15 : 0)) this.startClimb({ kind: 'terrain', nx: nhx, nz: nhz, sx, sz });
+        return;
+      }
+    }
+    this.pushT = 0;
+  }
+  // how far past the lip to step when pulling up onto a shape
+  inset(c) { return c.type === 'circle' ? Math.min(0.9, c.r * 0.75) : Math.min(0.9, Math.min(c.hw, c.hd) * 0.9); }
+  startClimb(c) {
+    this.climbing = c;
+    this.pushT = 0; this.climbJump = 0; this.slipT = 0;
+    this.gliding = false;
+    if (this.glideCircle) { this.glideCircle.end(); this.glideCircle = null; }
+    this.grounded = false; this.sprinting = false;
+    this.vel.set(0, 0, 0);
+    this.lockTarget = null;
+    this.snapClimb();
+    G.audio.play('climb_grab', { pos: this.pos });
+    if (G.story && G.story.once('climb1')) G.hud.hint('<b>등반</b> — 가파른 벽이나 바위를 향해 계속 걸으면 붙잡는다<br><small><kbd>W A S D</kbd> 오르내리기 · <kbd>Space</kbd> 도약(기력 소모) · <kbd>S</kbd>+<kbd>Space</kbd> 벽 차고 뛰기 · <kbd>Shift</kbd> 놓기</small>', 9);
+  }
+  // Keep the body pressed against the grabbed surface. Returns false if it's gone.
+  snapClimb() {
+    const C = this.climbing, W = G.world;
+    if (C.kind === 'terrain') {
+      const n = W.terrain.normal(C.sx, C.sz, tmp2);
+      const hl = Math.hypot(n.x, n.z) || 1;
+      C.nx = n.x / hl; C.nz = n.z / hl; C.ny = n.y;
+      this.pos.set(C.sx + C.nx * 0.34, W.h(C.sx, C.sz) - 0.25, C.sz + C.nz * 0.34);
+      return true;
+    }
+    const w = W.col.wallNear(this.pos.x, this.pos.y, this.pos.z, 1.2, 1.6);
+    if (!w) return false;
+    C.c = w.c; C.nx = w.nx; C.nz = w.nz; C.top = w.top;
+    this.pos.x = w.px + w.nx * 0.44; this.pos.z = w.pz + w.nz * 0.44;
+    return true;
+  }
+  updateClimb(dt, ix, iz, act, input) {
+    const W = G.world, C = this.climbing;
+    // climb jump: a burst of stamina for a quick lunge; S + Space kicks off the wall
+    if (act && input.hit('Space') && this.climbJump <= 0) {
+      if (iz < -0.3) { this.wallKick(); return; }
+      if (this.stamina >= 6) {
+        this.stamina -= 20; this.staminaUse = 1.2;
+        this.climbJump = 0.34; this.cjDir = [ix, Math.abs(ix) + Math.abs(iz) < 0.2 ? 1 : iz];
+        G.audio.play('climb_jump', { pos: this.pos });
+        G.vfx.burst(this.center(), 'dust', 5, { speed: 2.5, size: 0.4 });
+      }
+    }
+    let mx = ix, my = iz, speed = 2.3;
+    if (this.climbJump > 0) {
+      this.climbJump -= dt;
+      [mx, my] = this.cjDir; speed = 7.4;
+      const l = Math.hypot(mx, my) || 1; mx /= l; my /= l;
+    }
+    if (this.exhausted) { mx = 0; my = Math.min(my, 0); }
+    const moving = Math.abs(mx) + Math.abs(my) > 0.05;
+    this.climbMove = damp(this.climbMove, moving ? 1 : 0, 10, dt);
+    if (moving) this.climbPhase += dt * speed * 0.62;
+    // rain makes rock slick: now and then the grip slips
+    if (G.world.weather && G.world.weather.wet > 0.4 && moving && my > 0 && this.climbJump <= 0) {
+      this.slipT += dt;
+      if (this.slipT > 2.2) { this.slipT = 0; my = -3.5; G.hud.floatText && G.hud.floatText(this.center(), '미끄러진다!', '#bfe0ff'); G.audio.play('climb_slip', { pos: this.pos }); }
+    }
+    // right (when facing the wall) and surface-up vectors
+    const rx = C.nz, rz = -C.nx;
+    if (C.kind === 'terrain') {
+      // surface-up = (-n_h·cosθ, sinθ): drift into the cliff by n.y per metre and let the heightfield supply the rise
+      const ny = C.ny ?? 0.4, k = speed * dt;
+      C.sx += (-C.nx * ny * my + rx * mx) * k;
+      C.sz += (-C.nz * ny * my + rz * mx) * k;
+      this.snapClimb();
+      const n = W.terrain.normal(C.sx, C.sz, tmp2);
+      if (n.y > 0.72) {
+        // slope eased off: top out (going up) or step down onto it
+        if (my >= 0) this.startMantle(C.sx - C.nx * 0.4, W.h(C.sx - C.nx * 0.4, C.sz - C.nz * 0.4), C.sz - C.nz * 0.4, 0.34);
+        else this.endClimb();
+        return;
+      }
+    } else {
+      this.pos.y += my * speed * dt;
+      this.pos.x += rx * mx * speed * dt; this.pos.z += rz * mx * speed * dt;
+      if (!this.snapClimb()) { this.letGo(); return; }
+      const top = C.top;
+      if (!C.c.noTop && this.pos.y + 1.15 >= top && my > 0) {
+        const tx = this.pos.x - C.nx * (0.44 + this.inset(C.c)), tz = this.pos.z - C.nz * (0.44 + this.inset(C.c));
+        this.startMantle(tx, Math.max(top, W.col.topAt(C.c, tx, tz)), tz, 0.42);
+        return;
+      }
+      if (this.pos.y + 1.4 > C.c.h1) this.pos.y = C.c.h1 - 1.4; // can't climb past an unwalkable top
+      const g = W.ground(this.pos.x, this.pos.z, this.pos.y + 0.4);
+      if (this.pos.y <= g + 0.02) {
+        this.pos.y = g;
+        if (my < 0 || this.exhausted) { this.endClimb(); return; }
+      }
+      // a grabbed boulder or wall can hand over to steep terrain above it
+      const tn = W.terrain.normal(this.pos.x, this.pos.z, tmp2);
+      if (W.h(this.pos.x, this.pos.z) > this.pos.y + 0.1 && tn.y < 0.64) {
+        this.climbing = { kind: 'terrain', nx: C.nx, nz: C.nz, sx: this.pos.x - C.nx * 0.34, sz: this.pos.z - C.nz * 0.34 };
+      }
+    }
+    W.col.resolve(this.pos, 0.3, 1.6);
+    // grip noises
+    if (moving) {
+      this.stepT -= dt * speed * 0.8;
+      if (this.stepT <= 0) { this.stepT = 1; G.audio.play('step', { pos: this.pos, surface: 'stone', gap: 0.1, v: 0.5 }); if (Math.random() < 0.35) G.vfx.burst(this.center(), 'dust', 1, { speed: 1, size: 0.3 }); }
+    }
+  }
+  wallKick() {
+    const C = this.climbing;
+    this.stamina -= 12; this.staminaUse = 1.2;
+    this.climbing = null; this.regrabT = 0.45;
+    this.vel.set(C.nx * 6.5, 7.5, C.nz * 6.5);
+    this.yaw = Math.atan2(C.nx, C.nz);
+    this.grounded = false; this.coyote = -1;
+    G.audio.play('jump');
+    G.vfx.burst(this.center(), 'dust', 6, { speed: 3, size: 0.45 });
+  }
+  letGo(tired = false) {
+    const C = this.climbing;
+    if (!C) return;
+    this.climbing = null;
+    this.regrabT = tired ? 1.2 : 0.4;
+    this.vel.set(C.nx * 1.6, tired ? -1 : 0, C.nz * 1.6);
+    this.grounded = false; this.coyote = -1;
+    if (tired) G.audio.play('climb_slip', { pos: this.pos });
+  }
+  endClimb() {
+    this.climbing = null; this.regrabT = 0.3;
+    this.vel.set(0, 0, 0); this.grounded = true;
+    this.pos.y = G.world.ground(this.pos.x, this.pos.z, this.pos.y + 0.6);
+  }
+  startMantle(x, y, z, dur) {
+    this.climbing = null; this.pushT = 0;
+    this.gliding = false;
+    if (this.glideCircle) { this.glideCircle.end(); this.glideCircle = null; }
+    this.mantle = { t: 0, dur, from: this.pos.clone(), to: new THREE.Vector3(x, y, z) };
+    this.vel.set(0, 0, 0);
+    this.yaw = Math.atan2(x - this.pos.x, z - this.pos.z);
+    G.audio.play('climb_mantle', { pos: this.pos });
+  }
+  updateMantle(dt) {
+    const M = this.mantle;
+    M.t += dt;
+    const k = Math.min(1, M.t / M.dur);
+    // rise first, then roll forward over the lip
+    const ky = 1 - (1 - Math.min(1, k * 1.6)) ** 2;
+    const kh = Math.max(0, (k - 0.35) / 0.65); const kh2 = kh * kh * (3 - 2 * kh);
+    this.pos.set(lerp(M.from.x, M.to.x, kh2), lerp(M.from.y, M.to.y, ky), lerp(M.from.z, M.to.z, kh2));
+    if (k >= 1) {
+      this.mantle = null;
+      this.pos.y = G.world.ground(this.pos.x, this.pos.z, this.pos.y + 0.6);
+      this.grounded = true; this.vel.set(0, 0, 0); this.regrabT = 0.25;
+      G.audio.play('step', { pos: this.pos, surface: G.world.terrain.surfaceAt(this.pos.x, this.pos.z) });
+    }
   }
 
   onLand(vy) {
@@ -521,7 +734,7 @@ export class Player {
 
   // --------------------------------------------------------------
   damage(amount, o = {}) {
-    if (this.dead || G.mode !== 'free' || G.state !== 'play') return;
+    if (this.dead || G.mode !== 'free' || G.state !== 'play' || G.dev.god) return;
     this.dodged = false;
     if (!o.fall && (this.blinkT > 0 || G.time - this.blinkAt < 0.3)) { this.dodged = true; this.perfectDodge(o); return; }
     if (!o.fall && this.invuln > 0) return;

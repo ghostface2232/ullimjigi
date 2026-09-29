@@ -131,7 +131,22 @@ export class World {
   ground(x, z, y = 1e9) {
     const t = this.terrain.height(x, z);
     const p = this.col.platformTop(x, z, y);
-    return Math.max(t, p);
+    const s = y < 1e8 ? this.col.surfaceTop(x, z, y) : -1e9;
+    return Math.max(t, p, s);
+  }
+  // Solid building/landmark: box or circle collider whose top matches the mesh
+  // (so it can be climbed and stood on). Pass `r` for a circle, `hw`/`hd` for a box.
+  solid(obj, o) {
+    const base = obj.position.y;
+    const top = o.top ?? new THREE.Box3().setFromObject(obj).max.y;
+    const c = o.r !== undefined
+      ? this.col.addCircle(o.x ?? obj.position.x, o.z ?? obj.position.z, o.r, -10, top)
+      : this.col.addBox(o.x ?? obj.position.x, o.z ?? obj.position.z, o.hw, o.hd, o.rot ?? obj.rotation.y, -10, top);
+    if (o.topFn) c.topFn = o.topFn;
+    if (o.climb === false) c.climb = false;
+    if (o.noTop) c.noTop = true;
+    c.base = base;
+    return c;
   }
   place(obj, x, z, ry = 0, dy = 0) {
     obj.position.set(x, this.h(x, z) + dy, z);
@@ -164,14 +179,15 @@ export class World {
       const g = B.house({ w: hd.w, d: hd.d, h: hd.h, roof: hd.roof, seed: 10 + i });
       const ry = this.faceTo(hd.x, hd.z, plaza.x, plaza.z) + randRange(-0.12, 0.12);
       this.place(g, hd.x, hd.z, ry, -0.2);
-      this.col.addBox(hd.x, hd.z, g.userData.w / 2, g.userData.d / 2, ry, -10, g.position.y + g.userData.height);
+      const u = g.userData, by = g.position.y;
+      this.solid(g, { hw: u.w / 2, hd: u.d / 2, top: by + u.height, topFn: (lx) => by + u.eave + u.roofH * Math.max(0, 1 - Math.abs(lx) / u.roofHW) });
       if (g.userData.chimney) this.chimneys.push(g.localToWorld(g.userData.chimney.clone()));
       this.houses[hd.id] = g;
     });
     // bell tower
     const bt = B.bellTower();
     this.place(bt, POI.bellTower.x, POI.bellTower.z, 0.1);
-    this.col.addBox(POI.bellTower.x, POI.bellTower.z, 2.6, 2.6, 0.1, -10, 30);
+    this.solid(bt, { hw: 2.6, hd: 2.6, rot: 0.1 });
     this.bellTower = bt;
     this.bellSwing = 0;
     this.anims.push((dt) => {
@@ -183,12 +199,12 @@ export class World {
     // resonance tree
     const tree = B.resonanceTree();
     this.place(tree, -8, -2, 0);
-    this.col.addCircle(-8, -2, 1.5, -10, 30);
+    this.solid(tree, { r: 1.5, climb: false, noTop: true });
     this.resTree = tree;
     // windmill
     const wm = B.windmill();
     this.place(wm, 34, 50, this.faceTo(34, 50, 6, 14));
-    this.col.addCircle(34, 50, 3.2, -10, 30);
+    this.solid(wm, { r: 3.2 });
     this.anims.push((dt) => { wm.userData.rotor.rotation.z += dt * 0.6 * U.wind.value; });
     // well, stalls, benches
     this.place(B.well(), -4, 16); this.col.addCircle(-4, 16, 1.5, -10, 5);
@@ -217,8 +233,8 @@ export class World {
   buildTowerHill() {
     const t = B.moraTower();
     this.place(t, POI.tower.x, POI.tower.z, 0);
-    this.col.addCircle(POI.tower.x, POI.tower.z, 4.6, -10, 40);
-    this.col.addBox(POI.tower.x - 2, POI.tower.z - 6.2, 2.9, 2.5, 0, -10, 30);
+    this.solid(t, { r: 4.6 });
+    this.annexCol = this.col.addBox(POI.tower.x - 2, POI.tower.z - 6.2, 2.9, 2.5, 0, -10, 30);
     this.tower = t;
     this.anims.push(() => {
       t.userData.chimes.forEach((c, i) => { c.position.y = 16 + Math.sin(G.time * 1.5 + i) * 0.15 - (i % 2) * 0.4; c.rotation.y += 0.02; });
@@ -227,7 +243,7 @@ export class World {
     // grave (Seha's nameless stone)
     const gr = B.grave();
     this.place(gr, POI.grave.x, POI.grave.z, this.faceTo(POI.grave.x, POI.grave.z, -14, 146));
-    this.col.addCircle(POI.grave.x, POI.grave.z, 0.6, -10, 30);
+    this.solid(gr, { r: 0.6 });
     const bench = B.bench(); this.place(bench, -20, 132, Math.PI);
     // training yard
     this.training = { targets: [], braziers: [], dummies: [] };
@@ -242,7 +258,7 @@ export class World {
     for (const [x, z] of [[-9, 147], [4, 148], [-2, 153]]) this.training.braziers.push(this.makeBrazier(x, z, 'tbrazier'));
     for (const [x, z] of [[7, 137], [10, 142], [8, 147]]) {
       const d = B.dummy(); this.place(d, x, z, this.faceTo(x, z, -6, 142));
-      this.col.addCircle(x, z, 0.4, -10, 40);
+      this.solid(d, { r: 0.4, climb: false });
       const tgt = this.addTarget({ id: 'dummy', pos: new THREE.Vector3(x, this.h(x, z) + 1.5, z), r: 0.9, obj: d, wob: 0, onHit: null });
       tgt.baseHit = (el) => { tgt.wob = 1; tgt.wobEl = el; };
       this.training.dummies.push(tgt);
@@ -291,7 +307,7 @@ export class World {
 
   makeWindWheel(x, z, ry, id) {
     const w = B.windWheel(); this.place(w, x, z, ry);
-    this.col.addCircle(x, z, 0.4, -10, this.h(x, z) + 3.5);
+    this.col.addCircle(x, z, 0.4, -10, this.h(x, z) + 3.5).climb = false;
     const tgt = this.addTarget({ id, pos: new THREE.Vector3(x, this.h(x, z) + 3.3, z), r: 1.6, obj: w, spin: 0, active: false, onHit: null });
     tgt.baseHit = (el) => {
       if (el === 'wind') {
@@ -329,6 +345,7 @@ export class World {
       }
       for (const sx of [-1, 1]) this.col.addCircle(p.x + sx * 2, p.z - 5, 0.5, y, y + 7);
       const sealCol = this.col.addCircle(p.x, p.z, 11, y - 5, y + 12, 'seal');
+      sealCol.climb = false; sealCol.noTop = true;
       const data = { el, group: s, pos: new THREE.Vector3(p.x, y + 0.8, p.z), sealCol, sealed: true, y };
       this.anims.push((dt) => {
         const c = s.userData.crystal; c.rotation.y += dt * 0.8; c.position.y = 4.2 + Math.sin(G.time * 1.6) * 0.2;
@@ -382,7 +399,7 @@ export class World {
       if (Math.hypot(x - POI.storm.x, z - POI.storm.z) > 46) continue;
       const o = rr() < 0.4 ? B.ruinArch(rr) : B.pillarBroken(2 + rr() * 4, rr);
       this.place(o, x, z, rr() * 3);
-      this.col.addCircle(x, z, o.children.length > 2 ? 0.7 : 0.7, -10, this.h(x, z) + 8);
+      this.solid(o, { r: 0.7 });
     }
     // Kael's broken shield
     const sh = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.12, 6), B.MAT.bronze);
@@ -396,16 +413,16 @@ export class World {
     this.scene.add(g);
     this.rift = { group: g, y, center: new THREE.Vector3(POI.rift.x, y, POI.rift.z) };
     g.children.forEach((c) => {
-      if (c.geometry && c.geometry.type === 'OctahedronGeometry' && c.scale.y > 5) this.col.addCircle(POI.rift.x + c.position.x, POI.rift.z + c.position.z, 1.5, -10, 40);
+      if (c.geometry && c.geometry.type === 'OctahedronGeometry' && c.scale.y > 5) { const cc = this.col.addCircle(POI.rift.x + c.position.x, POI.rift.z + c.position.z, 1.5, -10, 40); cc.climb = false; cc.noTop = true; }
     });
   }
 
   buildLandmarks() {
     // Lake willow (hairpin), meadow lone tree + bench (flower book)
     const willow = makeTree('willow', 21, { trunkH: 3.0, size: 2.1, light: 0xb7d86a, dark: 0x4c8a40 });
-    this.place(willow, -49, 82, 0.4); this.col.addCircle(-49, 82, 0.6, -10, 30);
+    this.place(willow, -49, 82, 0.4); this.solid(willow, { r: 0.6, climb: false, noTop: true });
     const lone = makeTree('oak', 77, { trunkH: 3.4, size: 2.2, light: 0xe0c060, dark: 0x8a7a3a });
-    this.place(lone, POI.meadow.x, POI.meadow.z, 0); this.col.addCircle(POI.meadow.x, POI.meadow.z, 0.6, -10, 30);
+    this.place(lone, POI.meadow.x, POI.meadow.z, 0); this.solid(lone, { r: 0.6, climb: false, noTop: true });
     this.place(B.bench(), POI.meadow.x + 2, POI.meadow.z + 2.6, Math.PI * 0.25 + Math.PI);
     // island tree
     const it = makeTree('oak', 5, { trunkH: 2.4, size: 1.3 }); this.place(it, POI.island.x + 1.5, POI.island.z - 1, 0);

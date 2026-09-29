@@ -19,6 +19,7 @@ import './sfx/spells.js';
 import './sfx/combat.js';
 import './sfx/ui.js';
 import './sfx/loops.js';
+import './sfx/world.js';
 
 // Voice budget: approximate count of live source nodes. Low-priority sounds
 // are dropped first when a fight gets busy; priority 2 always plays.

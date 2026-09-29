@@ -10,6 +10,8 @@ export const G = {
   state: 'loading', // loading | title | intro | play
   mode: 'free',     // free | dialogue | cutscene
   paused: false,
+  // test switches: ?god (no damage) · ?unseen (enemies ignore you). Also togglable from the console.
+  dev: (() => { const q = new URLSearchParams(location.search); return { god: q.has('god'), unseen: q.has('unseen') }; })(),
   settings: {
     master: 80, music: 60, sfx: 90, sens: 100, quality: 'high', invertY: false,
   },

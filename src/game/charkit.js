@@ -639,6 +639,29 @@ export function crackMat(color, glowColor, o = {}) {
   return m;
 }
 
+// Tabby fur: noisy darker bands in bind-pose object space (rings around the
+// body along `axis`, arcs on the head), plus a soft lighter belly toward -y.
+export function stripeMat(color, stripe, o = {}) {
+  const m = bodyMat(color, { rim: o.rim ?? 0.5 });
+  const u = { uStripeC: { value: new THREE.Color(stripe) }, uStripeP: { value: new THREE.Vector4(o.freq ?? 34, o.width ?? 0.3, o.warp ?? 1.4, o.amt ?? 0.85) } };
+  m.userData.stripe = u;
+  extend(m, 'stripe', (sh) => {
+    Object.assign(sh.uniforms, u);
+    OBJ_VERT(sh);
+    sh.fragmentShader = 'varying vec3 vObj;\nuniform vec3 uStripeC;\nuniform vec4 uStripeP;\n' + sh.fragmentShader.replace('#include <color_fragment>', `
+#include <color_fragment>
+{
+  vec3 q = vObj;
+  float w = _dn(q * 14.0) * uStripeP.z + _dn(q * 31.0) * 0.4;
+  float c = (q.y * 1.0 + length(q.xz) * 0.55) * uStripeP.x + w * 2.2;
+  float band = 1.0 - smoothstep(uStripeP.y, uStripeP.y + 0.18, abs(fract(c) - 0.5) * 2.0);
+  float gate = smoothstep(0.3, 0.6, _dn(q * 5.0 + 3.0));
+  diffuseColor.rgb = mix(diffuseColor.rgb, uStripeC, band * gate * uStripeP.w);
+}`);
+  });
+  return m;
+}
+
 // Outline hull material with a per-vertex width (attribute olw; 0 = no outline)
 const olCache = new Map();
 export function olMat(color = 0x1a1410, width = 0.012) {

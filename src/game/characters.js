@@ -31,4 +31,5 @@
 //   gestures play automatically.
 // ---------------------------------------------------------------------------
 export { CHAR, Rig, HumanRig, makeHumanoid, makeGhost } from './humanrig.js';
-export { makeFox, makeCat, makeAshling, makeWailer, makeBrute, makeKnight, makeOoze, makeMoth, makeShieldBearer, makeArcher, makeRootHand, makeWatcher } from './legacy.js';
+export { makeFox, makeCat } from './creatures.js';
+export { makeAshling, makeWailer, makeBrute, makeKnight, makeOoze, makeMoth, makeShieldBearer, makeArcher, makeRootHand, makeWatcher } from './legacy.js';

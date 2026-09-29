@@ -327,7 +327,7 @@ function legacyHumanoid(c = {}) {
 // ------------------------------------------------------------------
 // Boreum — fox spirit of the west wind
 // ------------------------------------------------------------------
-export function makeFox() {
+function makeFoxOld() {
   const root = new THREE.Group();
   const body = new THREE.Group(); root.add(body);
   const fur = toon(0xf4fbff, { emissive: 0x3a8a9a, emissiveIntensity: 0.6, rim: 1.2 });
@@ -373,7 +373,7 @@ export function makeFox() {
   return rig;
 }
 
-export function makeCat() {
+function makeCatOld() {
   const root = new THREE.Group();
   const orange = toon(0xe8913a, { rim: 0.5 }), cream = toon(0xfff0d8);
   part(cap(0.1, 0.22), orange, root, 0, 0.16, 0, { rx: Math.PI / 2 });

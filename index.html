@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>울림지기 — 하늬 골짜기의 노래</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Cinzel:wght@500;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="game"></canvas>
+
+    <div id="ui">
+      <!-- ============ LOADING ============ -->
+      <div id="loading" class="screen">
+        <div class="load-inner">
+          <div class="load-rune"></div>
+          <div class="load-text">골짜기의 노래를 조율하는 중…</div>
+          <div class="load-bar"><div class="load-fill"></div></div>
+        </div>
+      </div>
+
+      <!-- ============ TITLE ============ -->
+      <div id="title-screen" class="screen hidden">
+        <div class="title-wrap">
+          <div class="title-sub-en">RESONANCE · SONG OF THE HANUI VALE</div>
+          <h1 class="title-main">울림지기</h1>
+          <div class="title-sub">하늬 골짜기의 노래</div>
+          <div class="title-menu">
+            <button class="tbtn" data-act="new">새로운 여정</button>
+            <button class="tbtn" data-act="continue">이어하기</button>
+            <button class="tbtn" data-act="settings">설정</button>
+          </div>
+          <div class="title-hint">헤드폰을 권장합니다 · 마우스와 키보드로 플레이하세요</div>
+        </div>
+        <div id="name-entry" class="hidden">
+          <div class="ne-box">
+            <div class="ne-q">모라 할머니가 당신을 부르던 이름은…</div>
+            <input id="name-input" maxlength="8" placeholder="리안" autocomplete="off" spellcheck="false" />
+            <div class="ne-btns">
+              <button class="tbtn small" data-act="name-ok">이 이름으로</button>
+              <button class="tbtn small ghost" data-act="name-cancel">돌아가기</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ INTRO NARRATION ============ -->
+      <div id="intro" class="screen hidden">
+        <div class="intro-text"></div>
+        <div class="intro-skip">Space · 넘기기</div>
+      </div>
+
+      <!-- ============ HUD ============ -->
+      <div id="hud" class="hidden">
+        <div id="vitals">
+          <div id="hearts"></div>
+          <div id="mana"><div class="mana-fill"></div><div class="mana-ghost"></div></div>
+          <div id="xpbar"><div class="xp-fill"></div><span class="xp-lv">Lv 1</span></div>
+        </div>
+
+        <div id="compass">
+          <div class="compass-strip"></div>
+          <div class="compass-markers"></div>
+          <div class="compass-center"></div>
+        </div>
+
+        <div id="quest-tracker">
+          <div class="qt-title"></div>
+          <div class="qt-obj"></div>
+        </div>
+
+        <div id="crosshair"><div class="ch-dot"></div><div class="ch-ring"></div></div>
+        <div id="lock-marker" class="hidden"></div>
+
+        <div id="stamina">
+          <svg viewBox="0 0 100 100">
+            <circle class="st-bg" cx="50" cy="50" r="40" />
+            <circle class="st-fill" cx="50" cy="50" r="40" />
+          </svg>
+        </div>
+
+        <div id="spellbar">
+          <div id="weave-slot">
+            <div class="weave-key">Q</div>
+            <div class="weave-icons"></div>
+            <div class="weave-name"></div>
+            <div class="weave-cd"></div>
+          </div>
+          <div id="elements"></div>
+          <div id="heavy-slot"><span class="hk">우클릭</span><span class="hn"></span><div class="heavy-cd"></div></div>
+        </div>
+
+        <div id="boss-bar" class="hidden">
+          <div class="boss-name"></div>
+          <div class="boss-track"><div class="boss-fill"></div><div class="boss-ghost"></div></div>
+        </div>
+
+        <div id="enemy-bars"></div>
+        <div id="dmg-layer"></div>
+        <div id="markers-layer"></div>
+        <div id="prompt" class="hidden"><span class="pk">E</span><span class="pt"></span></div>
+        <div id="hint" class="hidden"></div>
+        <div id="area-title"><div class="at-line"></div><div class="at-name"></div><div class="at-sub"></div><div class="at-line"></div></div>
+        <div id="banner" class="hidden"><div class="bn-small"></div><div class="bn-big"></div><div class="bn-desc"></div></div>
+        <div id="toasts"></div>
+        <div id="companion-line"></div>
+        <div id="barks"></div>
+      </div>
+
+      <!-- ============ DIALOGUE ============ -->
+      <div id="letterbox"><div class="lb-top"></div><div class="lb-bot"></div></div>
+      <div id="dialogue" class="hidden">
+        <div class="dlg-name"></div>
+        <div class="dlg-text"></div>
+        <div class="dlg-choices"></div>
+        <div class="dlg-next">▼</div>
+      </div>
+
+      <!-- ============ MAP ============ -->
+      <div id="map" class="screen hidden">
+        <div class="map-frame">
+          <canvas id="map-canvas" width="900" height="900"></canvas>
+          <div class="map-legend">
+            <div class="map-title">하늬 골짜기</div>
+            <div class="map-keys"></div>
+            <div class="map-close">M · 닫기</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ JOURNAL ============ -->
+      <div id="journal" class="screen hidden">
+        <div class="jr-frame">
+          <div class="jr-tabs">
+            <button data-tab="quests" class="on">여정</button>
+            <button data-tab="spells">마법서</button>
+            <button data-tab="memories">기억</button>
+            <button data-tab="controls">조작</button>
+          </div>
+          <div class="jr-body"></div>
+          <div class="jr-close">Tab · 닫기</div>
+        </div>
+      </div>
+
+      <!-- ============ PAUSE ============ -->
+      <div id="pause" class="screen hidden">
+        <div class="pz-frame">
+          <div class="pz-title">잠시 쉬어 가기</div>
+          <button class="tbtn" data-act="resume">계속하기</button>
+          <button class="tbtn" data-act="journal">여정 · 마법서</button>
+          <button class="tbtn" data-act="settings">설정</button>
+          <button class="tbtn" data-act="save">저장하기</button>
+          <button class="tbtn ghost" data-act="title">타이틀로</button>
+        </div>
+      </div>
+
+      <!-- ============ SETTINGS ============ -->
+      <div id="settings" class="screen hidden">
+        <div class="pz-frame wide">
+          <div class="pz-title">설정</div>
+          <label class="set-row">전체 음량 <input type="range" min="0" max="100" data-set="master" /></label>
+          <label class="set-row">음악 <input type="range" min="0" max="100" data-set="music" /></label>
+          <label class="set-row">효과음 <input type="range" min="0" max="100" data-set="sfx" /></label>
+          <label class="set-row">마우스 감도 <input type="range" min="10" max="300" data-set="sens" /></label>
+          <label class="set-row">그래픽 품질
+            <select data-set="quality">
+              <option value="high">높음</option>
+              <option value="medium">보통</option>
+              <option value="low">낮음</option>
+            </select>
+          </label>
+          <label class="set-row">마우스 Y축 반전 <input type="checkbox" data-set="invertY" /></label>
+          <button class="tbtn small" data-act="settings-close">돌아가기</button>
+        </div>
+      </div>
+
+      <!-- ============ DEATH ============ -->
+      <div id="death" class="screen hidden">
+        <div class="death-text">울림이 잦아들었다…</div>
+        <div class="death-sub">마지막으로 밝힌 등석에서 다시 깨어납니다</div>
+      </div>
+
+      <div id="fade"></div>
+      <div id="click-to-play" class="hidden">클릭하여 계속</div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

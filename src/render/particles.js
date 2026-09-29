@@ -11,12 +11,14 @@ uniform float uFogDensity;
 varying vec4 vColor;
 varying float vShape;
 varying float vFog;
+varying float vDist;
 void main(){
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
   gl_PointSize = min(aSize * uScale / max(-mv.z, 0.2), 900.0);
   vColor = aColor; vShape = aShape;
   float d = -mv.z;
+  vDist = d;
   vFog = 1.0 - exp(-uFogDensity * uFogDensity * d * d);
 }`;
 
@@ -26,6 +28,7 @@ uniform float uAdditive;
 varying vec4 vColor;
 varying float vShape;
 varying float vFog;
+varying float vDist;
 void main(){
   vec2 p = gl_PointCoord * 2.0 - 1.0;
   float d = length(p);
@@ -44,6 +47,7 @@ void main(){
   if (a < 0.004) discard;
   float al = vColor.a * a;
   if (uAdditive > 0.5) {
+    al *= smoothstep(0.3, 2.0, vDist);
     gl_FragColor = vec4(vColor.rgb * (1.0 - vFog * 0.9), al);
   } else {
     gl_FragColor = vec4(mix(vColor.rgb, uFogColor, vFog), al);

@@ -423,9 +423,9 @@ export function dummy() {
 
 export function targetCrystal(color = 0xb894ff) {
   const g = new THREE.Group();
-  const c = new THREE.Mesh(new THREE.OctahedronGeometry(0.5, 0), fresnelMat(0xffffff, color, { intensity: 1.4 }));
+  const c = new THREE.Mesh(new THREE.OctahedronGeometry(0.5, 0), fresnelMat(0xffffff, color, { intensity: 0.55 }));
   c.scale.set(0.8, 1.2, 0.8); g.add(c);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.04, 6, 24), glowMat(color, 1.5));
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.04, 6, 24), glowMat(color, 0.8));
   ring.rotation.x = Math.PI / 2; g.add(ring);
   g.userData = { c, ring };
   return g;

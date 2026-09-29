@@ -78,21 +78,35 @@ export class Dialogue {
     return G.npcs.get(who) || null;
   }
 
+  // Over-the-shoulder shot: camera behind `from`, looking at `subject`'s face
+  shot(from, subject, side = 1) {
+    const sub = subject.pos.clone();
+    if (subject === G.companion) sub.y -= 1.3;
+    const headH = subject.headH ?? 1.65;
+    const dir = sub.clone().sub(from).setY(0);
+    let dist = dir.length();
+    if (dist < 0.4) { dir.set(Math.sin(G.player.yaw), 0, Math.cos(G.player.yaw)); dist = 1; }
+    dir.normalize();
+    const right = new THREE.Vector3(-dir.z, 0, dir.x);
+    const back = Math.max(1.5, Math.min(3, dist * 0.45 + 1.3));
+    const cam = from.clone().addScaledVector(dir, -back).addScaledVector(right, 1.25 * side);
+    cam.y = Math.max(from.y, sub.y) + 1.85;
+    const g = G.world.ground(cam.x, cam.z, cam.y + 2);
+    cam.y = Math.max(cam.y, g + 1.3);
+    const look = sub.clone(); look.y += headH * 0.86;
+    G.cameraRig.setCine(cam, look);
+  }
+
   frameOn(obj, opts = {}) {
     const P = G.player;
     if (!obj) return;
-    let focus;
-    if (obj === G.player) {
-      // frame player, looking at the last other speaker if any
+    if (obj === P) {
       const other = this.lastOther;
-      if (other) { focus = P.pos.clone(); G.cameraRig.frame(focus, other.pos.clone ? other.pos.clone().setY(P.pos.y) : P.pos, { side: -1, dist: 3.2 }); }
+      if (other) this.shot(other.pos.clone().setY(other === G.companion ? other.pos.y - 1.3 : other.pos.y), P, -1);
       return;
     }
     this.lastOther = obj;
-    focus = obj.pos.clone();
-    if (obj === G.companion) focus.y -= 1.3;
-    const dist = opts.dist ?? (obj.headH && obj.headH < 1.3 ? 2.6 : 3.4);
-    G.cameraRig.frame(focus, P.pos.clone().setY(focus.y), { side: opts.side ?? 1, dist, h: (obj.headH ?? 1.7) * 0.95, lookH: (obj.headH ?? 1.7) * 0.85 });
+    this.shot(P.pos, obj, opts.side ?? 1);
   }
 
   say(who, text, opts = {}) {

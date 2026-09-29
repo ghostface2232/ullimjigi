@@ -352,7 +352,7 @@ export class HUD {
       if (!b) {
         b = document.createElement('div');
         b.className = 'ebar' + (e.elite ? ' elite' : '');
-        b.innerHTML = `<div class="elv"><span>Lv ${e.level}</span><span class="st"></span></div><div class="etrack"><div class="efill"></div></div>${e.armor ? '<div class="armor"></div>' : ''}`;
+        b.innerHTML = `<div class="en">${e.name || ''}</div><div class="elv"><span>Lv ${e.level}</span><span class="st"></span></div><div class="etrack"><div class="efill"></div></div>${e.armor ? '<div class="armor"></div>' : ''}`;
         this.el.bars.appendChild(b); this.barPool.set(e, b);
         b._fill = b.querySelector('.efill'); b._st = b.querySelector('.st'); b._ar = b.querySelector('.armor');
       }

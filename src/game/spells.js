@@ -271,11 +271,11 @@ export class Spells {
           V.lightning(sky.clone().add(new THREE.Vector3(2, 0, 1)), tp, { width: 0.2, dur: 0.3, branches: 1, jag: 0.1 });
           V.ring(tp, PAL.storm.core, 5, 0.4, { thick: 0.3 });
           V.burst(tp, 'electric', 40, { speed: 12 }); V.burst(tp, 'dust', 14, { speed: 7 }); V.burst(tp.clone().setY(tp.y + 1), 'star', 1, { el: 'storm', size: 7 });
-          V.flash(tp.clone().setY(tp.y + 3), 0xfff0a0, 160, 30, 0.5);
+          V.flash(tp.clone().setY(tp.y + 3), 0xfff0a0, 80, 30, 0.45);
           V.scorch(tp, 3, 0x000000, 8);
           A.play('thunder', { pos: tp });
           G.cameraRig.shake(0.55);
-          G.renderer.grade.uniforms.uFlash.value = 0.35;
+          G.renderer.grade.uniforms.uFlash.value = 0.18;
           G.renderer.grade.uniforms.uFlashColor.value.setRGB(1, 0.95, 0.8);
           G.world.grass.gust(tp.x, tp.z, 6, 2);
           for (const e of this.enemiesIn(tp.clone().setY(tp.y + 1), 3.9)) {
@@ -293,14 +293,14 @@ export class Spells {
     const c = pos.clone();
     const gy = G.world.ground(c.x, c.z, c.y + 2);
     const nearGround = c.y - gy < 2.5;
-    V.burst(c, 'glow', 1, { el, size: r * 2.2, size1: r * 3, life: 0.28 });
-    V.burst(c, 'star', 1, { el, size: r * 2.4, life: 0.2 });
-    V.burst(c, el === 'fire' ? 'fire' : 'arcane', 60, { speed: 8, spread: 0.8, size: 1.6 });
+    V.burst(c, 'glow', 1, { el, size: r * 1.1, size1: r * 1.7, life: 0.22, alpha: 0.55 });
+    V.burst(c, 'star', 1, { el, size: r * 1.6, life: 0.16 });
+    V.burst(c, el === 'fire' ? 'fire' : 'arcane', 40, { speed: 8, spread: 0.8, size: 1.2, alpha: 0.6 });
     V.burst(c, 'ember', 30, { speed: 10 });
     V.burst(c, 'smoke', 14, { spread: 1.5, size: 1.6 });
     V.burst(c, 'spark', 24, { el, speed: 14 });
     if (nearGround) { const g = c.clone(); g.y = gy; V.ring(g, PAL[el].glow, r * 1.3, 0.5, { thick: 0.25 }); V.scorch(g, r * 0.9); V.burst(g, 'dust', 16, { speed: 9 }); G.world.grass.gust(g.x, g.z, r * 1.6, 2); }
-    V.flash(c, PAL[el].light, 140, r * 5, 0.55);
+    V.flash(c, PAL[el].light, 60, r * 5, 0.5);
     A.play('explosion', { pos: c });
     G.cameraRig.shake(o.shake ?? 0.5);
     G.renderer.grade.uniforms.uImpact.value = Math.max(G.renderer.grade.uniforms.uImpact.value, 0.35);
@@ -341,10 +341,10 @@ export class Spells {
         G.later(() => {
           const c = tp.clone().setY(tp.y + 1);
           V.burst(c, 'steam', 45, { spread: 3, size: 1.6 });
-          V.burst(c, 'glow', 1, { el: 'white', size: 10, life: 0.3 });
+          V.burst(c, 'glow', 1, { el: 'white', size: 6, life: 0.25, alpha: 0.5 });
           V.burst(c, 'ice', 30, { speed: 12 }); V.burst(c, 'fire', 30, { speed: 9 });
           V.ring(tp, PAL.white.core, 8, 0.6, { thick: 0.25 }); V.ring(tp, PAL.frost.glow, 6, 0.8, { thick: 0.12, y: 1 });
-          V.flash(c, 0xffffff, 150, 24, 0.6);
+          V.flash(c, 0xffffff, 70, 24, 0.5);
           A.play('steam', { pos: c }); A.play('explosion', { pos: c, v: 0.7 });
           G.cameraRig.shake(0.6); G.renderer.grade.uniforms.uImpact.value = 0.5;
           G.world.grass.gust(tp.x, tp.z, 9, 2);

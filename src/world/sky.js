@@ -91,8 +91,8 @@ export class Sky {
     scene.add(this.sun); scene.add(this.sun.target);
     this.hemi = new THREE.HemisphereLight(0xbfd8ff, 0x7a8a5a, 1.2);
     scene.add(this.hemi);
-    scene.fog = new THREE.FogExp2(0xbcd6ec, 0.0042);
-    this.fogBase = 0.0042;
+    scene.fog = new THREE.FogExp2(0xbcd6ec, 0.0026);
+    this.fogBase = 0.0026;
     this.cur = {};
   }
 

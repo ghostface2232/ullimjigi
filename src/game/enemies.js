@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { G } from '../core/context.js';
 import { newStatus } from './combat.js';
-import { makeAshling, makeWailer, makeBrute, makeKnight } from './characters.js';
+import { makeAshling, makeWailer, makeBrute, makeKnight, makeOoze, makeMoth } from './characters.js';
 import { fresnelMat, glowMat, toon } from '../render/materials.js';
 import { PAL } from '../render/vfx.js';
 import { clamp, damp, angleDamp, randRange, rand, pick, wrapAngle, lerp } from '../core/util.js';
@@ -12,20 +12,35 @@ const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
 const GRAV = 24;
 
 export const DEF = {
-  ashling: { name: '잿빛이', hp: 42, dmg: 2, speed: 4.4, radius: 0.5, height: 1.5, xp: 6, aggro: 17, resist: { fire: 1.2 }, make: () => makeAshling('normal') },
-  ashlingFrost: { name: '서리 잿빛이', hp: 50, dmg: 2, speed: 4.2, radius: 0.5, height: 1.5, xp: 8, aggro: 17, resist: { frost: 0.4, fire: 1.4 }, freezeAt: 5, make: () => makeAshling('frost'), base: 'ashling' },
-  wailer: { name: '흐느낌', hp: 34, dmg: 2, speed: 3.6, radius: 0.55, height: 1.2, xp: 8, aggro: 24, resist: { storm: 1.3 }, flying: true, make: () => makeWailer() },
-  brute: { name: '돌껍질', hp: 170, dmg: 4, speed: 2.6, radius: 1.1, height: 2.9, xp: 22, aggro: 16, armor: 0.5, kbResist: 0.7, make: () => makeBrute('normal') },
-  bruteFrost: { name: '서리 껍질', hp: 190, dmg: 4, speed: 2.5, radius: 1.1, height: 2.9, xp: 26, aggro: 18, armor: 0.5, kbResist: 0.75, resist: { frost: 0.2, fire: 1.5 }, immune: ['frost'], make: () => makeBrute('frost'), base: 'brute' },
-  knight: { name: '잿빛 기사', hp: 950, dmg: 4, speed: 4.4, radius: 0.8, height: 2.4, xp: 180, aggro: 30, resist: { storm: 0.5 }, kbResist: 0.92, freezeAt: 8, freezeTime: 1.6, make: () => makeKnight(false), boss: true },
+  ashling: { name: '허깨비', hp: 42, dmg: 2, speed: 4.4, radius: 0.5, height: 1.5, xp: 6, aggro: 17, resist: { fire: 1.2 }, make: () => makeAshling('normal') },
+  ashlingFrost: { name: '서리 허깨비', hp: 50, dmg: 2, speed: 4.2, radius: 0.5, height: 1.5, xp: 8, aggro: 17, resist: { frost: 0.4, fire: 1.4 }, freezeAt: 5, make: () => makeAshling('frost'), base: 'ashling' },
+  wailer: { name: '울음탈', hp: 34, dmg: 2, speed: 3.6, radius: 0.55, height: 1.2, xp: 8, aggro: 24, resist: { storm: 1.3 }, flying: true, make: () => makeWailer() },
+  brute: { name: '돌무덤', hp: 170, dmg: 4, speed: 2.6, radius: 1.1, height: 2.9, xp: 22, aggro: 16, armor: 0.5, kbResist: 0.7, make: () => makeBrute('normal') },
+  bruteFrost: { name: '서리무덤', hp: 190, dmg: 4, speed: 2.5, radius: 1.1, height: 2.9, xp: 26, aggro: 18, armor: 0.5, kbResist: 0.75, resist: { frost: 0.2, fire: 1.5 }, immune: ['frost'], make: () => makeBrute('frost'), base: 'brute' },
+  ooze: { name: '잿물', hp: 30, dmg: 2, speed: 4, radius: 0.62, height: 0.9, xp: 5, aggro: 15, resist: { wind: 1.3 }, make: () => makeOoze('ash'), base: 'ooze', variant: 'ash' },
+  oozeFire: { name: '불잿물', hp: 34, dmg: 2, speed: 4, radius: 0.62, height: 0.9, xp: 7, aggro: 15, resist: { fire: 0, frost: 1.6 }, immune: ['fire'], make: () => makeOoze('fire'), base: 'ooze', variant: 'fire' },
+  oozeFrost: { name: '서리잿물', hp: 34, dmg: 2, speed: 3.8, radius: 0.62, height: 0.9, xp: 7, aggro: 15, resist: { frost: 0, fire: 1.6 }, immune: ['frost'], make: () => makeOoze('frost'), base: 'ooze', variant: 'frost' },
+  moth: { name: '재나방', hp: 14, dmg: 1, speed: 7, radius: 0.4, height: 0.4, xp: 3, aggro: 20, resist: { fire: 2, wind: 1.6 }, flying: true, make: () => makeMoth(), base: 'moth' },
+  knight: { name: '무명의 기사', hp: 950, dmg: 4, speed: 4.4, radius: 0.8, height: 2.4, xp: 180, aggro: 30, resist: { storm: 0.5 }, kbResist: 0.92, freezeAt: 8, freezeTime: 1.6, make: () => makeKnight(false), boss: true },
 };
+
+// Level tiers: how long a thing has been forgotten
+export const TIERS = [
+  { pre: '', col: null },
+  { pre: '해묵은 ', col: 0xffb050 },
+  { pre: '잊힌 ', col: 0xff4a6a },
+  { pre: '이름 없는 ', col: 0xeef4ff },
+];
+export const tierOf = (lv) => (lv >= 10 ? 3 : lv >= 7 ? 2 : lv >= 4 ? 1 : 0);
+const EPITHETS = ['새벽을 등진', '녹슨 종의', '울지 않는', '재를 뒤집어쓴', '천 번 잊힌', '빛을 삼킨', '돌아오지 못한'];
 
 export class Enemy {
   constructor(type, pos, level, opts = {}) {
     const def = DEF[type];
     this.type = type; this.def = def; this.base = def.base || type;
     this.level = level; this.elite = !!opts.elite;
-    this.name = (this.elite ? '정예 ' : '') + def.name;
+    this.tier = def.boss ? 0 : tierOf(level);
+    this.name = opts.name || ((this.elite ? pick(EPITHETS) + ' ' : '') + TIERS[this.tier].pre + def.name);
     const hpMul = 1 + 0.24 * (level - 1);
     this.maxHp = Math.round(def.hp * hpMul * (this.elite ? 2.2 : 1) * (opts.hpMul ?? 1));
     this.hp = this.maxHp;
@@ -51,6 +66,9 @@ export class Enemy {
       this.root.scale.setScalar(1.15);
       (this.rig.mats || []).forEach((m) => { if (m.userData.rim) m.userData.rim.value = 1.3; });
     }
+    const tcol = this.elite ? 0xffd060 : TIERS[this.tier].col;
+    if (tcol !== null) for (const m of this.rig.glowMats || []) m.color.set(tcol).multiplyScalar(2.6);
+    if (this.tier >= 3) for (const m of this.rig.mats || []) m.color.multiplyScalar(0.55);
     this.root.traverse((o) => { if (o.isMesh) o.castShadow = true; });
     G.scene.add(this.root);
     this.dying = 0;
@@ -476,6 +494,167 @@ class Brute extends Enemy {
 }
 
 // ------------------------------------------------------------------
+// 잿물 — hopping ooze that splits; elemental variants burst on death
+// ------------------------------------------------------------------
+class Ooze extends Enemy {
+  constructor(type, pos, level, opts = {}) {
+    super(type, pos, level, opts);
+    this.size = opts.size ?? 1;
+    this.variant = this.def.variant;
+    if (this.size < 1) {
+      this.maxHp = Math.max(6, Math.round(this.maxHp * 0.4)); this.hp = this.maxHp;
+      this.radius *= this.size; this.height *= this.size;
+      this.root.scale.setScalar(this.size * (this.elite ? 1.15 : 1));
+      this.def = { ...this.def, xp: Math.round(this.def.xp * 0.4) };
+    }
+    this.hopT = randRange(0.3, 1.2); this.hopping = false; this.airT = 0; this.landT = 0;
+    this.hopDir = new THREE.Vector3();
+  }
+  think(dt, mul) {
+    const P = G.player;
+    const d = this.dist2Player();
+    const canSee = !P.dead && G.mode === 'free';
+    this.landT = Math.max(0, this.landT - dt);
+    if (this.hopping) {
+      this.airT += dt;
+      this.pos.addScaledVector(this.hopDir, this.hopSpeed * dt * mul);
+      if (this.airT > 0.12 && this.vel.y === 0) {
+        this.hopping = false; this.landT = 0.2;
+        G.vfx.burst(this.pos, 'dust', 3, { speed: 2, size: 0.4 });
+        if (this.variant === 'fire') G.vfx.burst(this.pos, 'fire', 4, { speed: 2 });
+        if (this.variant === 'frost') G.vfx.burst(this.pos, 'frostmist', 2, { size: 0.6 });
+        G.audio.play('land', { v: 0.4 * this.size, gap: 0.05 });
+        if (this.aggroed && d < 1.1 + this.radius) this.hurtPlayer(this.def.dmg, 5);
+      }
+      return;
+    }
+    this.hopT -= dt * mul;
+    const hop = (tx, tz, dist) => {
+      const dx = tx - this.pos.x, dz = tz - this.pos.z, l = Math.hypot(dx, dz) || 1;
+      this.hopDir.set(dx / l, 0, dz / l).applyAxisAngle(new THREE.Vector3(0, 1, 0), randRange(-0.3, 0.3));
+      this.hopSpeed = Math.min(dist, 4.5) / 0.55;
+      this.yaw = Math.atan2(dx, dz);
+      this.vel.y = 6.2; this.hopping = true; this.airT = 0;
+    };
+    switch (this.state) {
+      case 'idle':
+        if (this.hopT <= 0) { this.hopT = randRange(1.5, 3); hop(this.home.x + randRange(-4, 4), this.home.z + randRange(-4, 4), 1.5); }
+        if (canSee && d < this.def.aggro) this.aggro();
+        break;
+      case 'alert': this.facePlayer(dt); if (this.stateT > 0.4) this.setState('chase'); break;
+      case 'chase':
+        if (!canSee) break;
+        if (this.pos.distanceTo(this.home) > this.leash && d > 14) { this.aggroed = false; this.setState('return'); break; }
+        if (this.hopT <= 0) { this.hopT = randRange(0.45, 0.9); hop(P.pos.x, P.pos.z, d); }
+        break;
+      case 'return':
+        if (this.hopT <= 0) { this.hopT = 0.5; hop(this.home.x, this.home.z, 4); }
+        this.hp = Math.min(this.maxHp, this.hp + this.maxHp * dt * 0.3);
+        if (this.pos.distanceTo(this.home) < 2) { this.aggroed = false; this.setState('idle'); }
+        break;
+    }
+  }
+  animState() { return { squash: this.hopping ? (this.vel.y > 0 ? 0.35 : -0.05) : this.landT > 0 ? -0.45 : this.hopT < 0.15 && this.aggroed ? -0.3 : 0 }; }
+  die(h) {
+    super.die(h);
+    const pos = this.pos.clone();
+    const c = this.center();
+    G.vfx.burst(c, this.variant === 'fire' ? 'fire' : this.variant === 'frost' ? 'ice' : 'hush', 12, { speed: 4 });
+    if (this.size >= 1) {
+      for (let i = 0; i < 2; i++) {
+        const a = rand() * Math.PI * 2;
+        const e = G.enemies.spawn(this.type, pos.clone().add(new THREE.Vector3(Math.cos(a) * 0.8, 0, Math.sin(a) * 0.8)), this.level, { size: 0.55, camp: this.camp, onDeath: this.onDeath });
+        if (this.camp) this.camp.members.push(e);
+        e.vel.set(Math.cos(a) * 4, 5, Math.sin(a) * 4);
+        e.aggro();
+      }
+    }
+    const R = this.size >= 1 ? 3.4 : 2.2;
+    if (this.variant === 'fire') {
+      G.vfx.telegraph(pos, R, 0.55, 0xff6a2a);
+      G.later(() => {
+        const ep = pos.clone().setY(pos.y + 0.5);
+        G.vfx.burst(ep, 'glow', 1, { el: 'fire', size: R * 1.8, life: 0.25 });
+        G.vfx.burst(ep, 'fire', 36, { speed: 7, size: 1.3 }); G.vfx.burst(ep, 'ember', 16, { speed: 8 }); G.vfx.burst(ep, 'smoke', 8, { size: 1.2 });
+        G.vfx.ring(pos, PAL.fire.glow, R * 1.2, 0.4, { thick: 0.3 }); G.vfx.scorch(pos, R * 0.8);
+        G.vfx.flash(ep, 0xff7a2a, 90, 14, 0.4);
+        G.audio.play('explosion', { pos: ep, v: 0.7 });
+        G.cameraRig.shake(0.3);
+        for (const e of G.enemies.list) if (e.alive && e.hittable && e.center().distanceTo(pos) < R + e.radius) G.combat.hit(e, { dmg: G.player.power() * 1.6, el: 'fire', pos: e.center(), dir: new THREE.Vector3().subVectors(e.pos, pos).setY(0).normalize(), knock: 8, lift: 4, source: 'env' });
+        if (G.player.pos.distanceTo(pos) < R) this.hurtPlayer(3, 10);
+      }, 550);
+    } else if (this.variant === 'frost') {
+      G.vfx.ring(pos, PAL.frost.core, R * 1.3, 0.5, { thick: 0.3 });
+      G.vfx.burst(c, 'frostmist', 12, { size: 1.2 }); G.vfx.burst(c, 'ice', 20, { speed: 7 });
+      G.audio.play('freeze', { pos });
+      for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2; G.vfx.crystal(pos.clone().add(new THREE.Vector3(Math.cos(a) * 1.2, 0, Math.sin(a) * 1.2)), 1.2, { life: 1.2, tiltX: Math.sin(a) * 0.5, tiltZ: -Math.cos(a) * 0.5 }); }
+      for (const e of G.enemies.list) if (e.alive && e.hittable && !e.boss && e.center().distanceTo(pos) < R + e.radius + 0.6) G.combat.addChill(e, 3);
+      if (G.player.pos.distanceTo(pos) < R * 0.8) this.hurtPlayer(1, 4);
+    }
+  }
+}
+
+// ------------------------------------------------------------------
+// 재나방 — swarming moths that dive
+// ------------------------------------------------------------------
+class Moth extends Enemy {
+  constructor(pos, level, opts) {
+    super('moth', pos, level, opts);
+    this.ang = rand() * Math.PI * 2; this.rad = randRange(3, 5.5); this.alt = randRange(1.3, 2.8);
+    this.diveCD = randRange(1.5, 4.5);
+    this.pos.y = G.world.ground(pos.x, pos.z) + this.alt;
+    this.diveDir = new THREE.Vector3();
+  }
+  get flying() { return this.st.frozen <= 0 && !this.airborne; }
+  think(dt, mul) {
+    const P = G.player;
+    const W = G.world;
+    const d = this.dist2Player();
+    const canSee = !P.dead && G.mode === 'free';
+    const gy = Math.max(W.ground(this.pos.x, this.pos.z, this.pos.y), W.water.level);
+    const flyTo = (tx, ty, tz, k) => {
+      this.pos.x = damp(this.pos.x, tx, k * mul, dt); this.pos.y = damp(this.pos.y, ty, k * mul, dt); this.pos.z = damp(this.pos.z, tz, k * mul, dt);
+      this.yaw = angleDamp(this.yaw, Math.atan2(tx - this.pos.x, tz - this.pos.z), 8, dt);
+    };
+    this.vel.y = 0;
+    this.ang += dt * 1.7 * this.orbit;
+    switch (this.state) {
+      case 'idle':
+        flyTo(this.home.x + Math.cos(this.ang) * 3, gy + this.alt + Math.sin(G.time * 3 + this.rad) * 0.4, this.home.z + Math.sin(this.ang) * 3, 2);
+        if (canSee && d < this.def.aggro) this.aggro();
+        break;
+      case 'alert': if (this.stateT > 0.3) this.setState('chase'); break;
+      case 'chase': {
+        if (!canSee) break;
+        if (this.pos.distanceTo(this.home) > this.leash + 10 && d > 20) { this.aggroed = false; this.setState('return'); break; }
+        const pg = W.ground(P.pos.x, P.pos.z, P.pos.y + 1);
+        flyTo(P.pos.x + Math.cos(this.ang) * this.rad, Math.max(pg, P.pos.y) + this.alt + Math.sin(G.time * 4 + this.rad) * 0.5, P.pos.z + Math.sin(this.ang) * this.rad, 2.8);
+        this.diveCD -= dt;
+        if (this.diveCD <= 0 && d < 9) { this.setState('diveWind'); G.audio.play('wailer_charge', { pos: this.pos, gap: 0.4 }); }
+        break;
+      }
+      case 'diveWind':
+        this.telegraph = true;
+        this.facePlayer(dt, 14);
+        if (this.stateT > 0.4) { this.telegraph = false; this.diveDir.copy(P.center()).sub(this.pos).normalize(); this.setState('dive'); this.hitDone = false; G.audio.play('enemy_swing', { pos: this.pos }); }
+        break;
+      case 'dive':
+        this.pos.addScaledVector(this.diveDir, 15 * dt * mul);
+        this.pos.y = Math.max(this.pos.y, gy + 0.3);
+        if (rand() < 0.6) G.vfx.burst(this.pos, 'ash', 1, { spread: 0.1 });
+        if (!this.hitDone && P.center().distanceTo(this.pos) < 0.95) { this.hitDone = true; this.hurtPlayer(this.def.dmg, 3); }
+        if (this.stateT > 0.5) { this.diveCD = randRange(2.5, 5); this.setState('chase'); }
+        break;
+      case 'return':
+        flyTo(this.home.x, gy + this.alt, this.home.z, 1.5);
+        if (this.pos.distanceTo(this.home) < 4) { this.aggroed = false; this.setState('idle'); }
+        break;
+    }
+  }
+  animState() { return { dive: this.state === 'dive' || this.state === 'diveWind' }; }
+}
+
+// ------------------------------------------------------------------
 // Boss: the Ashen Knight (Kael's forgotten shadow)
 // ------------------------------------------------------------------
 class Knight extends Enemy {
@@ -689,7 +868,7 @@ class Plate {
 
 class Heart {
   constructor(center, level) {
-    this.boss = true; this.type = 'heart'; this.name = '고요의 심장'; this.def = { xp: 0, name: '고요의 심장', boss: true };
+    this.boss = true; this.type = 'heart'; this.name = '이름 삼킨 자'; this.def = { xp: 0, name: '이름 삼킨 자', boss: true };
     this.level = level;
     this.center0 = center.clone();
     this.maxHp = Math.round(2400 * (1 + 0.24 * (level - 1))); this.hp = this.maxHp;
@@ -904,21 +1083,21 @@ class Heart {
 // Camps (spawn groups) and manager
 // ------------------------------------------------------------------
 export const CAMPS = [
-  { id: 'southfield', x: 40, z: 92, units: ['ashling', 'ashling', 'ashling'], gate: 'world' },
-  { id: 'eastmeadow', x: 96, z: 34, units: ['ashling', 'ashling', 'wailer'], gate: 'world' },
-  { id: 'lakewest', x: -112, z: 64, units: ['wailer', 'wailer', 'ashling'], gate: 'world' },
+  { id: 'southfield', x: 40, z: 92, units: ['ooze', 'ooze', 'ashling'], gate: 'world' },
+  { id: 'eastmeadow', x: 96, z: 34, units: ['moth', 'moth', 'moth', 'moth', 'wailer'], gate: 'world' },
+  { id: 'lakewest', x: -112, z: 64, units: ['wailer', 'wailer', 'ooze'], gate: 'world' },
   { id: 'northroad', x: -6, z: -58, units: ['ashling', 'ashling', 'ashling', 'wailer'], gate: 'world' },
-  { id: 'frostpass', x: -30, z: -118, units: ['ashlingFrost', 'ashlingFrost', 'wailer'], gate: 'world' },
+  { id: 'frostpass', x: -30, z: -118, units: ['ashlingFrost', 'ashlingFrost', 'oozeFrost'], gate: 'world' },
   { id: 'frostridge', x: -62, z: -128, units: ['ashlingFrost', 'bruteFrost'], gate: 'world' },
-  { id: 'westroad', x: -120, z: 4, units: ['ashling', 'ashling', 'wailer'], gate: 'world' },
-  { id: 'plateau', x: -146, z: -58, units: ['brute', 'ashling', 'ashling'], gate: 'world' },
-  { id: 'riftroad', x: 66, z: -48, units: ['ashling', 'ashling', 'ashling', 'wailer'], gate: 'world' },
-  { id: 'riftgate', x: 98, z: -88, units: ['brute', 'wailer', 'wailer'], gate: 'world' },
-  { id: 'nehills', x: 58, z: -8, units: ['wailer', 'wailer'], gate: 'world' },
-  { id: 'woods', x: -84, z: 118, units: ['ashling', 'ashling', 'ashling'], gate: 'world' },
-  { id: 'eliteWoods', x: -118, z: 150, units: ['brute'], elite: true, gate: 'bounty', bounty: 1 },
-  { id: 'eliteBluffs', x: 156, z: 30, units: ['wailer', 'wailer', 'wailer'], elite: true, gate: 'bounty', bounty: 2 },
-  { id: 'eliteNorth', x: 40, z: -150, units: ['bruteFrost', 'ashlingFrost'], elite: true, gate: 'bounty', bounty: 3 },
+  { id: 'westroad', x: -120, z: 4, units: ['ashling', 'oozeFire', 'wailer'], gate: 'world' },
+  { id: 'plateau', x: -146, z: -58, units: ['brute', 'ashling', 'moth', 'moth', 'moth'], gate: 'world' },
+  { id: 'riftroad', x: 66, z: -48, units: ['ashling', 'ashling', 'ashling', 'oozeFire'], gate: 'world' },
+  { id: 'riftgate', x: 98, z: -88, units: ['brute', 'wailer', 'wailer', 'moth', 'moth'], gate: 'world' },
+  { id: 'nehills', x: 58, z: -8, units: ['wailer', 'wailer', 'oozeFrost'], gate: 'world' },
+  { id: 'woods', x: -84, z: 118, units: ['moth', 'moth', 'moth', 'moth', 'ooze'], gate: 'world' },
+  { id: 'eliteWoods', x: -118, z: 150, units: ['brute'], names: ['뿌리 삼킨 돌무덤'], elite: true, gate: 'bounty', bounty: 1 },
+  { id: 'eliteBluffs', x: 156, z: 30, units: ['wailer', 'wailer', 'wailer'], names: ['세 자매 울음탈 · 첫째', '세 자매 울음탈 · 둘째', '세 자매 울음탈 · 막내'], elite: true, gate: 'bounty', bounty: 2 },
+  { id: 'eliteNorth', x: 40, z: -150, units: ['bruteFrost', 'ashlingFrost'], names: ['눈먼 파수꾼', null], elite: true, gate: 'bounty', bounty: 3 },
 ];
 
 export class EnemyManager {
@@ -942,8 +1121,10 @@ export class EnemyManager {
     if (type === 'wailer') e = new Wailer(pos, level, opts);
     else if (type === 'brute' || type === 'bruteFrost') e = new Brute(type, pos, level, opts);
     else if (type === 'knight') e = new Knight(pos, level, opts);
+    else if (type === 'moth') e = new Moth(pos, level, opts);
+    else if (DEF[type].base === 'ooze') e = new Ooze(type, pos, level, opts);
     else e = new Enemy(type, pos, level, opts);
-    e.pos.y = type === 'wailer' ? e.pos.y : G.world.ground(pos.x, pos.z);
+    e.pos.y = type === 'wailer' || type === 'moth' ? e.pos.y : G.world.ground(pos.x, pos.z);
     this.list.push(e);
     return e;
   }
@@ -985,7 +1166,7 @@ export class EnemyManager {
         c.units.forEach((u, i) => {
           const a = (i / c.units.length) * Math.PI * 2;
           const p = new THREE.Vector3(c.x + Math.cos(a) * 3, 0, c.z + Math.sin(a) * 3);
-          const e = this.spawn(u, p, lv, { camp: c, elite: c.elite, onDeath: () => this.checkCamp(c) });
+          const e = this.spawn(u, p, lv, { camp: c, elite: c.elite && (i === 0 || c.units.length <= 3), name: c.names ? c.names[i] || undefined : undefined, onDeath: () => this.checkCamp(c) });
           c.members.push(e);
         });
       } else if (c.spawned && d > 130 && !c.members.some((m) => m.aggroed)) {

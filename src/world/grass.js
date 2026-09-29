@@ -135,13 +135,13 @@ export class Grass {
       const v = 0.85 + rnd() * 0.3;
       const flower = rnd();
       off[k * 3] = x; off[k * 3 + 1] = y - 0.05; off[k * 3 + 2] = z;
-      if (flower < 0.012) { c.setRGB(1.0, 0.85, 0.25); }
-      else if (flower < 0.02) { c.setRGB(0.95, 0.95, 1.0); }
-      else if (flower < 0.026) { c.setRGB(0.75, 0.5, 1.0); }
+      let fl = false;
+      if (flower < 0.008) { c.setRGB(1.0, 0.8, 0.2); fl = true; }
+      else if (flower < 0.013) { c.setRGB(0.8, 0.55, 1.0); fl = true; }
       col[k * 3] = c.r * v * 1.05; col[k * 3 + 1] = c.g * v * 1.08; col[k * 3 + 2] = c.b * v;
       par[k * 3] = rnd() * Math.PI * 2;
-      par[k * 3 + 1] = 0.16 + rnd() * 0.12;
-      par[k * 3 + 2] = (0.45 + rnd() * 0.55) * (0.6 + g * 0.6);
+      par[k * 3 + 1] = 0.1 + rnd() * 0.07;
+      par[k * 3 + 2] = (0.3 + rnd() * 0.32) * (0.6 + g * 0.5) * (fl ? 0.7 : 1);
       k++;
     }
     if (k === 0) return null;

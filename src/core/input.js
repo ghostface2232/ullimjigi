@@ -54,12 +54,11 @@ export class Input {
 
   requestLock() {
     if (!this.locked && this.canvas.requestPointerLock) {
+      const retry = () => { try { const q = this.canvas.requestPointerLock(); if (q && q.catch) q.catch(() => {}); } catch (_) {} };
       try {
         const p = this.canvas.requestPointerLock({ unadjustedMovement: true });
-        if (p && p.catch) p.catch(() => { try { this.canvas.requestPointerLock(); } catch (_) {} });
-      } catch (_) {
-        try { this.canvas.requestPointerLock(); } catch (__) {}
-      }
+        if (p && p.catch) p.catch(retry);
+      } catch (_) { retry(); }
     }
   }
   exitLock() { if (this.locked) document.exitPointerLock(); }

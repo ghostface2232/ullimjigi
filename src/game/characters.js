@@ -181,8 +181,11 @@ export function makeHumanoid(c = {}) {
   // cape
   if (c.cape) {
     const capeG = new THREE.Group(); capeG.position.set(0, 0.5, -0.13); torso.add(capeG);
-    const g = new THREE.PlaneGeometry(0.46 * bw, c.capeLen ?? 0.75, 1, 3); g.translate(0, -(c.capeLen ?? 0.75) / 2, 0);
-    part(g, M(c.cape, { side: THREE.DoubleSide }), capeG, 0, 0, -0.02, { outline: 0 });
+    const cl = c.capeLen ?? 0.75, th = Math.PI * 0.75;
+    const g = new THREE.CylinderGeometry(0.19 * bw, 0.27 * bw, cl, 12, 3, true, Math.PI - th / 2, th);
+    g.translate(0, -cl / 2, 0.12);
+    const cm = part(g, M(c.cape, { side: THREE.DoubleSide }), capeG, 0, 0, 0, { outline: 0 });
+    void cm;
     P.cape = capeG;
   }
   // neck & head
@@ -306,7 +309,7 @@ export function makeHumanoid(c = {}) {
 // Preset characters
 // ------------------------------------------------------------------
 export const CHAR = {
-  player: { skin: 0xf3d2b2, top: 0xeee2c4, pants: 0x3e4a5e, boots: 0x6a4a30, hair: 0x5a3a26, hairStyle: 'fringe', hat: 'hood', hatColor: 0x2f5a8a, cape: 0x2f5a8a, capeLen: 0.72, scarf: 0xc8463c, staff: {}, belt: 0x7a5a38, sleeve: 0xeee2c4, outline: true, brows: true },
+  player: { skin: 0xf3d2b2, top: 0xeee2c4, pants: 0x3e4a5e, boots: 0x6a4a30, hair: 0x5a3a26, hairStyle: 'fringe', hat: 'hood', hatColor: 0x2f5a8a, cape: 0x2f5a8a, capeLen: 0.58, scarf: 0xc8463c, staff: {}, belt: 0x7a5a38, sleeve: 0xeee2c4, outline: true, brows: true },
   mora: { scale: 0.86, skin: 0xefcdb4, top: 0x6a4a8a, robe: 0x5a3a7a, robeLen: 0.72, robeFlare: 1.3, pants: 0x3a2a4a, hair: 0xe8e4e0, hairStyle: 'bun', hat: 'witch', hatColor: 0x4a3070, hatBand: 0xd8a860, hunch: 0.28, glasses: true, cane: true, sleeve: 0x6a4a8a, sleeveFlare: true, blush: true, outline: true, cape: 0x8a6a5a, capeLen: 0.5 },
   bau: { scale: 1.08, bodyW: 1.35, belly: true, skin: 0xe6b894, top: 0x8a6a4a, vest: 0x5a4030, pants: 0x4a3a2a, hairStyle: 'bald', beard: 0xf0f0f0, mustache: true, spear: true, brows: true, outline: true },
   dodam: { scale: 0.68, skin: 0xf6d6b8, top: 0x6aa0d8, pants: 0x7a5a3a, hair: 0x3a2a1a, hairStyle: 'spiky', hat: 'cap', hatColor: 0xe07a3a, blush: true, outline: true, stride: 2.6, headR: 0.19 },
@@ -440,7 +443,7 @@ export function makeAshling(variant = 'normal') {
     for (let k = 0; k < 3; k++) part(new THREE.ConeGeometry(0.02, 0.18, 4), bm, fore, (k - 1) * 0.035, -0.42, 0.02, { rx: Math.PI + 0.3 });
     if (side < 0) { P.armL = arm; P.foreL = fore; } else { P.armR = arm; P.foreR = fore; }
   }
-  rig.mats = mats; rig.eyeMat = eye; rig.height = 1.5;
+  rig.mats = mats; rig.eyeMat = eye; rig.glowMats = [eye]; rig.height = 1.5;
   return rig;
 }
 
@@ -473,7 +476,7 @@ export function makeWailer() {
   }
   const core = new THREE.Mesh(sph(0.12, 10, 8), glowMat(0xb070ff, 2.5, { nocache: true }));
   core.position.y = -0.2; body.add(core);
-  const rig = { root, body, strips, core, eyes, mats, t: rand() * 5, height: 1.2 };
+  const rig = { root, body, strips, core, eyes, mats, t: rand() * 5, height: 1.2, glowMats: [eye, core.material] };
   rig.update = (dt, s = {}) => {
     rig.t += dt;
     body.position.y = Math.sin(rig.t * 2) * 0.12;
@@ -528,7 +531,7 @@ export function makeBrute(variant = 'normal') {
     part(new THREE.DodecahedronGeometry(0.38, 0), rock, fore, 0, -0.75, 0.05);
     if (side < 0) { P.armL = arm; P.foreL = fore; } else { P.armR = arm; P.foreR = fore; }
   }
-  rig.mats = mats; rig.armor = armor; rig.glowMat = glow; rig.height = 2.9;
+  rig.mats = mats; rig.armor = armor; rig.glowMat = glow; rig.glowMats = [glow]; rig.height = 2.9;
   return rig;
 }
 
@@ -562,7 +565,85 @@ export function makeKnight(spectral = false) {
   const glow = new THREE.MeshBasicMaterial({ color: new THREE.Color(spectral ? 0x9ad0ff : 0xb080ff).multiplyScalar(2.5) });
   for (let i = 0; i < 3; i++) part(new THREE.BoxGeometry(0.02, 0.2, 0.02), glow, P.torso, -0.08 + i * 0.08, 0.3 + i * 0.05, 0.16, { rz: (i - 1) * 0.5, cast: false });
   P.eyes.forEach((e) => { e.material = glow; });
-  rig.mats = mats; rig.glowMat = glow; rig.height = 2.4;
+  rig.mats = mats; rig.glowMat = glow; rig.glowMats = spectral ? [] : [glow]; rig.height = 2.4;
   if (spectral) makeGhost(rig, 0x9ad0ff, 0.7);
+  return rig;
+}
+
+// ------------------------------------------------------------------
+// 잿물 — ash ooze (slime). variant: ash | fire | frost
+// ------------------------------------------------------------------
+const OOZE = {
+  ash: { body: 0x2e2a38, glow: 0xc9a0ff, emi: 0x120a1a },
+  fire: { body: 0x6a2410, glow: 0xff7a2a, emi: 0x5a1804 },
+  frost: { body: 0x6a9ac0, glow: 0x9fe8ff, emi: 0x1a4a6a },
+};
+export function makeOoze(variant = 'ash', size = 1) {
+  const C = OOZE[variant];
+  const root = new THREE.Group();
+  const body = new THREE.Group(); root.add(body);
+  const geo = new THREE.IcosahedronGeometry(0.62, 3);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const n = 1 + Math.sin(x * 7) * 0.05 + Math.cos(z * 6 + y * 3) * 0.05;
+    p.setXYZ(i, x * n, (y < 0 ? y * 0.55 : y) * n, z * n);
+  }
+  geo.computeVertexNormals();
+  const mat = EM(C.body, { rim: 1.1, emissive: C.emi, transparent: true, opacity: 0.88 });
+  const blob = new THREE.Mesh(geo, mat); blob.position.y = 0.36; blob.castShadow = true; body.add(blob);
+  const glow = new THREE.MeshBasicMaterial({ color: new THREE.Color(C.glow).multiplyScalar(2.4) });
+  const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2, 1), glow); core.position.y = 0.34; body.add(core);
+  const eyes = [];
+  for (const sx of [-1, 1]) { const e = new THREE.Mesh(sph(1, 8, 6), glow); e.scale.set(0.05, 0.08, 0.03); e.position.set(sx * 0.17, 0.5, 0.52); body.add(e); eyes.push(e); }
+  // drips
+  const drips = [];
+  for (let i = 0; i < 5; i++) {
+    const d = new THREE.Mesh(sph(0.1, 8, 6), mat);
+    const a = (i / 5) * Math.PI * 2;
+    d.position.set(Math.cos(a) * 0.55, 0.08, Math.sin(a) * 0.55); body.add(d); drips.push(d);
+  }
+  root.scale.setScalar(size);
+  const rig = { root, body, blob, core, mats: [mat], glowMats: [glow], t: rand() * 5, height: 0.9 * size, squash: 0 };
+  rig.update = (dt, s = {}) => {
+    rig.t += dt;
+    rig.squash = damp(rig.squash, s.squash ?? 0, 12, dt);
+    const q = rig.squash + Math.sin(rig.t * 4) * 0.04;
+    body.scale.set(1 - q * 0.35, 1 + q, 1 - q * 0.35);
+    core.rotation.y += dt * 2; core.position.y = 0.34 + Math.sin(rig.t * 3) * 0.04;
+    drips.forEach((d, i) => { d.scale.setScalar(0.8 + Math.sin(rig.t * 3 + i) * 0.25); });
+  };
+  return rig;
+}
+
+// ------------------------------------------------------------------
+// 재나방 — ash moth
+// ------------------------------------------------------------------
+export function makeMoth() {
+  const root = new THREE.Group();
+  const body = new THREE.Group(); root.add(body);
+  const bm = EM(0x3a3240, { rim: 0.9 });
+  const wm = EM(0x6a6072, { rim: 0.6, side: THREE.DoubleSide, emissive: 0x100818 });
+  part(cap(0.07, 0.3), bm, body, 0, 0, 0, { rx: Math.PI / 2 });
+  part(sph(0.08, 8, 6), bm, body, 0, 0.02, 0.2);
+  const glow = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xc9a0ff).multiplyScalar(2.6) });
+  for (const sx of [-1, 1]) part(sph(0.025, 6, 4), glow, body, sx * 0.04, 0.05, 0.26, { cast: false });
+  for (const sx of [-1, 1]) part(new THREE.ConeGeometry(0.01, 0.2, 3), bm, body, sx * 0.04, 0.12, 0.28, { rx: -0.6, rz: -sx * 0.4 });
+  const wings = [];
+  for (const sx of [-1, 1]) for (const back of [0, 1]) {
+    const piv = new THREE.Group(); piv.position.set(sx * 0.05, 0.03, back ? -0.06 : 0.06); body.add(piv);
+    const g = new THREE.CircleGeometry(back ? 0.22 : 0.3, 7); g.scale(1, 0.7, 1); g.translate(sx * (back ? 0.2 : 0.27), 0, 0); g.rotateX(-Math.PI / 2);
+    const w = new THREE.Mesh(g, wm); w.castShadow = true; piv.add(w);
+    const spot = new THREE.Mesh(new THREE.CircleGeometry(0.05, 8), glow); spot.rotation.x = -Math.PI / 2; spot.position.set(sx * (back ? 0.2 : 0.28), 0.005, 0); piv.add(spot);
+    wings.push({ piv, sx, back });
+  }
+  const rig = { root, body, wings, mats: [bm, wm], glowMats: [glow], t: rand() * 5, height: 0.4 };
+  rig.update = (dt, s = {}) => {
+    rig.t += dt;
+    const f = s.dive ? 38 : 22;
+    wings.forEach((w) => { w.piv.rotation.z = w.sx * (Math.sin(rig.t * f + (w.back ? 0.6 : 0)) * 0.9 + 0.1); });
+    body.rotation.x = s.dive ? 0.5 : Math.sin(rig.t * 2) * 0.15;
+    body.position.y = Math.sin(rig.t * 5) * 0.05;
+  };
   return rig;
 }

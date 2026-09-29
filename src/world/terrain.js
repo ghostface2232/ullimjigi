@@ -63,9 +63,9 @@ export class Terrain {
     const r = Math.hypot(x, z);
     const rg = ridged(n2, x * 0.013, z * 0.013, 4);
     const north = smoothstep(-50, -190, z);
-    h += north * (16 + rg * 30);
+    h += north * (16 + rg * 22);
     const edge = smoothstep(172, 232, r);
-    h += edge * (58 + rg * 48);
+    h += edge * (36 + rg * 26);
     h += smoothstep(118, 178, x) * (1 - edge) * 14 * (0.5 + 0.5 * rg);
     // west woods: gentle hollows
     // rift crater

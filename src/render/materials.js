@@ -79,7 +79,6 @@ export function toon(color = 0xffffff, opts = {}) {
     color,
     gradientMap: gradientMap(),
     vertexColors: !!opts.vertexColors,
-    flatShading: !!opts.flat,
     side: opts.side ?? THREE.FrontSide,
     transparent: !!opts.transparent,
     opacity: opts.opacity ?? 1,

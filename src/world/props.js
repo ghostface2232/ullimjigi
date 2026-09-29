@@ -234,6 +234,7 @@ export class Props {
       const h = T.height(x, z);
       const n = T.normal(x, z);
       const steep = 1 - n.y;
+      if (n.y < 0.66) continue;
       if (rnd() > 0.25 + steep * 3 + (h > 30 ? 0.3 : 0)) continue;
       if (this.excluded(x, z, -2) && rnd() < 0.9) continue;
       const big = rnd() < 0.08;
@@ -256,7 +257,7 @@ export class Props {
         const v = +k.split(',')[2];
         const im = new THREE.InstancedMesh(t.geos[v], t.mat, items.length);
         items.forEach((it, i) => {
-          dummy.position.set(it.x, it.y - (name === 'rock' ? it.s * 0.35 : 0.1), it.z);
+          dummy.position.set(it.x, it.y - (name === 'rock' ? it.s * 0.45 : 0.15), it.z);
           dummy.rotation.set(0, it.r, 0);
           dummy.scale.set(it.s, it.s * (name === 'rock' ? 1 : 0.9 + (i % 5) * 0.05), it.s);
           dummy.updateMatrix();

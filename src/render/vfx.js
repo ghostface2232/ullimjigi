@@ -538,7 +538,7 @@ VFX.prototype.presets = {
     const s = o.spread ?? 0.4, sp = o.speed ?? 2;
     sphereDir(D, sp);
     this.add.emit({ p: [p.x + rv(s), p.y + rv(s), p.z + rv(s)], v: [D[0] + (o.vx || 0), Math.abs(D[1]) + 1.5 + (o.vy || 0), D[2] + (o.vz || 0)], life: randRange(0.35, 0.8) * (o.life || 1),
-      size: randRange(0.5, 1.1) * (o.size || 1), size1: randRange(0.1, 0.3), color: PAL.fire.core, color1: PAL.fire.deep, alpha: 0.9, alpha1: 0, drag: 2, grav: -2.5, shape: 0 });
+      size: randRange(0.5, 1.1) * (o.size || 1), size1: randRange(0.1, 0.3), color: PAL.fire.core, color1: PAL.fire.deep, alpha: o.alpha ?? 0.75, alpha1: 0, drag: 2, grav: -2.5, shape: 0 });
   },
   ember(p, o) {
     const sp = o.speed ?? 5;

@@ -7,6 +7,27 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { G } from '../core/context.js';
 import './materials.js'; // installs the global aerial-perspective fog chunks before any compile
 
+// Screen-space refraction: offsets written by effect meshes (shock rings,
+// shells, heat haze) into a half-res float target bend the scene colour,
+// with a slight chromatic split along the offset.
+const DistortShader = {
+  uniforms: { tDiffuse: { value: null }, tDistort: { value: null } },
+  vertexShader: /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse, tDistort; varying vec2 vUv;
+    void main(){
+      vec2 off = texture2D(tDistort, vUv).xy;
+      off = clamp(off, vec2(-0.08), vec2(0.08));
+      vec3 c;
+      c.r = texture2D(tDiffuse, vUv + off * 1.08).r;
+      c.g = texture2D(tDiffuse, vUv + off).g;
+      c.b = texture2D(tDiffuse, vUv + off * 0.92).b;
+      // faint brightening where the refraction is strongest (shock front sheen)
+      c *= 1.0 + min(length(off) * 3.0, 0.12);
+      gl_FragColor = vec4(c, 1.0);
+    }`,
+};
+
 const GradeShader = {
   uniforms: {
     tDiffuse: { value: null },
@@ -99,6 +120,13 @@ export class Renderer {
     this.composer = new EffectComposer(r, rt);
     this.renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(this.renderPass);
+    // distortion objects live in their own scene and render into a half-res float target
+    this.distortScene = new THREE.Scene();
+    this.distortRT = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: false });
+    this.distort = new ShaderPass(DistortShader);
+    this.distort.uniforms.tDistort.value = this.distortRT.texture;
+    this.distort.enabled = false;
+    this.composer.addPass(this.distort);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.42, 0.5, 1.35);
     this.composer.addPass(this.bloom);
     this.grade = new ShaderPass(GradeShader);
@@ -119,6 +147,7 @@ export class Renderer {
     this.renderer.setSize(w, h, false);
     this.composer.setPixelRatio(pr);
     this.composer.setSize(w, h);
+    this.distortRT.setSize(Math.max(4, Math.round(w * pr * 0.5)), Math.max(4, Math.round(h * pr * 0.5)));
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.grade.uniforms.uAspect.value = w / h;
@@ -127,6 +156,18 @@ export class Renderer {
   render(dt) {
     const u = this.grade.uniforms;
     u.uTime.value = G.realTime;
+    const D = G.vfx && G.vfx.distort;
+    const on = !!(D && D.active);
+    this.distort.enabled = on;
+    if (on) {
+      const r = this.renderer;
+      const prevRT = r.getRenderTarget(), prevA = r.getClearAlpha();
+      r.getClearColor(this._cc || (this._cc = new THREE.Color()));
+      r.setRenderTarget(this.distortRT);
+      r.setClearColor(0x000000, 0); r.clear(true, false, false);
+      r.render(this.distortScene, this.camera);
+      r.setRenderTarget(prevRT); r.setClearColor(this._cc, prevA);
+    }
     this.composer.render(dt);
   }
 }

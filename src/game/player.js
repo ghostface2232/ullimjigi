@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import { G, ELEMENTS } from '../core/context.js';
 import { makeHumanoid, CHAR } from './characters.js';
 import { BOLT, HEAVY, WEAVE_COST, WEAVE_CD, weaveInfo } from './spells.js';
-import { ULT_COST } from './skills.js';
-import { clamp, damp, angleDamp, lerp, randRange } from '../core/util.js';
+import { ULT_COST, SIG, WEAVE_NODE } from './skills.js';
+import { clamp, damp, angleDamp, lerp, randRange, josa } from '../core/util.js';
 import { PAL } from '../render/vfx.js';
 import { toon, addOutline } from '../render/materials.js';
 
@@ -33,6 +33,8 @@ export class Player {
     this.unlocked = new Set(['arcane']);
     this.cd = { bolt: 0, heavy: 0, weave: 0 };
     this.castHold = 0; this.manaDelay = 0;
+    this.manaLowArmed = true; this.manaFullArmed = false; this.manaFullT = -99; this.manaMuteT = -99; this.lockedMsgT = -99;
+    this.regenRate = 0;
     this.invuln = 0; this.barrier = 0; this.updraft = 0;
     this.lockTarget = null;
     this.dead = false;
@@ -288,12 +290,13 @@ export class Player {
     this.stamina = Math.min(this.maxStamina, this.stamina);
 
     // --- mana & hp regen
+    const inCombat = G.enemies.inCombat();
     this.manaDelay -= dt;
-    const flow = 1 + 0.2 * (G.skills ? G.skills.r('a_flow') : 0);
-    if (this.manaDelay <= 0) this.mana = Math.min(this.maxMana, this.mana + dt * (10 + this.level * 0.6) * flow);
+    this.regenRate = this.manaDelay <= 0 && this.mana < this.maxMana ? this.manaRegenRate(inCombat) : 0;
+    if (this.regenRate > 0) this.mana = Math.min(this.maxMana, this.mana + dt * this.regenRate);
+    this.manaWatch();
     this.invuln = Math.max(0, this.invuln - dt);
     this.barrier = Math.max(0, this.barrier - dt);
-    const inCombat = G.enemies.inCombat();
     if (!inCombat && G.time - this.lastHurt > 6 && this.hp < this.maxHp && !this.dead) {
       this.regenT += dt;
       if (this.regenT > 2.5) { this.regenT = 0; this.hp = Math.min(this.maxHp, this.hp + 1); G.hud.updateHearts(); }
@@ -395,11 +398,49 @@ export class Player {
     if (best) G.audio.play('ui_click');
   }
 
+  // ---------------- mana ----------------
+  // Mana is a real constraint: slow regen in combat, fast out of combat.
+  // Gains in combat come from kill motes, reactions and perfect dodges.
+  manaRegenRate(inCombat) {
+    if (!inCombat) return 22;
+    const flow = 1 + 0.25 * (G.skills ? G.skills.r('a_flow') : 0);
+    return (5 + 0.25 * this.level) * flow;
+  }
+  gainMana(n, o = {}) {
+    if (n <= 0 || this.dead) return 0;
+    const before = this.mana;
+    this.mana = Math.min(this.maxMana, this.mana + n);
+    const got = this.mana - before;
+    if (got > 0 && G.hud && G.hud.manaGain) G.hud.manaGain(got, o);
+    return got;
+  }
+  refillMana(quiet = false) { this.mana = this.maxMana; if (quiet) this.manaMuteT = G.realTime; }
+  // low / full cues (rate-limited, with hysteresis)
+  manaWatch() {
+    const k = this.mana / this.maxMana;
+    if (k < 0.2 && this.manaLowArmed) { this.manaLowArmed = false; if (!this.dead && G.mode === 'free') G.audio.play('mana_low', { gap: 2 }); }
+    else if (k > 0.35) this.manaLowArmed = true;
+    if (k < 0.6) this.manaFullArmed = true;
+    if (k >= 0.999 && this.manaFullArmed) {
+      this.manaFullArmed = false;
+      if (G.realTime - this.manaFullT > 8 && G.realTime - this.manaMuteT > 1.5 && G.mode === 'free') { this.manaFullT = G.realTime; G.audio.play('mana_full'); if (G.hud.manaFull) G.hud.manaFull(); }
+    }
+  }
   spend(cost) {
     if (G.slowmo > 0 && cost < 10) return true;
-    if (this.mana < cost) { G.hud.manaShort(); G.audio.play('mana_empty', { gap: 0.3 }); return false; }
-    this.mana -= cost; this.manaDelay = 0.9; return true;
+    if (this.mana < cost) { G.hud.manaShort(cost); G.audio.play('mana_empty', { gap: 0.3 }); return false; }
+    this.mana -= cost; this.manaDelay = 1.4; return true;
   }
+  // technique not learned yet: short, gap-limited feedback
+  lockedTech(kind, name) {
+    G.hud.cooldownFlash(kind);
+    G.audio.play('mana_empty', { gap: 0.3 });
+    if (G.realTime - this.lockedMsgT < 2.2) return;
+    this.lockedMsgT = G.realTime;
+    G.hud.toast(`<b>${name}</b>${josa(name, '은').slice(name.length)} 아직 익히지 못한 기술이다 — <kbd>K</kbd> 울림 나무`, 3200);
+  }
+  canHeavy(el = this.element) { return !G.skills || G.skills.has(SIG[el]); }
+  canWeave() { return !G.skills || G.skills.has(WEAVE_NODE); }
 
   castBolt() {
     const el = this.element, def = BOLT[el];
@@ -416,6 +457,7 @@ export class Player {
   }
   castHeavy() {
     const el = this.element, def = HEAVY[el];
+    if (!this.canHeavy(el)) { this.lockedTech('heavy', def.name); return; }
     if (!this.spend(def.cost)) return;
     this.cd.heavy = def.cd; this.cd.heavyMax = def.cd;
     this.castHold = 1.0;
@@ -428,6 +470,7 @@ export class Player {
   }
   castWeave() {
     const a = this.element, b = this.prevElement;
+    if (!this.canWeave()) { this.lockedTech('weave', '두 노래 엮기'); return; }
     const info = weaveInfo(a, b);
     if (!info || !this.unlocked.has(b)) { G.hud.toast('두 가지 속성을 번갈아 고르면 <b>엮기(Q)</b>를 쓸 수 있다.'); return; }
     if (this.cd.weave > 0) { G.hud.cooldownFlash('weave'); return; }
@@ -470,6 +513,7 @@ export class Player {
     G.renderer.grade.uniforms.uImpact.value = Math.max(G.renderer.grade.uniforms.uImpact.value, 0.45);
     G.hitstop = Math.max(G.hitstop, 0.05);
     if (G.skills) G.skills.charge(12);
+    this.gainMana(15, { src: 'dodge' });
     this.invuln = Math.max(this.invuln, 0.5);
     this.stamina = Math.min(this.maxStamina, this.stamina + 20);
     if (G.story && G.story.once('perfect1')) G.hud.hint('<b>완벽 회피</b> — 공격이 닿기 직전 <kbd>Shift</kbd> 순간이동으로 피하면 울림이 가속한다<br><small>잠시 적이 느려지고, 기본 마법의 마나가 들지 않으며, 재사용 대기가 빨라진다</small>', 8);
@@ -526,10 +570,11 @@ export class Player {
       if (this.level % 2 === 0) this.maxHp += 4;
     }
     if (up) {
-      this.hp = this.maxHp; this.mana = this.maxMana;
+      this.hp = this.maxHp; this.refillMana(true);
       G.audio.play('levelup');
-      if (G.skills) G.skills.gain(2 * up);
-      G.hud.banner('LEVEL UP', `울림이 깊어졌다 — Lv ${this.level}`, `마법의 위력이 강해졌다.${this.level % 2 === 0 ? ' 생명력의 그릇이 늘었다.' : ''}<br><b style="color:#f1d48a">울림점 +${2 * up}</b> · <kbd>K</kbd> 울림 나무에서 새 노래를 익히자`, '#f1d48a');
+      if (G.skills) { G.skills.gain(2 * up); G.skills.cross = Math.min(5, (G.skills.cross || 0) + up); }
+      const calm = G.mode === 'free' && !G.enemies.inCombat();
+      G.hud.banner('LEVEL UP', `울림이 깊어졌다 — Lv ${this.level}`, `마법의 위력이 강해졌다.${this.level % 2 === 0 ? ' 생명력의 그릇이 늘었다.' : ''}<br><b style="color:#f1d48a">울림점 +${2 * up}</b> · <b>울림의 갈림길</b>이 열린다${calm ? '' : ' — 싸움이 끝나면 새 기술을 고를 수 있다'}`, '#f1d48a');
       G.vfx.burst(this.center(), 'soul', 30, { el: 'gold' });
       G.vfx.ring(this.pos, PAL.gold.core, 4, 0.8, { thick: 0.2 });
       G.hud.updateHearts();

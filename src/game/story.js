@@ -217,6 +217,7 @@ export class Story {
     G.world.sky.hush = this.hushBase;
     // restore lantern states handled by game
     this.run().catch((e) => console.error('story', e));
+    this.lakeSong().catch((e) => console.error('lake', e));
   }
   async run() {
     if (this.chapter === 'prologue') await this.prologue();
@@ -658,6 +659,7 @@ export class Story {
         return b;
       }, S.pos, 30);
       this.set('f_boss');
+      G.skills.gain(2, '서리무덤 파수꾼을 쓰러뜨렸다');
     }
     if (!this.flag('f_learn')) {
       await this.sleep(1);
@@ -786,6 +788,7 @@ export class Story {
         return k;
       }, S.pos, 34);
       this.set('s_boss');
+      G.skills.gain(2, '무명의 기사를 쓰러뜨렸다');
       await this.kaelScene(S, knight);
     }
     if (!this.flag('s_learn')) {
@@ -1019,6 +1022,7 @@ export class Story {
     await this.fade(true, 2.5, true);
     this.done('q_rift');
     this.chapter = 'post';
+    G.skills.gain(3, '이름 삼킨 자를 달랬다');
     this.positionNPCs(); this.refreshBarks();
     // epilogue at dawn
     G.world.sky.setHour(6.1);
@@ -1236,6 +1240,7 @@ export class Story {
   takeMemory(m) {
     m.taken = true; m.g.visible = false;
     this.memories[m.id] = 'have';
+    G.skills.gain(1, '모라의 기억을 찾았다');
     G.audio.play('pickup'); G.audio.play('echo', { pos: m.pos });
     G.vfx.burst(m.pos, 'soul', 30, { el: 'arcane' });
     G.hud.banner('모라의 기억', m.name, m.desc, '#c9a8ff');
@@ -1293,6 +1298,7 @@ export class Story {
     if (this.flag('bounty' + n)) return;
     this.set('bounty' + n);
     this.inc('bountyNew');
+    G.skills.gain(1, '이름 붙은 것을 쓰러뜨렸다');
     G.hud.toast(`이름 붙은 것을 쓰러뜨렸다 — 이솔에게 알려 주자`);
     this.updateBounty();
   }
@@ -1315,6 +1321,64 @@ export class Story {
     G.player.addXP(80 * n);
     this.counters.bountyNew = 0;
     this.updateBounty();
+  }
+
+  // ------------------------------------------------------------ side: the lake's song (water)
+  lakeSpot() {
+    if (this._lake) return this._lake;
+    const L = POI.lake;
+    for (let r = 30; r < 60; r += 0.5) {
+      const x = L.x + r * 0.97, z = L.z - r * 0.24;
+      if (G.world.h(x, z) > 0.45) { this._lake = { x, z, wx: L.x + (r - 3.5) * 0.97, wz: L.z - (r - 3.5) * 0.24 }; return this._lake; }
+    }
+    this._lake = { x: -40, z: 52, wx: -44, wz: 53 };
+    return this._lake;
+  }
+  async lakeSong() {
+    if (this.flag('water_learn') || G.player.unlocked.has('water')) return;
+    await this.wait(() => this.flag('worldOpen') && G.mode === 'free');
+    const spot = this.lakeSpot();
+    if (!this.quests.q_lake) {
+      await this.sleep(this.flag('v_wind') && !this.flag('frostBell') && !this.flag('stormBell') ? 40 : 4);
+      await this.wait(() => G.mode === 'free');
+      this.cSay('…이상하구나. 거울 호수 쪽에서 낯익은 노랫소리가 들리는구나. 한번 가 보지 않겠느냐?', null, 6);
+      this.quest('q_lake', '거울 호수의 메아리', '보름이 거울 호수 쪽에서 낯익은 노랫소리를 들었다고 한다. 호숫가에 가서 귀를 기울여 보자.', 'side');
+    }
+    this.obj('q_lake', '거울 호숫가에서 귀 기울이기', [{ x: spot.x, z: spot.z, h: 2.6 }]);
+    await this.wait(() => this.near(spot.x, spot.z, 7) && G.mode === 'free' && !G.enemies.inCombat());
+    await this.lakeScene(spot);
+  }
+  async lakeScene(spot) {
+    const W = G.world;
+    const rig = makeGhost(makeHumanoid(CHAR.seha), 0xa8d8ff, 0.8);
+    rig.root.scale.setScalar(0.72);
+    const face = Math.atan2(spot.wx - spot.x, spot.wz - spot.z);
+    const ghost = G.npcs.add(new NPC('seha', 'seha', spot.wx, spot.wz, face + Math.PI, { rig, float: Math.max(0, 0.05 - W.h(spot.wx, spot.wz)), headH: 1.3 }));
+    G.audio.play('echo', { pos: ghost.root.position });
+    G.vfx.burst(ghost.headPos(), 'soul', 30, { el: 'water' });
+    for (let i = 0; i < 3; i++) G.vfx.ring(V(spot.wx, 0.08, spot.wz), PAL.water.core, 4 + i * 3, 1.6 + i * 0.4, { thick: 0.06 });
+    await this.conv(async () => {
+      G.cameraRig.setCine(V(spot.x + (spot.x - spot.wx) * 0.9 + 2.5, W.h(spot.x, spot.z) + 2.4, spot.z + (spot.z - spot.wz) * 0.9 + 2), V(spot.wx, 1.1, spot.wz));
+      await this.say('boreum', '…수면을 들여다보거라. 호수가 무언가를 되비추고 있구나.');
+      await this.say('narr', '잔잔한 물 위에 어린 소녀가 비친다. 물가에 쪼그려 앉아, 손바닥으로 물을 떠 올렸다 흘려보내며 노래를 흥얼거린다.');
+      await this.say('seha', '엄마, 봐 봐! 물은 불러 주는 대로 모양이 바뀌어. 내가 웃으면 같이 웃고, 찡그리면 같이 찡그려.', { name: '어린 세하의 메아리' });
+      await this.say('seha', '서리는 물이 잠든 거고, 김은 물이 꿈꾸는 거래. 그러니까 물의 노래를 알면 서리도 김도 다 친구가 되는 거야.', { name: '어린 세하의 메아리' });
+      await this.say('seha', '…엄마 노래는 너무 뜨거워. 나는 이 노래가 좋아. 시원하고, 조금 슬프고. 오래오래 기억해 주거든.', { name: '어린 세하의 메아리' });
+      await this.say('boreum', '세하가 어릴 적 여기서 자주 놀았다고 했지. 거울 호수는 비친 것을 오래 기억한다더니… 그 아이의 노래를 네게 되비춰 주는구나.');
+      const c = await this.choose(['(수면에 손을 담근다)', '(메아리를 따라 흥얼거린다)']);
+      if (c === 0) await this.say('narr', '차가운 물이 손가락 사이로 스며든다. 물결이 퍼져 나가며, 소녀의 모습이 천천히 흐려진다.');
+      else await this.say('narr', '조금 틀린 음으로 따라 부르자, 소녀가 고개를 들고 이쪽을 보며 웃은 것 같았다.');
+      await this.say('seha', '…헤헤. 틀렸다. 그래도 좋다.', { name: '어린 세하의 메아리' });
+    });
+    G.vfx.burst(ghost.headPos(), 'soul', 40, { el: 'water' });
+    G.scene.remove(ghost.root);
+    G.npcs.list.splice(G.npcs.list.indexOf(ghost), 1); delete G.npcs.map.seha;
+    await this.unlockElement('water', '되비추는 노래. 적을 적셔 번개와 서리를 부르고, 불을 꺼뜨린다.');
+    this.set('water_learn');
+    this.hint(`${KBD('6')} 물 · 젖은 적에게 [번개] → <b>감전 연쇄</b>와 감전 지속 피해 · 젖은 적에게 [서리] → <b>순간 빙결</b><br><small>불타는 적에게 물을 끼얹으면 <b>소화</b> — 불은 꺼지지만 피해가 절반으로 준다</small>`, 12);
+    this.done('q_lake', '물의 노래를 얻었다.');
+    await this.sleep(1.5);
+    this.cSay('물의 노래라… 세하가 두고 간 것이 서리만은 아니었나 보구나. 울림 나무(K)에 물의 갈래가 새로 돋았을 게다.', null, 6);
   }
 
   async readGrave() {
@@ -1346,6 +1410,7 @@ export class Story {
     G.hud.toast(`노래 씨앗 <b>${n} / 16</b>`);
     if (n % 4 === 0) {
       const k = n / 4;
+      G.skills.gain(1, '노래 씨앗 넷이 울렸다');
       const P = G.player;
       const kind = ['heart', 'stamina', 'mana', 'heart'][k - 1];
       if (kind === 'heart') P.maxHp += 4; else if (kind === 'stamina') P.maxStamina += 25; else P.maxMana += 25;
@@ -1361,6 +1426,7 @@ export class Story {
   onCast(kind, el) {
     if (kind === 'heavy' && el === 'fire') this.heavyFireT = G.time;
     if (kind === 'weave' && this.once('weave1')) this.cSay('오호! 두 노래를 엮었구나. 모라도 그걸 익히는 데 삼 년은 걸렸느니라.');
+    if (kind === 'ult' && this.once('ult1')) this.cSay('…허. 방금 그건 이 몸도 처음 보는구나. 네 울림이 제법 깊어졌느니라.');
   }
   onReaction(r) {
     const L = {
@@ -1372,6 +1438,11 @@ export class Story {
       thermal: '불타는 놈에게 서리를! *열충격*이로구나.',
       flashfreeze: '젖은 것은 순식간에 언다. *순간 빙결*!',
       blizzard: '한기를 바람에 실었구나. *눈보라*로다.',
+      extinguish: '불타는 놈에게 물을 끼얹다니! 불은 꺼졌다만 피해도 줄었느니라. *소화*지. 물은 번개나 서리와 어울리는 법이다.',
+      scald: '물과 불을 한데 끓였구나! *끓는 김*이로다. 이 몸의 꼬리가 다 축축하구나.',
+      shortcircuit: '감전된 놈에게 물이라, *누전*이니라! 전기가 물을 타고 온몸을 도는구나.',
+      superconduct: '한기 서린 몸에 번개가 거침없이 흐르는구나. *초전도*로다!',
+      monsoon: '젖은 놈을 바람으로 쳐서 물보라를 흩뿌렸구나. *장대비*로다.',
     };
     if (L[r] && this.once('react_' + r)) this.cSay(L[r]);
   }

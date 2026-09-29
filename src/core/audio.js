@@ -607,6 +607,30 @@ S.levelup = function () {
   [62, 66, 69, 74, 78, 81, 86].forEach((m, i) => this.note(out, m, i * 0.06, 0.06, 1.4));
   [62, 66, 69].forEach((m) => this.tone({ out, type: 'triangle', f: mtof(m), t: 0.45, a: 0.1, d: 1.6, v: 0.05 }));
 };
+S.skill_learn = function () {
+  const out = this.bus(null, 1, 0.55); if (!out) return;
+  [69, 76, 81, 88].forEach((m, i) => this.note(out, m, i * 0.05, 0.07, 1.3));
+  this.tone({ out, type: 'triangle', f: mtof(57), a: 0.02, d: 0.9, v: 0.07 });
+  this.noise({ out, type: 'highpass', f: 5200, a: 0.05, d: 0.5, v: 0.05 });
+};
+S.ult_ready = function () {
+  const out = this.bus(null, 1, 0.6); if (!out) return;
+  [74, 81, 86].forEach((m, i) => this.note(out, m, i * 0.07, 0.06, 1.2));
+  this.tone({ out, f: 440, f2: 880, a: 0.1, d: 0.5, v: 0.03 });
+};
+S.ult_cast = function (o) {
+  const out = this.bus(o.pos, 1.1, 0.7); if (!out) return;
+  [50, 57, 62, 69, 74, 81].forEach((m, i) => this.tone({ out, type: i % 2 ? 'triangle' : 'sine', f: mtof(m), f2: mtof(m + 12), t: i * 0.04, a: 0.12, d: 1.1, v: 0.05 }));
+  this.tone({ out, f: 55, f2: 110, a: 0.25, d: 0.9, v: 0.3 });
+  this.noise({ out, type: 'highpass', f: 2500, f2: 9000, a: 0.3, d: 0.8, v: 0.12 });
+};
+S.perfect_dodge = function () {
+  const out = this.bus(null, 1, 0.8); if (!out) return;
+  this.tone({ out, f: 1760, f2: 440, d: 0.9, v: 0.06 });
+  this.tone({ out, type: 'triangle', f: 220, f2: 110, a: 0.02, d: 1.2, v: 0.12 });
+  this.noise({ out, f: 3000, f2: 500, q: 2, a: 0.01, d: 0.7, v: 0.12 });
+  [86, 93].forEach((m, i) => this.note(out, m, 0.05 + i * 0.08, 0.05, 1.4));
+};
 S.unlock = function () {
   const out = this.bus(null, 1, 0.8); if (!out) return;
   [50, 57, 62, 66, 69].forEach((m) => this.tone({ out, type: 'triangle', f: mtof(m), a: 0.6, d: 2.6, v: 0.045 }));

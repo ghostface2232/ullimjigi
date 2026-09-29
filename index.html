@@ -59,6 +59,7 @@
           <div id="hearts"></div>
           <div id="mana"><div class="mana-fill"></div><div class="mana-ghost"></div></div>
           <div id="xpbar"><div class="xp-fill"></div><span class="xp-lv">Lv 1</span></div>
+          <div id="sp-badge" class="hidden"><span class="spd">◆</span>울림점 <b>0</b><kbd>K</kbd></div>
         </div>
 
         <div id="compass">
@@ -90,7 +91,14 @@
             <div class="weave-cd"></div>
           </div>
           <div id="elements"></div>
-          <div id="heavy-slot"><span class="hk">우클릭</span><span class="hn"></span><div class="heavy-cd"></div></div>
+          <div class="slot-row">
+            <div id="ult-slot" class="hidden">
+              <svg viewBox="0 0 44 44"><circle class="ug-bg" cx="22" cy="22" r="19" /><circle class="ug" cx="22" cy="22" r="19" /></svg>
+              <span class="uk">F</span>
+              <span class="un"></span>
+            </div>
+            <div id="heavy-slot"><span class="hk">우클릭</span><span class="hn"></span><div class="heavy-cd"></div></div>
+          </div>
         </div>
 
         <div id="boss-bar" class="hidden">
@@ -145,12 +153,36 @@
         </div>
       </div>
 
+      <!-- ============ SKILL TREES ============ -->
+      <div id="skills" class="screen hidden">
+        <div class="sk-frame">
+          <div class="sk-head">
+            <div class="sk-title">울림 나무<small>속성마다 노래의 갈래를 익힌다</small></div>
+            <div class="sk-points">울림점 <b>0</b></div>
+          </div>
+          <div class="sk-tabs"></div>
+          <div class="sk-main">
+            <div class="sk-tree">
+              <div class="sk-motto"></div>
+              <svg class="sk-lines"></svg>
+              <div class="sk-nodes"></div>
+            </div>
+            <div class="sk-info"></div>
+          </div>
+          <div class="sk-foot">
+            <span>클릭: 선택 · 두 번 클릭 / Enter: 익히기 · K · 닫기</span>
+            <button class="tbtn small ghost" data-act="skills-reset">모두 잊기 (울림점 되돌리기)</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ============ PAUSE ============ -->
       <div id="pause" class="screen hidden">
         <div class="pz-frame">
           <div class="pz-title">잠시 쉬어 가기</div>
           <button class="tbtn" data-act="resume">계속하기</button>
           <button class="tbtn" data-act="journal">여정 · 마법서</button>
+          <button class="tbtn" data-act="skills">울림 나무</button>
           <button class="tbtn" data-act="settings">설정</button>
           <button class="tbtn" data-act="save">저장하기</button>
           <button class="tbtn ghost" data-act="title">타이틀로</button>

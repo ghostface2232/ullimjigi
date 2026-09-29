@@ -6,6 +6,7 @@ export const G = {
   dt: 0,
   timeScale: 1,
   hitstop: 0,       // seconds of real time remaining in hit-stop
+  slowmo: 0,        // seconds of real time remaining in perfect-dodge slow motion (enemies run at 1/4 speed)
   state: 'loading', // loading | title | intro | play
   mode: 'free',     // free | dialogue | cutscene
   paused: false,

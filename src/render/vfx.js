@@ -13,6 +13,7 @@ export const PAL = {
   frost: { core: C(2.4, 3.0, 3.4), glow: C(0.6, 1.8, 3.2), deep: C(0.15, 0.45, 1.2), light: 0x6cd0ff },
   storm: { core: C(3.6, 3.4, 2.2), glow: C(3.2, 2.4, 0.4), deep: C(1.4, 0.6, 1.6), light: 0xffd84a },
   wind: { core: C(2.0, 3.2, 2.6), glow: C(0.5, 2.4, 1.4), deep: C(0.1, 0.6, 0.4), light: 0x6effc0 },
+  water: { core: C(1.6, 2.6, 3.6), glow: C(0.25, 0.9, 3.0), deep: C(0.04, 0.2, 0.8), light: 0x4a9aff },
   hush: { core: C(1.6, 1.2, 2.4), glow: C(0.7, 0.35, 1.4), deep: C(0.12, 0.06, 0.2), light: 0x8a5aff },
   heal: { core: C(2.2, 3.2, 2.0), glow: C(0.6, 2.4, 0.8), deep: C(0.1, 0.5, 0.1), light: 0x8aff9a },
   gold: { core: C(3.4, 2.9, 1.8), glow: C(2.4, 1.6, 0.5), deep: C(0.8, 0.5, 0.1), light: 0xffd88a },
@@ -611,6 +612,17 @@ VFX.prototype.presets = {
     const a = rand() * Math.PI * 2, sp = (o.speed ?? 5) * randRange(0.6, 1);
     this.norm.emit({ p: [p.x + Math.cos(a) * 0.5, p.y + 0.2, p.z + Math.sin(a) * 0.5], v: [Math.cos(a) * sp, randRange(0.3, 1.5), Math.sin(a) * sp], life: randRange(0.6, 1.2),
       size: randRange(0.6, 1.1) * (o.size || 1), size1: randRange(1.8, 2.8) * (o.size || 1), color: o.color || C(0.62, 0.55, 0.42), color1: o.color || C(0.7, 0.64, 0.52), alpha: 0.5, alpha1: 0, drag: 3, grav: -0.2, shape: 3 });
+  },
+  water(p, o) {
+    const s = o.spread ?? 0.3;
+    sphereDir(D, o.speed ?? 5);
+    this.add.emit({ p: [p.x + rv(s), p.y + rv(s), p.z + rv(s)], v: [D[0], Math.abs(D[1]) * 1.3 + 2.5, D[2]], life: randRange(0.4, 0.8),
+      size: randRange(0.12, 0.28) * (o.size || 1), size1: 0.04, color: PAL.water.core, color1: PAL.water.glow, alpha: 0.95, alpha1: 0, drag: 1.2, grav: 18, shape: 2 });
+  },
+  splash(p, o) {
+    const a = rand() * Math.PI * 2, sp = (o.speed ?? 4) * randRange(0.5, 1);
+    this.norm.emit({ p: [p.x + Math.cos(a) * 0.4, p.y + 0.1, p.z + Math.sin(a) * 0.4], v: [Math.cos(a) * sp, randRange(2, 5), Math.sin(a) * sp], life: randRange(0.5, 0.9),
+      size: randRange(0.3, 0.6) * (o.size || 1), size1: randRange(0.9, 1.5) * (o.size || 1), color: C(0.78, 0.9, 1.0), color1: C(0.55, 0.75, 0.95), alpha: 0.6, alpha1: 0, drag: 2, grav: 9, shape: 3 });
   },
   steam(p, o) {
     const s = o.spread ?? 1;

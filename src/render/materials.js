@@ -26,7 +26,34 @@ export function gradientMap() {
   return _grad;
 }
 
+// World-space dissolve (enemy deaths, spirits). uDissolve 0 = solid, 1 = gone.
+const DISSOLVE_PARS = `
+varying vec3 vDWP;
+uniform float uDissolve;
+uniform vec3 uDissolveColor;
+float _dh(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float _dn(vec3 x){ vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
+  return mix(mix(mix(_dh(i), _dh(i+vec3(1,0,0)), f.x), mix(_dh(i+vec3(0,1,0)), _dh(i+vec3(1,1,0)), f.x), f.y),
+             mix(mix(_dh(i+vec3(0,0,1)), _dh(i+vec3(1,0,1)), f.x), mix(_dh(i+vec3(0,1,1)), _dh(i+vec3(1,1,1)), f.x), f.y), f.z); }
+float _dnoise(){ return _dn(vDWP * 2.6) * 0.65 + _dn(vDWP * 7.0) * 0.35; }
+`;
+const DISSOLVE_CLIP = `
+  #include <clipping_planes_fragment>
+  if (uDissolve > 0.0 && _dnoise() < uDissolve * 1.08) discard;
+`;
+const DISSOLVE_VERT = `
+  #include <project_vertex>
+  {
+    vec4 _dwp = vec4(transformed, 1.0);
+    #ifdef USE_INSTANCING
+      _dwp = instanceMatrix * _dwp;
+    #endif
+    vDWP = (modelMatrix * _dwp).xyz;
+  }
+`;
+
 const RIM_FRAG = `
+  if (uDissolve > 0.0) outgoingLight += uDissolveColor * smoothstep(uDissolve * 1.08 + 0.09, uDissolve * 1.08, _dnoise()) * 3.5;
   {
     vec3 _vd = normalize(vViewPosition);
     float _r = 1.0 - clamp(dot(normal, _vd), 0.0, 1.0);
@@ -97,17 +124,23 @@ export function patch(m, opts = {}) {
   const sway = { value: opts.sway ?? 0 };
   const swayBase = { value: opts.swayBase ?? 0 };
   m.userData.sway = sway;
+  const dissolve = { value: 0 };
+  const dissolveColor = { value: new THREE.Color(0.8, 0.45, 1.6) };
+  m.userData.dissolve = dissolve;
+  m.userData.dissolveColor = dissolveColor;
   const isTerrain = !!opts.terrain;
   const hasSway = (opts.sway ?? 0) > 0;
   m.onBeforeCompile = (sh) => {
+    sh.uniforms.uDissolve = dissolve;
+    sh.uniforms.uDissolveColor = dissolveColor;
     sh.uniforms.uRim = rim;
     sh.uniforms.uRimColor = U.rimColor;
     sh.uniforms.uTime = U.time;
     sh.uniforms.uWind = U.wind;
     sh.uniforms.uSway = sway;
     sh.uniforms.uSwayBase = swayBase;
-    sh.fragmentShader = 'uniform float uRim;\nuniform vec3 uRimColor;\n' + sh.fragmentShader.replace('#include <opaque_fragment>', RIM_FRAG);
-    sh.vertexShader = 'uniform float uTime;\nuniform float uWind;\nuniform float uSway;\nuniform float uSwayBase;\n' + sh.vertexShader;
+    sh.fragmentShader = 'uniform float uRim;\nuniform vec3 uRimColor;\n' + DISSOLVE_PARS + sh.fragmentShader.replace('#include <opaque_fragment>', RIM_FRAG).replace('#include <clipping_planes_fragment>', DISSOLVE_CLIP);
+    sh.vertexShader = 'uniform float uTime;\nuniform float uWind;\nuniform float uSway;\nuniform float uSwayBase;\nvarying vec3 vDWP;\n' + sh.vertexShader.replace('#include <project_vertex>', DISSOLVE_VERT);
     if (hasSway) sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', WIND_VERT);
     if (isTerrain) {
       sh.vertexShader = TERRAIN_VERT_PARS + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');

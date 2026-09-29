@@ -293,6 +293,13 @@ S.cast_wind = function (o) {
   this.noise({ out, f: 1200, f2: 3400, q: 3, a: 0.02, d: 0.24, v: 0.18 });
   this.tone({ out, f: 420, f2: 900, d: 0.2, v: 0.04 });
 };
+S.cast_water = function (o) {
+  const out = this.bus(o.pos, 1, 0.3); if (!out) return;
+  this.noise({ out, f: 600, f2: 1800, q: 2.2, a: 0.02, d: 0.22, v: 0.32 });
+  this.tone({ out, f: 520, f2: 1100, d: 0.09, v: 0.07 });
+  this.tone({ out, type: 'triangle', f: 1300, f2: 700, t: 0.04, d: 0.12, v: 0.04 });
+  this.noise({ out, type: 'lowpass', f: 700, d: 0.14, v: 0.16 });
+};
 S.charge = function (o) {
   const out = this.bus(o.pos, 0.8, 0.3); if (!out) return;
   this.tone({ out, f: 220, f2: 880, a: 0.05, d: 0.45, v: 0.06 });
@@ -340,6 +347,13 @@ S.impact_wind = function (o) {
   const out = this.bus(o.pos, 1, 0.25); if (!out) return;
   this.noise({ out, f: 800, f2: 240, q: 1, d: 0.28, v: 0.38 });
   this.tone({ out, f: 180, f2: 70, d: 0.12, v: 0.25 });
+};
+S.impact_water = function (o) {
+  const out = this.bus(o.pos, 1, 0.3); if (!out) return;
+  this.noise({ out, type: 'lowpass', f: 2200, f2: 300, d: 0.3, v: 0.42 });
+  this.noise({ out, f: 1400, f2: 500, q: 1.4, d: 0.16, v: 0.25 });
+  this.tone({ out, f: 300, f2: 90, d: 0.12, v: 0.2 });
+  for (let i = 0; i < 4; i++) this.tone({ out, f: randRange(900, 1700), f2: randRange(1800, 2600), t: 0.03 + i * 0.035, d: 0.05, v: 0.03 });
 };
 S.hit_flesh = function (o) {
   const out = this.bus(o.pos, o.v || 1, 0.15); if (!out) return;

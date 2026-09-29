@@ -10,9 +10,12 @@ import { rand, randRange, clamp, smoothstep } from '../core/util.js';
 import { POI } from './layout.js';
 
 const TICK = 0.12;            // spread step (s)
-const BURN_TIME = [2.6, 4.2]; // seconds a cell stays alight
+const BURN_TIME = [1.5, 2.4]; // seconds a cell stays alight
 const REGROW = [150, 240];    // seconds until scorched grass is back
-const MAX_BURNING = 900;
+const MAX_BURNING = 360;
+// Each ignition carries a vigor (1 at the source) that fades as flames pass from
+// cell to cell, so one spark scorches a patch of meadow, not the whole forest.
+const VIGOR_DECAY = 0.8, VIGOR_DECAY_DOWNWIND = 0.88, VIGOR_MIN = 0.25;
 const FLAMES = 180;           // flame cards drawn around the camera
 
 // Flame card: two crossed quads, toon-banded flicker (dark red → orange → yellow core)
@@ -65,6 +68,7 @@ export class Wildfire {
     }
     this.state = new Uint8Array(N * N);   // 0 grass, 1 burning, 2 scorched
     this.timer = new Float32Array(N * N); // burn / regrow countdown
+    this.vigor = new Float32Array(N * N); // how much further this flame can travel
     this.burning = new Set();
     this.scorched = new Set();
     this.tex = new THREE.DataTexture(new Uint8Array(N * N * 4), N, N, THREE.RGBAFormat);
@@ -114,14 +118,14 @@ export class Wildfire {
   isBurning(x, z) { const i = this.idx(x, z); return i >= 0 && this.state[i] === 1; }
   count() { return this.burning.size; }
 
-  _light(i) {
+  _light(i, vigor = 1) {
     if (this.state[i] !== 0 || this.fuel[i] < 0.12 || this.burning.size >= MAX_BURNING) return false;
-    this.state[i] = 1; this.timer[i] = randRange(BURN_TIME[0], BURN_TIME[1]) * (0.7 + 0.5 * this.fuel[i]);
+    this.state[i] = 1; this.vigor[i] = vigor; this.timer[i] = randRange(BURN_TIME[0], BURN_TIME[1]) * (0.7 + 0.5 * this.fuel[i]);
     this.burning.add(i); this.dirty = true;
     return true;
   }
   // Set grass alight in a radius. Returns the number of cells that caught.
-  ignite(x, z, r = 1.5) {
+  ignite(x, z, r = 1.5, vigor = 1) {
     const wet = G.world.weather ? G.world.weather.rain : 0;
     if (wet > 0.75) return 0;
     let n = 0;
@@ -131,7 +135,7 @@ export class Wildfire {
     for (let dz = -R; dz <= R; dz++) for (let dx = -R; dx <= R; dx++) {
       if (dx * dx + dz * dz > R * R + 0.5) continue;
       const ix = cx + dx, iz = cz + dz; if (ix < 0 || iz < 0 || ix >= this.N || iz >= this.N) continue;
-      if (rand() < 1 - wet) n += this._light(iz * this.N + ix) ? 1 : 0;
+      if (rand() < 1 - wet) n += this._light(iz * this.N + ix, vigor) ? 1 : 0;
     }
     if (n && G.audio.ready) G.audio.play('fire_catch', { pos: new THREE.Vector3(x, this.T.height(x, z), z), gap: 0.25 });
     if (n && G.story && G.story.once('wildfire1')) G.hud.hint('<b>들불</b> — 마른 풀은 불에 타 번진다. 바람을 타고 더 빨리 퍼지고, 불길 위에서는 <b>뜨거운 바람</b>이 솟아 활공으로 높이 오를 수 있다<br><small>물·서리로 끌 수 있고, 비가 오면 잘 붙지 않는다</small>', 9);
@@ -157,7 +161,7 @@ export class Wildfire {
     for (const i of this.burning) { this.cellPos(i, tmp); if ((tmp.x - x) ** 2 + (tmp.z - z) ** 2 < r * r) list.push(i); }
     for (const i of list.slice(0, 60)) {
       this.cellPos(i, tmp);
-      for (let k = 1; k <= 3; k++) { const j = this.idx(tmp.x + dirX * this.step * k, tmp.z + dirZ * this.step * k); if (j >= 0 && rand() < 0.7) this._light(j); }
+      for (let k = 1; k <= 3; k++) { const j = this.idx(tmp.x + dirX * this.step * k, tmp.z + dirZ * this.step * k); if (j >= 0 && rand() < 0.6) this._light(j, Math.max(this.vigor[i] * 0.9, 0.5)); }
     }
     return list.length;
   }
@@ -193,10 +197,11 @@ export class Wildfire {
     while (this.acc >= TICK) {
       this.acc -= TICK;
       if (this.burning.size) {
-        const N = this.N, fresh = [];
+        const N = this.N, fresh = [], fv = [];
         for (const i of this.burning) {
           this.timer[i] -= TICK * (1 + rain * 3);
-          if (this.timer[i] <= 0) { fresh.push(-1 - i); continue; }
+          if (this.timer[i] <= 0) { fresh.push(-1 - i); fv.push(0); continue; }
+          if (this.vigor[i] < VIGOR_MIN) continue; // a dying flame burns out where it is
           const cx = i % N, cz = Math.floor(i / N);
           for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
             if (!dx && !dz) continue;
@@ -209,11 +214,11 @@ export class Wildfire {
             const bias = Math.max(0.15, 1 + down * (0.6 + 1.6 * wind.s));
             // uphill spreads faster (flames lean into the slope)
             const up = clamp((this.T.h[j] - this.T.h[i]) * 0.4, -0.4, 0.8);
-            const p = 0.045 * f * bias * (1 + up) * (1 - rain) / dl;
-            if (rand() < p) fresh.push(j);
+            const p = 0.007 * f * bias * (1 + up) * (1 - rain) / dl;
+            if (rand() < p) { fresh.push(j); fv.push(this.vigor[i] * (down > 0.5 ? VIGOR_DECAY_DOWNWIND : VIGOR_DECAY) * (0.85 + 0.15 * f)); }
           }
         }
-        for (const j of fresh) { if (j < 0) this._scorch(-1 - j); else this._light(j); }
+        fresh.forEach((j, k) => { if (j < 0) this._scorch(-1 - j); else this._light(j, fv[k]); });
       }
       // regrowth
       if (this.scorched.size) {

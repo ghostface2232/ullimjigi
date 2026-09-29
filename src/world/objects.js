@@ -197,7 +197,7 @@ export class WorldObjects {
     const P = G.player;
     G.spells.explode(c, 5.2, P.power() * 3.4, 'fire', { knock: 15, lift: 7, shake: 0.7, big: true });
     G.vfx.chunks && G.vfx.chunks(c, 'wood', 10, { speed: 9 });
-    if (this.W.fire) this.W.fire.ignite(c.x, c.z, 3.5);
+    if (this.W.fire) this.W.fire.ignite(c.x, c.z, 2.6, 0.8);
     // shove the player and other loose things
     const d = P.center().distanceTo(c);
     if (d < 4.5) P.damage(Math.round(8 * (1 - d / 6)), { dir: tmp.subVectors(P.pos, c).setY(0).normalize().clone(), knock: 12 });

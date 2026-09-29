@@ -265,6 +265,8 @@ export class Game {
 
   // ------------------------------------------------------------ flow
   async newGame() {
+    if (this.starting) return; // Enter + click, double clicks: start exactly once
+    this.starting = true;
     this.confirmNew = false;
     try { localStorage.removeItem(SAVE_KEY); } catch (_) {}
     $('#title-screen').classList.add('hidden');
@@ -299,9 +301,11 @@ export class Game {
   }
 
   continueGame() {
+    if (this.starting) return;
     let d;
     try { d = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (_) { return; }
     if (!d) return;
+    this.starting = true;
     $('#title-screen').classList.add('hidden');
     G.playerName = d.name || '리안';
     const P = G.player;
@@ -323,6 +327,8 @@ export class Game {
   }
 
   startPlay(story, d) {
+    // a second story would run its own chapter coroutine and spawn a second cast
+    if (G.story && G.state === 'play') return;
     G.story = story;
     G.state = 'play'; G.mode = 'free';
     G.cameraRig.mode = 'follow';

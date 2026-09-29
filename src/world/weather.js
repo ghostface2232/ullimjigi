@@ -227,7 +227,7 @@ export class Weather {
     this.pending.push({ t: d / 343, v: clamp(1.4 - d / 140, 0.25, 1), near: d < 30 });
     G.renderer.grade.uniforms.uImpact.value = Math.max(G.renderer.grade.uniforms.uImpact.value, clamp(0.35 - d / 300, 0, 0.3));
     // lightning is fire's oldest spark: dry grass catches
-    if (G.world.fire && this.rain < 0.7) G.world.fire.ignite(at.x, at.z, 2.2);
+    if (G.world.fire && this.rain < 0.7) G.world.fire.ignite(at.x, at.z, 2, 0.7);
     for (const e of G.enemies.list) if (e.alive && e.pos.distanceTo(at) < 5) G.combat.hit(e, { dmg: 18 + G.player.power(), el: 'storm', pos: e.center(), source: 'env' });
     const P = G.player;
     if (P.pos.distanceTo(at) < 4 && !o.harmless) P.damage(8, { dir: new THREE.Vector3().subVectors(P.pos, at).setY(0).normalize(), knock: 10 });

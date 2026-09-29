@@ -27,7 +27,7 @@ function rockGeo(seed = 1, detail = 1) {
     const n = 0.78 + 0.32 * vnoise3(x * 1.7 + seed * 3.1, y * 1.7 + seed, z * 1.7 - seed * 2);
     p.setXYZ(i, x * n, y * n * 0.9, z * n);
   }
-  const f = g.toNonIndexed(); f.computeVertexNormals();
+  const f = g.index ? g.toNonIndexed() : g; f.computeVertexNormals();
   ROCKS.set(key, f);
   return f;
 }

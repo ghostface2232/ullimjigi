@@ -73,6 +73,7 @@ export class Dialogue {
     if (this.depth > 0) return;
     this.active = false;
     this.tw = null; this.ffwd = false;
+    if (this.actors) { for (const r of this.actors) { r.setExpression && r.setExpression('neutral'); r.lookAt && r.lookAt(null); r.gesture && r.gestureName === 'crossArms' && r.gesture(null); } this.actors.clear(); }
     if (this.logOpen) this.toggleLog(false);
     G.mode = 'free';
     this.lb.classList.remove('on');
@@ -102,12 +103,14 @@ export class Dialogue {
     if (dist < 0.4) { dir.set(Math.sin(G.player.yaw), 0, Math.cos(G.player.yaw)); dist = 1; }
     dir.normalize();
     const right = new THREE.Vector3(-dir.z, 0, dir.x);
-    const back = Math.max(1.5, Math.min(3, dist * 0.45 + 1.3));
-    const cam = from.clone().addScaledVector(dir, -back).addScaledVector(right, 1.25 * side);
-    cam.y = Math.max(from.y, sub.y) + 1.85;
+    // Over-the-shoulder: the listener sits at the frame edge, the speaker's face near centre.
+    const back = Math.max(1.2, Math.min(2.4, dist * 0.35 + 1.0));
+    const cam = from.clone().addScaledVector(dir, -back).addScaledVector(right, 1.9 * side);
+    cam.y = Math.max(from.y, sub.y) + Math.min(1.8, headH * 0.98 + 0.12);
     const g = G.world.ground(cam.x, cam.z, cam.y + 2);
-    cam.y = Math.max(cam.y, g + 1.3);
-    const look = sub.clone(); look.y += headH * 0.86;
+    cam.y = Math.max(cam.y, g + 1.2);
+    const look = sub.clone(); look.y += headH * 0.9;
+    look.addScaledVector(right, 0.35 * side);
     this.moveCam(cam, look);
   }
 
@@ -155,7 +158,7 @@ export class Dialogue {
       return;
     }
     this.lastOther = obj;
-    this.shot(P.pos, obj, opts.side ?? 1);
+    this.shot(P.pos, obj, opts.side ?? -1); // left shoulder: keeps the staff (right hand) out of frame
   }
 
   say(who, text, opts = {}) {
@@ -165,6 +168,14 @@ export class Dialogue {
     for (const n of G.npcs.list) n.talking = false;
     if (G.companion) G.companion.talking = false;
     if (obj && obj !== G.player) obj.talking = true;
+    // acting: facial expression, one-shot gesture, and gaze toward the player
+    const rig = obj && obj.rig;
+    if (rig && obj !== G.player) {
+      this.actors = this.actors || new Set(); this.actors.add(rig);
+      if (opts.expr && rig.setExpression) rig.setExpression(opts.expr);
+      if (opts.gesture && rig.gesture) rig.gesture(opts.gesture);
+      if (rig.lookAt && opts.look !== false) rig.lookAt(opts.lookAt || G.player.center().setY(G.player.pos.y + 1.55));
+    }
     if (obj && opts.cam !== false) this.frameOn(obj, opts);
     this.box.classList.remove('hidden');
     this.nameEl.textContent = name;

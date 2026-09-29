@@ -797,5 +797,5 @@ export function gemGeo() {
   const g = new THREE.OctahedronGeometry(0.06, 0);
   g.scale(0.85, 1.5, 0.85);   // long axis along Y (the rig tilts it onto the staff; player spins it about Y)
   g.translate(0, 0, 0);
-  return g.toNonIndexed();
+  return g.index ? g.toNonIndexed() : g;
 }

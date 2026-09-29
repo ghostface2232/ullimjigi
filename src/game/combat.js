@@ -444,13 +444,14 @@ export class Combat {
     if (!st.ice && t.pos && t.rig) {
       const g = new THREE.Group();
       const n = 6;
+      // a ring of leaning ice prisms encasing the body
       for (let i = 0; i < n; i++) {
-        const m = new THREE.Mesh(G.vfx.crystalGeo, G.vfx.iceMatT);
-        const a = (i / n) * Math.PI * 2;
-        const s = t.radius * 1.1;
-        m.position.set(Math.cos(a) * t.radius * 0.5, 0, Math.sin(a) * t.radius * 0.5);
-        m.rotation.set(Math.sin(a) * 0.5, a, Math.cos(a) * 0.5);
-        m.scale.set(s, t.height * 0.55, s);
+        const m = new THREE.Mesh(G.vfx.iceGeo ? G.vfx.iceGeo(i) : G.vfx.crystalGeo, G.vfx.iceMatT);
+        const a = (i / n) * Math.PI * 2 + rand() * 0.3;
+        const s = t.radius * randRange(1.3, 1.8);
+        m.position.set(Math.cos(a) * t.radius * 0.45, -0.1, Math.sin(a) * t.radius * 0.45);
+        m.rotation.set(Math.sin(a) * 0.35, a, -Math.cos(a) * 0.35);
+        m.scale.set(s, t.height * randRange(0.42, 0.6), s);
         g.add(m);
       }
       g.position.copy(t.pos);
@@ -520,6 +521,7 @@ export class Combat {
       st.chillT -= dt;
       if (st.chillT <= 0) { st.chill = Math.max(0, st.chill - 1); st.chillT = 1.5; }
       if (rand() < dt * 6 * st.chill) V.burst(c, 'frostmist', 1, { spread: 0.4, size: 0.4, alpha: 0.3 });
+      if (rand() < dt * 3 * st.chill) V.burst(c, 'snowflake', 1, { spread: 0.5 });
     }
     if (st.frozen > 0) {
       st.frozen -= dt;
@@ -532,7 +534,7 @@ export class Combat {
     }
     if (st.wet > 0) {
       st.wet -= dt;
-      if (rand() < dt * 8) G.vfx.add.emit({ p: [c.x + randRange(-0.3, 0.3), c.y + randRange(0, 0.5), c.z + randRange(-0.3, 0.3)], v: [0, -2, 0], life: 0.5, size: 0.1, color: PAL.water.glow, alpha: 0.8, alpha1: 0, grav: 9, shape: 2 });
+      if (rand() < dt * 8) G.vfx.norm.emit({ p: [c.x + randRange(-0.3, 0.3), c.y + randRange(0, 0.5), c.z + randRange(-0.3, 0.3)], v: [0, -2, 0], life: 0.5, size: 0.09, size1: 0.06, color: WET_C, color1: WET_C1, alpha: 0.9, alpha1: 0.3, grav: 9, shape: 9 });
     }
     if (st.steam > 0) {
       st.steam -= dt;
@@ -562,4 +564,5 @@ export class Combat {
   }
 }
 
+const WET_C = new THREE.Color(0.8, 0.92, 1.05), WET_C1 = new THREE.Color(0.6, 0.8, 1.0);
 export function elColor(el) { return EL_INFO[el]?.css ?? '#fff'; }

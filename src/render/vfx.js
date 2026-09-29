@@ -756,6 +756,8 @@ export class VFX {
     try { const p = R.compileAsync ? R.compileAsync(sc, G.camera, this.scene) : (R.compile(sc, G.camera, this.scene), null); if (p && p.then) p.then(done, done); else done(); } catch (e) { done(); }
   }
 
+  // spell ice prism geometry (freeze encasing etc.)
+  iceGeo(i = 0) { return spikeGeo(i % 4); }
   tex(kind) { return this.decalTex[kind] || (this.decalTex[kind] = buildDecalTex(kind, this)); }
 
   _newRing() {

@@ -340,7 +340,7 @@ export class HumanRig extends Rig {
     if (this.c.outline) addOutline(m, 0.006);
     const top = HB.STAFF.len - HB.STAFF.below;
     const gem = new THREE.Mesh(T.gem, new THREE.MeshBasicMaterial({ color: new THREE.Color(2, 1.6, 3) }));
-    gem.position.set(0, 0.0, top + 0.02); g.add(gem);
+    gem.position.set(0, 0.0, top + 0.02); gem.rotation.x = Math.PI / 2; g.add(gem);
     const halo = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 8), fresnelMat(0x000000, 0xcfb8ff, { intensity: 0.5, power: 2.2 }));
     gem.add(halo);
     const tip = new THREE.Object3D(); tip.position.set(0, 0, top + 0.05); g.add(tip);

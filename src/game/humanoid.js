@@ -576,7 +576,9 @@ export function apron(S, L, c, mat, under = null) {
       const hw = mix(0.1, 0.17, sstep(0.25, 0.4, vv)) * L.bw;
       const a = (u - 0.5) * 2;
       const uz = under ? under(y) : -1;
-      out.set(a * hw, y, Math.max(wz + 0.016, 0.1 * L.bw + 0.04 * vv, uz + 0.014) + 0.004 - a * a * 0.02 + 0.03 * vv * vv);
+      const fz = Math.max(wz + 0.016, 0.1 * L.bw + 0.02 * vv, uz + 0.014) + 0.004;
+      const x = a * hw;
+      out.set(x, y, fz - (x * x) / (2 * Math.max(0.13, fz * 0.9)) + 0.012 * vv * vv);
     },
     inside: () => v(0, L.H, -0.1),
   });
@@ -793,7 +795,7 @@ export function staffGeo(o = {}) {
 export function gemGeo() {
   // elongated faceted crystal
   const g = new THREE.OctahedronGeometry(0.06, 0);
-  g.scale(0.85, 0.85, 1.5);
+  g.scale(0.85, 1.5, 0.85);   // long axis along Y (the rig tilts it onto the staff; player spins it about Y)
   g.translate(0, 0, 0);
   return g.toNonIndexed();
 }

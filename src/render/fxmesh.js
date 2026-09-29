@@ -161,7 +161,7 @@ const C = (r, g, b) => new THREE.Color(r, g, b);
 export const SPHERE_LOOK = {
   fire: { mode: 0, hot: C(3.8, 2.7, 1.1), mid: C(2.2, 0.62, 0.08), cool: C(0.32, 0.05, 0.02), fres: 1.5, glow: 0.1, edge: 2.2, scale: 1.45, disp: 0.3, rise: 0.8, speed: 0.9, add: 0 },
   fireball: { mode: 0, hot: C(4.4, 3.3, 1.5), mid: C(2.6, 0.95, 0.16), cool: C(0.9, 0.18, 0.04), fres: 1.2, glow: 0.4, edge: 2.0, scale: 1.6, disp: 0.18, rise: 2.4, speed: 2.8, add: 0 },
-  sun: { mode: 0, hot: C(6.0, 4.6, 2.2), mid: C(4.2, 1.7, 0.3), cool: C(1.4, 0.3, 0.05), fres: 1.2, glow: 0.5, edge: 2.0, scale: 1.1, disp: 0.16, rise: 1.2, speed: 1.4, add: 0 },
+  sun: { mode: 0, hot: C(4.8, 3.6, 1.7), mid: C(2.8, 1.0, 0.16), cool: C(0.8, 0.14, 0.03), fres: 1.2, glow: 0.5, edge: 2.0, scale: 1.1, disp: 0.16, rise: 1.2, speed: 1.4, add: 0 },
   smoke: { mode: 1, hot: C(2.2, 0.65, 0.12), lit: C(0.46, 0.44, 0.44), shade: C(0.13, 0.13, 0.17), fres: 2, scale: 1.1, disp: 0.3, rise: 0.35, speed: 0.25, add: 0 },
   steam: { mode: 1, hot: C(0, 0, 0), lit: C(1.05, 1.07, 1.1), shade: C(0.55, 0.62, 0.72), fres: 2, scale: 1.0, disp: 0.28, rise: 0.6, speed: 0.3, add: 0 },
   dust: { mode: 1, hot: C(0, 0, 0), lit: C(0.72, 0.64, 0.5), shade: C(0.32, 0.3, 0.3), fres: 2, scale: 1.2, disp: 0.3, rise: 0.25, speed: 0.2, add: 0 },

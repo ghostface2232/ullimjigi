@@ -794,7 +794,7 @@ export class Spells {
         }, () => {
           if (sun) sun.end(); if (orb) G.vfx.disposeOrb(orb); if (light) V.releaseLight(light); if (rib) rib.release(); if (haze) haze.end(); snd.stop(0.2);
           this.explode(tp.clone().setY(tp.y + 0.6), 7, P * 6, 'fire', { shake: 0.95, lift: 9, knock: 16, quiet: true });
-          V.sphere('sun', tp.clone().setY(tp.y + 1.5), { r0: 2, r1: 8.5, dur: 1.1, grow: 3, erodeAt: 0.25, alpha: 1, rise: 2 });
+          V.sphere('sun', tp.clone().setY(tp.y + 1.5), { r0: 2, r1: 6, dur: 1.1, grow: 3, erodeAt: 0.22, alpha: 1, rise: 2.5 });
           V.ring(tp, PAL.fire.core, 16, 1, { thick: 0.08 });
           V.pillar(tp, PAL.fire.glow, 2.6, 22, 0.7, { core: PAL.fire.core, alpha: 0.7 });
           V.decal(tp, 'crack', 6.5, { glow: PAL.fire.glow, dur: 12, glowDur: 3 });
@@ -802,7 +802,7 @@ export class Spells {
           V.distort.ring(tp, 22, 0.9, { flat: true, amp: 0.07, width: 0.08 });
           V.chunks(tp, 'rock', 26, { speed: 18, up: 0.85, size: 0.25 });
           V.chunks(tp, 'ember', 30, { speed: 16, up: 0.7 });
-          const gu = G.renderer.grade.uniforms; gu.uFlash.value = Math.max(gu.uFlash.value, 0.14); gu.uFlashColor.value.setRGB(1, 0.75, 0.45);
+          const gu = G.renderer.grade.uniforms; gu.uFlash.value = Math.max(gu.uFlash.value, 0.07); gu.uFlashColor.value.setRGB(1, 0.75, 0.45);
           A.play('ult_boom', { pos: tp, el: 'fire' });
           G.hitstop = Math.max(G.hitstop, 0.1);
           if (G.cameraRig.punchFov) G.cameraRig.punchFov(6);
@@ -848,7 +848,7 @@ export class Spells {
         V.ring(feet, PAL.frost.core, 13, 0.6, { thick: 0.2 });
         V.ring(feet, PAL.white.core, 12, 0.9, { thick: 0.08, y: 1 });
         V.shock(player.center(), PAL.frost.core, 13, 0.6, { alpha: 0.5, flat: 0.4, pow: 3 });
-        V.sphere('frost', player.center(), { r0: 1, r1: 13, dur: 0.7, grow: 3, erodeAt: 0.3, squash: 0.45, alpha: 0.6, add: true });
+        V.sphere('frost', player.center(), { r0: 1, r1: 12, dur: 0.6, grow: 3, erodeAt: 0.2, squash: 0.4, alpha: 0.22, add: true });
         V.burst(player.center(), 'frostmist', 32, { spread: 6, size: 2 });
         V.burst(player.center(), 'snowflake', 60, { spread: 8 });
         V.decal(feet, 'frost', 12, { dur: 10, glowDur: 2.5 });

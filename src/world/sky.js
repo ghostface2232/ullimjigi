@@ -56,7 +56,7 @@ const KEYS = [
   { h: 6, top: 0x3e5b9a, hor: 0xf4ab7e, bot: 0x6a5a6a, sun: 0xffb27a, sunI: 1.3, hemiS: 0x9aa3c8, hemiG: 0x6a5a50, hemiI: 1.0, fog: 0xe0ab94, cloud: 0xffd0b8, shade: 0xb07a88, rim: 0.8, night: 0.15 },
   { h: 8, top: 0x4f86d6, hor: 0xcfe3f0, bot: 0x9ab0c0, sun: 0xfff0dc, sunI: 2.5, hemiS: 0xbfd8ff, hemiG: 0x7a8a5a, hemiI: 1.25, fog: 0xc6dbeb, cloud: 0xffffff, shade: 0xb9c6d8, rim: 1, night: 0 },
   { h: 12.5, top: 0x3f7fd8, hor: 0xbcdaf2, bot: 0x9ab0c0, sun: 0xfffaf0, sunI: 2.8, hemiS: 0xc4ddff, hemiG: 0x7d8f58, hemiI: 1.3, fog: 0xbcd6ec, cloud: 0xffffff, shade: 0xbac8da, rim: 1, night: 0 },
-  { h: 16.5, top: 0x4a7ed0, hor: 0xf0d8b0, bot: 0x9a9aa0, sun: 0xffe2b4, sunI: 2.4, hemiS: 0xc8d4f0, hemiG: 0x857f55, hemiI: 1.2, fog: 0xdcd6c6, cloud: 0xfff4e0, shade: 0xc4b8c0, rim: 1, night: 0 },
+  { h: 16.5, top: 0x4a7ed0, hor: 0xf0d8b0, bot: 0x9a9aa0, sun: 0xffe2b4, sunI: 2.4, hemiS: 0xc8d4f0, hemiG: 0x857f55, hemiI: 1.2, fog: 0xcfd9e2, cloud: 0xfff4e0, shade: 0xc4b8c0, rim: 1, night: 0 },
   { h: 18.6, top: 0x33447e, hor: 0xff9a60, bot: 0x5a4450, sun: 0xff8a4a, sunI: 1.4, hemiS: 0x9a88b0, hemiG: 0x5a4640, hemiI: 0.95, fog: 0xd08a70, cloud: 0xffb890, shade: 0x8a5a78, rim: 0.9, night: 0.1 },
   { h: 20, top: 0x141c44, hor: 0x5a4a78, bot: 0x1a1a2e, sun: 0xa0a8ff, sunI: 0.35, hemiS: 0x4a5080, hemiG: 0x252230, hemiI: 0.62, fog: 0x3a3a5e, cloud: 0x4a4468, shade: 0x2a2640, rim: 0.4, night: 0.75 },
   { h: 24, top: 0x060b20, hor: 0x1a2546, bot: 0x0c1226, sun: 0x8fa6ff, sunI: 0.35, hemiS: 0x31406e, hemiG: 0x1a1e2a, hemiI: 0.55, fog: 0x18223c, cloud: 0x2a3456, shade: 0x151b30, rim: 0.25, night: 1 },

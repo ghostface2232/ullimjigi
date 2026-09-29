@@ -1062,13 +1062,21 @@ export class Story {
       '잊힌 모든 이름에게',
       '— 끝 —\n\n골짜기는 계속됩니다. 남은 노래 씨앗과 기억을 찾아보세요.',
     ];
+    G.mode = 'cutscene';
+    let skip = false;
+    const onKey = (e) => { if (e.code === 'Space' || e.code === 'Escape') skip = true; };
+    window.addEventListener('keydown', onKey);
+    const wait = async (ms) => { const t = performance.now(); while (performance.now() - t < ms && !skip) await new Promise((r) => setTimeout(r, 50)); };
     for (const c of cards) {
+      if (skip) break;
       tx.innerHTML = c.replace(/\n/g, '<br>');
       tx.classList.add('show');
-      await new Promise((r) => setTimeout(r, 4200));
+      await wait(4200);
       tx.classList.remove('show');
-      await new Promise((r) => setTimeout(r, 1700));
+      await wait(1700);
     }
+    window.removeEventListener('keydown', onKey);
+    G.mode = 'free';
     intro.classList.add('hidden');
     intro.style.background = '';
   }

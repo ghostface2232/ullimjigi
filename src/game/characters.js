@@ -26,7 +26,7 @@ export class Rig {
     this.root = new THREE.Group();
     this.phase = 0; this.t = rand() * 10;
     this.blinkT = 2 + rand() * 3; this.blink = 0;
-    this.w = { cast: 0, air: 0, glide: 0, talk: 0, swim: 0, sit: 0, kneel: 0, hurt: 0, wave: 0, spread: 0 };
+    this.w = { cast: 0, air: 0, glide: 0, talk: 0, swim: 0, sit: 0, kneel: 0, hurt: 0, wave: 0, spread: 0, down: 0, stagger: 0, shock: 0, panic: 0, dead: 0 };
     this.castFlick = 0;
     this.scarfSeg = [];
     this.lookYaw = 0; this.lookPitch = 0;
@@ -47,6 +47,12 @@ export class Rig {
     W.hurt = Math.max(0, W.hurt - dt * 4);
     W.wave = damp(W.wave, s.wave ? 1 : 0, 6, dt);
     W.spread = damp(W.spread, s.spread ? 1 : 0, 6, dt);
+    // hit-reaction weights (enemies): knocked down, staggered, shocked, burning panic, dead
+    W.down = damp(W.down, s.down ? 1 : 0, s.down ? 14 : 5, dt);
+    W.stagger = damp(W.stagger, s.stagger ? 1 : 0, 8, dt);
+    W.shock = damp(W.shock, s.shock ? 1 : 0, 20, dt);
+    W.panic = damp(W.panic, s.panic ? 1 : 0, 10, dt);
+    W.dead = damp(W.dead, s.dead ? 1 : 0, 7, dt);
     this.castFlick = Math.max(0, this.castFlick - dt * 7);
 
     const stride = this.stride ?? 1.7;
@@ -65,18 +71,24 @@ export class Rig {
     lL = lerp(lL, kick, W.swim); lR = lerp(lR, -kick, W.swim);
     lL = lerp(lL, -1.5, W.sit); lR = lerp(lR, -1.5, W.sit);
     lL = lerp(lL, -1.4, W.kneel); lR = lerp(lR, 0.1, W.kneel);
+    const lie = Math.max(W.down, W.dead);
+    lL = lerp(lL, -0.25 + Math.sin(this.t * 3) * 0.05 * W.down, lie); lR = lerp(lR, 0.15, lie);
+    const sk = W.shock * 0.35;
+    if (sk > 0.01) { lL += (rand() - 0.5) * sk; lR += (rand() - 0.5) * sk; }
     P.legL.rotation.x = lL; P.legR.rotation.x = lR;
     if (P.shinL) {
-      P.shinL.rotation.x = Math.max(0, -Math.cos(this.phase) * amp * 0.9) + W.air * 0.9 + W.sit * 1.5 + W.kneel * 1.5;
-      P.shinR.rotation.x = Math.max(0, Math.cos(this.phase) * amp * 0.9) + W.air * 0.4 + W.sit * 1.5 + W.kneel * 0.2;
+      P.shinL.rotation.x = (Math.max(0, -Math.cos(this.phase) * amp * 0.9) + W.air * 0.9 + W.sit * 1.5 + W.kneel * 1.5) * (1 - lie) + lie * 0.5;
+      P.shinR.rotation.x = (Math.max(0, Math.cos(this.phase) * amp * 0.9) + W.air * 0.4 + W.sit * 1.5 + W.kneel * 0.2) * (1 - lie) + lie * 0.15;
     }
     // hips bob & lean
     const bob = Math.abs(Math.cos(this.phase)) * 0.05 * amp;
     P.hips.position.y = this.hipY + bob - amp * 0.03 - W.sit * (this.hipY * 0.45) - W.kneel * this.hipY * 0.35 + breathe * 0.5;
     P.hips.rotation.y = sw * amp * 0.12;
     let lean = amp * 0.12 + (this.hunch ?? 0) + W.glide * 0.5 + W.swim * 1.1 - W.cast * 0.08 + W.kneel * 0.25;
-    P.torso.rotation.x = damp(P.torso.rotation.x, lean, 10, dt);
-    P.torso.rotation.y = -sw * amp * 0.18 + W.cast * 0.35 + (s.twist ?? 0);
+    lean += W.stagger * (0.35 + Math.sin(this.t * 4.3) * 0.12) - W.panic * 0.2 - lie * (this.hunch ?? 0) * 0.8;
+    P.torso.rotation.x = damp(P.torso.rotation.x, lean, 10, dt) - W.hurt * 0.35;
+    P.torso.rotation.y = -sw * amp * 0.18 + W.cast * 0.35 + (s.twist ?? 0) + Math.sin(this.t * 11) * 0.25 * W.panic;
+    P.torso.rotation.z = Math.sin(this.t * 2.6) * 0.12 * W.stagger + (W.shock > 0.01 ? (rand() - 0.5) * 0.25 * W.shock : 0);
     P.torso.scale.y = 1 + breathe;
 
     // arms
@@ -97,6 +109,12 @@ export class Rig {
     const pitch = s.aimPitch ?? 0;
     aR = lerp(aR, -1.35 - pitch - this.castFlick * 0.35, W.cast); zR = lerp(zR, -0.1, W.cast);
     aL = lerp(aL, -0.5 - this.castFlick * 0.3, W.cast * 0.6); zL = lerp(zL, 0.35, W.cast * 0.6);
+    // reactions
+    aL = lerp(aL, -2.7 + Math.sin(this.t * 17) * 0.7, W.panic); aR = lerp(aR, -2.7 + Math.sin(this.t * 17 + 2.1) * 0.7, W.panic);
+    zL = lerp(zL, -0.45 - Math.sin(this.t * 13) * 0.35, W.panic); zR = lerp(zR, 0.45 + Math.sin(this.t * 13 + 1) * 0.35, W.panic);
+    aL = lerp(aL, 0.25 + Math.sin(this.t * 3.1) * 0.15, W.stagger); aR = lerp(aR, 0.2 + Math.sin(this.t * 3.4 + 1) * 0.15, W.stagger);
+    aL = lerp(aL, -2.4, lie); aR = lerp(aR, -2.2, lie); zL = lerp(zL, -0.6, lie); zR = lerp(zR, 0.6, lie);
+    if (W.shock > 0.01) { aL += (rand() - 0.5) * 0.9 * W.shock; aR += (rand() - 0.5) * 0.9 * W.shock; zL = lerp(zL, -0.9, W.shock); zR = lerp(zR, 0.9, W.shock); }
     const hurt = W.hurt;
     P.armL.rotation.set(aL - hurt * 0.4, 0, zL + hurt * 0.5);
     P.armR.rotation.set(aR - hurt * 0.4, 0, zR - hurt * 0.5);
@@ -106,7 +124,8 @@ export class Rig {
     // head
     const hy = clamp(this.lookYaw, -1.1, 1.1), hp = clamp(this.lookPitch, -0.5, 0.5);
     P.head.rotation.y = damp(P.head.rotation.y, hy, 8, dt);
-    P.head.rotation.x = damp(P.head.rotation.x, hp + Math.sin(this.t * 4.5) * 0.06 * W.talk - W.swim * 0.9 - (this.hunch ?? 0) * 0.6, 8, dt);
+    P.head.rotation.x = damp(P.head.rotation.x, hp + Math.sin(this.t * 4.5) * 0.06 * W.talk - W.swim * 0.9 - (this.hunch ?? 0) * 0.6 + W.stagger * 0.5 - W.panic * 0.4, 8, dt);
+    if (W.panic > 0.01) P.head.rotation.y += Math.sin(this.t * 15) * 0.5 * W.panic;
     P.head.rotation.z = Math.sin(this.t * 1.7) * 0.03 * W.talk;
     // blink
     this.blinkT -= dt;
@@ -577,6 +596,7 @@ const OOZE = {
   ash: { body: 0x4a3a66, glow: 0xd8b0ff, emi: 0x1c1030 },
   fire: { body: 0xd8502a, glow: 0xffc040, emi: 0x6a1a04 },
   frost: { body: 0x7ec8f0, glow: 0xe0fbff, emi: 0x1a5a80 },
+  water: { body: 0x2f7ae0, glow: 0xa8e4ff, emi: 0x08285e },
 };
 export function makeOoze(variant = 'ash', size = 1) {
   const C = OOZE[variant];
@@ -641,10 +661,333 @@ export function makeMoth() {
   const rig = { root, body, wings, mats: [bm, wm], glowMats: [glow], t: rand() * 5, height: 0.4 };
   rig.update = (dt, s = {}) => {
     rig.t += dt;
-    const f = s.dive ? 38 : 22;
+    if (s.dead) {
+      // wings fold and twitch as it drops
+      wings.forEach((w) => { w.piv.rotation.z = damp(w.piv.rotation.z, w.sx * -0.9 + Math.sin(rig.t * 30) * 0.05, 6, dt); });
+      body.rotation.x = damp(body.rotation.x, 1.1, 4, dt);
+      return;
+    }
+    const f = s.dive ? 38 : s.shock ? 60 : 22;
     wings.forEach((w) => { w.piv.rotation.z = w.sx * (Math.sin(rig.t * f + (w.back ? 0.6 : 0)) * 0.9 + 0.1); });
     body.rotation.x = s.dive ? 0.5 : Math.sin(rig.t * 2) * 0.15;
     body.position.y = Math.sin(rig.t * 5) * 0.05;
+  };
+  return rig;
+}
+
+// ------------------------------------------------------------------
+// 방패지기 — a forgotten gate guard that still hides behind its tower shield
+// ------------------------------------------------------------------
+export function makeShieldBearer() {
+  const rig = new Rig();
+  const P = (rig.p = {});
+  const mats = [];
+  const bodyM = EM(0x3b3546, { rim: 0.7 }); mats.push(bodyM);
+  const dark = EM(0x26212e, { rim: 0.5 }); mats.push(dark);
+  const metal = EM(0x6a6670, { rim: 1.0 }); mats.push(metal);
+  const bronze = EM(0x7a6044, { rim: 0.9 }); mats.push(bronze);
+  const cloth = EM(0x4f3040, { rim: 0.4, side: THREE.DoubleSide }); mats.push(cloth);
+  const glow = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xc9a0ff).multiplyScalar(2.6) });
+  rig.hipY = 0.92; rig.hunch = 0.12; rig.stride = 1.45;
+  const hips = (P.hips = new THREE.Group()); hips.position.y = rig.hipY; rig.root.add(hips);
+  for (const side of [-1, 1]) {
+    const leg = new THREE.Group(); leg.position.set(side * 0.17, -0.02, 0); hips.add(leg);
+    part(cap(0.1, 0.34), dark, leg, 0, -0.22, 0);
+    const shin = new THREE.Group(); shin.position.y = -0.46; leg.add(shin);
+    part(cap(0.085, 0.3), dark, shin, 0, -0.2, 0);
+    part(new THREE.BoxGeometry(0.2, 0.14, 0.3), metal, shin, 0, -0.4, 0.05);
+    part(sph(0.1, 8, 6), metal, shin, 0, 0.02, 0.07, { sz: 0.6 });
+    if (side < 0) { P.legL = leg; P.shinL = shin; } else { P.legR = leg; P.shinR = shin; }
+  }
+  part(new THREE.CylinderGeometry(0.27, 0.38, 0.52, 10, 1, true), cloth, hips, 0, -0.17, 0);
+  const torso = (P.torso = new THREE.Group()); torso.position.y = 0.02; hips.add(torso);
+  part(sph(0.34, 14, 10), bodyM, torso, 0, 0.36, 0, { sx: 1.05, sy: 1.1, sz: 0.78 });
+  part(cap(0.3, 0.2, 12), metal, torso, 0, 0.42, 0.05, { sz: 0.7, sx: 1.08 });
+  for (const sx of [-1, 1]) part(sph(0.18, 10, 8), metal, torso, sx * 0.37, 0.64, 0, { sy: 0.72 });
+  for (let i = 0; i < 3; i++) part(new THREE.BoxGeometry(0.02, 0.16, 0.02), glow, torso, -0.07 + i * 0.07, 0.4 + (i % 2) * 0.06, 0.28, { rz: (i - 1) * 0.6, cast: false });
+  // helm with a glowing visor slit
+  const head = (P.head = new THREE.Group()); head.position.set(0, 0.82, 0.02); torso.add(head);
+  part(sph(0.2, 14, 10), metal, head, 0, 0.02, 0, { sy: 1.2 });
+  part(new THREE.CylinderGeometry(0.22, 0.24, 0.06, 12), metal, head, 0, -0.13, 0);
+  part(new THREE.BoxGeometry(0.3, 0.04, 0.06), dark, head, 0, 0.03, 0.17, { cast: false });
+  P.eyes = [];
+  for (const sx of [-1, 1]) {
+    const e = part(sph(1, 8, 6), glow, head, sx * 0.065, 0.03, 0.2, { sx: 0.05, sy: 0.016, sz: 0.012, cast: false });
+    e.userData.sy = 0.016; P.eyes.push(e);
+  }
+  part(new THREE.BoxGeometry(0.04, 0.16, 0.34), cloth, head, 0, 0.27, -0.04);
+  // arms
+  for (const side of [-1, 1]) {
+    const arm = new THREE.Group(); arm.position.set(side * 0.42, 0.58, 0); torso.add(arm);
+    part(cap(0.085, 0.28), bodyM, arm, 0, -0.2, 0);
+    const fore = new THREE.Group(); fore.position.y = -0.4; arm.add(fore);
+    part(cap(0.075, 0.26), dark, fore, 0, -0.16, 0);
+    part(sph(0.1, 8, 6), metal, fore, 0, -0.36, 0);
+    if (side < 0) { P.armL = arm; P.foreL = fore; } else { P.armR = arm; P.foreR = fore; }
+  }
+  // rusted mace in the free hand
+  const mace = new THREE.Group(); mace.position.set(0, -0.36, 0.04); mace.rotation.x = 1.35; P.foreR.add(mace);
+  part(new THREE.CylinderGeometry(0.03, 0.035, 0.75, 6), dark, mace, 0, 0.2, 0);
+  part(new THREE.DodecahedronGeometry(0.13, 0), metal, mace, 0, 0.58, 0);
+  // tower shield on its own pivot so the pose can swing it in front of the body
+  const pivot = new THREE.Group(); torso.add(pivot);
+  const shield = new THREE.Group(); pivot.add(shield);
+  part(new THREE.BoxGeometry(0.86, 1.34, 0.07), bronze, shield, 0, -0.12, 0);
+  for (const [w, h, x, y] of [[0.94, 0.07, 0, 0.55], [0.94, 0.07, 0, -0.79], [0.07, 1.4, -0.44, -0.12], [0.07, 1.4, 0.44, -0.12], [0.07, 1.34, 0, -0.12]]) part(new THREE.BoxGeometry(w, h, 0.1), metal, shield, x, y, 0.01);
+  part(sph(0.13, 10, 8), metal, shield, 0, 0.05, 0.05, { sz: 0.6 });
+  const rune = new THREE.Mesh(new THREE.RingGeometry(0.17, 0.21, 20), glow); rune.position.set(0, 0.05, 0.06); shield.add(rune);
+  for (let i = 0; i < 2; i++) part(new THREE.BoxGeometry(0.02, 0.28, 0.02), glow, shield, i ? 0.2 : -0.2, -0.45, 0.05, { rz: i ? 0.4 : -0.4, cast: false });
+  rig.shield = shield; rig.shieldPivot = pivot;
+  rig.g = 1; rig.bashW = 0; rig.brk = 0;
+  const baseUpdate = rig.update.bind(rig);
+  rig.update = (dt, s = {}) => {
+    baseUpdate(dt, s);
+    rig.g = damp(rig.g, s.guard ? 1 : 0, 8, dt);
+    rig.bashW = damp(rig.bashW, s.bash ? 1 : 0, s.bash ? 24 : 6, dt);
+    rig.brk = damp(rig.brk, s.broken ? 1 : 0, s.broken ? 10 : 3, dt);
+    const g = rig.g * (1 - rig.brk), b = rig.bashW, k = rig.brk;
+    pivot.position.set(lerp(-0.52, -0.04, g) - k * 0.1, lerp(0.2, 0.3, g) - k * 0.42, lerp(0.14, 0.48, g) + b * 0.45);
+    pivot.rotation.set(k * 0.55 - b * 0.15, lerp(-1.3, 0.04, g) + k * 0.3, -k * 0.6 + Math.sin(rig.t * 2) * 0.02);
+    P.armL.rotation.x = lerp(P.armL.rotation.x, -1.1 - b * 0.4, g);
+    P.armL.rotation.z = lerp(P.armL.rotation.z, -0.35, g);
+    P.foreL.rotation.x = lerp(P.foreL.rotation.x, -0.5, g);
+  };
+  rig.mats = mats; rig.glowMats = [glow]; rig.height = 2.0;
+  return rig;
+}
+
+// ------------------------------------------------------------------
+// 메아리 사수 — a hooded echo that still draws a bow it no longer remembers
+// ------------------------------------------------------------------
+export function makeArcher() {
+  const rig = new Rig();
+  const P = (rig.p = {});
+  const mats = [];
+  const bodyM = EM(0x2c2833, { rim: 0.7 }); mats.push(bodyM);
+  const cloak = EM(0x3a4452, { rim: 0.6, side: THREE.DoubleSide }); mats.push(cloak);
+  const mask = EM(0xd8d0bf, { rim: 0.9 }); mats.push(mask);
+  const wood = EM(0x5a4230, { rim: 0.5 }); mats.push(wood);
+  const glow = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x9aeaff).multiplyScalar(2.6) });
+  const str = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x9aeaff).multiplyScalar(1.6) });
+  rig.hipY = 0.86; rig.hunch = 0.2; rig.stride = 1.9;
+  const hips = (P.hips = new THREE.Group()); hips.position.y = rig.hipY; rig.root.add(hips);
+  for (const side of [-1, 1]) {
+    const leg = new THREE.Group(); leg.position.set(side * 0.11, -0.02, 0); hips.add(leg);
+    part(cap(0.065, 0.34), bodyM, leg, 0, -0.22, 0);
+    const shin = new THREE.Group(); shin.position.y = -0.43; leg.add(shin);
+    part(cap(0.055, 0.32), bodyM, shin, 0, -0.2, 0);
+    part(new THREE.ConeGeometry(0.07, 0.2, 5), cloak, shin, 0, -0.38, 0.06, { rx: Math.PI / 2 });
+    if (side < 0) { P.legL = leg; P.shinL = shin; } else { P.legR = leg; P.shinR = shin; }
+  }
+  const torso = (P.torso = new THREE.Group()); torso.position.y = 0.02; hips.add(torso);
+  part(sph(0.22, 12, 10), bodyM, torso, 0, 0.3, 0, { sy: 1.35, sz: 0.72 });
+  part(new THREE.TorusGeometry(0.2, 0.05, 6, 14), cloak, torso, 0, 0.56, 0, { rx: Math.PI / 2 });
+  // ragged cloak
+  const capeG = new THREE.Group(); capeG.position.set(0, 0.56, -0.08); torso.add(capeG);
+  {
+    const cl = 1.05, th = Math.PI * 0.9;
+    const g = new THREE.CylinderGeometry(0.2, 0.36, cl, 12, 3, true, Math.PI - th / 2, th);
+    const p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) if (p.getY(i) < -cl / 2 + 0.01) p.setY(i, p.getY(i) + ((i * 7) % 3) * 0.08);
+    g.translate(0, -cl / 2, 0.1); g.computeVertexNormals();
+    part(g, cloak, capeG, 0, 0, 0);
+  }
+  P.cape = capeG;
+  // quiver with glowing arrow nocks
+  const quiver = new THREE.Group(); quiver.position.set(0.12, 0.38, -0.2); quiver.rotation.z = -0.4; torso.add(quiver);
+  part(new THREE.CylinderGeometry(0.07, 0.06, 0.5, 8), wood, quiver, 0, 0, 0);
+  for (let i = 0; i < 3; i++) part(new THREE.ConeGeometry(0.025, 0.09, 4), glow, quiver, (i - 1) * 0.035, 0.3, (i % 2) * 0.02, { cast: false });
+  // hooded head with a bone mask
+  const head = (P.head = new THREE.Group()); head.position.set(0, 0.7, 0.04); torso.add(head);
+  part(sph(0.15, 12, 10), bodyM, head, 0, 0, 0);
+  part(new THREE.SphereGeometry(0.2, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.62), cloak, head, 0, 0.02, -0.03, { rx: -0.32 });
+  part(new THREE.ConeGeometry(0.1, 0.3, 8), cloak, head, 0, 0.05, -0.22, { rx: -2.0 });
+  part(sph(0.13, 12, 8), mask, head, 0, -0.01, 0.07, { sz: 0.6, sy: 1.1 });
+  P.eyes = [];
+  for (const sx of [-1, 1]) {
+    const e = part(sph(1, 8, 6), glow, head, sx * 0.05, 0.02, 0.15, { sx: 0.025, sy: 0.032, sz: 0.01, cast: false });
+    e.userData.sy = 0.032; P.eyes.push(e);
+  }
+  // arms
+  for (const side of [-1, 1]) {
+    const arm = new THREE.Group(); arm.position.set(side * 0.24, 0.5, 0); torso.add(arm);
+    part(cap(0.05, 0.24), bodyM, arm, 0, -0.16, 0);
+    const fore = new THREE.Group(); fore.position.y = -0.33; arm.add(fore);
+    part(cap(0.045, 0.22), cloak, fore, 0, -0.14, 0);
+    part(sph(0.05, 8, 6), mask, fore, 0, -0.3, 0);
+    if (side < 0) { P.armL = arm; P.foreL = fore; } else { P.armR = arm; P.foreR = fore; }
+  }
+  // bow in the left hand (grip at origin, limbs curve back toward the string)
+  const bow = new THREE.Group(); bow.position.set(0, -0.3, 0); bow.rotation.x = Math.PI / 2; P.foreL.add(bow);
+  const R = 0.6;
+  const bg = new THREE.TorusGeometry(R, 0.024, 5, 18, Math.PI * 0.8); bg.rotateZ(-Math.PI * 0.4); bg.rotateY(-Math.PI / 2); bg.translate(0, 0, -R);
+  part(bg, wood, bow, 0, 0, 0);
+  const tipY = R * Math.sin(Math.PI * 0.4), tipZ = -R + R * Math.cos(Math.PI * 0.4);
+  for (const sy of [-1, 1]) part(new THREE.ConeGeometry(0.03, 0.12, 4), glow, bow, 0, sy * tipY, tipZ, { rx: sy > 0 ? -0.6 : Math.PI + 0.6, cast: false });
+  const segGeo = new THREE.CylinderGeometry(0.006, 0.006, 1, 3); segGeo.translate(0, 0.5, 0);
+  const strA = new THREE.Mesh(segGeo, str), strB = new THREE.Mesh(segGeo, str);
+  bow.add(strA, strB);
+  const arrow = new THREE.Group(); bow.add(arrow);
+  { const ag = new THREE.CylinderGeometry(0.012, 0.012, 0.85, 4); ag.rotateX(Math.PI / 2); ag.translate(0, 0, 0.42); arrow.add(new THREE.Mesh(ag, str)); }
+  { const hg = new THREE.ConeGeometry(0.035, 0.12, 4); hg.rotateX(Math.PI / 2); hg.translate(0, 0, 0.88); arrow.add(new THREE.Mesh(hg, glow)); }
+  const up = new THREE.Vector3(0, 1, 0), tv = new THREE.Vector3(), nock = new THREE.Vector3();
+  const setSeg = (m, ay, az) => {
+    tv.set(0, ay, az).sub(nock);
+    const len = tv.length();
+    m.position.copy(nock); m.scale.set(1, len, 1);
+    m.quaternion.setFromUnitVectors(up, tv.normalize());
+  };
+  rig.aimW = 0; rig.drawW = 0;
+  const baseUpdate = rig.update.bind(rig);
+  rig.update = (dt, s = {}) => {
+    baseUpdate(dt, s);
+    rig.aimW = damp(rig.aimW, s.aim ? 1 : 0, s.aim ? 12 : 5, dt);
+    rig.drawW = damp(rig.drawW, s.draw ?? 0, s.draw ? 6 : 30, dt);
+    const a = rig.aimW, d = rig.drawW, pitch = s.aimPitch ?? 0;
+    P.torso.rotation.y += a * 0.45;
+    P.armL.rotation.x = lerp(P.armL.rotation.x, -1.5 - pitch, a); P.armL.rotation.z = lerp(P.armL.rotation.z, -0.35, a);
+    P.foreL.rotation.x = lerp(P.foreL.rotation.x, 0, a);
+    P.armR.rotation.x = lerp(P.armR.rotation.x, -1.35 - pitch, a); P.armR.rotation.z = lerp(P.armR.rotation.z, 0.55 + d * 0.3, a);
+    P.foreR.rotation.x = lerp(P.foreR.rotation.x, -0.3 - d * 1.2, a);
+    nock.set(0, 0, tipZ - d * 0.42);
+    setSeg(strA, tipY, tipZ); setSeg(strB, -tipY, tipZ);
+    arrow.visible = d > 0.08;
+    arrow.position.z = nock.z;
+  };
+  rig.mats = mats; rig.glowMats = [glow, str]; rig.height = 1.75;
+  return rig;
+}
+
+// ------------------------------------------------------------------
+// 뿌리손 — a grasping root-hand that swims through the soil
+// ------------------------------------------------------------------
+export function makeRootHand() {
+  const root = new THREE.Group();
+  const mats = [];
+  const bark = EM(0x4b3a2c, { rim: 0.5, flat: true }); mats.push(bark);
+  const barkD = EM(0x2e241c, { rim: 0.4 }); mats.push(barkD);
+  const dirt = EM(0x5a4936, { rim: 0.2, flat: true }); mats.push(dirt);
+  const glow = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xc9a0ff).multiplyScalar(2.6) });
+  // disturbed earth mound (stays at ground level)
+  const mound = new THREE.Group(); root.add(mound);
+  part(new THREE.DodecahedronGeometry(0.85, 1), dirt, mound, 0, -0.38, 0, { sy: 0.5 });
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.4;
+    part(new THREE.DodecahedronGeometry(0.14 + (i % 3) * 0.05, 0), dirt, mound, Math.cos(a) * 0.95, 0, Math.sin(a) * 0.95, { ry: a });
+  }
+  const tips = new THREE.Group(); mound.add(tips);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2;
+    part(new THREE.ConeGeometry(0.05, 0.4, 5), bark, tips, Math.cos(a) * 0.4, 0.12, Math.sin(a) * 0.4, { rz: Math.cos(a) * 0.5, rx: -Math.sin(a) * 0.5 });
+  }
+  // the hand
+  const body = new THREE.Group(); root.add(body);
+  const wg = new THREE.CylinderGeometry(0.34, 0.52, 1.4, 9, 4);
+  { const p = wg.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = p.getY(i), z = p.getZ(i); const n = 1 + Math.sin(y * 7 + x * 5) * 0.08 + Math.cos(z * 9) * 0.05; p.setXYZ(i, x * n, y, z * n); } wg.computeVertexNormals(); }
+  part(wg, bark, body, 0, 0.6, 0);
+  part(sph(0.46, 12, 8), bark, body, 0, 1.36, 0.02, { sx: 1.1, sy: 0.62, sz: 0.82 });
+  for (const [x, y, z, r] of [[0.28, 0.4, 0.32, 0.07], [-0.22, 0.85, 0.3, 0.06], [0.05, 0.2, -0.45, 0.07]]) part(sph(r, 8, 6), glow, body, x, y, z, { cast: false });
+  part(sph(1, 10, 8), barkD, body, 0, 1.32, 0.36, { sx: 0.2, sy: 0.14, sz: 0.06, cast: false });
+  const eye = part(sph(1, 10, 8), glow, body, 0, 1.32, 0.39, { sx: 0.1, sy: 0.075, sz: 0.04, cast: false });
+  // fingers: 4 + thumb, 3 segments each, thorny tips
+  const fingers = [];
+  const segG = [0.36, 0.3, 0.24].map((l, k) => { const g = new THREE.CylinderGeometry(0.075 - k * 0.012, 0.09 - k * 0.012, l, 6); g.translate(0, l / 2, 0); return g; });
+  const fdef = [[-0.3, 1.52, 0.06, 0.32], [-0.1, 1.62, 0.1, 0.1], [0.12, 1.62, 0.1, -0.1], [0.32, 1.52, 0.06, -0.32], [0.46, 1.2, 0.2, -1.1]];
+  for (const [x, y, z, rz] of fdef) {
+    const segs = [];
+    let par = new THREE.Group(); par.position.set(x, y, z); par.rotation.z = rz; body.add(par);
+    const baseG = par;
+    for (let k = 0; k < 3; k++) {
+      const sg = new THREE.Group(); if (k > 0) sg.position.y = [0.36, 0.3][k - 1]; par.add(sg);
+      part(segG[k], k === 2 ? barkD : bark, sg, 0, 0, 0);
+      segs.push(sg); par = sg;
+    }
+    part(new THREE.ConeGeometry(0.05, 0.22, 5), barkD, par, 0, 0.32, 0.02, { rx: 0.25 });
+    fingers.push({ base: baseG, segs });
+  }
+  const rig = { root, body, mound, tips, fingers, eye, mats, glowMats: [glow], t: rand() * 5, height: 2.2, emerge: 0, grip: 0.3, droop: 0 };
+  rig.update = (dt, s = {}) => {
+    rig.t += dt;
+    const e = s.emerge ?? 1;
+    rig.emerge = e;
+    body.position.y = -2.5 * (1 - e) + (s.strike ? 0.25 : 0);
+    body.visible = e > 0.02;
+    tips.visible = e < 0.6;
+    mound.scale.setScalar(0.75 + 0.45 * e);
+    const want = s.dead ? 1.2 : s.strike ? -0.35 : s.grip ?? 0.35;
+    rig.grip = damp(rig.grip, want, s.strike ? 20 : 8, dt);
+    fingers.forEach((f, i) => f.segs.forEach((sg, k) => { sg.rotation.x = rig.grip * (0.45 + k * 0.25) + Math.sin(rig.t * 3.2 + i * 1.3 + k) * 0.1 * (s.dead ? 0 : 1); }));
+    rig.droop = damp(rig.droop, s.dead ? 1 : s.stagger ? 0.4 : 0, 4, dt);
+    body.rotation.z = Math.sin(rig.t * 1.3) * 0.07 * (1 - rig.droop) + (s.shock ? (rand() - 0.5) * 0.15 : 0);
+    body.rotation.x = Math.sin(rig.t * 1.1) * 0.05 + rig.droop * 0.9 + (s.strike ? -0.15 : 0);
+    const sc = s.strike ? 1.12 : 1;
+    body.scale.y = damp(body.scale.y, sc, 14, dt);
+    eye.scale.y = 0.075 * (s.dead ? 0.2 : 1);
+  };
+  return rig;
+}
+
+// ------------------------------------------------------------------
+// 망루지기 — a forgotten watchtower construct with a single sweeping eye
+// ------------------------------------------------------------------
+export function makeWatcher() {
+  const root = new THREE.Group();
+  const mats = [];
+  const stone = EM(0x6a6470, { rim: 0.6, flat: true }); mats.push(stone);
+  const stoneD = EM(0x3e3946, { rim: 0.5, flat: true }); mats.push(stoneD);
+  const moss = EM(0x4a5a3a, { rim: 0.3 }); mats.push(moss);
+  const brass = EM(0x8a7048, { rim: 1.0 }); mats.push(brass);
+  const glow = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xc9a0ff).multiplyScalar(2.6) });
+  const eyeM = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffc070).multiplyScalar(2.2) });
+  const body = new THREE.Group(); body.position.y = 2.2; root.add(body);
+  // legs (three, spider-like)
+  const legs = [];
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + Math.PI / 3;
+    const hip = new THREE.Group(); hip.position.set(Math.sin(a) * 0.7, -0.2, Math.cos(a) * 0.7); hip.rotation.y = a; body.add(hip);
+    const thigh = new THREE.Group(); thigh.rotation.x = 0.9; hip.add(thigh);
+    part(new THREE.BoxGeometry(0.3, 0.3, 1.2), stone, thigh, 0, 0, 0.55);
+    const knee = new THREE.Group(); knee.position.z = 1.15; thigh.add(knee);
+    part(sph(0.2, 8, 6), brass, knee, 0, 0, 0);
+    const shin = new THREE.Group(); shin.rotation.x = 0.6; knee.add(shin);
+    part(new THREE.CylinderGeometry(0.2, 0.12, 1.1, 6), stoneD, shin, 0, 0, 0.55, { rx: Math.PI / 2 });
+    part(new THREE.CylinderGeometry(0.28, 0.32, 0.14, 7), stoneD, shin, 0, 0, 1.1, { rx: Math.PI / 2 });
+    legs.push({ hip, thigh, knee, shin, a });
+  }
+  // base drum
+  part(new THREE.CylinderGeometry(0.85, 1.0, 0.7, 10), stoneD, body, 0, 0, 0);
+  part(new THREE.TorusGeometry(0.92, 0.07, 6, 20), brass, body, 0, 0.34, 0, { rx: Math.PI / 2 });
+  for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; part(new THREE.BoxGeometry(0.1, 0.4, 0.05), glow, body, Math.sin(a) * 0.98, -0.05, Math.cos(a) * 0.98, { ry: a, cast: false }); }
+  for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2 + 0.3; part(sph(0.25, 6, 5), moss, body, Math.sin(a) * 0.75, 0.3, Math.cos(a) * 0.75, { sy: 0.4 }); }
+  // head: lantern dome that rotates independently
+  const head = new THREE.Group(); head.position.y = 0.45; body.add(head);
+  part(new THREE.CylinderGeometry(0.75, 0.85, 0.5, 10), stone, head, 0, 0.25, 0);
+  part(new THREE.SphereGeometry(0.8, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), stone, head, 0, 0.5, 0);
+  part(new THREE.ConeGeometry(0.2, 0.5, 6), brass, head, 0, 1.45, 0);
+  part(new THREE.TorusGeometry(0.8, 0.06, 6, 20), brass, head, 0, 0.5, 0, { rx: Math.PI / 2 });
+  // eye socket + eye
+  part(new THREE.CylinderGeometry(0.34, 0.34, 0.2, 14), stoneD, head, 0, 0.52, 0.72, { rx: Math.PI / 2 });
+  const eye = new THREE.Mesh(sph(0.25, 14, 10), eyeM); eye.position.set(0, 0.52, 0.8); eye.scale.z = 0.5; head.add(eye);
+  const pupil = new THREE.Mesh(sph(0.1, 10, 8), new THREE.MeshBasicMaterial({ color: 0x120a18 })); pupil.position.set(0, 0.52, 0.93); pupil.scale.z = 0.4; head.add(pupil);
+  const eyeTip = new THREE.Object3D(); eyeTip.position.set(0, 0.52, 1.0); head.add(eyeTip);
+  const rig = { root, body, head, legs, eye, eyeTip, mats, glowMats: [glow], eyeMat: eyeM, t: rand() * 5, height: 3.9, walk: 0 };
+  rig.update = (dt, s = {}) => {
+    rig.t += dt;
+    const sp = s.speed ?? 0;
+    rig.walk += dt * sp * 2.2;
+    legs.forEach((L, i) => {
+      const ph = rig.walk + i * 2.1;
+      const lift = Math.max(0, Math.sin(ph)) * Math.min(1, sp / 2);
+      L.thigh.rotation.x = 0.9 - lift * 0.35 + (s.dead ? 0.5 : 0) - (s.stomp ?? 0) * 0.3;
+      L.hip.rotation.y = L.a + Math.cos(ph) * 0.2 * Math.min(1, sp / 2);
+    });
+    rig.sink = damp(rig.sink || 0, s.dead ? 1 : 0, 3, dt);
+    body.position.y = 2.2 + Math.sin(rig.t * 2) * 0.04 + Math.abs(Math.sin(rig.walk)) * 0.06 - rig.sink * 1.1 + (s.stomp ?? 0) * 0.5;
+    head.rotation.y = damp(head.rotation.y, s.headYaw ?? 0, s.headK ?? 6, dt);
+    head.rotation.x = damp(head.rotation.x, s.headPitch ?? 0, 6, dt);
+    const c = s.charge ?? 0;
+    eye.scale.set(1 + c * 0.35, 1 + c * 0.35, 0.5);
+    body.rotation.z = s.stagger ? Math.sin(rig.t * 5) * 0.08 : damp(body.rotation.z, 0, 5, dt);
   };
   return rig;
 }

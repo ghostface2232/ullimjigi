@@ -2,14 +2,15 @@
 // landmarks, vertex-painted in a BotW-like palette.
 import * as THREE from 'three';
 import { createNoise2D, fbm, ridged, smoothstep, lerp, segDist, clamp } from '../core/util.js';
-import { toon } from '../render/materials.js';
+import { toon, U } from '../render/materials.js';
 import { PATHS, POI } from './layout.js';
 
 const hex = (h) => new THREE.Color(h);
 const P = {
-  grassLight: hex(0xa3cf5c), grassMid: hex(0x74b146), grassDark: hex(0x4e8d3c), grassTeal: hex(0x5a9f67),
-  dry: hex(0xc2bd66), dirt: hex(0xb89468), dirtDark: hex(0x8c6f4f),
-  rock: hex(0x928a7e), rockDark: hex(0x6b655e), rockWarm: hex(0xa8957c),
+  grassLight: hex(0x9fc85a), grassMid: hex(0x6fa843), grassDark: hex(0x4a8238), grassTeal: hex(0x4e9468),
+  grassWarm: hex(0xb3c052), grassCool: hex(0x5f9e5a),
+  dry: hex(0xbfb466), dirt: hex(0xb89468), dirtDark: hex(0x86694b), dirtLight: hex(0xcdb088), worn: hex(0x7d8a4a),
+  rock: hex(0x928a7e), rockDark: hex(0x6b655e), rockWarm: hex(0xa8957c), rockCool: hex(0x7f8590),
   sand: hex(0xe0cf9c), wetSand: hex(0xa8986e),
   snow: hex(0xc9d4e2), snowShade: hex(0x9fb0c6),
   ash: hex(0x564d60), ashLight: hex(0x7a6f86),
@@ -43,6 +44,22 @@ export class Terrain {
       }
     }
     this.buildMesh();
+    this.buildHeightTexture();
+  }
+
+  // Heightmap for shaders (ground-contact AO, grime, soft particles).
+  buildHeightTexture() {
+    const N = this.N, data = new Uint16Array(N * N);
+    for (let i = 0; i < N * N; i++) data[i] = THREE.DataUtils.toHalfFloat(this.h[i]);
+    const t = new THREE.DataTexture(data, N, N, THREE.RedFormat, THREE.HalfFloatType);
+    t.minFilter = t.magFilter = THREE.LinearFilter;
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+    t.generateMipmaps = false;
+    t.needsUpdate = true;
+    this.heightTex = t;
+    U.heightTex.value = t;
+    // uv = (xz + half) * (N-1)/(N*size) + 0.5/N  (texel centres on grid vertices)
+    U.heightP.value.set(this.half, (N - 1) / (N * this.size), 0.5 / N, 0);
   }
 
   pathInfo(x, z) {
@@ -142,16 +159,28 @@ export class Terrain {
     const gN = fbm(n, x * 0.018, z * 0.018, 2) * 0.5 + 0.5;
     const forest = smoothstep(0.1, 0.6, fbm(this.noise, x * 0.012 + 50, z * 0.012, 2));
     const dry = smoothstep(0.2, 0.7, fbm(n, x * 0.008 - 40, z * 0.008 + 12, 2));
+    // broad hue patches: warm yellow-green meadows vs. cool blue-green hollows
+    const hue = fbm(this.noise2, x * 0.0065 + 7, z * 0.0065 - 3, 3);
     out.copy(P.grassMid).lerp(P.grassLight, gN);
-    out.lerp(P.grassDark, forest * 0.7);
-    out.lerp(P.dry, dry * 0.45);
+    out.lerp(P.grassWarm, smoothstep(0.05, 0.5, hue) * 0.45);
+    out.lerp(P.grassCool, smoothstep(-0.05, -0.5, hue) * 0.4);
+    out.lerp(P.grassDark, forest * 0.65);
+    out.lerp(P.dry, dry * 0.4);
     out.lerp(P.grassTeal, smoothstep(22, 40, h) * 0.5);
     const rk = smoothstep(0.82, 0.68, ny);
-    const rockC = P.rock.clone().lerp(P.rockDark, smoothstep(-0.3, 0.5, n(x * 0.05, z * 0.05))).lerp(P.rockWarm, smoothstep(0.2, 0.8, n(x * 0.02 + 9, z * 0.02)) * 0.5);
+    const rockC = P.rock.clone().lerp(P.rockDark, smoothstep(-0.3, 0.5, n(x * 0.05, z * 0.05)))
+      .lerp(P.rockWarm, smoothstep(0.2, 0.8, n(x * 0.02 + 9, z * 0.02)) * 0.5)
+      .lerp(P.rockCool, smoothstep(0.1, 0.7, n(x * 0.013 - 21, z * 0.013 + 4)) * 0.45);
+    // grassy ledges keep a mossy tint where the slope eases off
     out.lerp(rockC, rk);
+    out.lerp(P.grassDark, rk * (1 - rk) * 0.5);
     const sd = smoothstep(1.7, 0.5, h);
     out.lerp(h < -0.3 ? P.wetSand : P.sand, sd);
-    out.lerp(P.dirt.clone().lerp(P.dirtDark, gN * 0.4), pf * 0.92);
+    // paths: trampled, darker grass at the edge, lighter packed dirt in the middle
+    const edge = smoothstep(0.05, 0.4, pf) * (1 - smoothstep(0.45, 0.85, pf));
+    out.lerp(P.worn, edge * 0.45 * (1 - sd));
+    const dirtC = P.dirt.clone().lerp(P.dirtDark, gN * 0.45).lerp(P.dirtLight, smoothstep(0.75, 1, pf) * smoothstep(-0.2, 0.6, n(x * 0.3, z * 0.3)) * 0.5);
+    out.lerp(dirtC, smoothstep(0.3, 0.8, pf) * 0.94);
     let sn = smoothstep(38, 48, h + n(x * 0.03, z * 0.03) * 6) * smoothstep(-40, -90, z);
     sn *= 1 - rk * 0.55;
     out.lerp(P.snow.clone().lerp(P.snowShade, rk), sn);
@@ -163,6 +192,19 @@ export class Terrain {
     out.lerp(P.plaza, plaza * 0.9);
     const gf = (1 - rk) * (1 - sd) * (1 - pf) * (1 - sn) * (1 - ash) * (1 - plaza) * (h > 0.4 ? 1 : 0);
     return { gf, sn };
+  }
+
+  // Curvature-based ambient occlusion: concave cells (valleys, cliff feet)
+  // darken and cool slightly, convex ridges brighten a touch.
+  ambientOcclusion(i, ix, iz) {
+    const N = this.N, H = this.h;
+    let occ = 0, wsum = 0;
+    for (const r of [1, 3, 6]) {
+      const x0 = Math.max(0, ix - r), x1 = Math.min(this.seg, ix + r), z0 = Math.max(0, iz - r), z1 = Math.min(this.seg, iz + r);
+      const avg = (H[iz * N + x0] + H[iz * N + x1] + H[z0 * N + ix] + H[z1 * N + ix]) * 0.25;
+      occ += (avg - H[i]) / (r * this.step) * (1 / r); wsum += 1 / r;
+    }
+    return occ / wsum;
   }
 
   buildMesh() {
@@ -194,7 +236,9 @@ export class Terrain {
       const x = pos[i * 3], z = pos[i * 3 + 2];
       const r = this.paint(x, z, this.h[i], nrm[i * 3 + 1], this.pf[i], c);
       this.gf[i] = r.gf; this.sn[i] = r.sn;
-      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+      const curv = this.ambientOcclusion(i, i % N, Math.floor(i / N));
+      const ao = 1 - 0.34 * smoothstep(0.0, 0.6, curv) + 0.05 * smoothstep(0.0, -0.5, curv);
+      col[i * 3] = c.r * ao * (ao < 1 ? 0.97 + 0.03 * ao : 1); col[i * 3 + 1] = c.g * ao; col[i * 3 + 2] = c.b * (ao < 1 ? 0.5 + 0.5 * ao + 0.04 : ao);
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.computeBoundingSphere();

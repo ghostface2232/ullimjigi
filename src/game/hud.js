@@ -187,6 +187,14 @@ export class HUD {
   }
   ultReady() { const u = this.el.ult; u.classList.remove('flash'); void u.offsetWidth; u.classList.add('flash'); }
   ultShort() { this.el.ult.animate([{ transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'none' }], { duration: 200 }); this.toast(`울림 게이지가 아직 차지 않았다 — 적을 맞히고, 특히 <b>원소 반응</b>을 일으키면 빨리 찬다`); }
+  chain(n, kinds) {
+    let el = this.chainEl;
+    if (!el) { el = this.chainEl = document.createElement('div'); el.className = 'chain'; this.el.hud.appendChild(el); }
+    el.innerHTML = `<span class="cn">${n}</span><span class="cl">연쇄 반응${kinds > 1 ? ` · ${kinds}종` : ''}</span>`;
+    el.classList.remove('bump', 'out'); void el.offsetWidth; el.classList.add('bump');
+    clearTimeout(this.chainT); this.chainT = setTimeout(() => el.classList.add('out'), 3800);
+  }
+  chainEnd(n, xp) { if (this.chainEl) { this.chainEl.innerHTML = `<span class="cn">${n}</span><span class="cl">연쇄 반응 · +${xp} XP</span>`; this.chainEl.classList.add('out'); } }
   discovered(r) {
     const info = REACTIONS[r];
     if (!info) return;

@@ -172,6 +172,7 @@ export class Skills {
     this.points += n; this.earned += n;
     if (G.hud && why) G.hud.toast(`울림점 <b>+${n}</b> · ${why} — <kbd>K</kbd> 울림 나무`, 4200);
     if (G.hud && G.hud.updateSP) G.hud.updateSP(true);
+    if (G.story && G.story.once('sp_first')) setTimeout(() => G.hud.hint('<kbd>K</kbd> <b>울림 나무</b> — 울림점을 써서 속성마다 새로운 노래를 익힐 수 있습니다<br><small>나무에 점수를 쌓을수록 깊은 갈래가 열리고, 끝에는 궁극기가 있습니다</small>', 9), 1500);
   }
 
   // Ultimate gauge

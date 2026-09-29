@@ -22,7 +22,9 @@ export class AudioEngine {
     comp.threshold.value = -16; comp.knee.value = 14; comp.ratio.value = 4;
     comp.attack.value = 0.004; comp.release.value = 0.22;
     this.master = ctx.createGain();
-    this.master.connect(comp); comp.connect(ctx.destination);
+    // master tone filter: muffles everything during slow motion ("울림 가속")
+    this.tint = ctx.createBiquadFilter(); this.tint.type = 'lowpass'; this.tint.frequency.value = 20000; this.tint.Q.value = 0.6;
+    this.master.connect(this.tint); this.tint.connect(comp); comp.connect(ctx.destination);
     this.sfx = ctx.createGain(); this.sfx.connect(this.master);
     this.music = ctx.createGain(); this.music.connect(this.master);
     this.ambBus = ctx.createGain(); this.ambBus.connect(this.master);
@@ -47,6 +49,13 @@ export class AudioEngine {
     this.music.gain.value = (s.music / 100) * 0.55;
     this.sfx.gain.value = s.sfx / 100;
     this.ambBus.gain.value = (s.sfx / 100) * 0.9;
+  }
+
+  // k: 0 = normal, 1 = fully muffled
+  setMuffle(k) {
+    if (!this.ctx || Math.abs((this._muffle ?? 0) - k) < 0.01) return;
+    this._muffle = k;
+    this.tint.frequency.setTargetAtTime(20000 * Math.pow(900 / 20000, k), this.ctx.currentTime, 0.05);
   }
 
   _impulse(sec, decay) {

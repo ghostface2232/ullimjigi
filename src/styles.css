@@ -432,3 +432,9 @@ button, .tbtn, .dlg-choice, .jr-tabs button, input[type=range], select, input[ty
 .cx-any { color: var(--gold); font-size: 16px; justify-content: center; }
 .cx.unk { opacity: 0.45; }
 .jsp h4 small { color: var(--gold); }
+.chain { position: absolute; left: calc(50% + 70px); top: calc(50% - 60px); display: flex; align-items: baseline; gap: 8px; pointer-events: none; text-shadow: 0 0 12px rgba(255, 210, 120, 0.7), 0 2px 3px #000; }
+.chain .cn { font-family: var(--title); font-size: 40px; color: var(--gold); line-height: 1; }
+.chain .cl { font-family: var(--blade); font-size: 13px; letter-spacing: 0.15em; color: var(--ink); }
+.chain.bump { animation: chainBump 0.35s ease-out; }
+.chain.out { opacity: 0; transition: opacity 0.8s 0.6s; }
+@keyframes chainBump { 0% { transform: scale(1.5); filter: brightness(1.8); } 100% { transform: none; } }

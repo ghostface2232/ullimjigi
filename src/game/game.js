@@ -505,7 +505,9 @@ export class Game {
     if (G.slowmo > 0 && !G.paused) G.slowmo = Math.max(0, G.slowmo - raw);
     const sm = G.slowmo > 0 ? 0.25 : 1;
     const gu = G.renderer.grade.uniforms;
-    if (gu.uSlowmo) gu.uSlowmo.value += ((G.slowmo > 0 ? Math.min(1, G.slowmo * 2) : 0) - gu.uSlowmo.value) * Math.min(1, raw * 8);
+    G.slowK = (G.slowK || 0) + ((G.slowmo > 0 ? Math.min(1, G.slowmo * 2) : 0) - (G.slowK || 0)) * Math.min(1, raw * 8);
+    if (gu.uSlowmo) gu.uSlowmo.value = G.slowK;
+    if (G.audio.ready) G.audio.setMuffle(G.slowK * 0.85);
     if (G.state === 'play') {
       if (dt > 0) {
         P.update(dt, I);

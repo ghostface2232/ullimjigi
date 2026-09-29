@@ -1359,8 +1359,8 @@ export class Story {
     for (let i = 0; i < 3; i++) G.vfx.ring(V(spot.wx, 0.08, spot.wz), PAL.water.core, 4 + i * 3, 1.6 + i * 0.4, { thick: 0.06 });
     await this.conv(async () => {
       G.cameraRig.setCine(V(spot.x + (spot.x - spot.wx) * 0.9 + 2.5, W.h(spot.x, spot.z) + 2.4, spot.z + (spot.z - spot.wz) * 0.9 + 2), V(spot.wx, 1.1, spot.wz));
-      await this.say('boreum', '…수면을 들여다보거라. 호수가 무언가를 되비추고 있구나.');
-      await this.say('narr', '잔잔한 물 위에 어린 소녀가 비친다. 물가에 쪼그려 앉아, 손바닥으로 물을 떠 올렸다 흘려보내며 노래를 흥얼거린다.');
+      await this.say('boreum', '…수면을 들여다보거라. 호수가 무언가를 되비추고 있구나.', { cam: false });
+      await this.say('narr', '잔잔한 물 위에 어린 소녀가 비친다. 물가에 쪼그려 앉아, 손바닥으로 물을 떠 올렸다 흘려보내며 노래를 흥얼거린다.', { cam: false });
       await this.say('seha', '엄마, 봐 봐! 물은 불러 주는 대로 모양이 바뀌어. 내가 웃으면 같이 웃고, 찡그리면 같이 찡그려.', { name: '어린 세하의 메아리' });
       await this.say('seha', '서리는 물이 잠든 거고, 김은 물이 꿈꾸는 거래. 그러니까 물의 노래를 알면 서리도 김도 다 친구가 되는 거야.', { name: '어린 세하의 메아리' });
       await this.say('seha', '…엄마 노래는 너무 뜨거워. 나는 이 노래가 좋아. 시원하고, 조금 슬프고. 오래오래 기억해 주거든.', { name: '어린 세하의 메아리' });

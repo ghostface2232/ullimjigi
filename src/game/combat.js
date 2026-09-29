@@ -327,6 +327,7 @@ export class Combat {
       }
       if (reaction && G.story) G.story.onReaction(reaction);
       if (reaction && G.player) G.player.stats.reactions++;
+      if (reaction && reaction !== 'airborne' && byPlayer) this.chainUp(reaction);
       A.play('hit_flesh', { pos: c, v: h.heavy ? 1 : 0.7 });
       V.burst(pos, 'spark', h.heavy ? 14 : 7, { el });
       V.burst(pos, 'star', 1, { el, size: h.heavy ? 3.5 : 2, life: 0.12 });
@@ -341,6 +342,29 @@ export class Combat {
       t.die(h);
     }
     return dmg;
+  }
+
+  // Reaction chain: reactions within 4s of each other build a streak that
+  // charges the ultimate gauge faster and pays out bonus XP when it ends.
+  chainUp(reaction) {
+    const c = this.chain || (this.chain = { n: 0, t: 0, kinds: new Set() });
+    if (G.time - c.t > 4) { c.n = 0; c.kinds.clear(); }
+    c.n++; c.t = G.time; c.kinds.add(reaction);
+    if (c.n >= 2) {
+      if (K()) K().charge(1.5 * Math.min(c.n, 6));
+      G.hud.chain && G.hud.chain(c.n, c.kinds.size);
+      if (c.n === 5 || c.n === 10) G.audio.play('ult_ready');
+    }
+    const id = (this.chainId = (this.chainId || 0) + 1);
+    G.later(() => {
+      if (id !== this.chainId) return;
+      if (c.n >= 3 && G.player && G.state === 'play') {
+        const xp = Math.round(c.n * 2 + c.kinds.size * 4);
+        G.player.addXP(xp);
+        G.hud.chainEnd && G.hud.chainEnd(c.n, xp);
+      }
+      c.n = 0; c.kinds.clear();
+    }, 4200);
   }
 
   // kill-time tree effects (before die() clears statuses)

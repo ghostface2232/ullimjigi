@@ -204,7 +204,7 @@ button { font-family: inherit; }
 .pk { width: 26px; height: 26px; border-radius: 50%; background: var(--ink); color: #111; font-family: var(--latin); font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: 13px; }
 .pt { font-family: var(--blade); font-size: 16px; letter-spacing: 0.05em; }
 
-#hint { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); padding: 12px 26px; background: rgba(8, 10, 14, 0.78); border-top: 1px solid var(--panel-edge); border-bottom: 1px solid var(--panel-edge); font-size: 16px; text-align: center; line-height: 1.6; animation: fadeUpC 0.5s ease-out; max-width: 70vw; }
+#hint { position: absolute; left: 50%; top: 92px; transform: translateX(-50%); padding: 12px 26px; background: rgba(8, 10, 14, 0.78); border-top: 1px solid var(--panel-edge); border-bottom: 1px solid var(--panel-edge); font-size: 16px; text-align: center; line-height: 1.6; animation: fadeUpC 0.5s ease-out; max-width: 70vw; }
 #hint kbd { display: inline-block; min-width: 24px; padding: 1px 7px; margin: 0 2px; border: 1px solid rgba(255, 255, 255, 0.5); border-radius: 5px; background: rgba(255, 255, 255, 0.1); font-family: var(--latin); font-size: 13px; color: var(--gold); }
 @keyframes fadeUpC { from { opacity: 0; transform: translate(-50%, 12px); } }
 

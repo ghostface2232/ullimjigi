@@ -113,6 +113,7 @@ export class Game {
   }
 
   devStart(preset) {
+    if (preset === 'continue') { $('#title-screen').classList.add('hidden'); this.continueGame(); return; }
     const P = G.player;
     const pro = ['p_intro', 'p_run', 'p_bolt', 'p_fire', 'p_heavy', 'p_fight', 'p_end', 'prologueDone'];
     const vil = ['v_arrive', 'v_bau', 'v_isol', 'v_altar', 'v_defend', 'v_wind', 'worldOpen', 'bountyActive'];

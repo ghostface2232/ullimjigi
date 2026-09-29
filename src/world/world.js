@@ -18,7 +18,7 @@ const tmp = new THREE.Vector3();
 
 export const LANTERNS = [
   { id: 'tower', name: '모라의 언덕', x: -10, z: 127 },
-  { id: 'village', name: '하늬 마을', x: 16, z: 24 },
+  { id: 'village', name: '하늬 마을', x: 8, z: 31 },
   { id: 'lake', name: '거울 호수', x: -38, z: 38 },
   { id: 'meadow', name: '노을 들판', x: 70, z: 54 },
   { id: 'frostpass', name: '서리봉 오르막', x: -16, z: -96 },

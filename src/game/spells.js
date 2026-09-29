@@ -165,7 +165,7 @@ export class Spells {
       p.tipA = p.pos.clone(); p.tipB = p.pos.clone();
       p.ribA = V.ribbon({ el: 'wind', width: 0.1, life: 0.16, follow: p.tipA, core: PAL.white.core });
       p.ribB = V.ribbon({ el: 'wind', width: 0.1, life: 0.16, follow: p.tipB, core: PAL.white.core });
-      p.slashH = V.slash(p.pos, p.vel, { el: 'wind', radius: 0.8 * (p.bladeR ?? 1), dur: 0, thick: 0.5 });
+      p.slashH = V.slash(p.pos, p.vel, { el: 'wind', face: true, roll: randRange(-0.6, 0.6) + (rand() < 0.5 ? Math.PI : 0), radius: 0.75 * (p.bladeR ?? 1), dur: 0, thick: 0.45 });
       if (!p.slashH) {
         p.mesh = new THREE.Mesh(this.crescentGeo, new THREE.MeshBasicMaterial({ color: PAL.wind.core.clone().multiplyScalar(1.1), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
         G.scene.add(p.mesh);
@@ -355,7 +355,7 @@ export class Spells {
         const c = feet.clone().add(new THREE.Vector3(0, 1, 0));
         V.cast('arcane', origin, dir, 'heavy');
         // a translucent resonance dome sweeps outward, bending the air at its edge
-        V.sphere('arcane', c, { r0: 0.6, r1: rr, dur: 0.5, grow: 3.2, erodeAt: 0.25, squash: 0.55, alpha: 0.7, add: true });
+        V.sphere('arcane', c, { r0: 0.6, r1: rr, dur: 0.5, grow: 3.2, erodeAt: 0.25, squash: 0.55, alpha: 0.45, add: true });
         V.distort.ring(feet, rr * 1.35, 0.55, { flat: true, amp: 0.055, width: 0.1 });
         V.distort.shell(c, rr, 0.45, { amp: 0.035, flat: 0.55 });
         V.circle(feet, PAL.arcane.glow, 3.2 * (big ? 1.3 : 1), 0.6, { spin: 3 });
@@ -412,7 +412,9 @@ export class Spells {
         // three crescent gusts fan out and grow, riding a spray of wind lines
         for (let k = 0; k < 3; k++) G.later(() => {
           const sp = feet.clone().addScaledVector(flat, 1.4 + k * 2.1); sp.y = origin.y - 0.45 + k * 0.2;
-          V.slash(sp, flat, { el: 'wind', radius: 2 + k * 1.5 * (1 + 0.25 * gl), dur: 0.36, thick: 0.34, grow: 0.7, reveal: 0.1, roll: (k - 1) * 0.3, alpha: 0.95 - k * 0.15 });
+          V.slash(sp, flat, { el: 'wind', face: true, radius: 1.6 + k * 1.3 * (1 + 0.25 * gl), dur: 0.38, thick: 0.3, grow: 0.8, reveal: 0.1, roll: (k - 1) * 0.35 + (k === 1 ? Math.PI : 0), alpha: 0.9 - k * 0.12 });
+          const sp2 = sp.clone().addScaledVector(flat, 1.2); sp2.y -= 0.3;
+          V.slash(sp2, flat, { el: 'wind', radius: 2.4 + k * 1.2, dur: 0.3, thick: 0.25, grow: 0.9, alpha: 0.6 });
         }, k * 55);
         V.gustLines(origin.clone().setY(origin.y - 0.4), flat, 9, { spread: 1.4, fan: 0.35, len: range * 0.95, dur: 0.45, delay: 90, width: 0.055 });
         V.distort.ring(origin.clone().addScaledVector(flat, 3), 5.5, 0.4, { up: flat, amp: 0.035 });
@@ -451,7 +453,7 @@ export class Spells {
         A.play('heavy_frost', { pos: origin }); A.play('blast_frost', { pos: feet });
         V.cast('frost', origin, dir, 'heavy');
         const flat = dir.clone().setY(0).normalize();
-        const start = feet.clone().addScaledVector(flat, 1.8);
+        const start = feet.clone().addScaledVector(flat, 2.6);
         const big = R('i_lance');
         const n = big ? 12 : 8, hw = big ? 2.4 : 1.9;
         V.circle(feet, PAL.frost.glow, 2, 0.8, { spin: 2 });
@@ -465,7 +467,7 @@ export class Spells {
             const h = G.world.h(p.x, p.z);
             if (h < -0.3) { G.world.addIceFloe(p.x, p.z); V.burst(p.setY(0.1), 'ice', 6); return; }
             p.y = G.world.ground(p.x, p.z, player.pos.y + 3);
-            const sc = 1.6 + i * 0.12;
+            const sc = 0.95 + i * 0.16;
             // main spike + a fan of smaller splinters, leaning away from the line
             V.crystal(p, sc * 1.5, { width: sc * 0.7, life: 1.3 });
             V.crystal(p.clone().addScaledVector(side, randRange(0.4, 0.8)), sc * 0.8, { width: sc * 0.45, life: 1.2, tiltX: side.z * 0.5, tiltZ: -side.x * 0.5, quiet: true });
@@ -520,7 +522,7 @@ export class Spells {
         const flat = dir.clone().setY(0).normalize();
         V.circle(feet, PAL.water.glow, 2.2, 0.6, { spin: 3 });
         V.decal(feet, 'wet', 2.4);
-        V.crownSplash(feet.clone().addScaledVector(flat, 1.2), 2.2, { dur: 0.6, h: 1.6 });
+        V.crownSplash(feet.clone().addScaledVector(flat, 3.2), 1.6, { dur: 0.5, h: 1.2 });
         G.cameraRig.kick && G.cameraRig.kick(flat, 0.15);
         if (R('wa_spring')) { player.heal(R('wa_spring')); V.burst(player.center(), 'heal', 12); }
         this.wave(feet.clone().addScaledVector(flat, 1.2), flat, {
@@ -1343,8 +1345,11 @@ export class Spells {
       if (e === skip) continue;
       G.combat.hit(e, { dmg: s.dmg, el: s.el, noReact: s.el === 'fire', pos: e.center(), source: 'player', hitstop: 0, shake: 0, status: 0.6 });
     }
-    G.vfx.burst(pos, s.el === 'water' ? 'water' : 'fire', 12, { speed: 5 });
-    G.vfx.ring(pos, PAL[s.el].glow, s.r + 0.3, 0.25, { thick: 0.3, y: 0 });
+    const V = G.vfx;
+    V.burst(pos, s.el === 'water' ? 'water' : 'fire', 10, { speed: 5 });
+    V.ring(pos, PAL[s.el].glow, s.r + 0.3, 0.25, { thick: 0.3, y: 0 });
+    if (s.el === 'fire') { V.sphere('fire', pos, { r0: 0.2, r1: s.r * 0.6, dur: 0.45, grow: 3, erodeAt: 0.2, alpha: 1, rise: 1 }); V.chunks(pos, 'ember', 5, { speed: 7 }); }
+    else { const g = pos.clone(); g.y = G.world.ground(g.x, g.z, g.y + 1.5); if (pos.y - g.y < 1.5) V.crownSplash(g, s.r * 0.6, { dur: 0.45, h: 0.8 }); else V.sphere('water', pos, { r0: 0.2, r1: s.r * 0.5, dur: 0.3, erodeAt: 0.1, alpha: 0.8 }); }
   }
 
   collide(p) {

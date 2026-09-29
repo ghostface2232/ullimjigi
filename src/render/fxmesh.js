@@ -248,18 +248,19 @@ uniform sampler2D uNoise;
 varying vec2 vUv; varying vec3 vW; varying vec3 vN;
 ${FOG_GLSL}
 void main(){
-  float n = texture2D(uNoise, vec2(vUv.x * 3.0 + uSeed, vUv.y * 0.6 - uTime * 0.8)).r;
-  float n2 = texture2D(uNoise, vec2(vUv.x * 9.0 - uSeed, vUv.y * 1.4 - uTime * 1.3)).b;
+  // vertical streaks (sheet torn into fingers), torn top edge, erosion into droplet columns
+  float n = texture2D(uNoise, vec2(vUv.x * 5.0 + uSeed, vUv.y * 0.25 - uTime * 0.5)).r;
+  float n2 = texture2D(uNoise, vec2(vUv.x * 14.0 - uSeed, vUv.y * 0.4 - uTime * 0.9)).b;
   float top = 1.0 - vUv.y;
-  float rim = smoothstep(0.0, 0.28 + n * 0.3, top);            // torn top edge
-  float holes = smoothstep(uErode, uErode + 0.2, n * 0.7 + n2 * 0.5);
-  float a = rim * holes * smoothstep(0.0, 0.06, vUv.y) * uAlpha;
+  float rim = smoothstep(0.0, 0.18 + n * 0.45, top);
+  float fingers = smoothstep(uErode * 0.9, uErode * 0.9 + 0.25, n2 * 0.75 + n * 0.45);
+  float a = rim * fingers * smoothstep(0.0, 0.05, vUv.y) * uAlpha;
   if (a < 0.004) discard;
   vec3 V = normalize(cameraPosition - vW);
-  float fres = pow(1.0 - abs(dot(normalize(vN), V)), 1.6);
-  float foam = smoothstep(0.55, 0.85, n2 + (1.0 - top) * 0.4);
-  vec3 col = mix(uBody, uCore, clamp(fres * 0.8 + foam, 0.0, 1.0));
-  a *= mix(0.45, 1.0, clamp(fres + foam, 0.0, 1.0));
+  float fres = pow(1.0 - abs(dot(normalize(vN), V)), 1.4);
+  float foam = smoothstep(0.35, 0.0, top) * 0.8 + smoothstep(0.7, 0.9, n2) * 0.4;
+  vec3 col = mix(uBody, uCore, clamp(fres * 0.9 + foam, 0.0, 1.0));
+  a *= mix(0.5, 1.0, clamp(fres + foam, 0.0, 1.0));
   gl_FragColor = vec4(mix(col, uFogC, fxFog(vW)), a);
 }`;
 
@@ -595,6 +596,8 @@ export function applyLook(mat, look, o = {}) {
   const add = o.add ?? L.add;
   u.uAdd.value = add ? 1 : 0;
   mat.blending = add ? THREE.AdditiveBlending : THREE.NormalBlending;
+  // additive shells stay visible when the camera is inside them (big domes)
+  mat.side = add || o.inside ? THREE.DoubleSide : THREE.FrontSide;
   mat.depthWrite = false;
 }
 export function makeSlash(scene, span) {

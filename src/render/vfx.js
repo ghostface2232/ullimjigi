@@ -29,7 +29,7 @@ export const PAL = {
 const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), tmpV3 = new THREE.Vector3(), tmpV4 = new THREE.Vector3();
 const UPV = new THREE.Vector3(0, 1, 0);
 const tmpQ = new THREE.Quaternion();
-const _m4 = new THREE.Matrix4();
+const _m4 = new THREE.Matrix4(), _aura = new THREE.Vector3(), _bx = new THREE.Vector3(), _by = new THREE.Vector3(), _sd2 = new THREE.Vector3();
 // spell ice spike: 6-sided prism, base at y=0, radius 0.5, about 2 units tall
 const spikeGeo = (v) => crystalGeometry('prism', { sides: 6, radius: 0.5, height: 1.35, tip: 0.65, jitter: 0.22, seed: 31 + v * 7 });
 const tmpC = new THREE.Color();
@@ -608,7 +608,7 @@ class RibbonPool {
 const DECAL = {
   scorch: { base: C(0.025, 0.018, 0.014), baseA: 0.8, glow: C(3.4, 1.1, 0.18), glowA: 1, glowDur: 2.4, flick: 1, dur: 11 },
   frost: { base: C(0.6, 0.76, 0.88), baseA: 0.6, glow: C(0.45, 1.3, 2.1), glowA: 0.7, glowDur: 1.4, dur: 9, sheen: C(0.9, 1, 1.1) },
-  wet: { base: C(0.02, 0.035, 0.06), baseA: 0.5, glow: C(0.22, 0.32, 0.45), glowA: 0.5, glowDur: 99, ripple: 0.35, sheen: C(0.35, 0.45, 0.6), dur: 8 },
+  wet: { base: C(0.03, 0.05, 0.08), baseA: 0.32, glow: C(0.22, 0.32, 0.45), glowA: 0.5, glowDur: 99, ripple: 0.35, sheen: C(0.35, 0.45, 0.6), dur: 8 },
   char: { base: C(0.02, 0.02, 0.03), baseA: 0.62, glow: C(2.8, 2.3, 0.7), glowA: 1.2, glowDur: 1.6, flick: 1, dur: 7 },
   swirl: { base: C(0.55, 0.52, 0.42), baseA: 0.3, glow: C(0.5, 2.0, 1.2), glowA: 0.8, glowDur: 0.7, dur: 2.6, spin: 1.6 },
   rune: { base: C(0, 0, 0), baseA: 0, glow: C(1.0, 0.45, 2.2), glowA: 1, glowDur: 2.2, dur: 3, spin: 0.5 },
@@ -1449,10 +1449,22 @@ export class VFX {
     const dur = o.dur ?? 0.3, persist = dur <= 0;
     const R = o.radius ?? 1;
     const d = dir.clone().normalize();
+    // default: the crescent lies in a plane containing the travel direction (flat blade).
+    // face: the crescent faces along dir (arc plane ⟂ dir), bulging toward `up` rolled by `roll` —
+    // readable from behind the caster (sonic-boom arcs, flying crescents)
     const setBasis = (dd) => {
       const up = tmpV.copy(o.up || UPV);
       const x = tmpV2.crossVectors(up, dd); if (x.lengthSq() < 1e-6) x.set(1, 0, 0); x.normalize();
       const y = tmpV3.crossVectors(dd, x);
+      if (o.face) {
+        // local z (bulge) = y rotated by roll around dd, local y (normal) = dd
+        const c = Math.cos(o.roll || 0), sn = Math.sin(o.roll || 0);
+        const bz = tmpV4.copy(y).multiplyScalar(c).addScaledVector(x, sn).normalize();
+        const bx = _bx.crossVectors(dd, bz).normalize();
+        _m4.makeBasis(bx, _by.copy(dd), bz);
+        m.quaternion.setFromRotationMatrix(_m4);
+        return;
+      }
       _m4.makeBasis(x, y, dd);
       m.quaternion.setFromRotationMatrix(_m4);
       if (o.roll) m.rotateZ(o.roll);
@@ -1464,7 +1476,7 @@ export class VFX {
     const h = {
       m, done: false,
       end() { h.done = true; },
-      set(p, dd) { m.position.copy(p); if (dd) setBasis(tmpV4.copy(dd).normalize()); },
+      set(p, dd) { m.position.copy(p); if (dd) setBasis(_sd2.copy(dd).normalize()); },
       update: (dt) => {
         t += dt;
         const k = persist ? 0 : clamp(t / dur, 0, 1);
@@ -1938,8 +1950,8 @@ export class VFX {
   // sky bolt landing. o.big
   strike(tp, r = 3, o = {}) {
     const big = !!o.big;
-    this.pillar(tp, PAL.storm.glow, big ? 1.1 : 0.7, big ? 30 : 20, big ? 0.35 : 0.25, { core: PAL.storm.core, alpha: 0.8, i: 0.4 });
-    this.sphere('storm', tp.clone().setY(tp.y + 0.8), { r0: 0.3, r1: r * (big ? 1.0 : 0.7), dur: big ? 0.35 : 0.25, grow: 3, erodeAt: 0.05, alpha: 0.9 });
+    this.pillar(tp, PAL.storm.glow, big ? 1.0 : 0.7, big ? 30 : 20, big ? 0.3 : 0.22, { core: PAL.storm.core, alpha: 0.65, i: 0.35 });
+    this.sphere('storm', tp.clone().setY(tp.y + 0.8), { r0: 0.3, r1: r * (big ? 0.9 : 0.65), dur: big ? 0.35 : 0.25, grow: 3, erodeAt: 0.05, alpha: 0.55 });
     this.shock(tp.clone().setY(tp.y + 0.6), PAL.storm.core, r * 1.2, 0.35, { alpha: 0.6, flat: 0.5 });
     this.distort.ring(tp, r * 2.4, 0.45, { flat: true, amp: big ? 0.05 : 0.03 });
     this.distort.shell(tp.clone().setY(tp.y + 1), r * 1.6, 0.35, { amp: 0.03 });
@@ -1950,7 +1962,7 @@ export class VFX {
     this.burst(tp, 'electric', big ? 26 : 14, { speed: 12 }); this.burst(tp, 'dust', big ? 10 : 5, { speed: 7 });
     const gi = this.groundInfo(tp);
     if (!gi.water) this.chunks(tp, 'rock', big ? 12 : 6, { speed: big ? 12 : 9, up: 0.9 });
-    if (big) this.burst(tp.clone().setY(tp.y + 1), 'star', 1, { el: 'storm', size: 7 });
+    if (big) this.burst(tp.clone().setY(tp.y + 1), 'star', 1, { el: 'storm', size: 5 });
     this.flash(tp.clone().setY(tp.y + 3), 0xfff0a0, (big ? 80 : 50) * (o.dim ? 0.5 : 1), big ? 30 : 18, o.dim ? 0.25 : 0.4);
     this.decal(tp, 'char', r * (big ? 1.1 : 0.9), { dur: big ? 9 : 6 });
     if (big) this.decal(tp, 'crack', r * 0.8, { glow: PAL.storm.glow.clone().multiplyScalar(0.8), dur: 8 });
@@ -2156,6 +2168,44 @@ export class VFX {
     this.burst(feet, 'dust', 12, { speed: 8 });
   }
 
+  // the element in hand breathes at the staff gem: embers, snowflakes, sparks, droplets, leaves, glyphs
+  staffAura(dt) {
+    const P = G.player;
+    if (!P || !P.rig || !P.rig.p.gem || G.state !== 'play' || G.mode !== 'free' || P.dead || !P.root.visible) return;
+    this._auraT = (this._auraT || 0) - dt;
+    if (this._auraT > 0) return;
+    const el = P.element;
+    this._auraT = el === 'storm' ? 0.12 : 0.07;
+    const g = P.rig.p.gem.getWorldPosition(_aura);
+    const p = pal(el);
+    switch (el) {
+      case 'fire':
+        this.add.emit({ p: [g.x + rv(0.04), g.y + 0.02, g.z + rv(0.04)], v: [rv(0.15), randRange(0.5, 1.0), rv(0.15)], life: randRange(0.25, 0.4), size: randRange(0.1, 0.16), size1: 0.03, color: FIRE_WHITE, color2: PAL.fire.core, mid: 0.25, color1: PAL.fire.deep, alpha: 0.8, alpha1: 0, drag: 1, grav: -0.8, shape: 7 });
+        if (rand() < 0.25) this.add.emit({ p: [g.x, g.y, g.z], v: [rv(0.4), randRange(0.6, 1.4), rv(0.4)], life: randRange(0.5, 0.9), size: 0.035, size1: 0.01, color: FIRE_WHITE, color1: PAL.fire.glow, alpha: 1, alpha1: 0, drag: 1, turb: 3, shape: 1 });
+        break;
+      case 'frost':
+        this.add.emit({ p: [g.x + rv(0.12), g.y + rv(0.12), g.z + rv(0.12)], v: [rv(0.1), randRange(-0.25, 0.05), rv(0.1)], life: randRange(0.5, 0.9), size: randRange(0.05, 0.09), size1: 0.02, color: PAL.white.core, color1: PAL.frost.glow, alpha: 0.9, alpha1: 0, drag: 1, shape: 10 });
+        break;
+      case 'storm':
+        if (rand() < 0.45) this.arcs(g, 1, 0.22, { width: 0.012, dur: 0.08 });
+        else this.add.emit({ p: [g.x + rv(0.08), g.y + rv(0.08), g.z + rv(0.08)], v: [rv(0.8), rv(0.8), rv(0.8)], life: 0.12, size: 0.08, size1: 0.02, color: PAL.storm.core, color1: PAL.storm.glow, alpha: 1, alpha1: 0, drag: 4, shape: 13 });
+        break;
+      case 'water': {
+        const a = G.time * 5 + rand() * 0.3, r = 0.14;
+        this.add.emit({ p: [g.x + Math.cos(a) * r, g.y + Math.sin(a * 1.3) * 0.05, g.z + Math.sin(a) * r], v: [0, -0.05, 0], life: 0.3, size: 0.05, size1: 0.02, color: PAL.water.core, color1: PAL.water.glow, alpha: 0.9, alpha1: 0, shape: 9 });
+        if (rand() < 0.12) this.norm.emit({ p: [g.x, g.y - 0.05, g.z], v: [rv(0.1), -0.4, rv(0.1)], life: 0.5, size: 0.04, size1: 0.03, color: C(0.8, 0.92, 1.05), color1: C(0.6, 0.8, 1), alpha: 0.9, alpha1: 0.3, grav: 9, shape: 9 });
+        break;
+      }
+      case 'wind': {
+        const a = G.time * 7 + rand() * 0.5, r = 0.2;
+        this.add.emit({ p: [g.x + Math.cos(a) * r, g.y + rv(0.08), g.z + Math.sin(a) * r], v: [-Math.sin(a) * 1.2, 0.3, Math.cos(a) * 1.2], life: 0.28, size: 0.07, size1: 0.02, color: p.core, color1: p.glow, alpha: 0.7, alpha1: 0, shape: 0 });
+        break;
+      }
+      default:
+        if (rand() < 0.6) this.add.emit({ p: [g.x + rv(0.1), g.y + rv(0.1), g.z + rv(0.1)], v: [rv(0.1), randRange(0.1, 0.35), rv(0.1)], life: randRange(0.5, 0.8), size: randRange(0.05, 0.1), size1: 0.02, color: p.core, color1: p.glow, alpha: 0.9, alpha1: 0, shape: rand() < 0.35 ? 12 : 4, spin: rv(2) });
+    }
+  }
+
   update(dt) {
     for (let i = this.fx.length - 1; i >= 0; i--) {
       let alive = false;
@@ -2180,6 +2230,7 @@ export class VFX {
       const c = G.player.pos; const a = rand() * Math.PI * 2, r = randRange(1.2, 3);
       this.add.emit({ p: [c.x + Math.cos(a) * r, c.y + randRange(0.1, 2.4), c.z + Math.sin(a) * r], v: [-Math.sin(a) * 0.6, 0.2, Math.cos(a) * 0.6], life: 1.2, size: 0.07, size1: 0.02, color: PAL.white.core, color1: PAL.frost.glow, alpha: 0.9, alpha1: 0, shape: 0, fadeIn: 0.2 });
     }
+    this.staffAura(dt);
     // decal lighting & fog follow the scene
     const fog = this.scene.fog;
     if (fog && fog.density !== undefined) this.fogU.density.value = fog.density;

@@ -116,7 +116,7 @@ export class Weather {
   get name() { return (this.snow > 0.5 && this.rain > 0.2 ? (this.storm > 0.5 ? '눈보라' : '눈') : STATES[this.next].name); }
 
   pick(region) {
-    const w = CLIMATE[region] || CLIMATE.default;
+    const w = region.climate || CLIMATE[region.id] || CLIMATE.default;
     // a storm tends to break into rain, rain into clouds — weather has momentum
     const bias = { clear: 1, cloudy: 1, rain: 1, storm: 1 };
     if (this.next === 'storm') { bias.rain = 2.5; bias.storm = 0.4; }
@@ -137,7 +137,7 @@ export class Weather {
     // a dialogue or boss fight clears the sky right away (over the usual ~40 s fade)
     // instead of waiting for the next scheduled roll
     if (calm && !this.locked && this.next !== 'clear') this.set('clear');
-    else if (this.stateT <= 0 && !this.locked) this.set(calm ? 'clear' : this.pick(reg.id));
+    else if (this.stateT <= 0 && !this.locked) this.set(calm ? 'clear' : this.pick(reg));
     if (reg.id === 'rift' && story && story.chapter !== 'post' && !this.locked && (this.next === 'rain' || this.next === 'storm')) this.next = 'cloudy';
     const T = STATES[this.next];
     // weather rolls in over ~25 s and clears over ~40 s

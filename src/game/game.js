@@ -18,6 +18,7 @@ import { Dialogue } from './dialogue.js';
 import { HUD } from './hud.js';
 import { Story } from './story.js';
 import { Skills } from './skills.js';
+import { Atlas } from './atlas.js';
 import { fillName } from '../core/util.js';
 
 const SAVE_KEY = 'ullimjigi_save_v1';
@@ -75,6 +76,7 @@ export class Game {
     G.vfx = new VFX(G.scene);
     await nextFrame();
     G.world = new World(G.scene, (p, t) => this.progress(p, t));
+    G.atlas = new Atlas(G.world.terrain);
     this.progress(0.75, '사람들을 깨우는 중…');
     await nextFrame();
     G.cameraRig = new CameraRig(G.camera);
@@ -275,7 +277,7 @@ export class Game {
     if (name === 'pause') $('#pause').classList.remove('hidden');
     if (name === 'settings') { $('#pause').classList.add('hidden'); $('#settings').classList.remove('hidden'); }
     $('#ui').classList.add('menu-open');
-    if (name === 'map') { G.hud.drawMap(); $('#map').classList.remove('hidden'); }
+    if (name === 'map') { G.hud.openMap(); $('#map').classList.remove('hidden'); }
     if (name === 'journal') { G.hud.drawJournal(this.jTab || 'quests'); $('#journal').classList.remove('hidden'); }
     if (name === 'skills') { $('#skills').classList.remove('hidden'); G.hud.openSkills(); }
     if (name === 'crossroads') $('#crossroads').classList.remove('hidden');
@@ -355,6 +357,7 @@ export class Game {
     if (d.player.hat) P.setHat(true);
     const story0 = new Story(d.story);
     let techMigrated = false;
+    G.atlas.load(d.atlas); // older saves: only the vale is known
     if (d.skills) techMigrated = G.skills.load(d.skills);
     else { G.skills.points = Skills.expected(P.level, story0); G.skills.earned = G.skills.points; G.skills.grantBasics(); this.migratedSkills = true; }
     for (const id of d.lanterns || []) if (G.world.lanterns[id]) G.world.lanterns[id].setLit(true);
@@ -399,6 +402,7 @@ export class Game {
       respawn: this.respawn ? this.respawn.id : null,
       story: G.story.save(),
       skills: G.skills.save(),
+      atlas: G.atlas.save(),
     };
     if (!d.player.pos) delete d.player.pos;
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(d)); } catch (e) { console.warn(e); }
@@ -607,6 +611,7 @@ export class Game {
     } else {
       G.cameraRig.update(raw, P, I);
       G.world.update(dt, G.camera.position, P.pos);
+      if (G.state === 'play') G.atlas.update(dt);
     }
     G.vfx.add.setScale(G.renderer.renderer.domElement.height, G.camera.fov);
     G.vfx.norm.setScale(G.renderer.renderer.domElement.height, G.camera.fov);

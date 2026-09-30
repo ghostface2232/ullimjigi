@@ -1,5 +1,6 @@
 // World layout: landmarks, roads and named regions of the Hanui Vale.
 // North is -Z. Units are meters.
+import { OUTER_R, outerRegion } from './regions/index.js';
 
 // The whole map is a square of `size` metres centred on the origin; the Hanui Vale is the
 // ring-walled bowl in the middle (r ≈ 214). `bound` is how far the player can go.
@@ -61,11 +62,14 @@ export const PADS = [
 ];
 export const DEFAULT_REGION = { id: 'vale', name: '하늬 골짜기', en: 'HANUI VALE', lv: 0 };
 
+// Named places in the vale first, then the vale itself; past the ring, the outer region by
+// direction (world/regions/).
 export function regionAt(x, z) {
   let best = null, bd = 1e9;
   for (const r of REGIONS) {
     const d = Math.hypot(x - r.x, z - r.z);
     if (d < r.r && d / r.r < bd) { bd = d / r.r; best = r; }
   }
-  return best || DEFAULT_REGION;
+  if (best) return best;
+  return Math.hypot(x, z) > OUTER_R ? outerRegion(x, z) : DEFAULT_REGION;
 }

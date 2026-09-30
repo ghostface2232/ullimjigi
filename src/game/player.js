@@ -61,6 +61,7 @@ export class Player {
   center() { return new THREE.Vector3(this.pos.x, this.pos.y + 0.95, this.pos.z); }
 
   teleport(x, z, yaw) {
+    if (Math.hypot(x - this.pos.x, z - this.pos.z) > 60 && G.spells && G.spells.fields) G.spells.fields.clearFar({ x, z }, 60);
     this.pos.set(x, G.world.ground(x, z) + 0.05, z);
     this.vel.set(0, 0, 0);
     this.climbing = null; this.mantle = null; this.grounded = true;

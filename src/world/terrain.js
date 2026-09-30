@@ -1,9 +1,10 @@
 // Heightfield terrain: hand-shaped noise with carved roads and flattened
 // landmarks, vertex-painted in a BotW-like palette.
 import * as THREE from 'three';
-import { createNoise2D, fbm, ridged, smoothstep, lerp, clamp, wrapAngle } from '../core/util.js';
+import { createNoise2D, fbm, ridged, smoothstep, lerp, clamp } from '../core/util.js';
 import { toon, U } from '../render/materials.js';
 import { PATHS, POI, PADS, PASSES, WORLD } from './layout.js';
+import { OUTER, outerWeights } from './regions/index.js';
 
 // Chunked level of detail: CH grid cells (CH·step metres) per chunk side; LOD k draws every
 // 2^k-th vertex. A chunk picks its LOD from the camera's distance to its bounds.
@@ -11,9 +12,8 @@ const CH = 128;
 const LOD_R = [150, 420, 800];
 const LOD_KEEP = [450, 900];      // built LOD 0 / 1 geometry is freed beyond these distances
 const SKIRT = [3, 6, 12, 24];     // skirt depth per LOD: hides cracks between neighbouring LODs
-// Outer lands around the vale, by compass sector (0 = east, +π/2 = south).
-const SECTORS = [0, Math.PI / 4, Math.PI / 2, (3 * Math.PI) / 4, Math.PI, (-3 * Math.PI) / 4, -Math.PI / 2, -Math.PI / 4];
-const _sw = new Float32Array(8);
+// shared noise fields handed to the region height / paint functions (regions/README.md)
+const F = { b: 0, d: 0, rg: 0, dry: 0, n: null, n2: null, n3: null };
 const segT = (x, z, s) => {
   const dx = s.bx - s.ax, dz = s.bz - s.az, l2 = dx * dx + dz * dz;
   return l2 > 0 ? clamp(((x - s.ax) * dx + (z - s.az) * dz) / l2, 0, 1) : 0;
@@ -139,39 +139,17 @@ export class Terrain {
     return h;
   }
 
-  // Weights of the eight outer sectors at (x, z), normalised; shared scratch array.
-  sectors(x, z) {
-    const th = Math.atan2(z, x);
-    let sum = 0;
-    for (let i = 0; i < 8; i++) { const d = wrapAngle(th - SECTORS[i]) / 0.5; sum += (_sw[i] = Math.exp(-d * d)); }
-    for (let i = 0; i < 8; i++) _sw[i] /= sum;
-    return _sw;
-  }
-
-  // The lands beyond the ring: empty landscape for now, one broad character per direction.
+  // The lands beyond the ring: each outer region (regions/*.js) gives a height, blended by
+  // direction; the sea and the mountains along the map edge go on top.
   outerHeight(x, z) {
     const n = this.noise, n2 = this.noise2, n3 = this.noise3;
-    const b = fbm(n, x * 0.0032 + 11, z * 0.0032 - 5, 5);
-    const d = fbm(n3, x * 0.011 - 7, z * 0.011 + 3, 3);
-    const rg = ridged(n2, x * 0.0085 + 3, z * 0.0085 - 9, 4);
-    const w = this.sectors(x, z);
+    const b = (F.b = fbm(n, x * 0.0032 + 11, z * 0.0032 - 5, 5));
+    const d = (F.d = fbm(n3, x * 0.011 - 7, z * 0.011 + 3, 3));
+    const rg = (F.rg = ridged(n2, x * 0.0085 + 3, z * 0.0085 - 9, 4));
+    F.n = n; F.n2 = n2; F.n3 = n3;
+    const w = outerWeights(x, z);
     let h = 0;
-    // east: dry rolling plains
-    h += w[0] * (22 + b * 12 + d * 3);
-    // south-east: wooded hills running down to the sea
-    h += w[1] * (18 + b * 16 + d * 4 + rg * 6);
-    // south: the coast
-    h += w[2] * (22 + b * 12 + d * 4);
-    // south-west: rough headlands
-    h += w[3] * (30 + b * 18 + rg * 16);
-    // west: a high plateau with mesas
-    if (w[4] > 0.01) h += w[4] * (50 + 12 * smoothstep(-0.15, 0.15, b + 0.2) + d * 3 + 16 * smoothstep(0.3, 0.4, fbm(n3, x * 0.009 + 40, z * 0.009, 2)));
-    // north-west: tall cliffs and rock pillars
-    if (w[5] > 0.01) h += w[5] * (54 + rg * 50 + 36 * smoothstep(0.5, 0.64, n2(x * 0.034 + 17, z * 0.034 - 4)));
-    // north: a glacier valley between high flanks
-    if (w[6] > 0.01) h += w[6] * (84 + b * 10 + rg * 28 * smoothstep(30, 130, Math.abs(x + 30 + b * 40)));
-    // north-east: broken hills towards the rift side
-    h += w[7] * (36 + b * 20 + rg * 18);
+    for (let i = 0; i < OUTER.length; i++) h += w[i] * OUTER[i].height(x, z, F);
     // the sea to the south, with a ragged coastline
     const coast = 548 + fbm(n3, x * 0.005 + 2, 7.7, 3) * 40;
     h = lerp(h, -10 + d * 2, smoothstep(coast - 90, coast + 10, z));
@@ -288,9 +266,9 @@ export class Terrain {
     out.lerp(P.grassDark, forest * 0.65);
     out.lerp(P.dry, dry * 0.4);
     if (outer > 0) {
-      const w = this.sectors(x, z);
-      out.lerp(P.dry, outer * (w[0] + w[7] * 0.5) * (0.45 + dry * 0.4)); // sun-bleached eastern plains
-      out.lerp(P.grassWarm, outer * w[4] * 0.45);                          // the plateau's pale grass
+      const w = outerWeights(x, z);
+      F.dry = dry;
+      for (let i = 0; i < OUTER.length; i++) if (OUTER[i].paint) OUTER[i].paint(out, outer * w[i], F, P);
     }
     out.lerp(P.grassTeal, smoothstep(22, 40, h) * 0.5 * (1 - outer * 0.6));
     const rk = smoothstep(0.82, 0.68, ny);

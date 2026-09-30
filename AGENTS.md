@@ -44,7 +44,8 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | | `fxmesh.js` | 메시 이펙트 부품: 노이즈로 일렁이며 침식되는 구체(`SPHERE_LOOK`: 불·연기·김·흙먼지·물·서리·비전·플라스마·번개·바람·먹구름), 초승달 베기(`slash`), 물보라 벽(`crown`), 물리 파편(`Debris`: 바위·얼음·불똥), 화면 굴절 물체(`Distort`) |
 | | `crystal.js` | 수정 재질(`crystalMaterial`: 면 분할, 가짜 굴절, 내부 발광, 반짝임, 얼음 변형)과 모양(`crystalGeometry`: 기둥·군집·보석·조각), 후광 스프라이트 |
 | | `vfx.js` | 파티클 프리셋, 조명 풀, 링, 룬 원진, 프랙탈 번개, 얼음 가시, 회오리, 광선, 경고 표시. 구체(`sphere`)·베기(`slash`)·물보라(`crownSplash`)·파편(`chunks`)·바람 선(`windLine`·`gustLines`)·굴절(`distort.ring`·`shell`·`haze`)·시전 모으기(`charge`)·습득 연출(`learn`). 속성별 레시피(`cast`·`impact`·`explode`·`strike`·`react`·`kill`·`dodge`·`ultCast`), 속도 방향 불꽃(`sparks`), 투사체 궤적(`ribbon`), 지형을 따르는 바닥 흔적(`decal`: 그을음·서리·물웅덩이·번개 자국 등), 충격 구체·빛기둥(`shock`·`pillar`), 잔여 효과(`linger`) |
-| `world/` | `layout.js` | 랜드마크 좌표(`POI`), 길(`PATHS`), 지역(`REGIONS`) |
+| `world/` | `layout.js` | 맵 크기(`WORLD`), 고개(`PASSES`), 랜드마크 좌표(`POI`), 길(`PATHS`), 골짜기의 지역(`REGIONS`), `regionAt` |
+| | `regions/*.js` | 바깥 지역 데이터, 지역마다 파일 하나: 방향, 지형 함수, 채색, 기후, 음악, 레벨, 지도 이름 자리(`regions/README.md`) |
 | | `terrain.js` | 1280m 높이맵 지형(2m 격자), 채색, 높이·법선·레이캐스트 조회. 256m 청크 25개가 거리별 4단계 LOD로 그려짐(`update`), 골짜기 바깥 땅(`outerHeight`)과 고개(`carvePasses`), 소품 배치용 옛 480m 격자(`legacy`) |
 | | `sky.js` · `water.js` · `grass.js` | 하늘과 낮밤, 물, 풀(청크 단위 스트리밍) |
 | | `props.js` | 식생·바위: 줄기·가지·잎 뭉치 구조로 기르는 수종(참나무·단풍·꽃나무·자작·포플러·버드나무·전나무·고사목), 덤불·고사리·들꽃·갈대·버섯·그루터기·통나무, 깎은 면 바위. 가까운/먼 모델 두 벌, 카메라 기준 인스턴스 재정렬(`Props.update`), `add`·`clear` |
@@ -70,7 +71,8 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | | `npcs.js` · `dialogue.js` | NPC와 보름(동료), 대화창(타자 효과·목소리·선택지) |
 | | `story.js` | 장별 스크립트, 퀘스트, 곁가지, NPC 대화 분기, 이벤트 훅 |
 | | `sketches.js` | 모라의 스케치북: 전망점에서 장면을 그려 연필 그림으로 바꾸기(`ink`), 시점 맞추기(`align`), 여정의 스케치 목록 |
-| | `hud.js` | HUD 전반, 지도, 여정·마법서(반응 도감), 울림 나무 화면 |
+| | `hud.js` | HUD 전반, 지도(보기 창·휠 확대·끌어 옮기기·탐험 안개), 여정·마법서(반응 도감), 울림 나무 화면 |
+| | `atlas.js` | 탐험 기록(`G.atlas`): 16m 칸마다 본 곳을 표시, 지도 안개와 저장(`atlas`) |
 | | `minimap.js` | 왼쪽 아래 원형 미니맵(북쪽 고정, 시야 부채꼴, 나침반 테두리, 목표·등석·마을 사람·추격 중인 적). 바탕은 64m 타일을 필요할 때 만들어 24장까지 보관 |
 
 ## 반드시 지킬 규칙
@@ -118,13 +120,13 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 
 ### 식생 (`props.js`)
 - 나무는 시드로 구조(뿌리가 퍼진 줄기, 가지, 가지 끝의 잎 뭉치)를 만들고 가까운 모델과 먼 모델을 같은 구조로 뽑습니다. 잎 뭉치의 법선은 수관 전체 쪽으로 기울여 부드러운 덩어리로 보이게 합니다.
-- 종류·변형마다 가까운/먼 `InstancedMesh` 한 쌍과 그림자 대리(먼 모델, `SHADOW_LAYER`에만 있어 해의 그림자 카메라만 봄)가 있습니다. `Props.update(camera)`가 카메라가 움직일 때 거리·시야·그림자 반경으로 인스턴스를 다시 나눕니다. 나무의 가까운 모델 거리는 42m입니다.
+- 종류·변형마다 가까운/먼 `InstancedMesh` 한 쌍과 그림자 대리(먼 모델, `SHADOW_LAYER`에만 있어 해의 그림자 카메라만 봄)가 있습니다. `Props.update(camera)`가 카메라가 움직일 때 거리·시야·그림자 반경으로 인스턴스를 다시 나눕니다. 나무의 가까운 모델 거리는 42m이고, 그 앞뒤 5m(`FADE`)에서는 두 모델에 모두 넣어 인스턴스별 `aFade`로 디더링해 섞습니다(`toon(..., { lodFade: true })`, 소품 재질 전용). 소품 형상에는 모두 `aFade` 속성이 붙어 있어야 합니다(없는 속성 자리는 다른 셰이더가 남긴 값을 읽을 수 있음).
 - 배치는 `props.add(종류, x, z, 크기, { v, ry, dy, col, tall })`, 랜드마크 주변 비우기는 `props.clear(x, z, r, [종류])`(충돌체도 함께 제거)로 합니다. 메시는 다음 `update`에서 다시 만들어집니다.
 
 ### 등반과 충돌체
 - 가파른 지형(법선 y < 0.64)과 충돌체 벽은 그쪽으로 계속 걸으면 붙잡습니다(`player.tryGrab` → `updateClimb`). 허리 높이(1.45m 미만) 턱은 뛰어넘고, 꼭대기에서는 `startMantle`로 올라섭니다. 등반 중 이동은 기력 10/초, 도약(<kbd>Space</kbd>) 20(기력이 20 미만이면 뛰지 않고 기력 고리가 흔들림, `hud.staminaShort`), 벽 차기(<kbd>S</kbd>+<kbd>Space</kbd>) 12(빠져나가는 수단이라 거절하지 않되 기력을 0으로 만들지는 않음), <kbd>Shift</kbd>는 놓기입니다.
 - 충돌체 윗면은 바닥입니다(`Colliders.surfaceTop`, `World.ground`). 그래서 **충돌체 높이 `h1`은 실제 모양의 꼭대기와 맞아야 합니다.** 건물·지형지물은 `World.solid(obj, { r | hw, hd, top?, topFn?, climb?, noTop? })`로 등록하면 경계 상자에서 높이를 잽니다. 지붕처럼 기운 윗면은 `topFn(lx, lz)`(로컬 좌표), 나무 줄기처럼 올라설 수 없는 것은 `climb: false, noTop: true`를 주세요.
-- `Player.teleport`는 등반·기어오르기·활공 상태를 풉니다. 플레이어 위치를 직접 바꿀 때는 이것을 쓰세요.
+- `Player.teleport`는 등반·기어오르기·활공 상태를 풉니다. 60m 넘게 옮기면 떠난 자리의 땅의 흔적도 지웁니다(`Fields.clearFar`). 플레이어 위치를 직접 바꿀 때는 이것을 쓰세요.
 - 집은 `userData.roofTop(lx, lz)`(그룹 원점 기준 지붕 윗면 높이)를 주고, `buildVillage`가 이를 `topFn`으로 씁니다. `eave`·`roofH`·`roofHW`도 같은 선을 뜻합니다(`eave + roofH × max(0, 1 − |lx| / roofHW)`). 지붕 모양을 바꾸면 이 함수를 함께 고치세요. 모라의 탑과 풍차는 원뿔 모양 `topFn`을 씁니다.
 
 ### 날씨·들불·환경 (`world/weather.js`, `world/wildfire.js`, `world/env.js`)
@@ -234,6 +236,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 
 ### 저장
 - `localStorage`의 `ullimjigi_save_v1`(진행)과 `ullimjigi_settings`(설정)를 씁니다. 울림 나무는 `skills` 필드(`v: 2`, 단계, 남은 점수, 게이지, 반응 도감, `granted`, 남은 갈림길 `cross`)에 들어갑니다. `skills`가 없는 이전 저장은 `Skills.expected()`로 점수를 계산해 지급하고, `skills.v`가 없거나 2 미만이면 `grantBasics()`로 이미 쓰던 고유 마법과 엮기를 무료로 줍니다. `p_heavy` 플래그가 있으면 `Story.start`가 `f_sig`를 보장합니다.
+- 탐험 기록은 `atlas` 필드(칸 크기, 칸 수, base64 비트열)입니다. 없거나 칸 설정이 다르면 골짜기(반지름 236m)만 드러난 상태로 시작합니다. 새로 본 칸이 60개 쌓일 때마다 자동 저장을 요청합니다.
 - 저장 형식을 바꾸면 기존 저장과 호환되는지 확인하세요. `Story.load`는 없는 필드에 기본값을 넣어 줍니다.
 
 ## 테스트 방법

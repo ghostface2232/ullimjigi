@@ -48,6 +48,9 @@ export const MEMORIES = {
   badge: { name: '기사의 휘장', x: -163, z: -30, desc: '번개 문양이 새겨진 청동 휘장. 뒷면에 누군가 긁어 쓴 글씨.' },
 };
 
+const COAL = { lit: null, cold: null };
+let FLOE_GEO = null;
+
 export class World {
   constructor(scene, onProgress = () => {}) {
     this.scene = scene;
@@ -426,17 +429,20 @@ export class World {
     const fl = { pos: new THREE.Vector3(x, this.h(x, z) + b.userData.fireY, z), lit: false, scale: 1 };
     this.flames.push(fl);
     const tgt = this.addTarget({ id, pos: fl.pos.clone().add(new THREE.Vector3(0, -0.2, 0)), r: 1.1, obj: b, flame: fl, lit: false, onHit: null });
+    // lit and cold coal, shared by every brazier (swapped, never rebuilt)
+    COAL.lit ||= new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 1.2, 0.3) });
+    COAL.cold ||= new THREE.MeshBasicMaterial({ color: new THREE.Color(0.15, 0.1, 0.1) });
     tgt.baseHit = (el) => {
       if (el === 'fire' && !tgt.lit) {
         tgt.lit = fl.lit = true;
-        b.userData.coal.material = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 1.2, 0.3) });
+        b.userData.coal.material = COAL.lit;
         G.audio.play('lantern', { pos: fl.pos });
         G.vfx.burst(fl.pos, 'fire', 24, { speed: 3 }); G.vfx.burst(fl.pos, 'ember', 12);
         G.vfx.flash(fl.pos, 0xff8a3a, 40, 12, 0.6);
         if (tgt.onLit) tgt.onLit(tgt);
       } else if ((el === 'frost' || el === 'wind' || el === 'water') && tgt.lit && !tgt.permanent) {
         tgt.lit = fl.lit = false;
-        b.userData.coal.material = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.15, 0.1, 0.1) });
+        b.userData.coal.material = COAL.cold;
         G.vfx.burst(fl.pos, 'smoke', 8); G.audio.play('fizzle', { pos: fl.pos });
         if (tgt.onOut) tgt.onOut(tgt);
       }
@@ -728,7 +734,8 @@ export class World {
   // Ice floe (frost on water) — walkable
   addIceFloe(x, z) {
     if (this.iceFloes.length > 14) this.removeIceFloe(this.iceFloes[0]);
-    const m = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.3, 0.7, 6), G.vfx.iceMat);
+    FLOE_GEO ||= new THREE.CylinderGeometry(1.6, 1.3, 0.7, 6);
+    const m = new THREE.Mesh(FLOE_GEO, G.vfx.iceMat);
     m.position.set(x, -0.1, z); m.rotation.y = rand() * 3; m.scale.set(0.01, 1, 0.01);
     m.castShadow = true; m.receiveShadow = true;
     this.scene.add(m);

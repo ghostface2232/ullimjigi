@@ -177,6 +177,8 @@ const cA = new THREE.Color(), cB = new THREE.Color(), cT = new THREE.Color();
 function lerpHex(a, b, t, out) { cA.set(a); cB.set(b); return out.copy(cA).lerp(cB, t); }
 const lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
 
+const _lightDir = new THREE.Vector3();
+
 export class Sky {
   constructor(scene) {
     this.scene = scene;
@@ -265,7 +267,7 @@ export class Sky {
     // Directional light follows sun by day, moon by night
     const useMoon = sunUp < 0.02;
     const ldir = useMoon ? u.uMoonDir.value : sunDir;
-    const lightDir = new THREE.Vector3(ldir.x, Math.max(ldir.y, 0.25), ldir.z).normalize();
+    const lightDir = _lightDir.set(ldir.x, Math.max(ldir.y, 0.25), ldir.z).normalize();
     this.sun.position.copy(center).addScaledVector(lightDir, 120);
     this.sun.target.position.copy(center);
     lerpHex(a.sun, b.sun, t, this.sun.color);

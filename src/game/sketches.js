@@ -27,11 +27,15 @@ const NEAR = 7;              // camera within this of the vantage point (m)
 const CONE = 0.35;           // and facing within ~20°
 const HOLD = 0.7;            // seconds lined up before the memory opens
 const W_PX = 480;            // sketch width in pixels
+const NEED_R = 110;          // draw a page once the player is this close to its vantage point (m)
+const SLICE_MS = 3;          // drawing work per frame
+const WAIT = 'wait';         // a drawing step waiting on the GPU or the encoder
 
 export class Sketchbook {
   constructor() {
-    this.img = {};             // id → data URL
-    this.queue = [];
+    this.img = {};             // id → image URL
+    this.job = null;           // the page being drawn (generator)
+    this.wanted = false;       // the journal wants every open page
     this.hold = 0;
     this.busy = false;
     this.el = document.createElement('div');
@@ -51,12 +55,35 @@ export class Sketchbook {
   open(s) { return !s.after || this.S.flag(s.after); }
   count() { return SKETCHES.filter((s) => this.done(s)).length; }
 
-  // Draw the open pages (a few ms each), one per frame so nothing stalls. A page behind a
-  // shrine is drawn only once its bell rings, so the seal does not end up in the drawing.
-  prepare() { for (const s of SKETCHES) if (this.open(s) && !this.img[s.id] && !this.queue.includes(s)) this.queue.push(s); }
+  // Pages are drawn when needed: once the player is within NEED_R of a vantage point (the
+  // area is already on the GPU by then), or when the journal asks for them. A drawing is
+  // spread over frames (render → async read-back → inking in ~3 ms slices → async JPEG), so
+  // it never stalls play. A page behind a shrine is drawn only once its bell rings, so the
+  // seal does not end up in the drawing.
+  want() { this.wanted = true; }
+  nextPage() {
+    const P = G.player.pos;
+    for (const s of SKETCHES) {
+      if (this.img[s.id] || !this.open(s)) continue;
+      if (this.wanted || Math.hypot(P.x - s.eye[0], P.z - s.eye[1]) < NEED_R) return s;
+    }
+    this.wanted = false;
+    return null;
+  }
+  // called every frame by the game loop, menus included (the journal waits on it)
+  pump() {
+    if (!this.owned()) return;
+    if (!this.job) { const s = this.nextPage(); if (s) this.job = this.draw(s); }
+    const t0 = performance.now();
+    while (this.job) {
+      const r = this.job.next();
+      if (r.done) { this.job = null; break; }
+      if (r.value === WAIT || performance.now() - t0 > SLICE_MS) break;
+    }
+  }
 
-  // Render the view from the vantage point and ink it on paper.
-  draw(s) {
+  // Render the view from the vantage point and ink it on paper (a generator: see pump).
+  *draw(s) {
     const R = G.renderer.renderer, W = G.world;
     const aspect = Math.max(1.2, Math.min(2, innerWidth / innerHeight));
     const w = W_PX, h = Math.round(W_PX / aspect);
@@ -71,9 +98,20 @@ export class Sketchbook {
     R.setRenderTarget(this.rt); R.render(G.scene, cam); R.setRenderTarget(null);
     W.props.update(G.camera);
     hide.forEach((o, i) => (o.visible = vis[i]));
+    // read back without waiting on the GPU in this frame
     const px = new Uint8Array(w * h * 4);
-    R.readRenderTargetPixels(this.rt, 0, 0, w, h, px);
-    this.img[s.id] = ink(px, w, h, s.id.length * 7 + s.eye[0]);
+    let ready = false;
+    if (R.readRenderTargetPixelsAsync) {
+      R.readRenderTargetPixelsAsync(this.rt, 0, 0, w, h, px).then(() => (ready = true), () => (ready = true));
+      while (!ready) yield WAIT;
+    } else R.readRenderTargetPixels(this.rt, 0, 0, w, h, px);
+    const cv = yield* ink(px, w, h, s.id.length * 7 + s.eye[0]);
+    let url = null;
+    cv.toBlob((b) => { url = b ? URL.createObjectURL(b) : cv.toDataURL('image/jpeg', 0.86); }, 'image/jpeg', 0.86);
+    while (!url) yield WAIT;
+    this.img[s.id] = url;
+    // an open journal shows the page as soon as it is inked
+    for (const el of document.querySelectorAll(`[data-skp="${s.id}"]`)) el.outerHTML = `<img src="${url}" alt="">`;
   }
   camFor(s, aspect) {
     const W = G.world, [ex, ez] = s.eye, [lx, lz, ly] = s.look;
@@ -106,10 +144,7 @@ export class Sketchbook {
       const m = s.mem && G.world.memoryObjs[s.mem];
       if (m && !m.taken) m.g.visible = !!S.flag('sk_' + s.id);
     }
-    if (!this.owned()) return;
-    if (this.queue.length) { this.draw(this.queue.shift()); return; }
-    if (SKETCHES.some((s) => this.open(s) && !this.img[s.id])) { this.prepare(); return; }
-    if (this.busy) return;
+    if (!this.owned() || this.busy) return;
     // the closest open page decides the overlay
     let best = null, k = 0;
     if (G.mode === 'free' && !G.player.dead) {
@@ -166,9 +201,10 @@ export class Sketchbook {
   // Journal page: the sketches found so far.
   html() {
     if (!this.owned()) return '';
+    this.want();
     const cards = SKETCHES.map((s) => {
       const done = this.done(s), open = this.open(s), img = this.img[s.id];
-      const pic = open && img ? `<img src="${img}" alt="">` : '<span class="sk-blank">?</span>';
+      const pic = open && img ? `<img src="${img}" alt="">` : `<span class="sk-blank"${open ? ` data-skp="${s.id}"` : ''}>?</span>`;
       return `<figure class="sk ${done ? 'done' : ''} ${open ? '' : 'locked'}">${pic}<figcaption>${open ? s.name : '아직 흐릿한 그림'}${done ? ' <b>✓</b>' : ''}</figcaption>${done ? `<p>${s.text}</p>` : ''}</figure>`;
     }).join('');
     return `<div class="jsec">모라의 스케치북 — 그림 속 자리에 서서 같은 곳을 바라보자 · ${this.count()} / ${SKETCHES.length}</div><div class="sk-grid">${cards}</div>`;
@@ -177,39 +213,45 @@ export class Sketchbook {
 
 // Pencil on paper from a rendered view: luminance edges for outlines, three bands of
 // hatching for shade, warm paper with grain, and a soft hand-drawn border.
-function ink(px, w, h, seed) {
+function* ink(px, w, h, seed) {
   const L = new Float32Array(w * h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const i = ((h - 1 - y) * w + x) * 4; // read-back is bottom-up
     const l = (0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]) / 255;
     L[y * w + x] = Math.pow(l / (1 + l * 0.6) * 1.6, 0.6);
   }
+  yield;
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
   const g = cv.getContext('2d'), out = g.createImageData(w, h), o = out.data;
   let r = seed | 0; const rnd = () => ((r = (r * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
   const wob = new Float32Array(h); for (let y = 0; y < h; y++) wob[y] = Math.sin(y * 0.11 + seed) * 1.4 + Math.sin(y * 0.031) * 2;
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const at = (xx, yy) => L[clamp(yy, 0, h - 1) * w + clamp(xx, 0, w - 1)];
-    const gx = at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x - 1, y) - at(x - 1, y + 1);
-    const gy = at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1) - at(x - 1, y - 1) - 2 * at(x, y - 1) - at(x + 1, y - 1);
-    const e = Math.hypot(gx, gy), l = L[y * w + x];
-    // outlines, fainter in bright sky so clouds stay light
-    let k = Math.min(1, Math.max(0, (e - 0.12) / 0.35)) * 0.9 * (1 - 0.7 * clamp((l - 0.7) / 0.22, 0, 1));
-    const xw = x + wob[y];
-    if (l < 0.62 && ((xw + y) % 6 + 6) % 6 < 1) k += 0.3 * (0.62 - l) / 0.62 + 0.1;
-    if (l < 0.42 && ((xw - y) % 6 + 6) % 6 < 1) k += 0.32;
-    if (l < 0.24 && ((xw + y * 0.3) % 4 + 4) % 4 < 1) k += 0.3;
-    // fade the ink toward an uneven border
-    const bx = Math.min(x, w - 1 - x) / w, by = Math.min(y, h - 1 - y) / h;
-    const edge = clamp((Math.min(bx * 1.6, by * 1.6 * (w / h) / 1.6) - 0.02 - rnd() * 0.012) / 0.07, 0, 1);
-    k = clamp(k * edge, 0, 0.92);
-    const grain = 0.96 + rnd() * 0.04;
-    const i = (y * w + x) * 4;
-    o[i] = (244 * (1 - k) + 58 * k) * grain;
-    o[i + 1] = (234 * (1 - k) + 52 * k) * grain;
-    o[i + 2] = (214 * (1 - k) + 48 * k) * grain;
-    o[i + 3] = 255;
+  for (let y = 0; y < h; y++) {
+    // Sobel rows and columns, clamped at the edges
+    const ru = Math.max(y - 1, 0) * w, rc = y * w, rd = Math.min(y + 1, h - 1) * w;
+    for (let x = 0; x < w; x++) {
+      const xl = x > 0 ? x - 1 : 0, xr = x < w - 1 ? x + 1 : w - 1;
+      const gx = L[ru + xr] + 2 * L[rc + xr] + L[rd + xr] - L[ru + xl] - 2 * L[rc + xl] - L[rd + xl];
+      const gy = L[rd + xl] + 2 * L[rd + x] + L[rd + xr] - L[ru + xl] - 2 * L[ru + x] - L[ru + xr];
+      const e = Math.hypot(gx, gy), l = L[rc + x];
+      // outlines, fainter in bright sky so clouds stay light
+      let k = Math.min(1, Math.max(0, (e - 0.12) / 0.35)) * 0.9 * (1 - 0.7 * clamp((l - 0.7) / 0.22, 0, 1));
+      const xw = x + wob[y];
+      if (l < 0.62 && ((xw + y) % 6 + 6) % 6 < 1) k += 0.3 * (0.62 - l) / 0.62 + 0.1;
+      if (l < 0.42 && ((xw - y) % 6 + 6) % 6 < 1) k += 0.32;
+      if (l < 0.24 && ((xw + y * 0.3) % 4 + 4) % 4 < 1) k += 0.3;
+      // fade the ink toward an uneven border
+      const bx = Math.min(x, w - 1 - x) / w, by = Math.min(y, h - 1 - y) / h;
+      const edge = clamp((Math.min(bx * 1.6, by * 1.6 * (w / h) / 1.6) - 0.02 - rnd() * 0.012) / 0.07, 0, 1);
+      k = clamp(k * edge, 0, 0.92);
+      const grain = 0.96 + rnd() * 0.04;
+      const i = (rc + x) * 4;
+      o[i] = (244 * (1 - k) + 58 * k) * grain;
+      o[i + 1] = (234 * (1 - k) + 52 * k) * grain;
+      o[i + 2] = (214 * (1 - k) + 48 * k) * grain;
+      o[i + 3] = 255;
+    }
+    if (y % 16 === 15) yield;
   }
   g.putImageData(out, 0, 0);
-  return cv.toDataURL('image/jpeg', 0.86);
+  return cv;
 }

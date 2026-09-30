@@ -575,7 +575,7 @@ export class HUD {
         this.el.bossBreakFill.style.width = (b.v / 100) * 100 + '%';
         if (this.bossBrk !== st) { this.bossBrk = st; this.el.bossBreak.classList.toggle('down', st === 'down'); this.el.bossBreak.classList.toggle('lock', st === 'lock'); }
       }
-      if (!t.alive && t.hp <= 0) setTimeout(() => this.bossBar(null), 1500);
+      if (!t.alive && t.hp <= 0 && this.bossGone !== t) { this.bossGone = t; setTimeout(() => this.bossBar(null), 1500); }
     }
     // floats
     for (let i = this.floats.length - 1; i >= 0; i--) {

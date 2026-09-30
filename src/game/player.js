@@ -245,7 +245,6 @@ export class Player {
         if (this.gliding && G.story && G.story.once('updraft1')) G.hud.toast('뜨거운 바람이 몸을 들어 올린다!');
       }
       this.vel.y = Math.max(this.vel.y, -42);
-      const prevGround = W.ground(this.pos.x, this.pos.z, this.pos.y + 0.6);
 
       const nx = this.pos.x + this.vel.x * dt, nz = this.pos.z + this.vel.z * dt;
       // steep slope blocking
@@ -290,7 +289,6 @@ export class Player {
       if (this.grounded && !this.swimming && waterDepth < 0.5) {
         if (G.time % 1 < dt) this.lastSafe.copy(this.pos);
       }
-      void prevGround;
       this.tryGrab(dt, move, moving, act);
     }
     this.regrabT = Math.max(0, this.regrabT - dt);

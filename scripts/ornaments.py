@@ -68,20 +68,38 @@ rune = uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'>"
   "<circle cx='200' cy='200' r='60'/><circle cx='200' cy='200' r='52' stroke-dasharray='2 5'/>"
   + ''.join(glyphs) + "</g></svg>")
 
-print(":root {")
-print(f"  --orn-tl: {corner('')};")
-print(f"  --orn-tr: {corner('translate(60 0) scale(-1 1)')};")
-print(f"  --orn-bl: {corner('translate(0 60) scale(1 -1)')};")
-print(f"  --orn-br: {corner('translate(60 60) scale(-1 -1)')};")
-print(f"  --orn-rule: {rule};")
-print(f"  --pat-stars: {stars};")
-print(f"  --orn-rune: {rune};")
-print("}")
 # a quieter circle for busy panels (skill tree): rings, ticks and glyphs, no star lines
 soft = uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'>"
   f"<g fill='none' stroke='{G}' stroke-width='1' stroke-opacity='.09'>"
   "<circle cx='200' cy='200' r='194'/><circle cx='200' cy='200' r='170'/>"
   f"<path d='{' '.join(ticks)}'/>" + ''.join(glyphs) + "</g></svg>")
+
+# the loading screen: a brighter rune circle, an eight-pointed star and a small sparkle
+bright = rune.replace('stroke-opacity%3D%27.16%27', 'stroke-opacity%3D%27.6%27').replace("stroke-opacity='.16'", "stroke-opacity='.6'")
+def star_path(cx, cy, r1, r2, rs, n=8):
+    pts = []
+    for i in range(n * 2):
+        a = i / (n * 2) * 2 * math.pi - math.pi / 2
+        r = (r1 if i % 4 == 0 else r2) if i % 2 == 0 else rs
+        pts.append(f"{cx + math.cos(a) * r:.2f} {cy + math.sin(a) * r:.2f}")
+    return 'M' + ' L'.join(pts) + 'Z'
+star = uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>"
+  "<defs><radialGradient id='s' cx='50' cy='50' r='46' gradientUnits='userSpaceOnUse'>"
+  "<stop offset='0' stop-color='#ffffff'/><stop offset='.28' stop-color='#fff4cf'/><stop offset='.7' stop-color='#f1d48a'/><stop offset='1' stop-color='#c9a24e'/></radialGradient>"
+  "<radialGradient id='h' cx='50' cy='50' r='50' gradientUnits='userSpaceOnUse'><stop offset='0' stop-color='#bfe6ff' stop-opacity='.55'/><stop offset='1' stop-color='#bfe6ff' stop-opacity='0'/></radialGradient></defs>"
+  "<circle cx='50' cy='50' r='50' fill='url(#h)'/>"
+  f"<path d='{star_path(50, 50, 46, 26, 7)}' fill='url(#s)'/>"
+  f"<path d='{star_path(50, 50, 30, 16, 4.5)}' fill='#ffffff' fill-opacity='.55'/>"
+  "</svg>")
+spark = uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'>"
+  f"<path d='{star_path(10, 10, 10, 5, 1.6, 4)}' fill='#fff6d6'/></svg>")
+
+VARS = {
+  'orn-tl': corner(''), 'orn-tr': corner('translate(60 0) scale(-1 1)'),
+  'orn-bl': corner('translate(0 60) scale(1 -1)'), 'orn-br': corner('translate(60 60) scale(-1 -1)'),
+  'orn-rule': rule, 'pat-stars': stars, 'orn-rune': rune, 'orn-rune-soft': soft,
+  'orn-rune-bright': bright, 'orn-star': star, 'orn-spark': spark,
+}
 print(":root {")
-print(f"  --orn-rune-soft: {soft};")
+for k, v in VARS.items(): print(f"  --{k}: {v};")
 print("}")

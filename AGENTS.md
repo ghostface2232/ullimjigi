@@ -255,7 +255,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 
 캐릭터만 따로 보려면 개발 서버에서 `/charview.html`을 엽니다(게임 빌드에는 포함되지 않는 뷰어).
 
-`?dev` 모드는 `requestAnimationFrame` 대신 16ms 타이머로 루프를 돕니다. **브라우저 창이 가려져 있으면 rAF가 멈추기 때문입니다.** 일반 모드(타이틀부터)는 창이 보이는 상태에서만 확인할 수 있습니다.
+`?dev` 모드는 `requestAnimationFrame` 대신 16ms 타이머로 루프를 돕니다. **브라우저 창이 가려져 있으면 rAF가 멈추기 때문입니다.** 보이는 창에서 실제 프레임을 재려면 `&raf`를 붙이세요(예: `?dev=skills&god&raf`). 일반 모드(타이틀부터)는 창이 보이는 상태에서만 확인할 수 있습니다.
 
 ### 테스트 스위치
 주소에 `&god`(피해 없음), `&unseen`(적이 플레이어를 인지하지 않음)을 붙이거나 콘솔에서 `__G.dev.god = true`, `__G.dev.unseen = true`로 켭니다. 이동·등반·연출을 확인할 때 적에게 맞아 쓰러져 등석으로 돌아가는 일을 막아 줍니다. 적의 인지는 모두 `player.seen()`을 거칩니다.

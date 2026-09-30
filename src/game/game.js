@@ -24,7 +24,9 @@ const SAVE_KEY = 'ullimjigi_save_v1';
 const SET_KEY = 'ullimjigi_settings';
 const $ = (s) => document.querySelector(s);
 const DEV = new URLSearchParams(location.search).has('dev');
-const raf = (fn) => (DEV ? setTimeout(fn, 16) : requestAnimationFrame(fn));
+// dev presets tick on a timer so a hidden window keeps running; &raf uses real frames (measuring)
+const TIMER = DEV && !new URLSearchParams(location.search).has('raf');
+const raf = (fn) => (TIMER ? setTimeout(fn, 16) : requestAnimationFrame(fn));
 const nextFrame = () => new Promise((r) => raf(() => r()));
 
 const INTRO = [

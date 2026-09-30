@@ -228,7 +228,6 @@ export class Story {
     G.sketches ||= new Sketchbook();
     // saves from before the sketchbook: whoever started Mora's memories already has it
     if (this.quests.q_memory && !this.flag('sketchbook')) this.flags.sketchbook = true;
-    if (this.flag('sketchbook')) G.sketches.prepare();
     // restore lantern states handled by game
     this.run().catch((e) => console.error('story', e));
     this.lakeSong().catch((e) => console.error('lake', e));
@@ -1310,7 +1309,6 @@ export class Story {
     });
     G.player.heal(G.player.maxHp);
     this.set('sketchbook');
-    G.sketches.prepare();
     G.hud.banner('모라의 스케치북', '옛 그림이 담긴 책', `그림 속 자리에 서서 같은 곳을 바라보자<br><small>${KBD('J')} 여정 → 기억에서 볼 수 있다</small>`, '#c9a8ff', 5200);
     this.startMemoryQuest();
   }

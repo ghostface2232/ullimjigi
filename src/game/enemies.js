@@ -668,6 +668,8 @@ export class Enemy {
 
   remove() {
     G.scene.remove(this.root);
+    // free the per-enemy bone textures now rather than whenever the wrappers get collected
+    this.root.traverse((o) => { if (o.isSkinnedMesh && o.skeleton && o.skeleton.boneTexture) o.skeleton.dispose(); });
     this.alive = false;
     this.releaseToken();
     const i = G.enemies.list.indexOf(this);

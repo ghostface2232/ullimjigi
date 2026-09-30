@@ -23,6 +23,7 @@ uniform float uFogDensity;
 uniform vec2 uViewport;
 uniform sampler2D uHeightTex;
 uniform vec4 uHeightP;
+uniform float uAdditive;
 varying vec4 vColor;
 varying float vShape;
 varying float vFog;
@@ -61,6 +62,10 @@ void main(){
   vColor.a *= mix(0.4, 1.0, smoothstep(-aSize * 0.2, aSize * 0.3, above));
   // tiny sprites (sub-pixel) would shimmer; fade them instead
   vColor.a *= smoothstep(0.6, 2.0, size);
+  // a sprite that would come out invisible (sub-pixel, or faded right in front of the lens,
+  // the same fade the fragment shader applies) is dropped here instead of being shaded
+  float nearK = uAdditive > 0.5 ? smoothstep(0.3, 2.0, dd) : smoothstep(0.2, 1.2, dd);
+  if (vColor.a * nearK < 0.001) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; }
 }`;
 
 const FS = /* glsl */ `
@@ -68,6 +73,7 @@ uniform vec3 uFogColor;
 uniform float uAdditive;
 uniform float uOcc;
 uniform float uTime;
+uniform sampler2D uNoise;
 varying vec4 vColor;
 varying float vShape;
 varying float vFog;
@@ -76,8 +82,9 @@ varying vec2 vDir;
 varying float vStretch;
 varying vec2 vMisc;
 float h21(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+// value noise, one lattice cell per unit: the shared noise texture's A channel is the same
+// smoothstep-interpolated value noise with 32 cells per tile, so one fetch replaces four hashes
+float vn(vec2 p){ return textureLod(uNoise, p * (1.0 / 32.0), 0.0).a; }
 float fbm(vec2 p){ return vn(p) * 0.55 + vn(p * 2.07 + 3.1) * 0.3 + vn(p * 4.3 + 7.7) * 0.15; }
 void main(){
   vec2 p0 = gl_PointCoord * 2.0 - 1.0;
@@ -245,6 +252,7 @@ export class Particles {
         uHeightTex: U.heightTex,
         uHeightP: U.heightP,
         uTime: U.time,
+        uNoise: U.noise,
       },
       transparent: true, depthWrite: false,
       blending: additive ? THREE.CustomBlending : THREE.NormalBlending,

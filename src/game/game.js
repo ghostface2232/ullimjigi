@@ -24,7 +24,9 @@ const SAVE_KEY = 'ullimjigi_save_v1';
 const SET_KEY = 'ullimjigi_settings';
 const $ = (s) => document.querySelector(s);
 const DEV = new URLSearchParams(location.search).has('dev');
-const raf = (fn) => (DEV ? setTimeout(fn, 16) : requestAnimationFrame(fn));
+// dev presets tick on a timer so a hidden window keeps running; &raf uses real frames (measuring)
+const TIMER = DEV && !new URLSearchParams(location.search).has('raf');
+const raf = (fn) => (TIMER ? setTimeout(fn, 16) : requestAnimationFrame(fn));
 const nextFrame = () => new Promise((r) => raf(() => r()));
 
 const INTRO = [
@@ -156,6 +158,22 @@ export class Game {
     const bm = G.vfx.beam('arcane'); bm.done = true;
     G.vfx.rings.forEach((r) => (r.m.visible = true));
     G.scene.add(grp);
+    G.world.props.update(G.camera);
+    try { await this.compileScene(); } catch (_) { /* ignore */ }
+    G.vfx.rings.forEach((r) => (r.m.visible = false));
+    G.scene.remove(grp);
+    G.vfx.disposeOrb(orb);
+  }
+
+  // Compile every material in the scene so nothing compiles on first sight mid-play.
+  // compile() only visits visible objects, so everything hidden (the player before the intro,
+  // pooled effects, prop batches, characters placed by the story) is shown just for the
+  // synchronous visit and hidden again before any frame is drawn; the returned promise only
+  // waits for the driver to finish linking in the background. Lights stay as they are:
+  // their count is part of every program.
+  compileScene() {
+    const hidden = [];
+    G.scene.traverse((o) => { if (!o.visible && !o.isLight) { hidden.push(o); o.visible = true; } });
     // compile against the HDR scene target: programs are keyed by output colour space /
     // tone mapping, and the frame is drawn into the composer's target, not the canvas
     const R = G.renderer.renderer, prevRT = R.getRenderTarget();
@@ -164,10 +182,8 @@ export class Game {
     let pr = null;
     try { pr = R.compileAsync(G.scene, G.camera); } catch (_) { try { R.compile(G.scene, G.camera); } catch (e) { /* ignore */ } }
     R.setRenderTarget(prevRT);
-    try { if (pr) await pr; } catch (_) { /* ignore */ }
-    G.vfx.rings.forEach((r) => (r.m.visible = false));
-    G.scene.remove(grp);
-    G.vfx.disposeOrb(orb);
+    hidden.forEach((o) => (o.visible = false));
+    return pr || Promise.resolve();
   }
 
   // ------------------------------------------------------------ UI
@@ -363,6 +379,8 @@ export class Game {
       G.player.teleport(x, z, d.player.yaw ?? 0);
     } else G.player.teleport(POI.spawn.x, POI.spawn.z, 2.2);
     story.start();
+    // the story has placed its people and animals: compile whatever is new among them
+    this.compileScene().catch(() => {});
     G.input.requestLock();
     if (d) {
       const f = $('#fade'); f.style.transition = 'opacity 1.2s'; f.style.opacity = 0;
@@ -574,6 +592,7 @@ export class Game {
         if (G.story) G.story.update(dt);
       }
       G.dialogue.update(raw);
+      if (G.sketches) G.sketches.pump();
       this.updateInteract();
       this.combatHold -= dt;
     }

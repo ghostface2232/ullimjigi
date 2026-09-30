@@ -43,7 +43,7 @@ export class HUD {
       qtTitle: $('.qt-title'), qtObj: $('.qt-obj'), crosshair: $('#crosshair'), lock: $('#lock-marker'),
       stamina: $('#stamina'), stFill: $('.st-fill'), elements: $('#elements'), weaveSlot: $('#weave-slot'),
       weaveIcons: $('.weave-icons'), weaveName: $('.weave-name'), weaveCd: $('.weave-cd'), heavyName: $('#heavy-slot .hn'), heavyCd: $('.heavy-cd'),
-      boss: $('#boss-bar'), bossName: $('.boss-name'), bossFill: $('.boss-fill'), bossGhost: $('.boss-ghost'),
+      boss: $('#boss-bar'), bossName: $('.boss-name'), bossFill: $('.boss-fill'), bossGhost: $('.boss-ghost'), bossTrack: $('.boss-track'), bossBreak: $('.boss-break'), bossBreakFill: $('.boss-break-fill'),
       bars: $('#enemy-bars'), dmg: $('#dmg-layer'), markers: $('#markers-layer'), prompt: $('#prompt'), promptT: $('#prompt .pt'),
       hint: $('#hint'), area: $('#area-title'), banner: $('#banner'), toasts: $('#toasts'), comp: $('#companion-line'), barks: $('#barks'),
       sp: $('#sp-badge'), ult: $('#ult-slot'), ultName: $('#ult-slot .un'), ultGauge: $('#ult-slot .ug'),
@@ -431,6 +431,15 @@ export class HUD {
     if (!target) { this.el.boss.classList.add('hidden'); return; }
     this.el.boss.classList.remove('hidden');
     this.el.bossName.textContent = name || target.name;
+    // phase thresholds as notches on the health bar
+    for (const n of this.el.bossTrack.querySelectorAll('.boss-notch')) n.remove();
+    for (const a of target.phaseAt || []) {
+      const n = document.createElement('i'); n.className = 'boss-notch'; n.style.left = a * 100 + '%';
+      this.el.bossTrack.appendChild(n);
+    }
+    this.el.bossBreak.classList.toggle('hidden', !target.brk);
+    this.bossBrk = null;
+    if (target.brk && G.story && G.story.once('hint_break')) this.hint('<b>무너짐</b> — 보스 체력 아래의 금빛 줄<br><small>강한 마법과 <b>원소 반응</b>으로 채우면 보스가 무너져 잠시 무방비가 된다. 한동안 맞히지 않으면 줄어든다</small>', 9);
   }
 
   // ---------------- mana bar ----------------
@@ -560,6 +569,12 @@ export class HUD {
       const t = this.bossTarget;
       const f = Math.max(0, t.hp / t.maxHp) * 100;
       this.el.bossFill.style.width = f + '%'; this.el.bossGhost.style.width = f + '%';
+      const b = t.brk;
+      if (b) {
+        const st = b.down > 0 ? 'down' : b.lock > 0 ? 'lock' : '';
+        this.el.bossBreakFill.style.width = (b.v / 100) * 100 + '%';
+        if (this.bossBrk !== st) { this.bossBrk = st; this.el.bossBreak.classList.toggle('down', st === 'down'); this.el.bossBreak.classList.toggle('lock', st === 'lock'); }
+      }
       if (!t.alive && t.hp <= 0) setTimeout(() => this.bossBar(null), 1500);
     }
     // floats

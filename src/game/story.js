@@ -674,7 +674,7 @@ export class Story {
     if (!this.flag('f_boss')) {
       await this.bossFight(() => {
         const lv = G.enemies.levelFor(1) + 1;
-        const b = G.enemies.spawn('bruteFrost', V(S.pos.x, 0, S.pos.z + 2.2), lv, { elite: true, name: '서리무덤 파수꾼', leash: 999, hpMul: 1.6 });
+        const b = G.enemies.spawn('bruteFrost', V(S.pos.x, 0, S.pos.z + 2.2), lv, { elite: true, name: '서리무덤 파수꾼', leash: 999, hpMul: 2.6, brk: true });
         b.aggro();
         G.vfx.burst(b.center(), 'frostmist', 30, { size: 2 }); G.vfx.burst(b.center(), 'hush', 20, { size: 1.5 });
         G.audio.play('boss_roar', { pos: b.pos });
@@ -1520,7 +1520,12 @@ export class Story {
     if (L[r] && this.once('react_' + r)) this.cSay(L[r]);
   }
   onBossPhase(b, n) {
+    if (b.type === 'bruteFrost') {
+      if (n === 2) this.cSay('놈이 한기를 뿜는다! 발밑이 하얘지면 순간이동으로 빠져나오거라!');
+      if (n === 3) this.cSay('두 겹이다! 첫 고리를 피했다고 방심 말거라. 돌진한 뒤엔 곧장 내려찍는다!');
+    }
     if (b.type === 'knight' && n === 2) { G.hud.bark({ headPos: () => b.center().add(V(0, 1.5, 0)), speaker: 'kaelShadow' }, '모… 라…'); this.cSay('놈이 번개를 부른다! 발밑을 조심하거라!'); }
+    if (b.type === 'knight' && n === 3) { G.hud.bark({ headPos: () => b.center().add(V(0, 1.5, 0)), speaker: 'kaelShadow' }, '…아직… 지킬 것이…'); this.cSay('칼이 한 번 더 이어진다! 네 번째 베기까지 보고 움직이거라!'); }
     if (b.type === 'heart') {
       const S = this.npc('seha'), K = this.npc('kael');
       if (n === 2) { if (S) G.hud.bark(S, '{n}, 지치지 마! 네 노래는 혼자가 아니야!'); this.cSay('놈이 허깨비들을 부른다! 결계부터 깨라!'); }
@@ -1530,6 +1535,12 @@ export class Story {
         setTimeout(() => this.cSay('귀 기울이지 마라! 저건 슬픔이 하는 말이다!'), 5200);
       }
     }
+  }
+  // a boss's break meter filled (see BREAK in enemies.js)
+  onBossBreak(b) {
+    if (this.once('break1')) this.cSay('무너졌다! 지금이다, 가진 노래를 전부 쏟아붓거라!');
+    else if (Math.random() < 0.4) this.cSay(pick(['또 무너졌구나! 몰아치거라!', '옳지, 반응을 섞으니 버티질 못하는구나!', '지금이다, 꼬마!']));
+    void b;
   }
   onHeartExposed() { const S = this.npc('seha'); if (S && this.once('exposed1')) G.hud.bark(S, '지금이야! 가진 노래를 전부!'); else this.cSay('심장이 드러났다! 지금이다!'); }
 

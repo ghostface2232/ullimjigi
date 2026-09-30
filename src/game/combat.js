@@ -336,7 +336,7 @@ export class Combat {
     // resistances & armor
     dmg *= t.resist?.[el] ?? 1;
     if (t.armor && st.armorBroken <= 0 && !reaction) { dmg *= 1 - t.armor; if (h.source === 'player') A.play('hit_armor', { pos: c }); }
-    if (t.vulnerable) dmg *= 1.5;
+    if (t.vulnerable) dmg *= t.brk && t.brk.down > 0 ? 1.75 : 1.5; // a boss's collapse (break meter) opens wider
     let crit = false;
     if (h.source === 'player' && rand() < 0.08) { crit = true; dmg *= 1.6; }
     dmg = Math.max(1, Math.round(dmg * randRange(0.94, 1.06)));

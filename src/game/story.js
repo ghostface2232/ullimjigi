@@ -7,6 +7,7 @@ import { makeHumanoid, CHAR } from './characters.js';
 import { POI, regionAt } from '../world/layout.js';
 import { MEMORIES } from '../world/world.js';
 import { THEME_NOTES } from '../core/music.js';
+import { Sketchbook } from './sketches.js';
 import { PAL } from '../render/vfx.js';
 import { HEAVY } from './spells.js';
 import { SIG, WEAVE_NODE } from './skills.js';
@@ -224,6 +225,10 @@ export class Story {
     this.setupNPCs();
     G.world.sky.hush = this.hushBase;
     G.renderer.grade.uniforms.uSat.value = satFor(this.bellsRung());
+    G.sketches ||= new Sketchbook();
+    // saves from before the sketchbook: whoever started Mora's memories already has it
+    if (this.quests.q_memory && !this.flag('sketchbook')) this.flags.sketchbook = true;
+    if (this.flag('sketchbook')) G.sketches.prepare();
     // restore lantern states handled by game
     this.run().catch((e) => console.error('story', e));
     this.lakeSong().catch((e) => console.error('lake', e));
@@ -275,6 +280,7 @@ export class Story {
     const bells = this.bellsRung(), gu = G.renderer.grade.uniforms;
     gu.uSat.value = lerp(gu.uSat.value, satFor(bells), Math.min(1, dt * 0.35));
     G.music.memory = bells;
+    if (G.sketches) G.sketches.update(dt);
     // seeds
     for (const s of G.world.seeds) {
       if (s.taken) continue;
@@ -786,7 +792,8 @@ export class Story {
     this.set(el + 'Bell');
     const mem = el === 'frost' ? 'musicbox' : 'badge';
     const m = G.world.memoryObjs[mem];
-    if (m && !this.memories[mem]) { m.g.visible = true; G.hud.toast('어딘가에서 희미하게 반짝이는 것이 있다…'); }
+    // its sketchbook page can now be found (the item itself shows once the page is matched)
+    if (m && !this.memories[mem] && this.flag('sketchbook')) G.hud.toast('스케치북의 흐릿하던 그림 한 장이 또렷해졌다…');
     this.updateBells();
     G.game.save(true);
   }
@@ -1297,20 +1304,26 @@ export class Story {
       await this.say('danbi', '할머니는 요새 통 빵 사러 안 오시더라. 매일 새벽 종 치기 전에 제일 먼저 오시던 양반이…');
       await this.say('danbi', '참, 할머니가 예전에 그러시더라. 젊을 적 소중한 걸 골짜기 여기저기에 두고 왔다고.');
       await this.say('danbi', '"잊어버리지 않으려고 일부러 두고 왔지" 하시면서 웃으시던데. 무슨 말인지 원…');
+      await this.say('danbi', '아, 그리고 이거. 할머니가 예전에 맡겨 두신 스케치북이야. 젊을 적에 골짜기를 그리셨대.', { gesture: 'handToChest' });
+      await this.say('danbi', '그림 속 자리에 가서 한번 서 봐. 그림이랑 겹쳐 보이는 게 있을지도 모르지.');
       await this.say('danbi', '혹시 찾게 되면 할머니께 가져다드려. 기억이란 게, 물건을 보면 돌아오기도 하거든. 자, 꿀빵이나 하나 먹고 가!');
     });
     G.player.heal(G.player.maxHp);
+    this.set('sketchbook');
+    G.sketches.prepare();
+    G.hud.banner('모라의 스케치북', '옛 그림이 담긴 책', `그림 속 자리에 서서 같은 곳을 바라보자<br><small>${KBD('J')} 여정 → 기억에서 볼 수 있다</small>`, '#c9a8ff', 5200);
     this.startMemoryQuest();
   }
   startMemoryQuest() {
     if (this.quests.q_memory) return;
-    this.quest('q_memory', '모라의 기억', '모라 할머니는 젊은 날 소중한 것들을 골짜기 곳곳에 두고 왔다고 한다. 찾아서 할머니께 가져다드리자. 반짝이는 무언가를 따라가 보자.', 'side');
+    this.quest('q_memory', '모라의 기억', '모라 할머니는 젊은 날 소중한 것들을 골짜기 곳곳에 두고 왔다고 한다. 할머니의 옛 스케치북 속 자리에 서서 같은 곳을 바라보면, 두고 온 것이 보일지도 모른다. 찾으면 할머니께 가져다드리자.', 'side');
     this.updateMemoryObj();
   }
   updateMemoryObj() {
     const n = Object.values(this.memories).filter((v) => v === 'given').length;
     const have = Object.values(this.memories).filter((v) => v === 'have').length;
-    this.obj('q_memory', have ? `모라에게 기억의 물건 전하기 (${have}개 가지고 있음)` : `기억의 물건 찾기 (${n}/4 전함)`, have ? [{ x: -20, z: 132, h: 2.4 }] : []);
+    const sk = G.sketches && this.flag('sketchbook') ? ` · 스케치 ${G.sketches.count()}/6` : '';
+    this.obj('q_memory', have ? `모라에게 기억의 물건 전하기 (${have}개 가지고 있음)` : `스케치 속 자리 찾기 (물건 ${n}/4 전함${sk})`, have ? [{ x: -20, z: 132, h: 2.4 }] : []);
   }
   takeMemory(m) {
     m.taken = true; m.g.visible = false;

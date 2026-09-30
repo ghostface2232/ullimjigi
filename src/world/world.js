@@ -44,8 +44,8 @@ export const SEEDS = [
 export const MEMORIES = {
   hairpin: { name: '은빛 머리핀', x: -47, z: 80, desc: '작은 은방울꽃이 새겨진 머리핀. 끝이 조금 휘어 있다.' },
   book: { name: '눌러 말린 꽃 책', x: 81.5, z: 66, desc: '들꽃이 곱게 눌린 낡은 책. 첫 장에 두 사람의 이름이 있었던 자국.' },
-  musicbox: { name: '서리 오르골', x: -34, z: -163, desc: '태엽을 감으면 익숙한 노래가 흘러나오는 작은 오르골.', hidden: true },
-  badge: { name: '기사의 휘장', x: -163, z: -30, desc: '번개 문양이 새겨진 청동 휘장. 뒷면에 누군가 긁어 쓴 글씨.', hidden: true },
+  musicbox: { name: '서리 오르골', x: -34, z: -163, desc: '태엽을 감으면 익숙한 노래가 흘러나오는 작은 오르골.' },
+  badge: { name: '기사의 휘장', x: -163, z: -30, desc: '번개 문양이 새겨진 청동 휘장. 뒷면에 누군가 긁어 쓴 글씨.' },
 };
 
 export class World {
@@ -718,7 +718,7 @@ export class World {
       g.add(core);
       const halo = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.03, 6, 20), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.8, 1.6, 2.4) }));
       g.add(halo);
-      g.visible = !m.hidden;
+      g.visible = false; // shown once its sketchbook page is matched (game/sketches.js)
       this.scene.add(g);
       this.memoryObjs[id] = { id, ...m, g, core, halo, taken: false, pos: new THREE.Vector3(m.x, y + 0.5, m.z) };
     }

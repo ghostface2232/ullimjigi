@@ -69,6 +69,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | | `enemybodies.js` · `enemycreatures.js` | 적 몸체: 사람형 리그 위(허깨비·돌무덤·기사·방패지기·사수)와 생물 리그(울음탈·잿물·재나방·뿌리손·망루지기) |
 | | `npcs.js` · `dialogue.js` | NPC와 보름(동료), 대화창(타자 효과·목소리·선택지) |
 | | `story.js` | 장별 스크립트, 퀘스트, 곁가지, NPC 대화 분기, 이벤트 훅 |
+| | `sketches.js` | 모라의 스케치북: 전망점에서 장면을 그려 연필 그림으로 바꾸기(`ink`), 시점 맞추기(`align`), 여정의 스케치 목록 |
 | | `hud.js` | HUD 전반, 지도, 여정·마법서(반응 도감), 울림 나무 화면 |
 | | `minimap.js` | 왼쪽 아래 원형 미니맵(북쪽 고정, 시야 부채꼴, 나침반 테두리, 목표·등석·마을 사람·추격 중인 적) |
 
@@ -213,6 +214,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
   - `this.bossFight(make, center, radius, tip)`: 보스전. 쓰러지면 보스를 초기화하고, 다시 다가가기 전에 보름이 `tip`을 말합니다.
 - 체크포인트: `set()`, `done()`, 기억·씨앗·보고 같은 진행이 일어나면 `this.dirty`가 서고, 플레이어가 전투 밖·지상·자유 상태가 되는 순간 자동 저장합니다. 새 진행 지점을 만들면 `this.dirty = true`를 잊지 마세요.
 - **종과 세계의 기억**: `Story.bellsRung()`(0~4: 첫째 종 `v_wind`, `frostBell`, `stormBell`, 합창 `m_choir`)이 색 보정 채도(`satFor`, 0.80 → 1.12, 종이 울린 뒤 몇 초에 걸쳐 돌아옴), 새소리 빈도(`Audio.updateAmbience`의 `bells`), 들판·밤·마을 음악의 악기 층(`Music.memory`)을 정합니다. 연출만 바뀌고 규칙은 없습니다.
+- **모라의 스케치북**(`game/sketches.js`, `G.sketches`): 단비가 건네면 플래그 `sketchbook`. 각 쪽(`SKETCHES`)은 전망점 `eye`에서 `look`을 바라본 장면을 렌더 타깃에 그려 CPU로 연필 선·빗금으로 바꾼 이미지입니다(쪽당 수 ms, 한 프레임에 하나). 종 뒤에 열리는 쪽(`after`)은 봉인이 그림에 남지 않도록 열린 뒤에 그립니다. 게임 카메라가 전망점 7m 안에서 같은 방향(방위 ±20°, 기울기는 두 배 관대)을 보면 그림이 화면에 겹쳐 보이고(`#sketch-view`, 곱하기 합성), 0.7초 유지하면 쪽의 기억이 열려 `sk_<id>`가 저장됩니다. 기억의 물건 4개는 해당 쪽을 맞추기 전까지 보이지 않습니다. 전망점을 옮기면 여정에서 그림을 보고 구도를 확인하세요.
 - 보름의 `cSay(text, onceKey)` 1회성 대사는 `Story.saidOnce`에 `c:` 접두어로 저장됩니다.
 - NPC에게 말을 걸면 항상 `talkNPC(id)`로 들어옵니다. 메인 스토리 → 곁가지 → 일상 대화 순으로 분기합니다.
 - 대사 표기:

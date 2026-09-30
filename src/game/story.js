@@ -333,7 +333,7 @@ export class Story {
         await this.say('mora', '그럼 지팡이를 들어 보렴. 마음속으로 조용히… 네 안에서 울리는 소리를 느껴 보는 거야.');
         await this.say('mora', '그 소리를 저 *떠 있는 수정*들에게 보내 주렴. 세 개 모두.');
       });
-      this.hint(`${KBD('마우스')} 조준 · ${KBD('좌클릭')} 비전 화살 — 누르고 있으면 연사`, 10);
+      this.hint(`${KBD('마우스')} 조준 · ${KBD('좌클릭')} 비전 화살 — 누르고 있다가 떼면 모아 쏜다`, 10);
       let n = 0;
       for (const t of W.training.targets) {
         t.onHit = () => {

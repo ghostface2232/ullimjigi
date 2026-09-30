@@ -55,7 +55,8 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | `game/` | `game.js` | 부팅, 타이틀, 메인 루프, 메뉴, 저장·불러오기, 사망, 등석, 음악 선택 |
 | | `player.js` | 이동(달리기·순간이동·점프·활공·수영), 시전, 능력치 |
 | | `camera.js` | 어깨 너머 카메라, 지형 충돌, 흔들림(부드러운 노이즈+회전), 방향성 반동(`kick`·`impact`), FOV 펀치, 대상 고정, 컷씬 카메라. 조준은 흔들림이 빠진 `aimRay()`를 씁니다 |
-| | `spells.js` | 기본 마법, 고유 마법, 엮기, 궁극기, 투사체, 지속 효과 영역(`field`·`vortex`·`wave`) |
+| | `spells.js` | 기본 마법, 모아 쏘기(`CHARGED`), 고유 마법, 엮기, 궁극기, 투사체, 지속 효과 영역(`field`·`vortex`·`wave`), 착탄 훅 `touch()` |
+| | `fields.js` | 땅의 흔적(불길·서리밭·물웅덩이·김·대전된 땅과 그 변형): 생성·합치기(`add`), 두 번째 속성에 의한 변화(`infuse`→`mix`, `FIELD_MIX`), 소용돌이 연결(`bindWhirl`), 틱 효과·연출 |
 | | `combat.js` | 피해 계산, 상태 이상, 원소 반응(`pickReaction`), 연쇄 반응, 울림 나무 수정치 |
 | | `skills.js` | 울림 나무(스킬 트리) 데이터 `TREES`, 울림점, 궁극기 게이지, 반응 도감 |
 | | `enemies.js` | 적 정의(`DEF`), 레벨 단계, AI 클래스, 보스, 무리(`CAMPS`), 드롭 |
@@ -88,10 +89,13 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 
 
 ### 이펙트와 소리
-- 이펙트는 가능하면 풀을 쓰는 `G.vfx` 함수로 만듭니다. 새 `Mesh`·재질을 매번 만들면 첫 사용 때 셰이더 컴파일로 끊기니, 새 부품을 풀에 넣었다면 `VFX.prewarm()`에도 추가하세요.
+- 이펙트는 가능하면 풀을 쓰는 `G.vfx` 함수로 만듭니다. 새 `Mesh`·재질을 매번 만들면 첫 사용 때 셰이더 컴파일로 끊기니, 새 부품을 풀에 넣었다면 `VFX.prewarm()`에도 추가하세요. 다른 파일이 가진 풀 재질은 `G.vfx.keep(mat, geo)`로 등록하면 prewarm에서 함께 컴파일됩니다(예: 해일 물벽).
+- **재질을 쓰고 버리는 효과**(룬 원진, 구체 오브, 회오리, 광선 등)는 같은 프로그램을 쓰는 재질이 모두 dispose되면 three.js가 셰이더 프로그램을 해제해서, 다음 시전 때 다시 컴파일됩니다. 그래서 `prewarm()`이 버리지 않는 견본 재질(`_templates`)을 컴파일해 프로그램을 붙잡아 둡니다. 이런 효과를 새로 만들면 견본도 추가하세요.
+- 프로그램은 출력 색공간·톤매핑별로 따로 만들어집니다. 장면은 컴포저의 HDR 렌더 타깃(선형)에 그려지므로 **미리 컴파일할 때는 `composer.readBuffer`를 렌더 타깃으로 잡고** 컴파일해야 합니다(`Game.boot`의 compileAsync, `VFX.prewarm`). 캔버스(sRGB) 기준으로 컴파일하면 쓰이지 않는 프로그램 한 벌이 더 생기고 실제 사용 때 다시 컴파일됩니다.
 - 구체(`sphere(look, pos, o)`)는 `dur <= 0`이면 `end()`를 부를 때까지 유지되고, `follow`에 벡터를 주면 따라갑니다. 투사체 핵은 `mini: true` 풀(16개)을 쓰고, 모자라면 프레넬 구로 대신합니다.
 - 화면 굴절(`G.vfx.distort`)은 별도 장면에 그려 반해상도 목표에 오프셋을 쓰고, 활성 물체가 없으면 패스가 꺼집니다. 그래픽 품질 '낮음'에서는 만들지 않습니다.
 - 고유 마법은 `WINDUP`(속성별 0.1~0.2초) 동안 지팡이 끝에 힘을 모은 뒤(`charge_<속성>` 소리, `vfx.charge`) 그 순간의 조준점으로 나갑니다(`Spells.heavyRelease`).
+- 기본 마법 입력은 `player.basicInput()`: 클릭 = 기본 마법(재사용 중 클릭은 0.2초 버퍼), 0.26초 넘게 누르면 모으기 시작(`vfx.charge`, `charge_hold`), `CHARGE_T`(0.75초)가 차면 `charge_ready`, 떼면 `player.castCharged()` → `Spells.charged()`. 조준점 고리는 `HUD.chargeRing`.
 - 계속 나는 소리는 `G.audio.loop(name, { pos, v, max })`로 만들고 매 프레임 `set(pos)`, 끝날 때 `stop(fade)`를 부릅니다. 엔진이 준비되지 않았으면 아무것도 하지 않는 핸들이 돌아옵니다. `spells.js`의 `sndLoop()`를 쓰면 됩니다.
 - 큰 마법의 마무리 소리는 `blast_<속성>`, 궁극기는 `ult_boom`(속성을 주면 `blast_<속성>`을 겹침)입니다. 같은 순간에 둘을 겹치지 않도록 `Spells.explode(..., { quiet: true })`를 쓰세요.
 ### 정적 메시 합치기 (`World.bakeStatics`)
@@ -123,6 +127,13 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - **물리 소품**(`world/objects.js`, `G.world.objects`): 화약 통·상자·바위를 종류별 InstancedMesh 하나로 그립니다. 각 물체는 `world.targets`에 등록되어(`id: 'prop'`) 모든 마법의 `baseHit(el, src)`를 받습니다. 원소별 밀기(`PUSH`), 화염·번개 → 화약 통 도화선(1.1초, 연쇄 0.28초) → `Spells.explode` 반경 5.2, 상자는 3번 맞으면 부서져 마나 방울(불에 타면 3초 뒤 재), 바위는 경사를 따라 구르며 적을 치고 물에 빠지면 가라앉습니다. 멈추면 잠들어 계산하지 않고, 사라진 것은 플레이어가 45m 밖에 있을 때 제자리에 다시 생깁니다. 배치는 `place()`(야영지마다 통 2·상자 1·오르막 바위 1).
 - **환경 디스패처**(`G.env`): 마법이 착탄하면 `G.env.onSpell({ el, pos, r, kind, source })`를 부릅니다. 화염은 풀에 불을 붙이고, 물·서리는 끄고, 바람은 불길을 바람 방향으로 번지게, 번개는 가끔 불씨를 만듭니다. 새 환경 규칙은 여기에 추가하세요.
 
+### 땅의 흔적과 착탄 훅
+- 마법이 땅이나 영역에 닿는 지점에서는 `G.spells.touch(el, pos, r, kind)`를 부르세요. `kind`는 `'bolt' | 'heavy' | 'weave' | 'ult' | 'charged'`. 이 한 번의 호출이 ① 겹친 땅의 흔적을 변화시키고(`Fields.infuse`) ② 월드 시스템 훅 `G.env?.onSpell({ el, pos, r, kind, source })`를 부릅니다(`pos`는 착탄 지점 아래 지면, `charged`는 `'bolt'`로 전달). 흔적은 살아 있는 동안 0.5초마다 `kind: 'field'`로 같은 훅을 부릅니다. `G.env`가 없으면 아무 일도 없습니다.
+- `explode()`·`strike()`·투사체 `impact()`·`wave()`는 이미 `touch()`를 부릅니다. `explode(..., { kind })`, `strike(..., { kind, charge: { r, dur } })`로 종류와 대전된 땅을 지정합니다. `onImpact`가 있는 투사체는 `impact()`를 거치지 않으므로 콜백 안에서 `explode()`나 `touch()`를 부르세요.
+- 흔적 만들기: `G.spells.fields.add(kind, pos, { r, dur, dmg, maxR, noGround })` (`kind`: `blaze`·`plasma`·`rime`·`frostfog`·`puddle`·`steam`·`charged`·`shockfog`·`shockwater`). 같은 종류가 가까이 있으면 합쳐지고, 12개가 넘으면 오래된 것부터 지웁니다. 반응 뒤의 흔적은 `Combat.leave(kind, target, o)`로 발밑에 깝니다.
+- 새 변화는 `fields.js`의 `mix()` `switch`와 `FIELD_MIX`(도감 이름·설명)에 함께 추가합니다. 흔적 틱 피해는 `source: 'dot'`(숫자는 `hud.damage(..., small)`로 직접)라 적중 정지·반동·게이지가 없습니다.
+- 강한 비전(`kind !== 'bolt'`)은 흔적을 터뜨립니다(공명 폭발). 비전 화살은 공짜라 흔적을 건드리지 않습니다.
+
 ### 전투
 - 모든 피해는 `G.combat.hit(target, h)`로 넣습니다. `h`의 주요 필드:
   - 필수: `dmg`, `el`
@@ -130,6 +141,8 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
   - `source`: `'player'`(치명타·피드백 있음), `'enemy'`, `'dot'`(숫자만), `'env'`, `'fall'`
 - 반응은 `Combat.resolve` 한 곳에서 처리합니다. 연쇄 피해에는 `noReact: true`를 붙여 무한 연쇄를 막으세요.
 - 적이 아닌 대상(예: 최종 보스의 결계판 `Plate`)은 `receive(h)`를 구현하면 `hit()`이 그쪽으로 넘깁니다.
+- 적중 정지는 `G.hitstop`에 직접 쓰지 말고 `G.combat.stop(sec, force)`를 쓰세요. 한 프레임 안에서는 가장 센 값 + 나머지의 30%(최대 0.15초), 0.04초 미만은 0.3초에 한 번으로 제한됩니다(`force`로 무시). 궁극기 시전처럼 연출상 반드시 멈춰야 하는 곳만 직접 씁니다.
+- 빙결이 저절로 풀리면 `st.thaw`(2.5초, 보스 5초) 동안 한기로는 다시 얼지 않습니다. `freeze()`를 직접 부르는 반응은 예외입니다.
 
 ### 울림 나무 (스킬)
 - 노드는 `skills.js`의 `TREES`에 데이터로 추가합니다: `{ id, name, tier, col, max, cost, req, kind, desc(r) }`. `req`는 **하나만** 익혀도 되는 선행 목록, `tier`는 나무에 쓴 점수 조건(`TIER_GATE = [0, 1, 2, 4, 7]`)과 화면 위치를, `col`(0~2)은 가로 위치를 정합니다. 속성 나무는 5단(0~4), 조화의 나무는 4단(0~3)이고 화면은 나무의 `maxTier`에 맞춰 배치됩니다. 조화 노드는 `els: [속성, 속성]`과 `req: ['h_weave']`를 씁니다.
@@ -214,6 +227,8 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 `window.__G`로 게임 상태에 접근할 수 있습니다.
 - **입력 흉내**: `G.input.keys.add('KeyW')`(누르고 있기), `G.input.pressed.add('KeyE')`(한 번 누르기), `G.input.mouse.pressed.add(0)`(클릭)
 - **조준**: `G.player.lockTarget = 적`으로 대상을 고정하면 자동으로 조준됩니다.
+- **흔적**: `G.spells.fields.add('puddle', 위치, { r: 3, dur: 8 })` 뒤 `G.spells.touch('storm', 위치, 1)`로 변화를 확인합니다. `G.spells.fields.list`로 살아 있는 흔적, `G.env = { onSpell: (o) => console.log(o) }`로 월드 훅 호출을 볼 수 있습니다.
+- **모아 쏘기**: `G.input.mouse.pressed.add(0); G.input.mouse.buttons.add(0)` 뒤 1초 기다렸다가 `G.input.mouse.buttons.delete(0)`, 또는 바로 `G.spells.charged(속성, G.player.staffTip(), 조준점, G.player.power(), G.player)`.
 - **스킬**: `G.skills.learn('wa_ult')`, `G.skills.grant('i_sig')`, `G.skills.points += 10`, `G.skills.gauge = 100` 후 `G.player.castUlt()`. 울림 가속은 `G.player.tryBlink(); G.player.damage(1)`로 확인합니다.
 - **성능**: `G.game.perf`에서 프레임별 갱신·렌더 시간, 드로우콜, 삼각형 수를 봅니다.
 - **스크립트 도구 제한**: 브라우저 자동화 도구는 한 번에 약 45초까지만 실행됩니다. 긴 전투 테스트는 백그라운드 루프로 돌리고 결과를 `window`에 담아 따로 확인하세요.

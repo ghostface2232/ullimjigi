@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { G, ELEMENTS } from '../core/context.js';
 import { makeHumanoid, CHAR } from './characters.js';
-import { BOLT, HEAVY, WEAVE_COST, WEAVE_CD, weaveInfo } from './spells.js';
+import { BOLT, HEAVY, WEAVE_COST, WEAVE_CD, CHARGED, CHARGE_T, weaveInfo } from './spells.js';
 import { ULT_COST, SIG, WEAVE_NODE } from './skills.js';
 import { clamp, damp, angleDamp, lerp, randRange, josa } from '../core/util.js';
 import { PAL } from '../render/vfx.js';
@@ -32,6 +32,7 @@ export class Player {
     this.element = 'arcane'; this.prevElement = null;
     this.unlocked = new Set(['arcane']);
     this.cd = { bolt: 0, heavy: 0, weave: 0 };
+    this.lmbT = 0; this.boltBuf = 0; this.charge = null; // basic spell: tap = bolt, hold = charged shot
     this.castHold = 0; this.manaDelay = 0;
     this.manaLowArmed = true; this.manaFullArmed = false; this.manaFullT = -99; this.manaMuteT = -99; this.lockedMsgT = -99;
     this.regenRate = 0;
@@ -180,13 +181,13 @@ export class Player {
       }
       if (input.hit('KeyT') || input.mHit(1)) this.toggleLock();
       if (!this.swimming && !G.spells.channel && !this.climbing && !this.mantle) {
-        if (input.mDown(0) && this.cd.bolt <= 0) this.castBolt();
+        this.basicInput(input);
         if (input.mHit(2) && this.cd.heavy <= 0) this.castHeavy();
         else if (input.mHit(2)) G.hud.cooldownFlash('heavy');
         if (input.hit('KeyQ')) this.castWeave();
         if (input.hit('KeyF')) this.castUlt();
-      }
-    }
+      } else if (this.charge) this.endCharge(false);
+    } else if (this.charge) this.endCharge(false);
     this.aimZoom = act && input.mDown(2);
     const cdRate = G.slowmo > 0 ? 2.5 : 1;
     for (const k in this.cd) this.cd[k] = Math.max(0, this.cd[k] - dt * cdRate);
@@ -662,6 +663,57 @@ export class Player {
   canHeavy(el = this.element) { return !G.skills || G.skills.has(SIG[el]); }
   canWeave() { return !G.skills || G.skills.has(WEAVE_NODE); }
 
+  // Basic spell input: a click fires a bolt (a click during the cooldown is buffered
+  // briefly); keeping the button held past a short beat gathers a charged shot that is
+  // released with the button once full (CHARGE_T). Releasing early just cancels it.
+  // (hold timing runs on wall-clock time so hitstop, slow motion or long frames don't stretch the charge)
+  basicInput(input) {
+    const now = performance.now() / 1000;
+    if (input.mHit(0)) { this.lmbT = now; this.boltBuf = now + 0.2; }
+    if (this.boltBuf > now && this.cd.bolt <= 0 && !this.charge) { this.boltBuf = 0; this.castBolt(); }
+    if (input.mDown(0)) {
+      if (!this.charge && now - this.lmbT > 0.26 && this.boltBuf <= now) this.beginCharge();
+      if (this.charge) this.updateCharge();
+    } else if (this.charge) this.endCharge(this.charge.ready);
+  }
+  beginCharge() {
+    const el = this.element;
+    this.charge = { el, t0: performance.now() / 1000, ready: false, fx: G.vfx.charge(el, () => this.staffTip(), CHARGE_T, { big: 0.85, hold: 60 }) };
+    G.audio.play('charge_hold', { pos: this.staffTip() });
+  }
+  updateCharge() {
+    const c = this.charge;
+    if (c.el !== this.element) { this.endCharge(false); return; }
+    this.castHold = Math.max(this.castHold, 0.35);
+    const k = Math.min(1, (performance.now() / 1000 - c.t0) / CHARGE_T);
+    if (!c.ready && k >= 1) {
+      c.ready = true;
+      const tip = this.staffTip();
+      G.audio.play('charge_ready', { pos: tip });
+      G.vfx.burst(tip, 'star', 1, { el: c.el, size: 2.2, life: 0.16 });
+      G.vfx.ring(tip, PAL[c.el].core, 1.1, 0.3, { y: 0, thick: 0.3, up: G.camera.position.clone().sub(tip).normalize() });
+    }
+    if (G.hud.chargeRing) G.hud.chargeRing(k, c.ready, c.el, this.mana >= CHARGED[c.el].cost);
+  }
+  endCharge(fire) {
+    const c = this.charge;
+    this.charge = null;
+    if (c.fx) c.fx.end();
+    if (G.hud.chargeRing) G.hud.chargeRing(0, false, c.el);
+    if (fire && c.el === this.element) this.castCharged();
+  }
+  castCharged() {
+    const el = this.element, def = CHARGED[el];
+    if (!this.spend(def.cost)) return;
+    this.cd.bolt = Math.max(this.cd.bolt, 0.4);
+    this.castHold = 1.0;
+    this.rig.flick();
+    G.spells.charged(el, this.staffTip(), this.aimPoint(), this.power(), this);
+    G.hud.castPulse();
+    this.stats.casts++; this.stats.charged = (this.stats.charged || 0) + 1;
+    if (G.story) G.story.onCast('charged', el);
+    if (G.story && G.story.once && G.story.once('charged1')) G.hud.hint(`<b>모아 쏘기 · ${def.name}</b> — 좌클릭을 누르고 있다가 고리가 차면 뗀다<br><small>모아 쏘기와 고유 마법은 땅에 흔적(불길·서리밭·물웅덩이…)을 남긴다. 흔적에 다른 속성을 더하면 모습이 바뀐다</small>`, 8);
+  }
   castBolt() {
     const el = this.element, def = BOLT[el];
     if (!this.spend(def.cost)) { this.cd.bolt = 0.3; return; }

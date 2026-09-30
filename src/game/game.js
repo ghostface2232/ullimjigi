@@ -155,7 +155,15 @@ export class Game {
     const bm = G.vfx.beam('arcane'); bm.done = true;
     G.vfx.rings.forEach((r) => (r.m.visible = true));
     G.scene.add(grp);
-    try { await G.renderer.renderer.compileAsync(G.scene, G.camera); } catch (_) { G.renderer.renderer.compile(G.scene, G.camera); }
+    // compile against the HDR scene target: programs are keyed by output colour space /
+    // tone mapping, and the frame is drawn into the composer's target, not the canvas
+    const R = G.renderer.renderer, prevRT = R.getRenderTarget();
+    const rt = G.renderer.composer && G.renderer.composer.readBuffer;
+    if (rt) R.setRenderTarget(rt);
+    let pr = null;
+    try { pr = R.compileAsync(G.scene, G.camera); } catch (_) { try { R.compile(G.scene, G.camera); } catch (e) { /* ignore */ } }
+    R.setRenderTarget(prevRT);
+    try { if (pr) await pr; } catch (_) { /* ignore */ }
     G.vfx.rings.forEach((r) => (r.m.visible = false));
     G.scene.remove(grp);
     G.vfx.disposeOrb(orb);

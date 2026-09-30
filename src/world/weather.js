@@ -52,10 +52,11 @@ void main(){
   w -= vel * tip * mix(0.85, 0.07, uSnow);
   // width across the view (after wrapping, so a streak never straddles the box edge)
   vec3 side = normalize(cross(vel, w - cameraPosition));
-  w += side * normal.x * mix(0.012, 0.035, uSnow);
+  w += side * normal.x * mix(0.007, 0.035, uSnow);
   float keep = step(aSeed, uAmount);
   float d = length(w.xz - uCam.xz);
-  vA = keep * (1.0 - smoothstep(${(RAIN_BOX * 0.6).toFixed(1)}, ${RAIN_BOX.toFixed(1)}, d)) * smoothstep(0.5, 3.0, d) * (1.0 - tip * 0.7);
+  // rain close to the lens fades out (the streaks nearest the camera are the ones that cover the view)
+  vA = keep * (1.0 - smoothstep(${(RAIN_BOX * 0.6).toFixed(1)}, ${RAIN_BOX.toFixed(1)}, d)) * mix(smoothstep(1.5, 5.0, d), smoothstep(0.5, 3.0, d), uSnow) * (1.0 - tip * 0.7);
   vSnow = uSnow;
   gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
 }`;
@@ -65,7 +66,7 @@ varying float vA;
 varying float vSnow;
 void main(){
   if (vA < 0.01) discard;
-  gl_FragColor = vec4(mix(uTint, vec3(0.95, 0.97, 1.0), vSnow), vA * mix(0.5, 0.85, vSnow));
+  gl_FragColor = vec4(mix(uTint, vec3(0.95, 0.97, 1.0), vSnow), vA * mix(0.3, 0.85, vSnow));
 }`;
 
 export class Weather {

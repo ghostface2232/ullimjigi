@@ -212,6 +212,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
   - `this.scriptedWave(spawnFn, center, radius)`: 스크립트 전투 한 파. 플레이어가 쓰러지면 남은 적을 지우고 다시 생성합니다. 적이 모두 죽어야 끝나는 전투는 반드시 이것으로 감싸세요.
   - `this.bossFight(make, center, radius, tip)`: 보스전. 쓰러지면 보스를 초기화하고, 다시 다가가기 전에 보름이 `tip`을 말합니다.
 - 체크포인트: `set()`, `done()`, 기억·씨앗·보고 같은 진행이 일어나면 `this.dirty`가 서고, 플레이어가 전투 밖·지상·자유 상태가 되는 순간 자동 저장합니다. 새 진행 지점을 만들면 `this.dirty = true`를 잊지 마세요.
+- **종과 세계의 기억**: `Story.bellsRung()`(0~4: 첫째 종 `v_wind`, `frostBell`, `stormBell`, 합창 `m_choir`)이 색 보정 채도(`satFor`, 0.80 → 1.12, 종이 울린 뒤 몇 초에 걸쳐 돌아옴), 새소리 빈도(`Audio.updateAmbience`의 `bells`), 들판·밤·마을 음악의 악기 층(`Music.memory`)을 정합니다. 연출만 바뀌고 규칙은 없습니다.
 - 보름의 `cSay(text, onceKey)` 1회성 대사는 `Story.saidOnce`에 `c:` 접두어로 저장됩니다.
 - NPC에게 말을 걸면 항상 `talkNPC(id)`로 들어옵니다. 메인 스토리 → 곁가지 → 일상 대화 순으로 분기합니다.
 - 대사 표기:

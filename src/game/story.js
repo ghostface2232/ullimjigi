@@ -12,6 +12,9 @@ import { HEAVY } from './spells.js';
 import { SIG, WEAVE_NODE } from './skills.js';
 import { pick, randRange, rand, fillName, clamp, lerp, josa } from '../core/util.js';
 
+// grade saturation for the number of bells rung: muted in the silent vale, full at four
+const satFor = (bells) => 1.12 - (4 - bells) * 0.08;
+
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const GV = (x, dy, z) => new THREE.Vector3(x, G.world.h(x, z) + dy, z); // ground-relative
 const KBD = (k) => `<kbd>${k}</kbd>`;
@@ -220,6 +223,7 @@ export class Story {
     if (this.flag('p_heavy') && G.skills && !G.skills.has('f_sig')) G.skills.grant('f_sig', { silent: true });
     this.setupNPCs();
     G.world.sky.hush = this.hushBase;
+    G.renderer.grade.uniforms.uSat.value = satFor(this.bellsRung());
     // restore lantern states handled by game
     this.run().catch((e) => console.error('story', e));
     this.lakeSong().catch((e) => console.error('lake', e));
@@ -236,6 +240,12 @@ export class Story {
     if (this.chapter === 'rift') await this.riftChapter();
     if (this.dead) return;
     this.postgame();
+  }
+  // How many bells ring again (0..4). The vale gets its colour, birdsong and music back
+  // with each one (saturation here, birds in Audio.updateAmbience, instruments in music.js).
+  bellsRung() {
+    if (this.chapter === 'rift' || this.chapter === 'post') return 4;
+    return (this.flag('v_wind') ? 1 : 0) + (this.flag('frostBell') ? 1 : 0) + (this.flag('stormBell') ? 1 : 0) + (this.flag('m_choir') ? 1 : 0);
   }
   setChapter(c) { this.chapter = c; this.positionNPCs(); this.refreshBarks(); G.game.save(true); }
 
@@ -261,6 +271,10 @@ export class Story {
     const riftD = Math.hypot(P.pos.x - POI.rift.x, P.pos.z - POI.rift.z);
     const local = clamp(1 - (riftD - 40) / 60, 0, 1) * (this.chapter === 'post' ? 0.2 : 0.6);
     G.world.sky.hush = lerp(G.world.sky.hush, Math.min(1, this.hushBase + local), dt * 0.5);
+    // colour blooms back over a few seconds after a bell
+    const bells = this.bellsRung(), gu = G.renderer.grade.uniforms;
+    gu.uSat.value = lerp(gu.uSat.value, satFor(bells), Math.min(1, dt * 0.35));
+    G.music.memory = bells;
     // seeds
     for (const s of G.world.seeds) {
       if (s.taken) continue;

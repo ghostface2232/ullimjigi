@@ -228,6 +228,8 @@ export class Story {
     G.sketches ||= new Sketchbook();
     // saves from before the sketchbook: whoever started Mora's memories already has it
     if (this.quests.q_memory && !this.flag('sketchbook')) this.flags.sketchbook = true;
+    // saves from before gliding was Borum's gift: anyone past the first bell already has it
+    if (this.flag('v_wind') && !this.flag('glide')) this.flags.glide = true;
     // restore lantern states handled by game
     this.run().catch((e) => console.error('story', e));
     this.lakeSong().catch((e) => console.error('lake', e));
@@ -302,7 +304,7 @@ export class Story {
     // carried cat delivery
     if (this.flag('catCarried') && !this.flag('catSaved') && this.near(this.npc('dodam').pos.x, this.npc('dodam').pos.z, 3) && G.mode === 'free' && !this.catBusy) { this.catBusy = true; this.deliverCat(); }
     // glide hint
-    if (!P.grounded && P.vel.y < -6 && this.once('hint_glide') && this.flag('p_fire')) this.hint(`공중에서 ${KBD('Space')} 누르고 있기: 활공 — 기력을 소모합니다`, 5);
+    if (!P.grounded && P.vel.y < -6 && this.flag('glide') && this.once('hint_glide')) this.hint(`공중에서 ${KBD('Space')} 누르고 있기: 활공 — 기력을 소모합니다`, 5);
   }
 
   // ------------------------------------------------------------ prologue
@@ -587,6 +589,13 @@ export class Story {
       await this.say('boreum', '약속대로다. 이 몸의 노래를 빌려주마. *하늬바람*이니라. 흐르는 것은 막을 수 없느니.');
     });
     await this.unlockElement('wind', '흐르는 노래. 적을 띄우고 밀어내며, 불과 한기를 퍼뜨린다.');
+    // Borum lends the wind itself too: gliding starts here, at the end of the first act
+    await this.conv(async () => {
+      await this.say('boreum', '덤으로 하나 더. 바람은 부리기만 해서는 반쪽이니라. *올라탈 줄*도 알아야지.');
+      await this.say('boreum', '높은 데서 뛰어내려 보거라. 이 몸이 받쳐 주마. 불길 위의 더운 바람이라면 더 높이 띄워 줄 게다.');
+    });
+    this.set('glide');
+    G.hud.banner('바람 타기', '하늬바람의 선물', `공중에서 ${KBD('Space')} 누르고 있기: <b>활공</b> — 기력을 소모합니다`, '#9ff0d0', 5000);
     if (G.skills.has(WEAVE_NODE)) this.hint(`${KBD('3')} 바람 · ${KBD('Q')} <b>엮기</b> — 직전에 쓰던 속성과 지금 속성을 엮어 강력한 마법을 쓴다<br><small>예: 화염 → 바람으로 바꾼 뒤 Q = 화염 회오리 · 고유 마법 <b>${HEAVY.wind.name}</b>은 울림 나무에서 익힌다</small>`, 12);
     else this.hint(`${KBD('3')} 바람 · 고유 마법 <b>${HEAVY.wind.name}</b>${josa(HEAVY.wind.name, '와').slice(HEAVY.wind.name.length)} <b>엮기</b>는 울림 나무(${KBD('K')})나 울림의 갈림길에서 익힌다<br><small>조화의 뿌리 「두 노래 엮기」를 익히면 ${KBD('Q')}로 두 속성을 엮는다 — 예: 화염 → 바람 = 화염 회오리</small>`, 12);
     await this.sleep(1);
@@ -1575,7 +1584,7 @@ export class Story {
       lake: '거울 호수는 비친 것을 오래 기억한다더구나. 세하가 여기서 자주 놀았지.',
       woods: '속삭이는 숲… 재나방이 많은 곳이다. 불을 준비하거라.',
       meadow: '노을 들판. 해 질 녘이 제일 곱지. 모라가 좋아하던 곳이니라.',
-      bluffs: '이 벼랑 위에선 골짜기가 한눈에 보이지. 떨어지면 활공하거라.',
+      bluffs: this.flag('glide') ? '이 벼랑 위에선 골짜기가 한눈에 보이지. 떨어지면 활공하거라.' : '이 벼랑 위에선 골짜기가 한눈에 보이지. 발밑 조심하거라.',
       rift: '……이 몸의 꼬리털이 곤두서는구나.',
       frostpass: '에취! 눈이다, 눈. 발밑 조심하거라.',
     };

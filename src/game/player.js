@@ -150,6 +150,8 @@ export class Player {
   // can enemies perceive the player right now?
   seen() { return !this.dead && G.mode === 'free' && !G.dev.unseen; }
   canAct() { return G.mode === 'free' && !this.dead && G.state === 'play' && !G.paused; }
+  // gliding is Borum's gift at the end of the first act (story flag 'glide')
+  canGlide() { return !!(G.story && G.story.flag('glide')); }
 
   // --------------------------------------------------------------
   update(dt, input) {
@@ -232,7 +234,7 @@ export class Player {
         G.audio.play('jump');
         G.vfx.burst(this.pos, 'dust', 4, { speed: 2, size: 0.4 });
       }
-      const wantGlide = act && input.down('Space') && !this.grounded && !this.swimming && (this.gliding || this.vel.y < 0) && !this.exhausted && this.stamina > 0 && this.coyote < -0.1;
+      const wantGlide = act && this.canGlide() && input.down('Space') && !this.grounded && !this.swimming && (this.gliding || this.vel.y < 0) && !this.exhausted && this.stamina > 0 && this.coyote < -0.1;
       if (wantGlide && !this.gliding) { G.audio.play('glide'); this.gliding = true; this.glideCircle = G.vfx.circle(this.pos, PAL[this.element].glow, 1.2, 0, { follow: this.root, offset: new THREE.Vector3(0, 2.6, 0), spin: 2, alpha: 0.7 }); }
       if (!wantGlide && this.gliding) { this.gliding = false; if (this.glideCircle) { this.glideCircle.end(); this.glideCircle = null; } }
 

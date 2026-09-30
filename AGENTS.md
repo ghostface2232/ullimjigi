@@ -126,6 +126,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 ### 등반과 충돌체
 - 가파른 지형(법선 y < 0.64)과 충돌체 벽은 그쪽으로 계속 걸으면 붙잡습니다(`player.tryGrab` → `updateClimb`). 허리 높이(1.45m 미만) 턱은 뛰어넘고, 꼭대기에서는 `startMantle`로 올라섭니다. 등반 중 이동은 기력 10/초, 도약(<kbd>Space</kbd>) 20(기력이 20 미만이면 뛰지 않고 기력 고리가 흔들림, `hud.staminaShort`), 벽 차기(<kbd>S</kbd>+<kbd>Space</kbd>) 12(빠져나가는 수단이라 거절하지 않되 기력을 0으로 만들지는 않음), <kbd>Shift</kbd>는 놓기입니다.
 - 충돌체 윗면은 바닥입니다(`Colliders.surfaceTop`, `World.ground`). 그래서 **충돌체 높이 `h1`은 실제 모양의 꼭대기와 맞아야 합니다.** 건물·지형지물은 `World.solid(obj, { r | hw, hd, top?, topFn?, climb?, noTop? })`로 등록하면 경계 상자에서 높이를 잽니다. 지붕처럼 기운 윗면은 `topFn(lx, lz)`(로컬 좌표), 나무 줄기처럼 올라설 수 없는 것은 `climb: false, noTop: true`를 주세요.
+- **활공은 1막 끝(첫째 종 장면 `windAndBell`)에 보름이 빌려주는 능력**입니다. 스토리 플래그 `glide`, 확인은 `player.canGlide()`. `v_wind`가 있는 이전 저장은 `Story.start`가 `glide`를 줍니다. 활공이 필요한 콘텐츠(허공 씨앗 `sky`, 시련 들불 오르기)는 이 플래그 전에는 숨기거나 시작하지 않습니다. 새로 활공이 필요한 것을 만들면 같이 막으세요.
 - `Player.teleport`는 등반·기어오르기·활공 상태를 풉니다. 60m 넘게 옮기면 떠난 자리의 땅의 흔적도 지웁니다(`Fields.clearFar`). 플레이어 위치를 직접 바꿀 때는 이것을 쓰세요.
 - 집은 `userData.roofTop(lx, lz)`(그룹 원점 기준 지붕 윗면 높이)를 주고, `buildVillage`가 이를 `topFn`으로 씁니다. `eave`·`roofH`·`roofHW`도 같은 선을 뜻합니다(`eave + roofH × max(0, 1 − |lx| / roofHW)`). 지붕 모양을 바꾸면 이 함수를 함께 고치세요. 모라의 탑과 풍차는 원뿔 모양 `topFn`을 씁니다.
 

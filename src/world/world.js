@@ -787,7 +787,7 @@ export class World {
     if (this.resTree) this.resTree.userData.lanterns.forEach((l, i) => { l.position.y += Math.sin(G.time * 1.3 + i) * 0.002; });
     // seeds
     for (const s of this.seeds) {
-      if (s.taken) continue;
+      if (s.taken || s.hidden) continue;
       s.orb.position.y = 0.9 + Math.sin(G.time * 2 + s.i) * 0.15;
       s.orb.rotation.y += dt * 2;
       const d = Math.hypot(s.x - playerPos.x, s.z - playerPos.z);

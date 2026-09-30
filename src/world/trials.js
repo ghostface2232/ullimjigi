@@ -265,7 +265,8 @@ class EmberClimb {
     if (!this.done && S && S.flag('trial_' + this.id)) this.finish(true);
     if (this.done) return;
     const d = Math.hypot(P.x - this.cx, P.z - this.cz);
-    if (!this.started && d < 30 && G.mode === 'free') { this.started = true; banner(this.name, '가장 높은 망대 꼭대기에 올라서자'); }
+    // the climb is all gliding on hot air: it wakes once Borum has lent the wind (story flag 'glide')
+    if (!this.started && d < 30 && G.mode === 'free' && S && S.flag('glide')) { this.started = true; banner(this.name, '가장 높은 망대 꼭대기에 올라서자'); }
     if (!this.started) return;
     // standing on a post top lights its lamp; the last one ends the trial
     const pl = G.player;

@@ -249,8 +249,9 @@ export class Puzzles {
       }
       case 'sky': {
         // floats high off the ground (SEEDS dy): reachable only by gliding in
+        // hidden until the player can glide (update())
         sprout.visible = false; s.pickR = 2.4;
-        s.locked = false; L.solved = true;
+        s.locked = true; s.hidden = true; s.g.visible = false; L.solved = true;
         break;
       }
     }
@@ -470,6 +471,8 @@ export class Puzzles {
       if (L.solved && L.grow !== 1 && s.orb.visible) { L.grow = Math.min(1, (L.grow || 0) + dt * 1.8); s.orb.scale.setScalar(0.2 * easeOutBack(L.grow)); }
       if (L.kind === 'ice' && !L.solved && this.heatAt(tmp.set(s.x, s.y + 0.3, s.z), 1)) this.addMelt(L, dt * 0.35);
       if (L.kind === 'thorns' && !s.taken) this.updateThicket(L.thicket, dt, playerPos);
+      if (L.kind === 'sky' && !s.taken && s.hidden && S && S.flag('glide')) { s.hidden = false; s.locked = false; s.g.visible = true; }
+      if (s.hidden) continue;
       // Borum speaks up when the player lingers without solving
       if (!s.taken && S && G.mode === 'free') {
         const d = Math.hypot(playerPos.x - s.x, playerPos.z - s.z);

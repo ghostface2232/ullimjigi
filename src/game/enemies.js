@@ -32,7 +32,7 @@ export const DEF = {
   archer: { name: '메아리 사수', hp: 30, dmg: 3, speed: 4.2, radius: 0.45, height: 1.75, xp: 10, aggro: 30, resist: { storm: 1.4, wind: 1.4 }, panic: true, knockdown: true, dodge: 0.45, make: () => makeArcher() },
   rootHand: { name: '뿌리손', hp: 70, dmg: 3, speed: 6, radius: 0.75, height: 2.2, xp: 14, aggro: 18, resist: { fire: 1.6, frost: 0.8, wind: 0.6, water: 0.6 }, kbResist: 0.95, freezeAt: 4, make: () => makeRootHand(), deathStyle: 'sink' },
   watcher: { name: '망루지기', hp: 260, dmg: 4, speed: 2.2, radius: 1.4, height: 3.9, xp: 60, aggro: 26, armor: 0.35, kbResist: 0.95, freezeAt: 8, freezeTime: 2, resist: { storm: 0.7, fire: 0.8, frost: 1.2, water: 1.3, wind: 0.6 }, make: () => makeWatcher(), deathStyle: 'sink', bigDeath: true },
-  knight: { name: '무명의 기사', hp: 600, dmg: 3, speed: 4.4, radius: 0.8, height: 2.4, xp: 180, aggro: 30, resist: { storm: 0.5, water: 0.9 }, kbResist: 0.92, freezeAt: 8, freezeTime: 1.6, make: () => makeKnight(false), boss: true, deathStyle: 'kneel' },
+  knight: { name: '무명의 기사', hp: 900, dmg: 3, speed: 4.4, radius: 0.8, height: 2.4, xp: 180, aggro: 30, resist: { storm: 0.5, water: 0.9 }, kbResist: 0.92, freezeAt: 8, freezeTime: 1.6, make: () => makeKnight(false), boss: true, deathStyle: 'kneel' },
 };
 
 // Level tiers: how long a thing has been forgotten
@@ -53,6 +53,55 @@ function predictsReaction(t, h) {
 
 const easeIn = (k) => k * k;
 const smooth = (k) => k * k * (3 - 2 * k);
+
+// Boss break meter (무너짐). Damage fills it a little, strong magic more, an elemental
+// reaction most. Full → the boss collapses for `down` seconds and takes ×1.75 (instead of
+// the usual ×1.5 opening). It drains after `hold` seconds without a hit and is locked for
+// `lock` seconds after a collapse, so it rewards pressure and mixing elements over chip damage.
+export const BREAK = { max: 100, perHp: 100, heavy: 5, reaction: 8, hold: 2.5, drain: 14, down: 4.5, lock: 5 };
+const newBreak = (drain = BREAK.drain) => ({ v: 0, lastT: -99, down: 0, lock: 0, n: 0, drain });
+// adds `amt`; true when this fills the meter (the caller starts the collapse)
+function addBreak(t, amt) {
+  const b = t.brk;
+  if (!b || !t.alive || b.down > 0 || b.lock > 0 || !(amt > 0)) return false;
+  b.v += amt; b.lastT = G.time;
+  if (b.v < BREAK.max) return false;
+  b.v = BREAK.max; b.down = BREAK.down; b.n++;
+  return true;
+}
+function breakFromHit(t, h, dmg, reaction) {
+  if (h.source === 'enemy' || h.source === 'dot' || h.source === 'fall') return false;
+  return addBreak(t, (dmg / t.maxHp) * BREAK.perHp + (h.heavy ? BREAK.heavy : 0) + (reaction && reaction !== 'airborne' ? BREAK.reaction : 0));
+}
+function tickBreak(t, dt) {
+  const b = t.brk;
+  if (b.down > 0) {
+    b.down -= dt;
+    b.v = BREAK.max * Math.max(0, b.down) / BREAK.down;
+    if (b.down <= 0) { b.v = 0; b.lock = BREAK.lock; }
+  } else if (b.lock > 0) b.lock -= dt;
+  else if (G.time - b.lastT > BREAK.hold) b.v = Math.max(0, b.v - b.drain * dt);
+}
+function collapseFx(t, pos) {
+  G.hud.floatText(pos.clone().setY(pos.y + 1), '무너졌다!', '#ffd86a');
+  G.audio.play('shatter', { pos }); G.audio.play('boss_roar', { pos, v: 0.5 });
+  G.vfx.burst(pos, 'star', 1, { el: 'gold', size: 5, life: 0.4 });
+  G.vfx.burst(pos, 'spark', 26, { el: 'gold', speed: 9 });
+  G.combat.stop(0.14, true); G.cameraRig.shake(0.45);
+  if (G.story && G.story.onBossBreak) G.story.onBossBreak(t);
+}
+
+// Boss HP phases: each threshold (fraction of max HP) raises the phase by one; bosses read
+// `this.phase` to change their pattern, and hits scale by PHASE_DMG[phase − 1].
+const PHASE_DMG = [1, 1.2, 1.4];
+function phaseCheck(t, at) {
+  const frac = t.hp / t.maxHp;
+  let want = 1;
+  for (const a of at) if (frac <= a) want++;
+  if (want <= t.phase) return false;
+  t.phase = want; t.phaseMul = PHASE_DMG[want - 1] ?? PHASE_DMG[PHASE_DMG.length - 1];
+  return true;
+}
 
 export class Enemy {
   constructor(type, pos, level, opts = {}) {
@@ -80,6 +129,9 @@ export class Enemy {
     this.wanderT = randRange(1, 4); this.wanderTo = null;
     this.orbit = rand() < 0.5 ? 1 : -1; this.orbitT = randRange(2, 5);
     this.poise = 0; this.poiseMax = this.maxHp * (def.boss ? 0.22 : this.base === 'brute' ? 0.5 : 0.35);
+    // bosses (and story bosses built from ordinary types) use the break meter instead of poise
+    this.brk = def.boss || opts.brk ? newBreak() : null;
+    this.phase = 1; this.phaseMul = 1;
     this.rig = def.make();
     this.root = this.rig.root;
     this.root.rotation.order = 'YXZ';
@@ -182,7 +234,9 @@ export class Enemy {
       const amt = clamp(0.08 + (dmg / this.maxHp) * 1.5, 0.08, 0.5) * (h.heavy || reaction ? 1.5 : 1) * (1 - this.kbResist * 0.75) * (h.blocked ? 0.3 : 1);
       this.flinch(dir, amt);
     }
-    if (this.poise > this.poiseMax && this.alive) {
+    if (this.brk) {
+      if (breakFromHit(this, h, dmg, reaction)) { this.poise = 0; this.stagger(BREAK.down, true); collapseFx(this, this.center()); }
+    } else if (this.poise > this.poiseMax && this.alive) {
       this.poise = 0;
       this.stagger(this.def.boss ? 2.4 : 1.1);
     } else if ((h.heavy || reaction) && this.base === 'ashling' && this.alive && this.state !== 'attack') this.stagger(0.45);
@@ -194,13 +248,13 @@ export class Enemy {
     }
     G.audio.play('enemy_hurt', { pos: this.pos, f: this.base === 'brute' ? 380 : this.base === 'wailer' ? 1100 : 720, gap: 0.08 });
   }
-  stagger(t) {
+  stagger(t, quiet = false) {
     this.releaseToken();
-    this.telegraph = false;
+    this.telegraph = false; this.slashing = false;
     if (this.state === 'down') { this.downT = Math.max(this.downT, this.stateT + t); return; }
     if (this.armor) this.st.armorBroken = Math.max(this.st.armorBroken, 6);
     this.setState('stagger'); this.staggerT = t;
-    if (t > 1.5) { this.vulnerable = true; G.hud.floatText(this.center(), '빈틈!', '#ffd86a'); }
+    if (t > 1.5) { this.vulnerable = true; if (!quiet) G.hud.floatText(this.center(), '빈틈!', '#ffd86a'); }
   }
   pull(v) { if (this.kbResist < 0.8) { this.pos.x += v.x; this.pos.z += v.z; } }
 
@@ -474,12 +528,13 @@ export class Enemy {
     const P = G.player;
     const dir = tmp.subVectors(P.pos, this.pos).setY(0).normalize().clone();
     const hp0 = P.hp;
-    P.damage(Math.max(1, Math.round(q * this.dmgMul)), { dir, knock, pos: this.center() });
+    P.damage(Math.max(1, Math.round(q * this.dmgMul * this.phaseMul)), { dir, knock, pos: this.center() });
     return P.hp < hp0;
   }
 
   update(dt) {
     if (this.dying > 0) return this.updateDying(dt);
+    if (this.brk) tickBreak(this, dt);
     this.speedMul = G.combat.tick(this, dt);
     const st = this.st;
     const disabled = st.frozen > 0 || st.stun > 0;
@@ -761,10 +816,13 @@ class Wailer extends Enemy {
 class Brute extends Enemy {
   constructor(type, pos, level, opts) {
     super(type, pos, level, opts);
-    this.slamCD = 1; this.chargeCD = 4;
+    this.slamCD = 1; this.chargeCD = 4; this.novaCD = 3;
+    if (this.brk) this.phaseAt = [0.6, 0.25];
   }
   update(dt) {
     if (this.dying > 0) return super.update(dt);
+    // as a boss (the frost shrine's guardian): 60% → frost nova, 25% → double nova and charge-into-slam
+    if (this.brk && this.alive && phaseCheck(this, this.phaseAt)) this.enterPhase();
     if (this.type === 'bruteFrost' && this.st.burn > 0) this.st.armorBroken = Math.max(this.st.armorBroken, 0.6);
     const broken = this.st.armorBroken > 0;
     if (this.rig.armor) this.rig.armor.forEach((a, i) => { a.visible = !broken || i % 3 === 2; });
@@ -772,12 +830,34 @@ class Brute extends Enemy {
     this._wasBroken = broken;
     return super.update(dt);
   }
+  enterPhase() {
+    const c = this.center();
+    G.audio.play('boss_roar', { pos: this.pos });
+    G.vfx.ring(this.pos, PAL.frost.glow, 9, 0.7, { thick: 0.3 });
+    G.vfx.burst(c, 'frostmist', 24, { size: 2 }); G.vfx.burst(c, 'ice', 16, { speed: 8 });
+    G.cameraRig.shake(0.3);
+    this.novaCD = Math.min(this.novaCD, 1.5);
+    if (G.story) G.story.onBossPhase(this, this.phase);
+  }
+  // ring of frost bursting out of the ground around the guardian (blink out or stand beyond it)
+  frostNova(r) {
+    const p = this.pos.clone();
+    G.audio.play('shatter', { pos: p }); G.audio.play('brute_slam', { pos: p, v: 0.8 });
+    G.vfx.ring(p, PAL.frost.glow, r, 0.45, { thick: 0.35 });
+    G.vfx.burst(p, 'frostmist', 18, { size: 2.2, speed: 6 });
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2;
+      G.vfx.burst(tmp.set(p.x + Math.cos(a) * r * 0.7, p.y + 0.4, p.z + Math.sin(a) * r * 0.7), 'ice', 3, { speed: 6 });
+    }
+    G.cameraRig.shake(0.35);
+    if (G.player.pos.distanceTo(p) < r) this.hurtPlayer(this.def.dmg * 0.9, 10);
+  }
   think(dt, mul) {
     const P = G.player;
     const d = this.dist2Player();
     const canSee = P.seen();
-    this.slamCD -= dt; this.chargeCD -= dt;
-    const slamWind = this.elite ? 0.85 : 1.05;
+    this.slamCD -= dt; this.chargeCD -= dt; this.novaCD -= dt;
+    const slamWind = this.fastSlam ? 0.6 : this.elite ? 0.85 : 1.05;
     switch (this.state) {
       case 'idle':
         this.wanderT -= dt;
@@ -793,7 +873,11 @@ class Brute extends Enemy {
         if (!canSee) break;
         if (this.pos.distanceTo(this.home) > this.leash && d > 16) { this.aggroed = false; this.setState('return'); break; }
         this.moveToward(P.pos.x, P.pos.z, this.def.speed * mul, dt);
-        if (d < 4.2 && this.slamCD <= 0) {
+        if (this.brk && this.phase >= 2 && d < 7 && this.novaCD <= 0) {
+          this.setState('novaWind');
+          G.vfx.telegraph(this.pos, 6.5, 1.1, 0x9ad8ff);
+          G.audio.play('charge', { pos: this.pos });
+        } else if (d < 4.2 && this.slamCD <= 0) {
           this.setState('slamWind');
           const f = this.fwd();
           this.slamPt = this.pos.clone().addScaledVector(f, 2.4);
@@ -818,7 +902,24 @@ class Brute extends Enemy {
           const dd = G.player.pos.distanceTo(p);
           if (dd < 3.6) this.hurtPlayer(this.def.dmg, 12);
           G.cameraRig.shake(clamp(0.6 - dd * 0.03, 0.05, 0.6));
-          this.slamCD = randRange(2.2, 3.5);
+          this.slamCD = randRange(2.2, 3.5) * (this.phase >= 2 ? 0.8 : 1);
+          this.fastSlam = false;
+          this.setState('recover');
+        }
+        break;
+      case 'novaWind':
+        this.telegraph = true;
+        this.glintAt(0.8, null, true);
+        if (rand() < 0.5) G.vfx.burst(this.pos, 'frostmist', 1, { size: 1.4, speed: 2 });
+        if (this.stateT > 1.1) {
+          this.telegraph = false;
+          this.frostNova(6.5);
+          // last phase: a wider second ring catches those who only stepped back
+          if (this.phase >= 3) {
+            G.vfx.telegraph(this.pos, 10, 0.8, 0x9ad8ff);
+            G.later(() => this.alive && this.frostNova(10), 800);
+          }
+          this.novaCD = this.phase >= 3 ? randRange(6, 8) : randRange(8, 10);
           this.setState('recover');
         }
         break;
@@ -835,7 +936,18 @@ class Brute extends Enemy {
         this.curSpeed = 10;
         if (rand() < 0.5) G.vfx.burst(this.pos, 'dust', 1, { speed: 3 });
         if (!this.hitDone && d < this.radius + 1.0) { this.hitDone = true; this.hurtPlayer(this.def.dmg, 14); }
-        if (this.stateT > 1.1 || G.world.col.pointHit(this.pos.x + f.x * 1.5, this.pos.y + 1, this.pos.z + f.z * 1.5, 0.5)) { this.chargeCD = randRange(5, 8); this.setState('recover'); G.cameraRig.shake(0.15); }
+        if (this.stateT > 1.1 || G.world.col.pointHit(this.pos.x + f.x * 1.5, this.pos.y + 1, this.pos.z + f.z * 1.5, 0.5)) {
+          this.chargeCD = randRange(5, 8) * (this.phase >= 2 ? 0.8 : 1); G.cameraRig.shake(0.15);
+          if (this.brk && this.phase >= 3) {
+            // last phase: the charge ends in a quick slam
+            this.fastSlam = true; this.facePlayer(1, 99);
+            this.setState('slamWind');
+            this.slamPt = this.pos.clone().addScaledVector(this.fwd(), 2.4);
+            this.slamPt.y = G.world.ground(this.slamPt.x, this.slamPt.z, this.pos.y + 2);
+            this.tele = G.vfx.telegraph(this.slamPt, 3.4, 0.6);
+            G.audio.play('brute_roar', { pos: this.pos, gap: 0.3 });
+          } else this.setState('recover');
+        }
         break;
       }
       case 'recover':
@@ -852,6 +964,8 @@ class Brute extends Enemy {
     if (this.state === 'slamWind' || this.state === 'alert') s.wave = false, s.cast = true, s.aimPitch = -1.3;
     if (this.state === 'recover' && this.stateT < 0.3) s.cast = true, s.aimPitch = 0.6;
     if (this.state === 'chargeWind' || this.state === 'charge') s.charge = this.state === 'charge' ? 1 : 0.6;
+    if (this.state === 'novaWind') s.cast = true, s.aimPitch = -1.5;
+    if (this.state === 'stagger' && this.brk && this.brk.down > 0) s.kneel = true;
     return s;
   }
 }
@@ -1640,7 +1754,7 @@ class Knight extends Enemy {
   constructor(pos, level, opts) {
     super('knight', pos, level, { ...opts, leash: 999 });
     this.boss = true;
-    this.phase = 1;
+    this.phaseAt = [0.66, 0.33];
     this.cd = { combo: 0.5, dash: 3, wave: 6, bolts: 8 };
     this.combo = 0;
     this.state = 'dormant';
@@ -1651,12 +1765,16 @@ class Knight extends Enemy {
     const P = G.player;
     const d = this.dist2Player();
     for (const k in this.cd) this.cd[k] -= dt;
-    if (this.phase === 1 && this.hp < this.maxHp * 0.5) {
-      this.phase = 2;
-      if (G.story) G.story.onBossPhase(this, 2);
+    // 66% → lightning bolts and a double shockwave; 33% → four-cut combo, double dash, bolts in two waves
+    if (this.state !== 'dormant' && phaseCheck(this, this.phaseAt)) {
+      if (G.story) G.story.onBossPhase(this, this.phase);
       G.audio.play('boss_roar', { pos: this.pos });
-      G.vfx.ring(this.pos, PAL.storm.core, 10, 0.8, { thick: 0.3 });
+      G.vfx.ring(this.pos, PAL.storm.core, this.phase === 3 ? 14 : 10, 0.8, { thick: 0.3 });
+      G.vfx.burst(this.center(), 'electric', 24, { speed: 9 });
+      G.cameraRig.shake(0.3);
+      this.cd.bolts = Math.min(this.cd.bolts, 2);
     }
+    const P3 = this.phase >= 3, lastCut = P3 ? 3 : 2;
     const sword = this.rig.p.swordEdge;
     if (this.slashing && sword) {
       const wp = sword.getWorldPosition(tmp2);
@@ -1669,28 +1787,29 @@ class Knight extends Enemy {
         this.hittable = true;
         this.moveToward(P.pos.x, P.pos.z, (d > 10 ? 5.5 : 3.8) * mul, dt);
         if (d < 3.6 && this.cd.combo <= 0) { this.combo = 0; this.setState('slashWind'); }
-        else if (d > 6 && d < 16 && this.cd.dash <= 0) this.setState('dashWind');
+        else if (d > 6 && d < 16 && this.cd.dash <= 0) { this.dashLeft = P3 ? 2 : 1; this.setState('dashWind'); }
         else if (this.cd.wave <= 0 && d > 4) this.setState('waveWind');
-        else if (this.phase === 2 && this.cd.bolts <= 0) this.setState('boltsWind');
+        else if (this.phase >= 2 && this.cd.bolts <= 0) this.setState('boltsWind');
         break;
       }
       case 'slashWind': {
-        const wind = [0.5, 0.32, 0.62][this.combo];
+        const wind = (P3 ? [0.45, 0.3, 0.3, 0.62] : [0.5, 0.32, 0.62])[this.combo];
         this.facePlayer(dt, 10);
         this.telegraph = this.stateT > wind * 0.4;
-        if (this.combo === 2) this.glintAt(wind - 0.22, this.swordPoint(), true);
+        if (this.combo === lastCut) this.glintAt(wind - 0.22, this.swordPoint(), true);
         if (this.stateT > wind) {
           this.telegraph = false;
           this.slashing = true;
           G.audio.play('sword', { pos: this.pos });
           const f = this.fwd();
           this.pos.addScaledVector(f, 1.2);
-          if (this.combo < 2) { if (this.playerInArc(3.4, 0.1)) this.hurtPlayer(this.def.dmg * 0.8, 7); }
+          if (this.combo < lastCut) { if (this.playerInArc(3.4, 0.1)) this.hurtPlayer(this.def.dmg * 0.8, 7); }
           else {
             const p = this.pos.clone().addScaledVector(f, 2.2); p.y = G.world.ground(p.x, p.z, p.y + 3);
             G.vfx.ring(p, PAL.storm.glow, 4, 0.4, { thick: 0.3 }); G.vfx.burst(p, 'electric', 20, { speed: 8 }); G.vfx.burst(p, 'dust', 12, { speed: 6 });
             G.audio.play('impact_storm', { pos: p }); G.cameraRig.shake(0.35);
             if (G.player.pos.distanceTo(p) < 3.6) this.hurtPlayer(this.def.dmg * 1.5, 10);
+            if (P3) this.shockwave(p, 9, 12);
           }
           this.setState('slash');
         }
@@ -1700,16 +1819,17 @@ class Knight extends Enemy {
         if (this.stateT > 0.22) {
           this.slashing = false;
           this.combo++;
-          if (this.combo < 3) this.setState('slashWind');
-          else { this.cd.combo = randRange(1.6, 2.6); this.setState('recover'); }
+          if (this.combo <= lastCut) this.setState('slashWind');
+          else { this.cd.combo = randRange(1.9, 2.9); this.setState('recover'); }
         }
         break;
       case 'dashWind':
         this.facePlayer(dt, 10);
         this.telegraph = true;
-        this.glintAt(0.38, this.swordPoint(), true);
+        const dw = this.dashLeft === 1 && P3 ? 0.42 : 0.6; // the follow-up dash comes quicker
+        this.glintAt(dw - 0.22, this.swordPoint(), true);
         if (rand() < 0.5) G.vfx.burst(this.pos, 'electric', 1, { speed: 2, spread: 0.6 });
-        if (this.stateT > 0.6) { this.telegraph = false; this.hitDone = false; this.setState('dash'); G.audio.play('sword', { pos: this.pos }); G.audio.play('blink'); G.vfx.burst(this.pos, 'dust', 10, { speed: 5 }); }
+        if (this.stateT > dw) { this.telegraph = false; this.hitDone = false; this.setState('dash'); G.audio.play('sword', { pos: this.pos }); G.audio.play('blink'); G.vfx.burst(this.pos, 'dust', 10, { speed: 5 }); }
         break;
       case 'dash': {
         const f = this.fwd();
@@ -1721,7 +1841,11 @@ class Knight extends Enemy {
         if (rand() < 0.6) G.vfx.burst(this.pos, 'electric', 1, { speed: 3 });
         if (rand() < 0.5) G.vfx.burst(this.pos, 'dust', 1, { speed: 2 });
         if (!this.hitDone && d < 1.8) { this.hitDone = true; this.hurtPlayer(this.def.dmg * 1.25, 12); }
-        if (this.stateT > 0.42) { this.slashing = false; this.cd.dash = randRange(4, 6); this.setState('recover'); }
+        if (this.stateT > 0.42) {
+          this.slashing = false;
+          if (--this.dashLeft > 0) this.setState('dashWind');
+          else { this.cd.dash = randRange(4, 6); this.setState('recover'); }
+        }
         break;
       }
       case 'waveWind':
@@ -1730,41 +1854,50 @@ class Knight extends Enemy {
         this.glintAt(0.68, this.swordPoint());
         if (this.stateT > 0.9) {
           this.telegraph = false;
-          this.cd.wave = this.phase === 2 ? 6 : 9;
+          this.cd.wave = this.phase >= 2 ? 6 : 9;
           this.shockwave(this.pos.clone(), 18, 13);
-          if (this.phase === 2) G.later(() => this.alive && this.shockwave(this.pos.clone(), 18, 13), 650);
+          if (this.phase >= 2) G.later(() => this.alive && this.shockwave(this.pos.clone(), 18, 13), 650);
           this.setState('recover');
         }
         break;
       case 'boltsWind':
         this.telegraph = true;
         if (this.stateT < 0.05) {
-          this.boltPts = [];
-          for (let i = 0; i < 4; i++) {
-            const p = G.player.pos.clone().add(new THREE.Vector3(i === 0 ? 0 : randRange(-5, 5), 0, i === 0 ? 0 : randRange(-5, 5)));
-            p.y = G.world.ground(p.x, p.z, p.y + 3);
-            this.boltPts.push(p); G.vfx.telegraph(p, 2.2, 0.9, 0xffd84a);
-          }
+          this.boltPts = this.boltVolley(4);
           G.audio.play('charge', { pos: this.pos });
         }
         if (this.stateT > 0.9) {
           this.telegraph = false;
-          for (const p of this.boltPts) {
-            G.vfx.lightning(p.clone().setY(p.y + 28), p, { width: 0.35, dur: 0.3, branches: 2 });
-            G.vfx.burst(p, 'electric', 16, { speed: 8 });
-            if (G.player.pos.distanceTo(p) < 2.3) this.hurtPlayer(this.def.dmg, 6);
-          }
-          G.audio.play('thunder', { pos: this.boltPts[0] });
-          G.cameraRig.shake(0.3);
-          this.cd.bolts = 7;
+          this.boltStrike(this.boltPts);
+          // last phase: a second volley lands where the player dodged to
+          if (P3) G.later(() => { if (!this.alive) return; const pts = this.boltVolley(3); G.later(() => this.alive && this.boltStrike(pts), 900); }, 250);
+          this.cd.bolts = P3 ? 6 : 7;
           this.setState('recover');
         }
         break;
       case 'recover':
-        if (this.stateT > (this.phase === 2 ? 0.5 : 0.8)) this.setState('chase');
+        if (this.stateT > (P3 ? 0.45 : this.phase === 2 ? 0.6 : 0.9)) this.setState('chase');
         break;
       case 'stagger': this.hittable = true; break;
     }
+  }
+  boltVolley(n) {
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+      const p = G.player.pos.clone().add(new THREE.Vector3(i === 0 ? 0 : randRange(-5, 5), 0, i === 0 ? 0 : randRange(-5, 5)));
+      p.y = G.world.ground(p.x, p.z, p.y + 3);
+      pts.push(p); G.vfx.telegraph(p, 2.2, 0.9, 0xffd84a);
+    }
+    return pts;
+  }
+  boltStrike(pts) {
+    for (const p of pts) {
+      G.vfx.lightning(p.clone().setY(p.y + 28), p, { width: 0.35, dur: 0.3, branches: 2 });
+      G.vfx.burst(p, 'electric', 16, { speed: 8 });
+      if (G.player.pos.distanceTo(p) < 2.3) this.hurtPlayer(this.def.dmg, 6);
+    }
+    G.audio.play('thunder', { pos: pts[0] });
+    G.cameraRig.shake(0.3);
   }
   shockwave(center, maxR, speed) {
     G.audio.play('shockwave', { pos: center });
@@ -1826,7 +1959,9 @@ class Plate {
     G.hud.damage(this.pos, dmg, h.el, false, null);
     if (mult < 1) { if (rand() < 0.4) G.hud.floatText(this.pos.clone().setY(this.pos.y + 0.8), `저항 — ${josa(({ fire: '화염', frost: '서리', storm: '번개', wind: '바람' })[weak], '이')} 필요하다`, '#c9c0d8', 'info'); G.audio.play('hit_armor', { pos: this.pos }); }
     else { G.audio.play('shatter', { pos: this.pos, gap: 0.1 }); G.vfx.burst(this.pos, 'spark', 12, { el: h.el }); G.hitstop = Math.max(G.hitstop, 0.05); G.cameraRig.shake(0.15); }
-    if (this.hp <= 0) this.die();
+    // the right element on a ward also wears the heart down (break meter)
+    if (mult >= 1 && h.source !== 'dot') this.heart.addBreak(4);
+    if (this.hp <= 0) { this.die(); this.heart.addBreak(10); }
     return dmg;
   }
   die() {
@@ -1859,7 +1994,9 @@ class Heart {
     this.boss = true; this.type = 'heart'; this.name = '이름 삼킨 자'; this.def = { xp: 0, name: '이름 삼킨 자', boss: true };
     this.level = level;
     this.center0 = center.clone();
-    this.maxHp = Math.round(1000 * (1 + 0.18 * (level - 1))); this.hp = this.maxHp;
+    this.maxHp = Math.round(1400 * (1 + 0.18 * (level - 1))); this.hp = this.maxHp;
+    this.brk = newBreak(6); // drains slowly: ward hits between volleys count too
+    this.phaseMul = 1; this.phaseAt = [0.66, 0.33];
     this.alive = true; this.hittable = false; this.radius = 1.9; this.height = 3;
     this.st = newStatus(); this.resist = {}; this.armor = 0; this.freezeAt = 10; this.freezeTime = 1.5;
     this.pos = center.clone().setY(center.y + 6); this.home = this.pos.clone();
@@ -1901,7 +2038,27 @@ class Heart {
     if (!this.hittable) return 0;
     return G.combat.resolve(this, h);
   }
-  onHit(h, dmg) { this.flash = 1; }
+  onHit(h, dmg, reaction) {
+    this.flash = 1;
+    if (breakFromHit(this, h, dmg, reaction)) this.collapse();
+  }
+  addBreak(v) { if (addBreak(this, v)) this.collapse(); }
+  // Collapse: any wards left shatter at once, and the heart sinks low and stays exposed longer.
+  collapse() {
+    const wasExposed = this.exposed > 0;
+    for (const p of this.plates) if (p.alive) p.die();
+    this.plates = [];
+    if (!wasExposed) this.expose();
+    this.exposed += BREAK.down;
+    collapseFx(this, this.core.position);
+  }
+  expose() {
+    this.exposed = 11.5;
+    G.hud.floatText(this.core.position, '심장이 드러났다!', '#ffd86a');
+    G.audio.play('shatter', { pos: this.core.position });
+    G.vfx.ring(this.center0, PAL.hush.core, 12, 1, { thick: 0.2 });
+    if (G.story) G.story.onHeartExposed();
+  }
   die() {
     this.alive = false; this.hittable = false;
     for (const b of this.beams) b.done = true;
@@ -1949,28 +2106,23 @@ class Heart {
     });
     this.core.scale.setScalar(breathe);
     G.combat.tick(this, dt);
+    tickBreak(this, dt);
     if (this.state === 'dormant') { this.core.position.y = this.pos.y + Math.sin(G.time) * 0.3; return true; }
     // phase checks
     const frac = this.hp / this.maxHp;
     const want = frac > 0.66 ? 1 : frac > 0.33 ? 2 : 3;
-    if (want > this.phase) { this.phase = want; if (G.story) G.story.onBossPhase(this, want); G.audio.play('boss_roar', { pos: this.core.position }); }
+    if (want > this.phase) { this.phase = want; this.phaseMul = PHASE_DMG[want - 1]; if (G.story) G.story.onBossPhase(this, want); G.audio.play('boss_roar', { pos: this.core.position }); }
     // plates / exposure cycle
     this.plates = this.plates.filter((p) => p.update(dt));
     if (this.exposed > 0) {
       this.exposed -= dt;
       this.hittable = true; this.vulnerable = true;
-      this.core.position.y = damp(this.core.position.y, this.center0.y + 2.6, 3, dt);
+      this.core.position.y = damp(this.core.position.y, this.center0.y + (this.brk.down > 0 ? 1.4 : 2.6), 3, dt);
       if (this.exposed <= 0) { this.hittable = false; this.vulnerable = false; this.spawnPlates(); }
     } else {
       this.core.position.y = damp(this.core.position.y, this.pos.y + Math.sin(G.time) * 0.3, 2, dt);
       this.hittable = false;
-      if (this.plates.length === 0) {
-        this.exposed = 11.5;
-        G.hud.floatText(this.core.position, '심장이 드러났다!', '#ffd86a');
-        G.audio.play('shatter', { pos: this.core.position });
-        G.vfx.ring(this.center0, PAL.hush.core, 12, 1, { thick: 0.2 });
-        if (G.story) G.story.onHeartExposed();
-      }
+      if (this.plates.length === 0) this.expose();
     }
     // attacks
     this.atkT -= dt; this.addsCD -= dt;
@@ -1996,7 +2148,7 @@ class Heart {
         const a = (i / n) * Math.PI * 2;
         const side = new THREE.Vector3(Math.cos(a), 0.3, Math.sin(a)).multiplyScalar(0.8);
         const dir = toP.clone().add(side).normalize();
-        G.spells.enemyOrb(c.clone().addScaledVector(dir, 2), dir, { speed: 9 + this.phase, dmg: Math.round(2 * (1 + 0.12 * (this.level - 1))), homing: G.player, homingRate: 1.1, size: 0.35 });
+        G.spells.enemyOrb(c.clone().addScaledVector(dir, 2), dir, { speed: 9 + this.phase, dmg: Math.round(2 * (1 + 0.12 * (this.level - 1)) * this.phaseMul), homing: G.player, homingRate: 1.1, size: 0.35 });
         G.audio.play('wailer_shot', { pos: c, gap: 0.03 });
       }, i * 90);
     }
@@ -2018,7 +2170,7 @@ class Heart {
             r += sp * dt;
             const P = G.player;
             const dd = Math.hypot(P.pos.x - c.x, P.pos.z - c.z);
-            if (!hit && Math.abs(dd - r) < 1 && P.pos.y - G.world.ground(P.pos.x, P.pos.z) < 0.6) { hit = true; P.damage(Math.round(4 * (1 + 0.12 * (this.level - 1))), { dir: new THREE.Vector3(P.pos.x - c.x, 0, P.pos.z - c.z).normalize(), knock: 8 }); }
+            if (!hit && Math.abs(dd - r) < 1 && P.pos.y - G.world.ground(P.pos.x, P.pos.z) < 0.6) { hit = true; P.damage(Math.round(4 * (1 + 0.12 * (this.level - 1)) * this.phaseMul), { dir: new THREE.Vector3(P.pos.x - c.x, 0, P.pos.z - c.z).normalize(), knock: 8 }); }
             if (Math.random() < 0.9) { const a = Math.random() * Math.PI * 2; G.vfx.burst(tmp.set(c.x + Math.cos(a) * r, c.y + 0.4, c.z + Math.sin(a) * r), 'hush', 1, { size: 0.6, spread: 0.2 }); }
           });
         }, 700);
@@ -2067,7 +2219,7 @@ class Heart {
             const px = ax + dx * tt, pz = az + dz * tt;
             const dd = Math.hypot(P.pos.x - px, P.pos.z - pz);
             const airborne = P.pos.y - G.world.ground(P.pos.x, P.pos.z) > 1.1;
-            if (dd < 1.1 && !airborne && tt > 0.08) P.damage(Math.round(3 * (1 + 0.12 * (this.level - 1))), { dir: new THREE.Vector3(-dz, 0, dx).normalize(), knock: 8 });
+            if (dd < 1.1 && !airborne && tt > 0.08) P.damage(Math.round(3 * (1 + 0.12 * (this.level - 1)) * this.phaseMul), { dir: new THREE.Vector3(-dz, 0, dx).normalize(), knock: 8 });
             if (Math.random() < 0.8) G.vfx.burst(end, 'hush', 1, { size: 0.8 });
             if (Math.random() < 0.8) G.vfx.burst(tmp.set(ax + dx * Math.random(), end.y, az + dz * Math.random()), 'trail', 1, { el: 'arcane', size: 0.6, spread: 0.3 });
           }

@@ -88,6 +88,7 @@ function collapseFx(t, pos) {
   G.vfx.burst(pos, 'star', 1, { el: 'gold', size: 5, life: 0.4 });
   G.vfx.burst(pos, 'spark', 26, { el: 'gold', speed: 9 });
   G.combat.stop(0.14, true); G.cameraRig.shake(0.45);
+  if (G.enemies) G.enemies.bossSpill(pos, 'break');
   if (G.story && G.story.onBossBreak) G.story.onBossBreak(t);
 }
 
@@ -100,6 +101,7 @@ function phaseCheck(t, at) {
   for (const a of at) if (frac <= a) want++;
   if (want <= t.phase) return false;
   t.phase = want; t.phaseMul = PHASE_DMG[want - 1] ?? PHASE_DMG[PHASE_DMG.length - 1];
+  if (G.enemies) G.enemies.bossSpill(t.center(), 'phase');
   return true;
 }
 
@@ -2123,7 +2125,7 @@ class Heart {
     // phase checks
     const frac = this.hp / this.maxHp;
     const want = frac > 0.66 ? 1 : frac > 0.33 ? 2 : 3;
-    if (want > this.phase) { this.phase = want; this.phaseMul = PHASE_DMG[want - 1]; if (G.story) G.story.onBossPhase(this, want); G.audio.play('boss_roar', { pos: this.core.position }); }
+    if (want > this.phase) { this.phase = want; this.phaseMul = PHASE_DMG[want - 1]; G.enemies.bossSpill(this.core.position, 'phase'); if (G.story) G.story.onBossPhase(this, want); G.audio.play('boss_roar', { pos: this.core.position }); }
     // plates / exposure cycle
     this.plates = this.plates.filter((p) => p.update(dt));
     if (this.exposed > 0) {
@@ -2380,6 +2382,13 @@ export class EnemyManager {
     const [n, v] = e.elite ? [6, 6] : heavy ? [5, 6] : [3, 5];
     for (let i = 0; i < n; i++) this.pickups.push(this.makePickup(pos, 'mana', { v, i, n }));
     if (rand() < (e.elite || e.type === 'watcher' ? 0.8 : 0.25)) this.pickups.push(this.makePickup(pos, 'heal'));
+  }
+  // A little relief in a long fight: a boss entering a new phase lets fall a heart and a few
+  // mana motes, a collapse (break gauge) a few motes. Kept small on purpose.
+  bossSpill(pos, kind) {
+    const n = kind === 'phase' ? 4 : 3;
+    for (let i = 0; i < n; i++) this.pickups.push(this.makePickup(pos, 'mana', { v: 6, i, n }));
+    if (kind === 'phase') this.pickups.push(this.makePickup(pos, 'heal'));
   }
   makePickup(pos, kind, o = {}) {
     if (kind === 'mana') {

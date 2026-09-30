@@ -9,6 +9,8 @@ import { PAL } from '../render/vfx.js';
 import { toon, addOutline } from '../render/materials.js';
 
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
+// the frame's move direction; its own vector, because casting (aimPoint) reuses tmp mid-update
+const moveV = new THREE.Vector3();
 const GRAV = 26;
 const CLIMB_JUMP_COST = 20;
 
@@ -162,7 +164,7 @@ export class Player {
     }
     const il = Math.hypot(ix, iz); if (il > 1) { ix /= il; iz /= il; }
     const { f, r } = cr.moveBasis();
-    const move = tmp.set(f.x * iz + r.x * ix, 0, f.z * iz + r.z * ix);
+    const move = moveV.set(f.x * iz + r.x * ix, 0, f.z * iz + r.z * ix);
     const moving = move.lengthSq() > 0.01;
 
     // shift: tap = blink, hold = sprint

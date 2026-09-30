@@ -106,6 +106,7 @@ export class Game {
       ld.classList.add('hidden');
       G.playerName = '리안';
       this.devStart(new URLSearchParams(location.search).get('dev'));
+      if (new URLSearchParams(location.search).has('rec')) import('./devrec.js').then((m) => m.startRecorder());
       return;
     }
     ld.classList.add('ready'); // the loading star blooms

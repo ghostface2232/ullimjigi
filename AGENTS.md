@@ -1,6 +1,6 @@
 # AGENTS.md — 울림지기 개발 가이드
 
-이 저장소에서 작업하는 사람과 코딩 에이전트를 위한 문서입니다. 게임 소개와 조작은 [README.md](README.md), 세계관·수치·기획은 [docs/DESIGN.md](docs/DESIGN.md), 맵·이야기 확장 제안(미확정)은 [docs/EXPANSION.md](docs/EXPANSION.md)를 보세요.
+이 저장소에서 작업하는 사람과 코딩 에이전트를 위한 문서입니다. 게임 소개와 조작은 [README.md](README.md), 세계관·수치·기획은 [docs/DESIGN.md](docs/DESIGN.md), 맵·이야기·콘텐츠 확장 계획은 [docs/EXPANSION.md](docs/EXPANSION.md)를 보세요.
 
 ## 개요
 

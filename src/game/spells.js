@@ -1627,7 +1627,7 @@ export class Spells {
     if (p.owner === 'enemy') { V.burst(pos, 'arcane', 10); V.burst(pos, 'hush', 3); V.sparks(pos, null, 6, { el: 'hush', speed: 8, life: 0.3 }); return; }
     A.play('impact_' + p.el, { pos });
     if (!p.noTouch) this.touch(p.el, pos, p.touchR ?? (p.heavy ? 1.6 : 1.1), p.kind || (p.heavy ? 'heavy' : 'bolt'));
-    if (p.infused && !p.noTouch) this.fields.infuse(p.infused, pos, 1.1, 'bolt');
+    if (p.infused && !p.noTouch && !this.airHit) this.fields.infuse(p.infused, pos, 1.1, 'bolt'); // a raised target keeps it off the ground too
     const dir = p.vel.lengthSq() > 1e-6 ? p.vel.clone().normalize() : null;
     V.impact(p.el, pos, { dir, target, ground: ground || undefined, scale: p.heavy ? 1.4 : 1 });
     if (p.el === 'wind' && ground) G.world.grass.gust(pos.x, pos.z, 3, 1);

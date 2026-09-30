@@ -314,6 +314,19 @@ button { font-family: inherit; }
 .jq { padding: 14px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
 .jq h3 { font-family: var(--blade); font-weight: 400; font-size: 19px; color: var(--gold); }
 .jq h3 small { font-size: 12px; color: var(--ink-dim); margin-left: 10px; letter-spacing: 0.1em; }
+/* Mora's sketchbook (journal → 기억) */
+.sk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; margin: 12px 0 24px; }
+.sk { margin: 0; padding: 8px 8px 10px; border-radius: 4px; background: #efe6d2; color: #3a342c; box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25), 0 6px 18px rgba(0, 0, 0, 0.35); transform: rotate(-0.6deg); }
+.sk:nth-child(even) { transform: rotate(0.7deg); }
+.sk img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 2px; outline: 1px solid rgba(0, 0, 0, 0.1); outline-offset: -1px; }
+.sk-blank { display: grid; place-items: center; aspect-ratio: 16 / 10; font-size: 28px; color: rgba(58, 52, 44, 0.35); background: repeating-linear-gradient(135deg, transparent 0 7px, rgba(58, 52, 44, 0.06) 7px 8px); }
+.sk figcaption { margin-top: 7px; font-family: var(--blade); font-size: 14px; }
+.sk figcaption b { color: #7a5a1a; }
+.sk p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.55; color: #5a5146; text-wrap: pretty; }
+.sk.locked { opacity: 0.6; }
+/* the page laid over the world while lining up (pencil multiplies onto the view), then shown whole */
+#sketch-view { position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0; background: center / cover no-repeat; mix-blend-mode: multiply; transition: opacity 0.2s ease-out; }
+#sketch-view.full { mix-blend-mode: normal; transition: opacity 0.6s ease-out; }
 .jq.done h3 { color: var(--ink-dim); text-decoration: line-through; }
 .jq p { color: var(--ink); opacity: 0.85; }
 .jq .obj { color: #bfe8ff; margin-top: 4px; }

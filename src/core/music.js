@@ -238,15 +238,17 @@ const MOODS = {
     },
   },
 
+  // field / night / village thin out while the bells are silent: `m.m.memory` is the number
+  // of bells rung (0..4), and each one brings an instrument back
   field: {
     tempo: 76, rev: 0.65,
     step(m, s, t) {
-      const st = m.state;
+      const st = m.state, k = m.m.memory;
       const chords = [[38, [62, 66, 69, 73]], [35, [59, 62, 66, 69]], [43, [59, 62, 66, 67]], [45, [57, 62, 64, 66]]];
       if (s % 16 === 0) {
         const ch = chords[Math.floor(s / 16) % 4];
         m.pad(ch[1].map((n) => n - 12), t, m.spb * 16, 0.35, 650);
-        if (R() < 0.8) m.piano(ch[0] + 12, t, 0.22, 3.5);
+        if (k >= 1 && R() < 0.8) m.piano(ch[0] + 12, t, 0.22, 3.5);
       }
       if (st.frag > 0) {
         const e = TE.ev[st.fragI];
@@ -255,18 +257,19 @@ const MOODS = {
         if (!TE.ev[st.fragI] || st.fragI > st.fragEnd) st.frag = 0;
         return;
       }
-      if (s % 64 === 32 && R() < 0.5) {
+      if (k >= 2 && s % 64 === 32 && R() < 0.5) {
         const start = choose([0, 4, 16]);
         st.fragI = TE.ev.findIndex((e) => e.s >= start * 2); st.fragS = TE.ev[st.fragI].s; st.frag = 1; st.fragEnd = st.fragI + 6;
         const e = TE.ev[st.fragI]; m.piano(e.m, t, 0.4, e.l * m.spb + 1.4); st.fragI++;
         return;
       }
-      const p = s % 2 === 0 ? 0.3 : 0.1;
+      const p = (s % 2 === 0 ? 0.3 : 0.1) * (0.55 + 0.1125 * k);
       if (R() < p) {
         const n = walker(st, DMAJ_PENTA);
         m.piano(n, t, 0.28 + R() * 0.18, 2.6);
         if (R() < 0.18) m.piano(n - choose([3, 5, 7]), t + 0.02, 0.2, 2.4);
       }
+      if (k >= 3 && R() < 0.035) m.celesta(choose([81, 83, 86, 88, 90]), t, 0.2, 1.8);
     },
   },
 
@@ -281,7 +284,7 @@ const MOODS = {
         m.piano(ch[0] + 12, t, 0.18, 4);
       }
       if (s % 2 === 0 && R() < 0.22) m.piano(walker(st, AMIN_PENTA), t, 0.24 + R() * 0.12, 3);
-      if (R() < 0.05) m.celesta(choose([81, 84, 88, 91]), t, 0.22, 2.2);
+      if (m.m.memory >= 2 && R() < 0.05) m.celesta(choose([81, 84, 88, 91]), t, 0.22, 2.2);
     },
   },
 
@@ -290,15 +293,15 @@ const MOODS = {
     step(m, s, t) {
       const loop = TE.len;
       const t2 = s % loop, pass = Math.floor(s / loop);
-      const ch = THEME_CHORDS[Math.floor(t2 / 4) % THEME_CHORDS.length];
-      if (t2 % 4 === 0) m.bass(ch[0], t, m.spb * 3.5, 0.45);
-      if (t2 % 4 === 2) m.bass(ch[0] + 7, t, m.spb * 1.8, 0.3);
+      const ch = THEME_CHORDS[Math.floor(t2 / 4) % THEME_CHORDS.length], k = m.m.memory;
+      if (k >= 1 && t2 % 4 === 0) m.bass(ch[0], t, m.spb * 3.5, 0.45);
+      if (k >= 1 && t2 % 4 === 2) m.bass(ch[0] + 7, t, m.spb * 1.8, 0.3);
       const arp = [ch[1][0], ch[1][1], ch[1][2], ch[1][1]];
       m.pluck(arp[t2 % 4] - 12, t, 0.3);
-      if (t2 % 2 === 1) m.hat(t, 0.25);
+      if (k >= 2 && t2 % 2 === 1) m.hat(t, 0.25);
       for (const e of TE.ev) if (e.s === t2) {
         m.piano(e.m + (pass % 2 ? 12 : 0), t, 0.42, e.l * m.spb + 0.8);
-        if (pass % 2) m.celesta(e.m + 12, t, 0.18, 1.2);
+        if (k >= 3 && pass % 2) m.celesta(e.m + 12, t, 0.18, 1.2);
       }
     },
   },
@@ -380,7 +383,7 @@ const MOODS = {
 };
 
 export class Music {
-  constructor(audio) { this.a = audio; this.cur = null; this.name = null; }
+  constructor(audio) { this.a = audio; this.cur = null; this.name = null; this.memory = 4; }
   setMood(name) {
     if (!this.a.ready || name === this.name) return;
     const def = MOODS[name];

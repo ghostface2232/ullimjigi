@@ -743,7 +743,7 @@ export class HUD {
       h += '</div>';
       body.innerHTML = h;
     } else if (tab === 'memories') {
-      let h = `<div class="jsec">모라의 기억 — 골짜기에 두고 온 것들</div>`;
+      let h = (G.sketches ? G.sketches.html() : '') + `<div class="jsec">모라의 기억 — 골짜기에 두고 온 것들</div>`;
       for (const [id, m] of Object.entries(MEMORIES)) {
         const st = S ? S.memoryState(id) : 'none';
         h += `<div class="jq ${st === 'given' ? 'done' : ''}"><h3>${st === 'none' ? '???' : m.name}<small>${st === 'given' ? '전해 줌' : st === 'have' ? '가지고 있음' : ''}</small></h3><p>${st === 'none' ? '아직 찾지 못했다.' : m.desc}</p></div>`;

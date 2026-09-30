@@ -598,6 +598,7 @@ export class Game {
       const reg = regionAt(P.pos.x, P.pos.z);
       G.audio.updateAmbience(raw, {
         altitude: P.pos.y, gliding: P.gliding, speed: Math.hypot(P.vel.x, P.vel.y, P.vel.z), hour: G.world.sky.hour,
+        bells: G.story ? G.story.bellsRung() : 4,
         rift: reg.id === 'rift' && G.story && G.story.chapter !== 'post', water: Math.max(0, 1 - Math.hypot(P.pos.x - POI.lake.x, P.pos.z - POI.lake.z) / 55),
       });
       const mood = this.pickMood();

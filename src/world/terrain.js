@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { createNoise2D, fbm, ridged, smoothstep, lerp, segDist, clamp } from '../core/util.js';
 import { toon, U } from '../render/materials.js';
-import { PATHS, POI } from './layout.js';
+import { PATHS, POI, PADS } from './layout.js';
 
 const hex = (h) => new THREE.Color(h);
 const P = {
@@ -190,7 +190,10 @@ export class Terrain {
     const dp = Math.hypot(x - POI.bellTower.x, z - POI.bellTower.z);
     const plaza = 1 - smoothstep(10, 14, dp + n(x * 0.1, z * 0.1) * 1.5);
     out.lerp(P.plaza, plaza * 0.9);
-    const gf = (1 - rk) * (1 - sd) * (1 - pf) * (1 - sn) * (1 - ash) * (1 - plaza) * (h > 0.4 ? 1 : 0);
+    let pad = 0;
+    for (const q of PADS) pad = Math.max(pad, 1 - smoothstep(q.r - 2, q.r + 0.5, Math.hypot(x - q.x, z - q.z) + n(x * 0.12, z * 0.12) * 1.5));
+    if (pad > 0) out.lerp(P.plaza.clone().lerp(P.rock, 0.35), pad * 0.85);
+    const gf = (1 - rk) * (1 - sd) * (1 - pf) * (1 - sn) * (1 - ash) * (1 - plaza) * (1 - pad) * (h > 0.4 ? 1 : 0);
     return { gf, sn };
   }
 

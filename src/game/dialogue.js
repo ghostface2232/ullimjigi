@@ -20,18 +20,21 @@ function parse(text) {
   const total = segs.reduce((a, s) => a + [...s.t].length, 0);
   return { segs, total };
 }
+// Typed text plus the untyped rest laid out invisibly, so every word already sits on its
+// final line: with Korean word-keeping line breaks a half-typed word would otherwise jump
+// to the next line as it grows.
 function render(parsed, n) {
-  let out = '', left = n;
+  let out = '', rest = '', left = n;
+  const esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>');
+  const wrap = (s, t) => (s.c === 'em' ? `<em>${t}</em>` : s.c ? `<span class="${s.c}">${t}</span>` : t);
   for (const s of parsed.segs) {
-    if (left <= 0) break;
     const chars = [...s.t];
-    const part = chars.slice(0, left).join('').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>');
+    const k = Math.max(0, Math.min(chars.length, left));
+    if (k) out += wrap(s, esc(chars.slice(0, k).join('')));
+    if (k < chars.length) rest += wrap(s, esc(chars.slice(k).join('')));
     left -= chars.length;
-    if (s.c === 'em') out += `<em>${part}</em>`;
-    else if (s.c) out += `<span class="${s.c}">${part}</span>`;
-    else out += part;
   }
-  return out;
+  return rest ? `${out}<span class="dlg-rest">${rest}</span>` : out;
 }
 
 export class Dialogue {

@@ -73,7 +73,7 @@ float fxFog(vec3 w){ float d = length(w - cameraPosition); return 1.0 - exp(-uFo
 const SPHERE_VS = /* glsl */ `
 uniform float uTime, uScale, uDisp, uSeed, uRise, uSpeed;
 varying vec3 vN, vW, vL;
-varying float vN1;
+varying float vN1, vRad;
 ${SNOISE}
 float field(vec3 d){
   vec3 q = d * uScale + vec3(uSeed * 7.1, uSeed * 13.7 - uTime * uRise, uSeed * 3.3);
@@ -91,6 +91,7 @@ void main(){
   vec3 nn = normalize(cross(pa - p0, pb - p0));
   if (dot(nn, d) < 0.0) nn = -nn;
   vN1 = n; vL = d;
+  vRad = length(modelMatrix[0].xyz);
   vec4 wp = modelMatrix * vec4(p0, 1.0);
   vW = wp.xyz;
   vN = normalize(mat3(modelMatrix) * nn);
@@ -101,7 +102,7 @@ uniform float uTime, uScale, uRise, uErode, uAlpha, uMode, uFres, uGlow, uEmiss,
 uniform vec3 uHot, uMid, uCool, uSun, uLit, uShade;
 uniform float uAmb;
 varying vec3 vN, vW, vL;
-varying float vN1;
+varying float vN1, vRad;
 ${SNOISE}
 ${FOG_GLSL}
 void main(){
@@ -113,6 +114,9 @@ void main(){
   float mask = vN1 * 0.5 + 0.5 + n2 * 0.22 + facing * 0.12;
   float ero = smoothstep(uErode - uSoft * 0.3, uErode + uSoft, mask);
   float alpha = ero * uAlpha;
+  // big blasts thin out where they pass close to the camera, so a fireball at arm's length
+  // does not paint the whole screen; small orbs (projectile cores at the staff tip) are untouched
+  alpha *= mix(1.0, smoothstep(1.2, 5.5, distance(cameraPosition, vW)), smoothstep(1.4, 2.6, vRad));
   if (alpha < 0.008) discard;
   vec3 col;
   if (uMode < 0.5) {

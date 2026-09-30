@@ -115,15 +115,20 @@ export class WorldObjects {
     const W = this.W, rnd = mulberry32(2024);
     const flatAt = (x, z) => W.terrain.normal(x, z).y > 0.86 && W.h(x, z) > 0.8 && !W.col.pointHit(x, W.h(x, z) + 0.5, z, 0.9);
     const near = (x, z, r) => this.list.some((b) => Math.hypot(b.pos.x - x, b.pos.z - z) < r);
+    // no powder anywhere near where people live: a stray spark there would burn the home region
+    const settled = (x, z) => Math.hypot(x - POI.village.x, z - POI.village.z) < 110
+      || Math.hypot(x - POI.towerYard.x, z - POI.towerYard.z) < 60 || Math.hypot(x - POI.spawn.x, z - POI.spawn.z) < 60;
     for (const c of CAMPS) {
       if (c.elite) continue;
-      // a couple of powder barrels and a crate at every camp: the camp's own supplies can be its undoing
-      let nb = 0, nc = 0;
+      // a couple of powder barrels and a crate at every camp: the camp's own supplies can be its undoing.
+      // Camps close to the village keep only crates.
+      const safe = settled(c.x, c.z);
+      let nb = safe ? 2 : 0, nc = safe ? -1 : 0;
       for (let t = 0; t < 40 && (nb < 2 || nc < 1); t++) {
         const a = rnd() * Math.PI * 2, r = 3 + rnd() * 6;
         const x = c.x + Math.cos(a) * r, z = c.z + Math.sin(a) * r;
         if (!flatAt(x, z) || near(x, z, 1.4)) continue;
-        if (nb < 2) { this.add('barrel', x, z); nb++; if (rnd() < 0.5 && nb < 2) { this.add('barrel', x + 0.9, z + 0.3); nb++; } }
+        if (nb < 2) { if (settled(x, z)) continue; this.add('barrel', x, z); nb++; if (rnd() < 0.5 && nb < 2) { this.add('barrel', x + 0.9, z + 0.3); nb++; } }
         else { this.add('crate', x, z); nc++; }
       }
       // a boulder perched uphill, ready to be sent down onto the camp

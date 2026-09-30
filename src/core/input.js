@@ -15,6 +15,9 @@ export class Input {
     window.addEventListener('keydown', (e) => {
       if (e.target && e.target.tagName === 'INPUT') return;
       if (BLOCK.has(e.code)) e.preventDefault();
+      // any key (a user gesture) re-captures the mouse after a dialogue, Esc or alt-tab,
+      // so play never stalls behind a "click to continue" prompt
+      if (!this.locked && e.code !== 'Escape' && this.wantLock && this.wantLock()) this.requestLock();
       if (!this.keys.has(e.code)) {
         this.pressed.add(e.code);
         this.keyDownTime[e.code] = performance.now();
@@ -26,6 +29,7 @@ export class Input {
       this.released.add(e.code);
     });
     canvas.addEventListener('mousedown', (e) => {
+      if (!this.locked && this.wantLock && this.wantLock()) this.requestLock();
       this.mouse.buttons.add(e.button);
       this.mouse.pressed.add(e.button);
       e.preventDefault();
@@ -53,7 +57,7 @@ export class Input {
   }
 
   requestLock() {
-    if (!this.locked && this.canvas.requestPointerLock) {
+    if (!this.locked && this.canvas.requestPointerLock && document.hasFocus()) {
       const retry = () => { try { const q = this.canvas.requestPointerLock(); if (q && q.catch) q.catch(() => {}); } catch (_) {} };
       try {
         const p = this.canvas.requestPointerLock({ unadjustedMovement: true });

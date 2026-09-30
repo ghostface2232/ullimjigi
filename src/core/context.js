@@ -13,7 +13,7 @@ export const G = {
   // test switches: ?god (no damage) · ?unseen (enemies ignore you). Also togglable from the console.
   dev: (() => { const q = new URLSearchParams(location.search); return { god: q.has('god'), unseen: q.has('unseen') }; })(),
   settings: {
-    master: 80, music: 60, sfx: 90, sens: 100, quality: 'high', invertY: false,
+    master: 80, music: 60, sfx: 90, sens: 100, quality: 'high', invertY: false, ui: 100,
   },
 };
 

@@ -32,7 +32,7 @@
 html, body { width: 100%; height: 100%; overflow: hidden; background: #0b0f16; color: var(--ink); font-family: var(--sans); user-select: none; -webkit-user-select: none; }
 #app { position: fixed; inset: 0; }
 #game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
-#ui { position: absolute; inset: 0; pointer-events: none; }
+#ui { position: absolute; inset: 0; pointer-events: none; word-break: keep-all; overflow-wrap: anywhere; }
 .hidden { display: none !important; }
 .screen { position: absolute; inset: 0; pointer-events: auto; }
 button { font-family: inherit; }
@@ -59,7 +59,7 @@ button { font-family: inherit; }
 @keyframes titleIn { from { opacity: 0; transform: translateY(14px); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
 
 .tbtn { pointer-events: auto; background: none; border: none; color: var(--ink); font-family: var(--blade); font-size: 20px; letter-spacing: 0.15em; padding: 8px 18px 8px 26px; cursor: pointer; position: relative; transition: color 0.2s, letter-spacing 0.3s; text-align: left; }
-.tbtn::before { content: '◆'; position: absolute; left: 4px; top: 50%; transform: translateY(-50%) scale(0.5); opacity: 0; color: var(--gold); transition: all 0.25s; font-size: 12px; }
+.tbtn::before { content: '◆'; position: absolute; left: 4px; top: 50%; transform: translateY(-50%) scale(0.5); opacity: 0; color: var(--gold); transition-duration: 0.25s; transition-timing-function: ease; transition-property: opacity, transform, left, color; font-size: 12px; }
 .tbtn:hover, .tbtn.focus { color: var(--gold); letter-spacing: 0.22em; }
 .tbtn:hover::before, .tbtn.focus::before { opacity: 1; transform: translateY(-50%) scale(1); }
 .tbtn:disabled { opacity: 0.3; cursor: default; }
@@ -148,7 +148,7 @@ button { font-family: inherit; }
 
 #crosshair { position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; transform: translate(-50%, -50%); transition: opacity 0.2s; }
 .ch-dot { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: #fff; box-shadow: 0 0 4px #000; }
-.ch-ring { position: absolute; inset: 5px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 50%; transition: all 0.15s; }
+.ch-ring { position: absolute; inset: 5px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 50%; transition-duration: 0.15s; transition-timing-function: ease; transition-property: inset, border-color, box-shadow, transform, opacity; }
 #crosshair.enemy .ch-ring { border-color: #ff8a8a; inset: 2px; box-shadow: 0 0 8px rgba(255, 90, 90, 0.5); }
 #crosshair.enemy .ch-dot { background: #ffb0b0; }
 #crosshair.cast .ch-ring { animation: chPulse 0.25s ease-out; }
@@ -176,7 +176,7 @@ button { font-family: inherit; }
 
 #spellbar { position: absolute; right: 36px; bottom: 30px; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
 #elements { display: flex; gap: 8px; }
-.el { width: 48px; height: 48px; border-radius: 50%; position: relative; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 40%, rgba(40, 46, 60, 0.85), rgba(10, 12, 18, 0.9)); border: 1px solid rgba(255, 255, 255, 0.18); transition: all 0.25s cubic-bezier(.2, .9, .3, 1.3); }
+.el { width: 48px; height: 48px; border-radius: 50%; position: relative; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 40%, rgba(40, 46, 60, 0.85), rgba(10, 12, 18, 0.9)); border: 1px solid rgba(255, 255, 255, 0.18); transition-duration: 0.25s; transition-timing-function: cubic-bezier(.2, .9, .3, 1.3); transition-property: transform, box-shadow, border-color, opacity, filter; }
 .el svg { width: 60%; height: 60%; }
 .el .key { position: absolute; bottom: -7px; right: -3px; font-size: 10px; font-family: var(--latin); background: rgba(0, 0, 0, 0.8); border-radius: 3px; padding: 0 4px; color: var(--ink-dim); }
 .el.locked { opacity: 0.25; filter: grayscale(1); }
@@ -289,7 +289,7 @@ button { font-family: inherit; }
 .dlg-next.on { opacity: 1; }
 @keyframes nextBob { 50% { transform: translateY(4px); } }
 .dlg-choices { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
-.dlg-choice { pointer-events: auto; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--ink); text-align: left; padding: 9px 18px; border-radius: 12px; font-family: var(--serif); font-size: 17px; cursor: pointer; transition: all 0.15s; }
+.dlg-choice { pointer-events: auto; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--ink); text-align: left; padding: 9px 18px; border-radius: 12px; font-family: var(--serif); font-size: 17px; cursor: pointer; transition-duration: 0.15s; transition-timing-function: ease; transition-property: background-color, border-color, color, transform, padding; }
 .dlg-choice:hover, .dlg-choice.sel { background: rgba(241, 212, 138, 0.14); border-color: var(--gold); color: var(--gold); padding-left: 26px; }
 
 /* ================= MAP ================= */
@@ -392,7 +392,7 @@ button, .tbtn, .dlg-choice, .jr-tabs button, input[type=range], select, input[ty
 .sk-points { font-family: var(--blade); font-size: 16px; letter-spacing: 0.1em; }
 .sk-points b { font-size: 30px; color: var(--gold); margin-left: 6px; text-shadow: 0 0 12px rgba(241, 212, 138, 0.5); }
 .sk-tabs { display: flex; justify-content: center; gap: 6px; padding: 6px 20px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
-.sk-tab { pointer-events: auto; cursor: pointer; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 22px; padding: 5px 14px 5px 8px; display: flex; align-items: center; gap: 7px; font-family: var(--blade); font-size: 14px; transition: all 0.2s; }
+.sk-tab { pointer-events: auto; cursor: pointer; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 22px; padding: 5px 14px 5px 8px; display: flex; align-items: center; gap: 7px; font-family: var(--blade); font-size: 14px; transition-duration: 0.2s; transition-timing-function: ease; transition-property: background-color, border-color, color, opacity, box-shadow; }
 .sk-tab .ti { width: 22px; height: 22px; display: inline-flex; }
 .sk-tab .ti svg { width: 100%; height: 100%; }
 .sk-tab .tn { color: var(--ink); letter-spacing: 0.08em; }
@@ -415,7 +415,7 @@ button, .tbtn, .dlg-choice, .jr-tabs button, input[type=range], select, input[ty
 .sk-gateline.ok { stroke: rgba(241, 212, 138, 0.12); }
 .sk-nodes { position: absolute; inset: 0; }
 .sk-node { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; cursor: pointer; pointer-events: auto; }
-.sk-orb { width: 62px; height: 62px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 38%, rgba(46, 52, 66, 0.95), rgba(10, 12, 18, 0.95)); border: 2px solid rgba(255, 255, 255, 0.14); transition: all 0.25s cubic-bezier(.2, .9, .3, 1.3); position: relative; }
+.sk-orb { width: 62px; height: 62px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 38%, rgba(46, 52, 66, 0.95), rgba(10, 12, 18, 0.95)); border: 2px solid rgba(255, 255, 255, 0.14); transition-duration: 0.25s; transition-timing-function: cubic-bezier(.2, .9, .3, 1.3); transition-property: transform, box-shadow, border-color, background-color, opacity; position: relative; }
 .sk-node.k-ult .sk-orb { width: 78px; height: 78px; border-radius: 18px; transform: rotate(45deg); }
 .sk-node.k-ult .sk-orb > * { transform: rotate(-45deg); }
 .sk-orb .gl { width: 30px; height: 30px; display: inline-flex; opacity: 0.4; }
@@ -455,7 +455,7 @@ button, .tbtn, .dlg-choice, .jr-tabs button, input[type=range], select, input[ty
 .si-big { font-family: var(--title); font-size: 56px; color: var(--gold); line-height: 1.1; text-shadow: 0 0 18px rgba(241, 212, 138, 0.4); }
 .si-empty p { opacity: 0.8; margin-top: 8px; }
 .si-empty ul { margin: 6px 0 0 18px; opacity: 0.85; }
-.sk-learn { pointer-events: auto; cursor: pointer; margin-top: 14px; width: 100%; padding: 10px; border-radius: 6px; border: 1px solid var(--gold); background: linear-gradient(180deg, rgba(241, 212, 138, 0.25), rgba(241, 212, 138, 0.08)); color: var(--gold); font-family: var(--blade); font-size: 16px; letter-spacing: 0.12em; transition: all 0.2s; }
+.sk-learn { pointer-events: auto; cursor: pointer; margin-top: 14px; width: 100%; padding: 10px; border-radius: 6px; border: 1px solid var(--gold); background: linear-gradient(180deg, rgba(241, 212, 138, 0.25), rgba(241, 212, 138, 0.08)); color: var(--gold); font-family: var(--blade); font-size: 16px; letter-spacing: 0.12em; transition-duration: 0.2s; transition-timing-function: ease; transition-property: background-color, border-color, color, opacity, box-shadow; }
 .sk-learn:hover { background: rgba(241, 212, 138, 0.35); color: #fff; }
 .sk-learn.off { border-color: rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.04); color: var(--ink-dim); font-size: 13px; letter-spacing: 0.02em; cursor: default; }
 .sk-foot { display: flex; justify-content: space-between; align-items: center; padding: 6px 28px 10px; font-size: 12px; color: var(--ink-dim); border-top: 1px solid rgba(255, 255, 255, 0.05); }
@@ -627,3 +627,88 @@ button, .tbtn, .dlg-choice, .jr-tabs button, input[type=range], select, input[ty
   .sk-foot { padding: 4px 28px 8px; }
 }
 .sk-name { padding: 0 6px; border-radius: 7px; background: rgba(12, 14, 19, 0.78); }
+/* ================= UX PASS: tips, combat banners, resume prompt, UI scale ================= */
+/* tutorial tips: a card at the left edge, clear of the aim point and the fight */
+#hint { left: 34px; top: 38%; transform: none; max-width: min(380px, calc(40vw / var(--ui))); padding: 12px 18px 12px 16px; text-align: left; font-size: 15px; line-height: 1.6;
+  background: linear-gradient(90deg, rgba(8, 10, 14, 0.86), rgba(8, 10, 14, 0.55)); border: none; border-left: 2px solid var(--gold); border-radius: 0 10px 10px 0; animation: hintIn 0.45s ease-out; }
+#hint small { display: block; margin-top: 4px; opacity: 0.8; font-size: 13px; }
+#hint kbd { font-size: 12px; min-width: 20px; padding: 0 6px; }
+@keyframes hintIn { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
+/* banners during a fight: a thin ribbon under the compass */
+#banner.compact { top: 66px; left: 50%; right: auto; transform: translateX(-50%); padding: 6px 64px; width: max-content; white-space: nowrap; background: linear-gradient(90deg, transparent, rgba(8, 10, 16, 0.7) 20%, rgba(8, 10, 16, 0.7) 80%, transparent); }
+#banner.compact::before, #banner.compact::after { left: 10%; right: 10%; }
+#banner.compact { animation: bannerInC 0.45s ease-out; }
+#banner.compact.out { animation: bannerOutC 0.6s ease-in forwards; }
+@keyframes bannerInC { from { opacity: 0; transform: translateX(-50%) translateY(-8px); } to { opacity: 1; transform: translateX(-50%); } }
+@keyframes bannerOutC { to { opacity: 0; transform: translateX(-50%) translateY(-6px); } }
+#banner.compact .bn-small { font-size: 11px; letter-spacing: 0.3em; display: inline; margin-right: 12px; }
+#banner.compact .bn-big { font-size: 20px; letter-spacing: 0.06em; display: inline; margin: 0; }
+#banner.compact .bn-desc { display: none; }
+/* the mouse is free: a quiet line near the bottom instead of a bobbing pill in the middle */
+#click-to-play { top: auto; bottom: 22%; padding: 6px 18px; font-size: 13px; letter-spacing: 0.06em; color: var(--ink-dim); background: rgba(0, 0, 0, 0.45); animation: fadeUpC 0.5s ease-out; }
+/* elements not yet awakened are not shown */
+.el.gone { display: none; }
+.jsp-more { margin: 12px 0 4px; font-size: 13px; opacity: 0.6; font-style: italic; }
+
+/* UI scale: --ui is set from the window size (and the 인터페이스 크기 setting) in HUD.applyScale.
+   zoom scales px lengths and vw/vh alike, so viewport-relative sizes are divided back by --ui. */
+:root { --ui: 1; }
+#vitals, #compass, #quest-tracker, #spellbar, #boss-bar, #prompt, #hint, #area-title, #banner, #toasts, #companion-line, #crosshair,
+#dialogue, #click-to-play, .jr-frame, .sk-frame, .cr-frame, .pz-frame, .map-frame, .lg-frame, .title-wrap, .ne-box, .death-text, .death-sub { zoom: var(--ui); }
+#dialogue { width: min(860px, calc(88vw / var(--ui))); bottom: calc(5vh / var(--ui)); }
+.jr-frame { width: min(1000px, calc(90vw / var(--ui))); height: min(680px, calc(84vh / var(--ui))); }
+.sk-frame { width: min(1080px, calc(94vw / var(--ui))); height: min(760px, calc(94vh / var(--ui))); }
+.lg-frame { width: min(760px, calc(90vw / var(--ui))); height: min(640px, calc(82vh / var(--ui))); }
+.cr-frame { width: min(1060px, calc(94vw / var(--ui))); }
+#map-canvas { width: min(calc(82vh / var(--ui)), calc(60vw / var(--ui))); height: min(calc(82vh / var(--ui)), calc(60vw / var(--ui))); }
+.title-wrap { margin-left: calc(9vw / var(--ui)); }
+#companion-line { max-width: min(640px, calc(80vw / var(--ui))); }
+/* narrow windows: tuck the quest tracker under the compass line and keep the compass inside the screen */
+@media (max-width: 900px) {
+  #compass { width: calc(56vw / var(--ui)); }
+  #quest-tracker { max-width: calc(34vw / var(--ui)); }
+}
+.dlg-rest, .dlg-rest * { visibility: hidden; }
+/* while a menu is open the HUD messages wait underneath instead of showing through it */
+#ui.menu-open #banner, #ui.menu-open #area-title, #ui.menu-open #hint, #ui.menu-open #toasts, #ui.menu-open #companion-line { visibility: hidden; }
+/* ================= MINIMAP (bottom-left, heading-up) ================= */
+#minimap { position: absolute; left: 30px; bottom: 26px; width: 184px; height: 184px; border-radius: 50%; zoom: var(--ui);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(241, 212, 138, 0.25); transition: opacity 0.4s; }
+#minimap canvas { width: 100%; height: 100%; display: block; border-radius: 50%; }
+/* toasts stack above the minimap; tips sit higher on the same edge */
+#toasts { bottom: 230px; }
+#toasts .toast:nth-last-child(n+5) { display: none; }
+#hint { top: 27%; }
+/* ================= spellbar hierarchy & steady numbers ================= */
+/* right-click (the element's own spell) is a main action: same weight as the weave pill */
+#heavy-slot { font-size: 13px; padding: 6px 14px 6px 10px; gap: 10px; border-radius: 30px; border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(90deg, rgba(10, 12, 18, 0.25), rgba(10, 12, 18, 0.8)); }
+#heavy-slot .hk { font-family: var(--blade); font-size: 11px; letter-spacing: 0.04em; padding: 1px 7px; border-radius: 9px; background: rgba(241, 212, 138, 0.16); }
+#heavy-slot .hn { font-size: 15px; letter-spacing: 0.04em; }
+.el .key { font-size: 11px; min-width: 15px; text-align: center; }
+/* digits that change every frame keep their width, so '/ max' and neighbours stay still */
+.mana-num b { display: inline-block; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
+.slot-cost, .xp-lv, .cm .dist, .ebar .elv, .sk-points b, .cr-pts b { font-variant-numeric: tabular-nums; }
+.set-val { display: inline-block; min-width: 44px; margin-left: 10px; text-align: right; font-family: var(--latin); font-size: 13px; color: var(--gold); font-variant-numeric: tabular-nums; }
+/* quiet badges: the skill-point badge glows three times when points arrive, then rests with a
+   steady gold edge; the crossroads star stops spinning. Only 'ready' states keep breathing. */
+#sp-badge.pop { animation: spPop 0.8s ease-out, spGlow 2.4s ease-in-out 0.8s 3; }
+#sp-badge { box-shadow: 0 0 0 1px rgba(241, 212, 138, 0.25); }
+#cr-badge .crg { animation: none; }
+.cm.quest { animation: none; text-shadow: 0 0 8px rgba(241, 212, 138, 0.8), 0 0 3px #000; }
+.set-row input[type=range] { margin-left: auto; }
+.set-row .set-val { margin-left: -18px; }
+/* ================= text rendering ================= */
+html, body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+.at-name, .bn-big, .cr-title, .pz-title, .sk-title, .death-text { text-wrap: balance; }
+#hint, .toast, .qt-obj, .bn-desc, .cr-desc, .si-row p, .jq p { text-wrap: pretty; }
+/* world-anchored labels are placed in screen pixels by script, so they are not zoomed with
+   the HUD; on big screens their text still grows a little with the interface */
+:root { --uiw: max(1, var(--ui)); }
+.ebar .en { font-size: calc(11px * var(--uiw)); }
+.ebar.elite .en { font-size: calc(12px * var(--uiw)); }
+.ebar .elv { font-size: calc(10px * var(--uiw)); }
+.bark { font-size: calc(13px * var(--uiw)); }
+.dmg { font-size: calc(20px * var(--uiw)); }
+.dmg.crit { font-size: calc(30px * var(--uiw)); }
+.dmg.small { font-size: calc(14px * var(--uiw)); }

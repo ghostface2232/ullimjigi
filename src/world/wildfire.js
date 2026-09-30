@@ -15,7 +15,7 @@ const REGROW = [150, 240];    // seconds until scorched grass is back
 const MAX_BURNING = 360;
 // Each ignition carries a vigor (1 at the source) that fades as flames pass from
 // cell to cell, so one spark scorches a patch of meadow, not the whole forest.
-const VIGOR_DECAY = 0.8, VIGOR_DECAY_DOWNWIND = 0.88, VIGOR_MIN = 0.25;
+const VIGOR_DECAY = 0.72, VIGOR_DECAY_DOWNWIND = 0.8, VIGOR_MIN = 0.32;
 const FLAMES = 180;           // flame cards drawn around the camera
 
 // Flame card: two crossed quads, toon-banded flicker (dark red → orange → yellow core)
@@ -214,7 +214,7 @@ export class Wildfire {
             const bias = Math.max(0.15, 1 + down * (0.6 + 1.6 * wind.s));
             // uphill spreads faster (flames lean into the slope)
             const up = clamp((this.T.h[j] - this.T.h[i]) * 0.4, -0.4, 0.8);
-            const p = 0.007 * f * bias * (1 + up) * (1 - rain) / dl;
+            const p = 0.04 * f * bias * (1 + up) * (1 - rain) / dl;
             if (rand() < p) { fresh.push(j); fv.push(this.vigor[i] * (down > 0.5 ? VIGOR_DECAY_DOWNWIND : VIGOR_DECAY) * (0.85 + 0.15 * f)); }
           }
         }

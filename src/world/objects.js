@@ -166,7 +166,7 @@ export class WorldObjects {
       rot: new THREE.Quaternion().setFromAxisAngle(UP, Math.random() * 6.28), yaw: 0,
       asleep: true, alive: true, hp: kind === 'crate' ? 3 : 1, fuse: 0, burn: 0, respawn: 0, stillT: 0, wetT: 0,
     };
-    b.target = this.W.addTarget({ id: 'prop', kind, pos: new THREE.Vector3(x, y + b.h * 0.5, z), r: b.r + 0.2, baseHit: (el, src) => this.hit(b, el, src) });
+    b.target = this.W.addTarget({ id: 'prop', ground: true, kind, pos: new THREE.Vector3(x, y + b.h * 0.5, z), r: b.r + 0.2, baseHit: (el, src) => this.hit(b, el, src) });
     this.list.push(b);
     return b;
   }

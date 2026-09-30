@@ -853,7 +853,7 @@ export class Player {
       G.audio.play('levelup');
       if (G.skills) { G.skills.gain(2 * up); G.skills.cross = Math.min(5, (G.skills.cross || 0) + up); }
       const calm = G.mode === 'free' && !G.enemies.inCombat();
-      G.hud.banner('LEVEL UP', `울림이 깊어졌다 — Lv ${this.level}`, `마법의 위력이 강해졌다.${this.level % 2 === 0 ? ' 생명력의 그릇이 늘었다.' : ''}<br><b style="color:#f1d48a">울림점 +${2 * up}</b> · <b>울림의 갈림길</b>이 열린다${calm ? '' : ' — 싸움이 끝나면 새 기술을 고를 수 있다'}`, '#f1d48a');
+      G.hud.banner('LEVEL UP', `울림이 깊어졌다 — Lv ${this.level}`, `마법의 위력이 강해졌다.${this.level % 2 === 0 ? ' 생명력의 그릇이 늘었다.' : ''}<br><b style="color:#f1d48a">울림점 +${2 * up}</b> · <b>울림의 갈림길</b>이 열린다${calm ? '' : ' — 싸움이 끝나면 새 기술을 고를 수 있다'}`, '#f1d48a', 3800, { minor: true });
       G.vfx.burst(this.center(), 'soul', 30, { el: 'gold' });
       G.vfx.ring(this.pos, PAL.gold.core, 4, 0.8, { thick: 0.2 });
       G.hud.updateHearts();

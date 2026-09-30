@@ -252,11 +252,11 @@ button { font-family: inherit; }
 .at-line { height: 1px; width: 420px; margin: 8px auto; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent); }
 @keyframes areaTitle { 0% { opacity: 0; letter-spacing: 0.5em; } 15% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
 
-#banner { position: absolute; left: 0; right: 0; top: 34%; text-align: center; padding: 24px 0; background: linear-gradient(90deg, transparent, rgba(8, 10, 16, 0.82) 25%, rgba(8, 10, 16, 0.82) 75%, transparent); animation: bannerIn 0.8s ease-out; }
+#banner { position: absolute; left: 0; right: 0; top: 20%; text-align: center; padding: 18px 0; background: linear-gradient(90deg, transparent, rgba(8, 10, 16, 0.82) 25%, rgba(8, 10, 16, 0.82) 75%, transparent); animation: bannerIn 0.8s ease-out; }
 #banner::before, #banner::after { content: ''; position: absolute; left: 20%; right: 20%; height: 1px; background: linear-gradient(90deg, transparent, var(--gold), transparent); }
 #banner::before { top: 0; } #banner::after { bottom: 0; }
 .bn-small { font-family: var(--blade); font-size: 13px; letter-spacing: 0.45em; color: var(--gold); }
-.bn-big { font-family: var(--title); font-size: 38px; letter-spacing: 0.18em; margin: 8px 0; text-shadow: 0 0 24px currentColor; }
+.bn-big { font-family: var(--title); font-size: 32px; letter-spacing: 0.16em; margin: 6px 0; text-shadow: 0 0 24px currentColor; }
 .bn-desc { font-size: 15px; color: var(--ink); opacity: 0.85; line-height: 1.6; }
 #banner.out { animation: bannerOut 0.6s ease-in forwards; }
 @keyframes bannerIn { from { opacity: 0; transform: scaleY(0.3); } }
@@ -657,6 +657,14 @@ button, .tbtn, .dlg-choice, .jr-tabs button, input[type=range], select, input[ty
 #banner.compact .bn-small { font-size: 11px; letter-spacing: 0.3em; display: inline; margin-right: 12px; }
 #banner.compact .bn-big { font-size: 20px; letter-spacing: 0.06em; display: inline; margin: 0; }
 #banner.compact .bn-desc { display: none; }
+/* frequent notices (quests, waystones, seeds, level-ups): the same slim ribbon outside fights too,
+   with the description as one small line under it */
+#banner.minor { top: 66px; left: 50%; right: auto; transform: translateX(-50%); padding: 7px 60px 8px; width: max-content; max-width: calc(64vw / var(--ui)); background: linear-gradient(90deg, transparent, rgba(8, 10, 16, 0.72) 18%, rgba(8, 10, 16, 0.72) 82%, transparent); animation: bannerInC 0.45s ease-out; }
+#banner.minor.out { animation: bannerOutC 0.6s ease-in forwards; }
+#banner.minor::before, #banner.minor::after { left: 10%; right: 10%; }
+#banner.minor .bn-small { font-size: 11px; letter-spacing: 0.3em; display: inline; margin-right: 12px; }
+#banner.minor .bn-big { font-size: 20px; letter-spacing: 0.06em; display: inline; margin: 0; white-space: nowrap; }
+#banner.minor .bn-desc { font-size: 12.5px; line-height: 1.5; margin-top: 3px; opacity: 0.78; }
 /* the mouse is free: a quiet line near the bottom instead of a bobbing pill in the middle */
 #click-to-play { top: auto; bottom: 22%; padding: 6px 18px; font-size: 13px; letter-spacing: 0.06em; color: var(--ink-dim); background: rgba(0, 0, 0, 0.45); animation: fadeUpC 0.5s ease-out; }
 /* elements not yet awakened are not shown */

@@ -302,7 +302,7 @@ export class HumanRig extends Rig {
       return chn;
     });
     // state
-    this.w = { cast: 0, air: 0, glide: 0, talk: 0, swim: 0, sit: 0, kneel: 0, hurt: 0, wave: 0, spread: 0, down: 0, stagger: 0, shock: 0, panic: 0, dead: 0, dash: 0, gait: 0, run: 0 };
+    this.w = { climb: 0, cast: 0, air: 0, glide: 0, talk: 0, swim: 0, sit: 0, kneel: 0, hurt: 0, wave: 0, spread: 0, down: 0, stagger: 0, shock: 0, panic: 0, dead: 0, dash: 0, gait: 0, run: 0 };
     this.q = newPose();
     this.phase = rand();
     this.style = { hunch: c.hunch ?? 0, cadence: c.stride ? c.stride / 1.7 : 1, lift: 1, armHang: 0.08, kneeBend: 0, sway: 1, ...(o.style || {}) };
@@ -428,7 +428,8 @@ export class HumanRig extends Rig {
     const grounded = s.grounded !== false;
     const lie = Math.max(W.down, W.dead);
     W.cast = damp(W.cast, s.cast ? 1 : 0, s.cast ? 16 : 5, dt);
-    W.air = damp(W.air, !grounded && !s.glide && !s.swim ? 1 : 0, 12, dt);
+    W.climb = damp(W.climb, s.climb ? 1 : 0, s.climb ? 14 : 8, dt);
+    W.air = damp(W.air, !grounded && !s.glide && !s.swim && !s.climb ? 1 : 0, 12, dt);
     W.glide = damp(W.glide, s.glide ? 1 : 0, 7, dt);
     W.swim = damp(W.swim, s.swim ? 1 : 0, 6, dt);
     W.talk = damp(W.talk, s.talk ? 1 : 0, 6, dt);
@@ -504,7 +505,7 @@ export class HumanRig extends Rig {
     q.headx -= (0.02 + 0.08 * run + 0.1 * sprint) * gw;
     // held props: staff / cane / spear upright in the right fist, book in the left
     const hold = this.hold;
-    if (hold) {
+    if (hold && W.climb < 0.5) {
       q.armRx = q.armRx * 0.35 + (hold === 'cane' ? -0.3 : -0.12);
       q.armRz += hold === 'staff' ? -0.16 : -0.1;
       q.foreRx = (hold === 'cane' ? -0.95 : -1.3) - 0.25 * run * gw;
@@ -575,6 +576,29 @@ export class HumanRig extends Rig {
       q.shinLx = lerp(q.shinLx, 0.5 + 0.6 * (0.5 - 0.5 * kick), a); q.shinRx = lerp(q.shinRx, 0.5 + 0.6 * (0.5 - 0.5 * kick), a);
       q.footLx = lerp(q.footLx, 0.9, a); q.footRx = lerp(q.footRx, 0.9, a);
       q.hipsPY = lerp(q.hipsPY, Math.sin(cyc) * 0.02, a);
+    }
+    // --- climb: body pressed to the wall, hands reaching up in turn, knees stepping
+    if (W.climb > 0.01) {
+      const a = W.climb;
+      const cp = (s.climbPhase ?? 0) * TAU, mv = s.climbMove ?? 0;
+      const reachL = 0.5 + 0.5 * Math.sin(cp), reachR = 1 - reachL;
+      const lift = s.mantle ?? 0; // 0..1 while pulling up over a ledge
+      const push = sstep(0.3, 0.8, lift);
+      q.hipsx = lerp(q.hipsx, 0.25 - push * 0.3, a); q.spinex = lerp(q.spinex, 0.18 + push * 0.5, a); q.chestx = lerp(q.chestx, 0.05, a);
+      q.headx = lerp(q.headx, -0.45 + push * 0.5, a); q.hipsPZ = lerp(q.hipsPZ, 0.1, a);
+      // arms: one high, one lower, swapping as we climb; mantle pushes down on the lip
+      const hiL = mix(-2.2 - 0.5 * reachL * mv, -1.0, push), hiR = mix(-2.2 - 0.5 * reachR * mv, -1.0, push);
+      q.armLx = lerp(q.armLx, hiL, a); q.armRx = lerp(q.armRx, hiR, a);
+      q.armLz = lerp(q.armLz, 0.28, a); q.armRz = lerp(q.armRz, -0.28, a);
+      q.foreLx = lerp(q.foreLx, -0.55 - 0.5 * (1 - reachL) * mv - push * 0.9, a); q.foreRx = lerp(q.foreRx, -0.55 - 0.5 * (1 - reachR) * mv - push * 0.9, a);
+      q.handLx = lerp(q.handLx, 0.5, a); q.handRx = lerp(q.handRx, 0.5, a);
+      q.fingL = lerp(q.fingL, 1.1, a); q.fingR = lerp(q.fingR, 1.1, a);
+      // legs: opposite leg bends up with the reaching arm
+      q.thighLx = lerp(q.thighLx, -0.35 - 0.75 * reachR * mv - push * 0.6, a); q.thighRx = lerp(q.thighRx, -0.35 - 0.75 * reachL * mv, a);
+      q.shinLx = lerp(q.shinLx, 0.55 + 0.8 * reachR * mv + push * 0.5, a); q.shinRx = lerp(q.shinRx, 0.55 + 0.8 * reachL * mv, a);
+      q.thighLz = lerp(q.thighLz, 0.12, a); q.thighRz = lerp(q.thighRz, -0.12, a);
+      q.footLx = lerp(q.footLx, 0.35, a); q.footRx = lerp(q.footRx, 0.35, a);
+      q.hipsPY = lerp(q.hipsPY, Math.sin(cp * 2) * 0.03 * mv, a);
     }
     // --- sit (on a bench / ground edge)
     if (W.sit > 0.01) {
@@ -729,7 +753,7 @@ export class HumanRig extends Rig {
       _v1.copy(_v3).multiplyScalar(Math.cos(tilt)).addScaledVector(_v4, Math.sin(tilt)).addScaledVector(_v5, -0.06 * (1 - ct)).normalize();
       B.handR.getWorldQuaternion(_q1);
       _v2.set(0, 0, 1).applyQuaternion(_q1);
-      rotateTowards(B.handR, _v2, _v1, 0.9 * (1 - lie) * (1 - W.shock) * (1 - W.panic));
+      rotateTowards(B.handR, _v2, _v1, 0.9 * (1 - lie) * (1 - W.shock) * (1 - W.panic) * (1 - W.climb));
       B.handR.updateMatrixWorld(true);
     }
 

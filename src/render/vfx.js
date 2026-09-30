@@ -729,6 +729,12 @@ export class VFX {
     const idle = window.requestIdleCallback || ((f) => setTimeout(f, 60));
     const next = () => { const k = kinds.shift(); if (!k) return; this.tex(k); idle(next); };
     setTimeout(() => idle(next), 1500);
+    // Program keepers: one never-disposed instance of every per-use material type.
+    // Per-use materials (rune circles, orbs, tornados, beams, telegraphs, waves) are
+    // disposed when their effect ends; if no other user of that shader program is
+    // alive, three.js releases the program and the next cast recompiles it (a hitch
+    // on every bolt). Compiling these templates in prewarm() keeps each program alive.
+    this.keepers = [];
     setTimeout(() => this.prewarm(), 800);
 
     this._slowPrev = false;
@@ -755,9 +761,34 @@ export class VFX {
     const sp = this._spike(false); if (sp) { add(sp.material, spikeGeo(0)); sp.userData.busy = false; }
     for (const pool of [this.debris.rock, this.debris.ice, this.debris.ember]) { const im = new THREE.InstancedMesh(pool.im.geometry, pool.im.material, 1); im.position.set(0, -500, 0); im.frustumCulled = false; sc.add(im); }
     if (this.distort.scene) { const m = new THREE.Mesh(this.distort.quad, this.distort.base); m.position.set(0, -500, 0); m.frustumCulled = false; sc.add(m); }
+    add(this.rings[0].m.material, this.ringGeo);
+    add(this.minis[0].m.material, this.minis[0].m.geometry);
+    // templates for per-use materials (see `keepers` in the constructor)
+    if (!this._templates) {
+      const orb = this.orb('arcane', 0.1, { halo: 1 }); this.scene.remove(orb);
+      this._templates = [
+        [this._circleMat(PAL.arcane.glow, {}), this.planeGeo], [this._circleMat(PAL.arcane.glow, { alt: true }), this.planeGeo],
+        [orb.material, this.orbGeo], [orb.userData.halo.material, this.planeGeo],
+        [this._tornadoMat(PAL.wind, 1), this.cylGeo], [this._beamMat(PAL.white.core, PAL.arcane.core, 1, 1), this.cylGeo],
+      ];
+      // noise spheres switch to double-sided for additive / inside-camera looks (another program variant)
+      const ds = this.spheres[0].m.material.clone(); ds.side = THREE.DoubleSide; ds.blending = THREE.AdditiveBlending;
+      this._templates.push([ds, this.spheres[0].m.geometry]);
+    }
+    for (const [mat, geo] of this._templates) add(mat, geo);
+    for (const k of this.keepers) add(k.mat, k.geo || this.planeGeo);
     const done = () => { sc.clear(); };
+    // programs are keyed by output colour space / tone mapping: compile against the
+    // composer's HDR target the scene is actually drawn into (not the sRGB canvas)
+    const prevRT = R.getRenderTarget();
+    const rt = G.renderer.composer && G.renderer.composer.readBuffer;
+    if (rt) R.setRenderTarget(rt);
     try { const p = R.compileAsync ? R.compileAsync(sc, G.camera, this.scene) : (R.compile(sc, G.camera, this.scene), null); if (p && p.then) p.then(done, done); else done(); } catch (e) { done(); }
+    R.setRenderTarget(prevRT);
   }
+
+  // register a per-use material type whose shader program must stay compiled
+  keep(mat, geo) { this.keepers.push({ mat, geo }); }
 
   // spell ice prism geometry (freeze encasing etc.)
   iceGeo(i = 0) { return spikeGeo(i % 4); }
@@ -921,11 +952,30 @@ export class VFX {
   }
 
   // ---------------- rune circle ----------------
-  circle(pos, color, size = 2, dur = 1, o = {}) {
+  // Rune circles draw themselves in: an angular wipe sweeps around the centre with a
+  // bright leading edge (uReveal 0 → 1), then the circle spins and fades as before.
+  _circleMat(color, o) {
     const mat = new THREE.MeshBasicMaterial({
       map: o.alt ? this.runeTex2 : this.runeTex, color: (color instanceof THREE.Color ? color.clone() : new THREE.Color(color)).multiplyScalar(o.intensity ?? 1.05),
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, opacity: 0,
     });
+    const rev = mat.userData.reveal = { value: 1 };
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uReveal = rev;
+      sh.fragmentShader = sh.fragmentShader.replace('void main() {', 'uniform float uReveal;\nvoid main() {').replace('#include <map_fragment>', `#include <map_fragment>
+        if (uReveal < 1.0) {
+          vec2 q = vMapUv - 0.5;
+          float ang = atan(q.x, q.y) / 6.2831853 + 0.5;
+          float lead = uReveal * 1.12 - ang;
+          if (lead < 0.0) discard;
+          diffuseColor.rgb *= 1.0 + smoothstep(0.1, 0.0, lead) * 2.5 * step(0.02, 1.0 - uReveal);
+        }`);
+    };
+    mat.customProgramCacheKey = () => 'rune-wipe';
+    return mat;
+  }
+  circle(pos, color, size = 2, dur = 1, o = {}) {
+    const mat = this._circleMat(color, o);
     const m = new THREE.Mesh(this.planeGeo, mat);
     m.renderOrder = 7;
     if (o.vertical) {
@@ -939,11 +989,16 @@ export class VFX {
     this.nCircles++;
     let t = 0;
     const spin = o.spin ?? 1.2;
+    // longer-lived circles (signature spells, weaves, ultimates) are drawn in; quick muzzle circles pop
+    const wipe = o.wipe ?? (dur <= 0 || dur >= 0.5 ? 0.3 : 0);
+    const rev = mat.userData.reveal;
+    rev.value = wipe > 0 ? 0 : 1;
     const h = {
       mesh: m, done: false, follow: o.follow || null, offset: o.offset || null,
       end() { h.done = true; },
       update: (dt) => {
         t += dt;
+        if (wipe > 0) rev.value = Math.min(1, t / wipe);
         const inT = Math.min(1, t / 0.18);
         const s = size * (o.grow ? 0.5 + 0.5 * easeOutBack(inT) : easeOutBack(inT));
         let alpha = inT;
@@ -1161,18 +1216,22 @@ export class VFX {
   }
 
   // ---------------- tornado ----------------
+  _tornadoMat(p, sp) {
+    return new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: p.glow.clone() }, uCore: { value: p.core.clone() }, uAlpha: { value: 0 }, uTime: U.time, uSpeed: { value: sp }, uNoise: U.noise },
+      vertexShader: TORNADO_VS, fragmentShader: TORNADO_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
+  }
   tornado(pos, o = {}) {
-    const p = PAL[o.el || 'wind'];
+    o = { ...o };
+    let p = PAL[o.el || 'wind'];
     const grp = new THREE.Group();
     grp.position.copy(pos);
     const mats = [];
     const layers = [[1.3, 3.2, 7, 0.9], [0.9, 2.3, 6, 1.4], [0.5, 1.4, 5, 2.1]];
     for (const [rb, rt, h, sp] of layers) {
       const geo = new THREE.CylinderGeometry(rt, rb, h, 20, 6, true); geo.translate(0, h / 2, 0);
-      const mat = new THREE.ShaderMaterial({
-        uniforms: { uColor: { value: p.glow.clone() }, uCore: { value: p.core.clone() }, uAlpha: { value: 0 }, uTime: U.time, uSpeed: { value: sp }, uNoise: U.noise },
-        vertexShader: TORNADO_VS, fragmentShader: TORNADO_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-      });
+      const mat = this._tornadoMat(p, sp);
       mats.push(mat);
       const m = new THREE.Mesh(geo, mat); m.renderOrder = 9; grp.add(m);
     }
@@ -1180,10 +1239,21 @@ export class VFX {
     grp.scale.setScalar(sc);
     this.scene.add(grp);
     let dustT = 0;
+    let tint = 0;
     const h = {
       grp, alpha: 0, done: false,
+      // re-tint the funnel to another element (a field infused by a second element)
+      setEl(el) {
+        const np = PAL[el]; if (!np || np === p) return;
+        p = np; o.el = el; tint = 1;
+      },
       update: (dt) => {
         h.alpha = h.done ? Math.max(0, h.alpha - dt * 2.5) : Math.min(1, h.alpha + dt * 4);
+        if (tint > 0) {
+          tint = Math.max(0, tint - dt * 2.5);
+          const k = Math.min(1, dt * 6);
+          for (const m of mats) { m.uniforms.uColor.value.lerp(p.glow, k); m.uniforms.uCore.value.lerp(p.core, k); }
+        }
         // when the camera is at/inside the funnel wall (tornados worn by the player), both walls
         // stack right in front of the lens — fade them so the view stays readable
         let camK = 1;
@@ -1222,14 +1292,17 @@ export class VFX {
   // ---------------- beam ----------------
   // Layered shader cylinders (white-hot core, flowing glow, soft outer halo),
   // a muzzle flare, a boiling impact point with sparks and refraction.
+  _beamMat(core, glow, flow, soft) {
+    return new THREE.ShaderMaterial({
+      uniforms: { uCore: { value: core.clone() }, uGlow: { value: glow.clone() }, uAlpha: { value: 0 }, uTime: U.time, uLen: { value: 10 }, uFlow: { value: flow }, uSoft: { value: soft }, uNoise: U.noise },
+      vertexShader: BEAM_VS, fragmentShader: BEAM_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
+  }
   beam(el, o = {}) {
     const p = PAL[el] || PAL.arcane;
     const grp = new THREE.Group();
     const mk = (core, glow, flow, soft, order) => {
-      const mat = new THREE.ShaderMaterial({
-        uniforms: { uCore: { value: core.clone() }, uGlow: { value: glow.clone() }, uAlpha: { value: 0 }, uTime: U.time, uLen: { value: 10 }, uFlow: { value: flow }, uSoft: { value: soft }, uNoise: U.noise },
-        vertexShader: BEAM_VS, fragmentShader: BEAM_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-      });
+      const mat = this._beamMat(core, glow, flow, soft);
       const m = new THREE.Mesh(this.cylGeo, mat); m.renderOrder = order; m.frustumCulled = false; grp.add(m); return m;
     };
     const core = mk(PAL.white.core.clone().lerp(p.core, 0.35).multiplyScalar(0.9), p.core, 0.2, 0.6, 12);
@@ -1332,7 +1405,7 @@ export class VFX {
     }
     let d = this.decals.find((q) => !q.busy);
     if (!d) { d = this.decals.reduce((a, b) => (a.seq < b.seq ? a : b)); }
-    d.busy = true; d.seq = ++this.decalSeq; d.t = -(o.delay ?? 0); d.kind = kind;
+    d.busy = true; d.seq = ++this.decalSeq; d.t = -(o.delay ?? 0); d.kind = kind; d.killAt = undefined;
     const m = d.m, u = m.material.uniforms;
     u.uMap.value = this.tex(kind);
     u.uBase.value.copy(D.base); u.uBaseA.value = 0;
@@ -1354,6 +1427,12 @@ export class VFX {
     m.visible = true;
     return d;
   }
+  // fade a decal out early (a field that changed into something else). `seq` guards
+  // against the decal having been recycled for another effect in the meantime.
+  endDecal(d, seq, fade = 0.8) {
+    if (!d || !d.busy || d.seq !== seq || d.t < 0) return;
+    d.killAt = Math.min(d.killAt ?? 1e9, d.t + fade); d.killFade = fade;
+  }
   _updateDecals(dt) {
     for (const d of this.decals) {
       if (!d.busy) continue;
@@ -1363,7 +1442,8 @@ export class VFX {
       const pop = Math.min(1, t / 0.14);
       const s = d.r * (0.55 + 0.45 * (1 - Math.pow(1 - pop, 3)));
       m.scale.set(s, 1, s);
-      const out = clamp((d.dur - t) / (d.dur * 0.35), 0, 1);
+      let out = clamp((d.dur - t) / (d.dur * 0.35), 0, 1);
+      if (d.killAt !== undefined) { out = Math.min(out, clamp((d.killAt - t) / d.killFade, 0, 1)); if (t >= d.killAt) d.dur = t; }
       u.uBaseA.value = d.baseA * Math.min(1, t / 0.08) * out;
       u.uGlowA.value = d.glowA * Math.min(1, t / 0.05) * Math.exp(-t / Math.max(0.05, d.glowDur)) * out;
       if (d.spin) m.rotateY(dt * d.spin * Math.exp(-t * 0.8));

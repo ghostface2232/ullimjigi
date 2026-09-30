@@ -21,9 +21,69 @@ export class Colliders {
       }
     return c;
   }
+  // Shapes are solid from h0 to h1. Optional fields set after creation:
+  //   climb: false  → can't be grabbed (trees, seals, thin poles)
+  //   noTop: true   → the top isn't a floor (tall trunks, magic barriers)
+  //   topFn(lx, lz) → local top height (e.g. a gable roof); defaults to h1
   addCircle(x, z, r, h0 = -1e9, h1 = 1e9, tag = null) { return this._insert({ type: 'circle', x, z, r, h0, h1, tag, _s: 0 }); }
   addBox(x, z, hw, hd, rot = 0, h0 = -1e9, h1 = 1e9, tag = null) {
     return this._insert({ type: 'box', x, z, hw, hd, rot, cos: Math.cos(rot), sin: Math.sin(rot), h0, h1, tag, _s: 0 });
+  }
+  // local frame helpers (box): world → local and back
+  _local(c, x, z) { const dx = x - c.x, dz = z - c.z; return [dx * c.cos - dz * c.sin, dx * c.sin + dz * c.cos]; }
+  _world(c, lx, lz) { return [c.x + lx * c.cos + lz * c.sin, c.z - lx * c.sin + lz * c.cos]; }
+  topAt(c, x, z) {
+    if (!c.topFn) return c.h1;
+    if (c.type === 'circle') return c.topFn(x - c.x, z - c.z);
+    const [lx, lz] = this._local(c, x, z);
+    return c.topFn(lx, lz);
+  }
+  inside(c, x, z, pad = 0) {
+    if (c.type === 'circle') return Math.hypot(x - c.x, z - c.z) < c.r + pad;
+    const [lx, lz] = this._local(c, x, z);
+    return Math.abs(lx) < c.hw + pad && Math.abs(lz) < c.hd + pad;
+  }
+  // Highest walkable shape top under (x, z) that is at most `step` above y
+  surfaceTop(x, z, y, step = 0.7) {
+    let best = -1e9;
+    this.query(x, z, 0.5, (c) => {
+      if (c.noTop || c.h1 > 1e8) return;
+      if (!this.inside(c, x, z, -0.05)) return;
+      const t = this.topAt(c, x, z);
+      if (t <= y + step && t > best) best = t;
+    });
+    return best;
+  }
+  // Nearest grabbable wall around a body at (x, y..y+height, z).
+  // Returns { c, px, pz, nx, nz, d, top } (contact point, outward normal, gap, top at contact) or null.
+  wallNear(x, y, z, reach = 0.9, height = 1.6) {
+    let best = null;
+    this.query(x, z, reach + 1, (c) => {
+      if (c.climb === false || y + height < c.h0 || y > c.h1 - 0.1) return;
+      // standing on (or above) this shape's sloped top: it's the floor, not a wall
+      if (c.topFn && this.inside(c, x, z, 0.1) && y > this.topAt(c, x, z) - 0.35) return;
+      let px, pz, nx, nz, d;
+      if (c.type === 'circle') {
+        const dx = x - c.x, dz = z - c.z, l = Math.hypot(dx, dz) || 1e-4;
+        nx = dx / l; nz = dz / l; px = c.x + nx * c.r; pz = c.z + nz * c.r; d = l - c.r;
+      } else {
+        const [lx, lz] = this._local(c, x, z);
+        const cx = Math.max(-c.hw, Math.min(c.hw, lx)), cz = Math.max(-c.hd, Math.min(c.hd, lz));
+        let ox = lx - cx, oz = lz - cz, l = Math.hypot(ox, oz);
+        if (l < 1e-4) { // inside: push out through the nearest face
+          const fx = c.hw - Math.abs(lx), fz = c.hd - Math.abs(lz);
+          if (fx < fz) { ox = Math.sign(lx || 1); oz = 0; } else { ox = 0; oz = Math.sign(lz || 1); }
+          l = 1; d = -Math.min(fx, fz);
+        } else d = l;
+        const lnx = ox / l, lnz = oz / l;
+        [px, pz] = this._world(c, cx, cz);
+        nx = lnx * c.cos + lnz * c.sin; nz = -lnx * c.sin + lnz * c.cos;
+      }
+      if (d > reach) return;
+      if (!best || d < best.d) best = { c, px, pz, nx, nz, d };
+    });
+    if (best) best.top = best.c.noTop ? best.c.h1 : this.topAt(best.c, best.px - best.nx * 0.3, best.pz - best.nz * 0.3);
+    return best;
   }
   remove(c) {
     if (!c || !c.cells) return;
@@ -44,6 +104,8 @@ export class Colliders {
     let hit = false;
     this.query(pos.x, pos.z, radius + 1, (c) => {
       if (pos.y > c.h1 - 0.05 || pos.y + height < c.h0) return;
+      // within a step of a walkable top (stairs, sloped roofs): let the ground snap lift us instead
+      if (!c.noTop && pos.y > (c.topFn ? this.topAt(c, pos.x, pos.z) : c.h1) - 0.45) return;
       if (c.type === 'circle') {
         const dx = pos.x - c.x, dz = pos.z - c.z, rr = c.r + radius;
         const d2 = dx * dx + dz * dz;

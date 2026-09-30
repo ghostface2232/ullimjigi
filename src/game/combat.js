@@ -30,7 +30,7 @@ export const REACTIONS = {
 export function newStatus() {
   return {
     burn: 0, burnDmg: 0, burnTick: 0, chill: 0, chillT: 0, frozen: 0, shock: 0, stun: 0, wet: 0, armorBroken: 0, ice: null,
-    electro: 0, electroDmg: 0, electroTick: 0, steam: 0, bubble: 0, bubbleMesh: null, wetFrozen: false,
+    electro: 0, electroDmg: 0, electroTick: 0, steam: 0, bubble: 0, bubbleMesh: null, wetFrozen: false, thaw: 0,
   };
 }
 
@@ -38,7 +38,31 @@ const K = () => G.skills;
 const R = (id) => (G.skills ? G.skills.r(id) : 0);
 
 export class Combat {
-  constructor() { this.killCount = 0; }
+  constructor() { this.killCount = 0; this.hs = { frame: -1, base: 0, max: 0, sum: 0, light: -9 }; }
+
+  // Hitstop aggregation: within one frame the strongest stop wins plus 30% of the
+  // rest (capped), and light stops (< 0.04 s) are rate-limited so rapid multi-hit
+  // spells (vortex ticks, crystal storm, beams) don't keep the game crawling.
+  stop(v, force = false) {
+    if (!(v > 0)) return;
+    const S = this.hs, now = G.realTime;
+    if (S.frame !== now) { S.frame = now; S.base = G.hitstop; S.max = 0; S.sum = 0; }
+    if (v < 0.04 && !force) {
+      if (S.max === 0 && now - S.light < 0.3) return;
+      S.light = now;
+    }
+    S.max = Math.max(S.max, v); S.sum += v;
+    G.hitstop = Math.max(S.base, Math.min(0.15, S.max + 0.3 * (S.sum - S.max)));
+  }
+
+  // lingering field under a target (reaction aftermath); skipped for high flyers
+  leave(kind, t, o) {
+    const F = G.spells && G.spells.fields;
+    if (!F || !t.pos) return null;
+    const g = t.pos.clone(); g.y = G.world.ground(g.x, g.z, g.y + 1);
+    if (t.pos.y - g.y > 3) return null;
+    return F.add(kind, g, { ...o, noGround: true });
+  }
 
   others(target, pos, r) {
     const out = [];
@@ -106,16 +130,19 @@ export class Combat {
       case 'melt':
         dmg *= 2.2 * (R('h_thermal') ? 1.4 : 1); st.frozen = 0; st.chill = 0; st.wet = 5; st.wetFrozen = false; applyStatus = false;
         this.breakIce(t);
+        this.leave('puddle', t, { r: 2, dur: 4 });
         V.react('melt', c);
         A.play('melt', { pos: c }); A.play('steam', { pos: c, v: 0.5 }); hs = 0.09; shake = 0.3;
         break;
       case 'evaporate':
         dmg *= 1.6; st.wet = 0; applyStatus = false;
+        this.leave('steam', t, { r: 2.2, dur: 3 });
         V.react('evaporate', c); A.play('steam', { pos: c }); A.play('sizzle', { pos: c, d: 0.4 }); hs = 0.07;
         break;
       case 'thermal': {
         const big = R('h_thermal');
         dmg *= 1.8 * (big ? 1.4 : 1); st.burn = 0; applyStatus = false;
+        if (!(t.immune && t.immune.includes('water'))) st.wet = Math.max(st.wet, 4);
         const rr = big ? 5 : 3.5;
         V.react('thermal', c, { r: rr });
         A.play('react_thermal', { pos: c });
@@ -128,6 +155,7 @@ export class Combat {
         const perma = R('h_permafrost');
         this.freeze(t, 3.2 * (perma ? 2 : 1));
         if (perma) st.wetFrozen = true;
+        this.leave('rime', t, { r: 1.8, dur: 3.5 });
         V.react('flashfreeze', c);
         A.play('react_flashfreeze', { pos: c });
         hs = 0.08; shake = 0.2;
@@ -139,6 +167,8 @@ export class Combat {
         st.frozen = 0; st.chill = 0; st.armorBroken = 8; st.wetFrozen = false; applyStatus = el === 'storm' ? false : applyStatus;
         this.breakIce(t, true);
         const rr = 4.2 * (1 + 0.25 * br);
+        st.chill = Math.max(st.chill, 1); st.chillT = 3.5; // ice dust clings: the next frost hit refreezes sooner
+        this.leave('rime', t, { r: Math.min(4, rr * 0.6), dur: 3.5 });
         V.react('shatter', c, { r: rr });
         A.play('shatter', { pos: c });
         for (const o of this.others(t, c, rr)) this.hit(o, { dmg: P * 1.0, el: 'frost', noReact: true, pos: o.center(), knock: 8 });
@@ -167,6 +197,7 @@ export class Combat {
           V.burst(oc, 'electric', 14);
           from = oc;
         }
+        this.leave('shockwater', t, { r: 2.4, dur: 2.5 });
         V.react('conduct', c);
         A.play('chain', { pos: c }); A.play('splash', { pos: c, v: 0.5 });
         hs = 0.1; shake = 0.35;
@@ -180,10 +211,8 @@ export class Combat {
         A.play('overload', { pos: c });
         for (const o of this.others(t, c, rr)) this.hit(o, { dmg: P * 1.5, el: 'fire', noReact: true, pos: o.center(), dir: tmp.subVectors(o.center(), c).normalize().clone(), knock: 14, lift: 5 });
         h.knock = (h.knock || 0) + 12; h.lift = 5;
-        if (R('h_firebolt') && G.spells) {
-          const g = t.pos.clone(); g.y = G.world.ground(g.x, g.z, g.y + 2);
-          G.spells.field(g, { r: 3.2, dur: 3, every: 0.4, dmg: P * 0.35, el: 'fire', alt: 'storm', look: 'plasma' });
-        }
+        if (R('h_firebolt')) this.leave('plasma', t, { r: 3.2, dur: 3, dmg: P * 0.35 });
+        else this.leave('blaze', t, { r: 2.2, dur: 2.5, dmg: P * 0.12 });
         hs = 0.12; shake = 0.5; impact(0.5);
         break;
       }
@@ -243,6 +272,7 @@ export class Combat {
         A.play('react_scald', { pos: c }); A.play('steam', { pos: c, v: 0.6 });
         for (const o of this.others(t, c, 3.5)) this.hit(o, { dmg: P * 0.8, el: 'fire', noReact: true, noStatus: true, pos: o.center(), dir: tmp.subVectors(o.center(), c).normalize().clone(), knock: 7, lift: 3 });
         this.steamCloud(c, t);
+        if (!R('wa_steam')) this.leave('steam', t, { r: 2.4, dur: 3 });
         hs = 0.1; shake = 0.35; impact(0.35);
         break;
       }
@@ -317,7 +347,7 @@ export class Combat {
 
     // feedback
     if (h.source !== 'enemy' && h.source !== 'dot') {
-      G.hitstop = Math.max(G.hitstop, hs + (crit ? 0.025 : 0));
+      this.stop(hs + (crit ? 0.025 : 0), !!reaction || crit);
       G.cameraRig.shake(shake);
       G.hud.damage(c, dmg, el, crit, reaction);
       if (reaction && REACTIONS[reaction]) {
@@ -343,7 +373,7 @@ export class Combat {
     t.onHit && t.onHit(h, dmg, reaction);
     if (t.hp <= 0) {
       t.hp = 0;
-      if (h.source !== 'enemy') { G.hitstop = Math.max(G.hitstop, 0.09); G.cameraRig.shake(0.2); }
+      if (h.source !== 'enemy') { this.stop(h.source === 'dot' ? 0.05 : 0.09, true); G.cameraRig.shake(0.2); }
       if (byPlayer) {
         A.play('kill', { pos: c, gap: 0.06 });
         V.kill(c, el);
@@ -426,12 +456,16 @@ export class Combat {
     const rr = 3 + lv, dur = 2 + lv;
     G.vfx.burst(c, 'steam', 18, { spread: rr * 0.6, size: 1.5 });
     for (const o of [t, ...this.others(t, c, rr)]) if (o.st) o.st.steam = Math.max(o.st.steam, dur);
+    this.leave('steam', t, { r: rr * 0.8, dur: dur + 1 });
   }
 
   addChill(t, n) {
     const st = t.st;
     if (!st) return;
     if (st.frozen > 0) { st.frozen = Math.max(st.frozen, 1.5); return; }
+    // just thawed: chill still builds (and slows) but cannot refreeze yet, so rime
+    // fields and frost spam can't lock an enemy down forever
+    if (st.thaw > 0) { st.chill = Math.min(st.chill + n * 0.5, (t.freezeAt ?? 3) - 0.25); st.chillT = 3.5; return; }
     st.chill += n; st.chillT = 3.5;
     if (st.chill >= (t.freezeAt ?? 3)) { st.chill = 0; this.freeze(t, t.freezeTime ?? 3); }
   }
@@ -528,7 +562,7 @@ export class Combat {
     if (st.frozen > 0) {
       st.frozen -= dt;
       if (st.ice) st.ice.position.copy(t.pos);
-      if (st.frozen <= 0) { this.breakIce(t); st.wetFrozen = false; }
+      if (st.frozen <= 0) { this.breakIce(t); st.wetFrozen = false; st.thaw = t.boss ? 5 : 2.5; }
     }
     if (st.shock > 0) {
       st.shock -= dt;
@@ -550,6 +584,7 @@ export class Combat {
       if (st.bubble <= 0 || !t.alive) this.popBubble(t);
     }
     if (st.stun > 0) st.stun -= dt;
+    if (st.thaw > 0) st.thaw -= dt;
     if (st.armorBroken > 0) st.armorBroken -= dt;
     let mul = 1;
     if (st.chill > 0) mul *= 1 - 0.18 * Math.min(st.chill, 4);

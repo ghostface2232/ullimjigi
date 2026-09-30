@@ -23,12 +23,12 @@ export const sigOf = (el) => SIG[el];
 export const WEAVE_NODE = 'h_weave';
 
 const SIG_TEXT = {
-  arcane: '지팡이 끝에 모은 울림을 한꺼번에 터뜨려, 주위로 비전의 충격파를 퍼뜨린다. 가까운 적을 밀쳐 내고 날아오는 투사체를 지운다.',
-  fire: '두 손 가득 모은 불을 거대한 불덩이로 빚어 던진다. 떨어진 자리가 크게 터지며 넓은 범위를 불태운다.',
-  wind: '앞으로 휘몰아치는 돌풍이 적들을 공중으로 들어 올린다. 공중에서 쓰면 상승 기류를 타고 솟구친다.',
-  frost: '땅을 따라 얼음 가시가 줄지어 솟구치며 적을 꿰뚫는다. 물 위에서는 건널 수 있는 얼음 길이 된다.',
-  storm: '조준한 곳에 하늘의 번개를 내리꽂는다. 벼락이 떨어진 자리가 넓게 터지며 적을 감전시킨다.',
-  water: '앞으로 밀려가는 물결이 적을 밀쳐 내고 모두 적신다. 적의 투사체를 삼켜 버린다.',
+  arcane: '지팡이 끝에 모은 울림을 한꺼번에 터뜨려, 주위로 비전의 충격파를 퍼뜨린다. 가까운 적을 밀쳐 내고 날아오는 투사체를 지우며, 닿은 땅의 흔적을 모두 터뜨린다.',
+  fire: '두 손 가득 모은 불을 거대한 불덩이로 빚어 던진다. 떨어진 자리가 크게 터지며 넓은 범위를 불태우고, 잠시 불길이 남는다.',
+  wind: '앞으로 휘몰아치는 돌풍이 적들을 공중으로 들어 올린다. 앞의 불길은 번지고 김과 전기는 흩어진다. 공중에서 쓰면 상승 기류를 타고 솟구친다.',
+  frost: '땅을 따라 얼음 가시가 줄지어 솟구치며 적을 꿰뚫고, 한기를 뿜는 서리밭을 남긴다. 물 위에서는 건널 수 있는 얼음 길이 된다.',
+  storm: '조준한 곳에 하늘의 번개를 내리꽂는다. 벼락이 떨어진 자리가 넓게 터지며 적을 감전시키고, 잠시 대전된 땅이 남는다.',
+  water: '앞으로 밀려가는 물결이 적을 밀쳐 내고 모두 적시며, 지나간 자리에 물웅덩이를 남긴다. 적의 투사체를 삼켜 버린다.',
 };
 const heavyLine = (el) => { const h = HEAVY[el]; return h ? `<span class="nd-meta">우클릭 · 마나 ${h.cost} · 재사용 ${h.cd}초</span>` : ''; };
 // tier-0 "active" node that unlocks an element's signature spell (name read lazily from spells.js)
@@ -61,7 +61,7 @@ export const TREES = {
       { id: 'f_heat', name: '달군 불씨', tier: 1, col: 1, max: 3, cost: 1, req: ['f_sig'], desc: (r) => `불씨 탄 피해 +${12 * r}%, 화상 피해 +${15 * r}%.` },
       { id: 'f_splash', name: '튀는 불씨', tier: 2, col: 0, max: 1, cost: 1, req: ['f_heat'], desc: () => '불씨 탄이 터지며 반경 2.2 안의 적에게 0.4P 피해와 화상을 입힌다.' },
       { id: 'f_kindle', name: '잉걸불', tier: 2, col: 2, max: 2, cost: 1, req: ['f_heat'], desc: (r) => `화상 지속 +${2 * r}초. 불타는 적이 받는 모든 피해 +${8 * r}%.` },
-      { id: 'f_blaze', name: '불바다', tier: 3, col: 0, max: 1, cost: 2, req: ['f_splash'], desc: () => '화염구가 터진 자리에 4초간 불길이 남는다 (0.5초마다 0.3P, 화상).' },
+      { id: 'f_blaze', name: '불바다', tier: 3, col: 0, max: 1, cost: 2, req: ['f_splash'], desc: () => '화염구가 남기는 불길이 불바다가 된다: 반경 2.4 → 3.6, 2.5 → 4초, 0.5초마다 0.15P → 0.3P (화상).' },
       { id: 'f_overheat', name: '과열', tier: 3, col: 1, max: 2, cost: 2, req: ['f_splash', 'f_kindle'], desc: (r) => `2초 안에 연달아 쓰는 화염 마법은 겹칠 때마다 피해 +${6 * r}% (최대 5겹).` },
       { id: 'f_ashwalk', name: '재의 걸음', tier: 3, col: 2, max: 1, cost: 2, req: ['f_kindle'], desc: () => '불타는 적을 쓰러뜨리면 마나 8을 되찾고, 불이 주변 적에게 옮겨붙는다.' },
       { id: 'f_ult', name: '태양의 노래', tier: 4, col: 1, max: 1, cost: 3, kind: 'ult', req: ['f_blaze', 'f_overheat', 'f_ashwalk'], desc: () => '궁극기 (F). 하늘에서 거대한 불덩이가 떨어져 반경 7에 6P 피해, 6초간 불바다를 남긴다.' },
@@ -115,7 +115,7 @@ export const TREES = {
       { id: 'wa_spring', name: '맑은 샘', tier: 2, col: 2, max: 2, cost: 1, req: ['wa_pressure'], desc: (r) => `해일을 쓰면 생명력을 하트 ${r === 1 ? '¼' : '½'}칸 되찾는다.` },
       { id: 'wa_bubble', name: '물방울 감옥', tier: 3, col: 0, max: 1, cost: 2, req: ['wa_soak'], desc: () => '해일에 맞은 가장 가까운 적을 2.5초간 물방울에 가둔다 (행동 불가, 떠오름).' },
       { id: 'wa_mirror', name: '되비추는 물결', tier: 3, col: 1, max: 1, cost: 2, req: ['wa_soak', 'wa_spring'], desc: () => '해일이 적의 투사체를 삼키고, 주인에게 되돌려 보낸다.' },
-      { id: 'wa_steam', name: '김서림', tier: 3, col: 2, max: 2, cost: 2, req: ['wa_spring'], desc: (r) => `소화가 일어나면 짙은 김이 피어올라 반경 ${3 + r}의 적이 ${2 + r}초간 40% 느려진다.` },
+      { id: 'wa_steam', name: '김서림', tier: 3, col: 2, max: 2, cost: 2, req: ['wa_spring'], desc: (r) => `소화가 일어나면 짙은 김 구름(땅의 흔적)이 피어올라 반경 ${3 + r}의 적이 ${2 + r}초간 40% 느려지고 젖는다.` },
       { id: 'wa_ult', name: '바다의 노래', tier: 4, col: 1, max: 1, cost: 3, kind: 'ult', req: ['wa_bubble', 'wa_mirror', 'wa_steam'], desc: () => '궁극기 (F). 조준한 곳에 4초간 소용돌이가 일어 적을 빨아들이고 적신 뒤, 무너지며 5P.' },
     ],
   },
@@ -124,13 +124,13 @@ export const TREES = {
     harmony: true,
     nodes: [
       { id: 'h_weave', name: '두 노래 엮기', tier: 0, col: 1, max: 1, cost: 2, kind: 'active', desc: () => `지금 속성과 직전 속성, 두 노래를 한데 엮어 강력한 합체 마법을 쓴다. 예: 화염 → 바람으로 바꾼 뒤 엮으면 화염 회오리. <span class="nd-meta">Q · 마나 ${WEAVE_COST} · 재사용 ${WEAVE_CD}초</span>` },
-      { id: 'h_thunderrain', name: '벼락비', els: ['water', 'storm'], tier: 1, col: 0, max: 1, cost: 2, kind: 'harmony', req: ['h_weave'], desc: () => '젖은 적에게 번개 → 감전 연쇄의 감전 지속 피해가 2배, 연쇄 범위가 50% 넓어진다.' },
-      { id: 'h_scald', name: '끓는 김', els: ['fire', 'water'], tier: 1, col: 1, max: 1, cost: 2, kind: 'harmony', req: ['h_weave'], desc: () => '불타는 적에게 물 → 소화가 더 이상 피해를 줄이지 않는다. 대신 끓는 김이 터져 1.6배 피해와 반경 3.5에 0.8P.' },
+      { id: 'h_thunderrain', name: '벼락비', els: ['water', 'storm'], tier: 1, col: 0, max: 1, cost: 2, kind: 'harmony', req: ['h_weave'], desc: () => '젖은 적에게 번개 → 감전 연쇄의 감전 지속 피해가 2배, 연쇄 범위가 50% 넓어진다. 물웅덩이에 번개를 떨어뜨린 전류 웅덩이의 감전도 2배.' },
+      { id: 'h_scald', name: '끓는 김', els: ['fire', 'water'], tier: 1, col: 1, max: 1, cost: 2, kind: 'harmony', req: ['h_weave'], desc: () => '불타는 적에게 물 → 소화가 더 이상 피해를 줄이지 않는다. 대신 끓는 김이 터져 1.6배 피해와 반경 3.5에 0.8P. 불길에 물을 부을 때도 0.5P → 0.9P로 끓어오른다.' },
       { id: 'h_permafrost', name: '영구동토', els: ['frost', 'water'], tier: 1, col: 2, max: 1, cost: 2, kind: 'harmony', req: ['h_weave'], desc: () => '순간 빙결 시간이 2배. 젖은 채 얼어붙은 적의 파쇄 피해 +40%.' },
-      { id: 'h_wildfire', name: '들불', els: ['fire', 'wind'], tier: 2, col: 0, max: 1, cost: 2, kind: 'harmony', req: ['h_weave'], desc: () => '화염 확산으로 옮겨붙은 불이 한 번 더 번진다. 화염 회오리 지속 +50%.' },
+      { id: 'h_wildfire', name: '들불', els: ['fire', 'wind'], tier: 2, col: 0, max: 1, cost: 2, kind: 'harmony', req: ['h_weave'], desc: () => '화염 확산으로 옮겨붙은 불이 한 번 더 번진다. 화염 회오리 지속 +50%. 바람이 부채질한 불길이 2초 더 탄다.' },
       { id: 'h_superconduct', name: '초전도', els: ['frost', 'storm'], tier: 2, col: 1, max: 1, cost: 2, kind: 'harmony', req: ['h_weave'], desc: () => '얼지 않고 한기만 서린 적에게 번개 → 초전도: 1.6배 피해, 갑옷 파괴, 한기 유지.' },
       { id: 'h_monsoon', name: '장대비', els: ['water', 'wind'], tier: 2, col: 2, max: 1, cost: 2, kind: 'harmony', req: ['h_weave'], desc: () => '젖은 적에게 바람 → 물보라가 흩날려 반경 6의 적을 모두 적신다.' },
-      { id: 'h_firebolt', name: '불벼락', els: ['fire', 'storm'], tier: 3, col: 0, max: 1, cost: 2, kind: 'harmony', req: ['h_weave'], desc: () => '과부하가 터진 자리에 3초간 불길과 전류가 남는다 (0.4초마다 0.35P, 화상·감전).' },
+      { id: 'h_firebolt', name: '불벼락', els: ['fire', 'storm'], tier: 3, col: 0, max: 1, cost: 2, kind: 'harmony', req: ['h_weave'], desc: () => '과부하가 터진 자리에 남는 불길이 3초간 불길과 전류가 뒤섞인 불벼락 자리가 된다 (0.4초마다 0.35P, 화상·감전).' },
       { id: 'h_thermal', name: '열교차', els: ['fire', 'frost'], tier: 3, col: 1, max: 1, cost: 2, kind: 'harmony', req: ['h_weave'], desc: () => '열충격·융해 피해 +40%. 열충격의 폭발 범위가 넓어진다.' },
       { id: 'h_prism', name: '프리즘', els: ['arcane', '*'], tier: 3, col: 2, max: 1, cost: 2, kind: 'harmony', req: ['h_weave'], desc: () => '공명이 적의 상태 이상을 모두 터뜨린다. 터뜨린 상태 하나마다 피해 +30%.' },
     ],

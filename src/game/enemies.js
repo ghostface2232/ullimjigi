@@ -586,7 +586,10 @@ export class Enemy {
     let r = 0, g = 0, b = 0;
     if (frozen) { r = 0.1; g = 0.35; b = 0.6; }
     else if (st.burn > 0) { const p = 0.25 + Math.sin(G.time * 12) * 0.1; r = p; g = p * 0.35; }
+    else if (st.chill > 0) { const k = Math.min(st.chill, 3) / 3; r = 0.03 * k; g = 0.14 * k; b = 0.26 * k; } // frost creeping in, deepening per stack
+    if (st.wet > 0 && !frozen) { const p = 0.05 + Math.max(0, Math.sin(G.time * 3 + this.pos.x)) * 0.05; g += p * 0.5; b += p; } // cool wet sheen
     if (shocked) { const p = rand() * 0.35; r += p; g += p; b += p * 0.3; }
+    else if (st.electro > 0 && rand() < 0.18) { const p = 0.25 + rand() * 0.3; r += p; g += p * 0.95; b += p * 0.35; } // crackling charge
     if (this.telegraph) { const p = 0.3 + Math.sin(G.time * 30) * 0.25; r += p; g += p * 0.1; }
     if (this.vulnerable) { const p = 0.2 + Math.sin(G.time * 10) * 0.15; r += p; g += p * 0.8; }
     r += this.flash * 1.4 + this.glintFlash * 0.32; g += this.flash * 1.4 + this.glintFlash * 0.28; b += this.flash * 1.4 + this.glintFlash * 0.2;
@@ -614,7 +617,7 @@ export class Enemy {
   think(dt, mul) {
     const P = G.player;
     const d = this.dist2Player();
-    const canSee = !P.dead && G.mode === 'free';
+    const canSee = P.seen();
     switch (this.state) {
       case 'idle':
         this.wanderT -= dt;
@@ -700,7 +703,7 @@ class Wailer extends Enemy {
     this.pos.y = damp(this.pos.y, wantY, 3, dt);
     this.vel.y = 0;
     const d = this.dist2Player();
-    const canSee = !P.dead && G.mode === 'free';
+    const canSee = P.seen();
     switch (this.state) {
       case 'idle':
         this.wanderT -= dt;
@@ -772,7 +775,7 @@ class Brute extends Enemy {
   think(dt, mul) {
     const P = G.player;
     const d = this.dist2Player();
-    const canSee = !P.dead && G.mode === 'free';
+    const canSee = P.seen();
     this.slamCD -= dt; this.chargeCD -= dt;
     const slamWind = this.elite ? 0.85 : 1.05;
     switch (this.state) {
@@ -878,7 +881,7 @@ class Ooze extends Enemy {
   think(dt, mul) {
     const P = G.player;
     const d = this.dist2Player();
-    const canSee = !P.dead && G.mode === 'free';
+    const canSee = P.seen();
     this.landT = Math.max(0, this.landT - dt);
     if (this.hopping) {
       this.airT += dt;
@@ -987,7 +990,7 @@ class Moth extends Enemy {
     const P = G.player;
     const W = G.world;
     const d = this.dist2Player();
-    const canSee = !P.dead && G.mode === 'free';
+    const canSee = P.seen();
     const gy = Math.max(W.ground(this.pos.x, this.pos.z, this.pos.y), W.water.level);
     const flyTo = (tx, ty, tz, k) => {
       this.pos.x = damp(this.pos.x, tx, k * mul, dt); this.pos.y = damp(this.pos.y, ty, k * mul, dt); this.pos.z = damp(this.pos.z, tz, k * mul, dt);
@@ -1100,7 +1103,7 @@ class ShieldBearer extends Enemy {
   think(dt, mul) {
     const P = G.player;
     const d = this.dist2Player();
-    const canSee = !P.dead && G.mode === 'free';
+    const canSee = P.seen();
     const turn = this.elite ? 4 : 3; // slow turning: blink behind it
     switch (this.state) {
       case 'idle':
@@ -1225,7 +1228,7 @@ class Archer extends Enemy {
   think(dt, mul) {
     const P = G.player;
     const d = this.dist2Player();
-    const canSee = !P.dead && G.mode === 'free';
+    const canSee = P.seen();
     const M = G.enemies;
     switch (this.state) {
       case 'idle':
@@ -1341,7 +1344,7 @@ class RootHand extends Enemy {
   think(dt, mul) {
     const P = G.player;
     const d = this.dist2Player();
-    const canSee = !P.dead && G.mode === 'free';
+    const canSee = P.seen();
     this.slapCD -= dt;
     switch (this.state) {
       case 'buried':
@@ -1506,7 +1509,7 @@ class Watcher extends Enemy {
   think(dt, mul) {
     const P = G.player;
     const d = this.dist2Player();
-    const canSee = !P.dead && G.mode === 'free';
+    const canSee = P.seen();
     const toP = Math.atan2(P.pos.x - this.pos.x, P.pos.z - this.pos.z);
     this.beamCD -= dt; this.stompCD -= dt;
     switch (this.state) {

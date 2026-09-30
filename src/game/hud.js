@@ -1,13 +1,19 @@
 // DOM HUD: vitals, compass, spell bar, world-anchored labels, banners, map & journal.
 import * as THREE from 'three';
 import { G, ELEMENTS, EL_INFO, EL_SVG } from '../core/context.js';
-import { BOLT, HEAVY, WEAVE, weaveInfo, WEAVE_CD, WEAVE_COST, ultInfo } from './spells.js';
+import { BOLT, HEAVY, CHARGED, WEAVE, weaveInfo, WEAVE_CD, WEAVE_COST, ultInfo } from './spells.js';
 import { TREES, TREE_ORDER, NODES, ULTS, ULT_COST, TIER_GATE, SIG, WEAVE_NODE, isTechnique, treeColor } from './skills.js';
 import { REACTIONS } from './combat.js';
+import { FIELD_MIX, FIELDS } from './fields.js';
 import { xpNeed } from './player.js';
 import { wrapAngle, clamp, fillName, josa } from '../core/util.js';
 import { LANTERNS, MEMORIES } from '../world/world.js';
 import { POI } from '../world/layout.js';
+import { Minimap } from './minimap.js';
+
+// Elements the player has not awakened stay hidden everywhere in the UI.
+const elKnown = (e) => e === '*' || G.player.unlocked.has(e);
+const veiled = (n) => n.kind === 'harmony' && !n.els.every(elKnown);
 
 const $ = (s) => document.querySelector(s);
 const HEART_PATH = 'M13 22.5C5 16.2 1.2 12.3 1.2 7.6A5.6 5.6 0 0 1 13 5.2 5.6 5.6 0 0 1 24.8 7.6c0 4.7-3.8 8.6-11.8 14.9z';
@@ -51,14 +57,24 @@ export class HUD {
     this.barPool = new Map();
     this.lastHp = -1;
     this.bannerQ = []; this.bannerBusy = false;
-    this.hintT = 0; this.compT = 0;
+    this.hintT = 0; this.hintAge = 0; this.hintQ = []; this.compT = 0;
     this.buildCompass();
     this.buildElements();
+    this.minimap = new Minimap($('#minimap'));
+    $('#map-canvas').addEventListener('mousemove', (e) => {
+      const L = this.mapClick(e);
+      if (L === this.mapHover) return;
+      this.mapHover = L;
+      if (L) G.audio.play('ui_hover');
+      this.drawMap();
+    });
+    this.applyScale();
+    window.addEventListener('resize', () => this.applyScale());
     this.bossTarget = null;
     this.qmark = document.createElement('div'); this.qmark.className = 'wmark'; this.qmark.innerHTML = '◆<span class="d"></span>'; this.el.markers.appendChild(this.qmark);
     this.barkEls = [];
     const style = document.createElement('style');
-    style.textContent = `#hud.dlg #quest-tracker,#hud.dlg #crosshair,#hud.dlg #spellbar,#hud.dlg #compass,#hud.dlg #vitals,#hud.dlg #enemy-bars,#hud.dlg #stamina,#hud.dlg #prompt,#hud.dlg #hint,#hud.dlg #boss-bar{opacity:0!important;transition:opacity .4s}
+    style.textContent = `#hud.dlg #quest-tracker,#hud.dlg #crosshair,#hud.dlg #spellbar,#hud.dlg #compass,#hud.dlg #vitals,#hud.dlg #enemy-bars,#hud.dlg #stamina,#hud.dlg #prompt,#hud.dlg #hint,#hud.dlg #boss-bar,#hud.dlg #minimap{opacity:0!important;transition:opacity .4s}
       #quest-tracker,#crosshair,#spellbar,#compass,#vitals{transition:opacity .4s}
       .castname{position:absolute;left:50%;top:58%;transform:translateX(-50%);font-family:var(--blade);font-size:22px;letter-spacing:.2em;text-shadow:0 0 18px currentColor,0 2px 4px #000;animation:reactPop 1.6s ease-out forwards;white-space:nowrap}
       .castname.big{top:30%;font-family:var(--title);font-size:46px;letter-spacing:.3em;animation:ultPop 2.2s ease-out forwards}`;
@@ -66,6 +82,14 @@ export class HUD {
   }
 
   show(v) { this.el.hud.classList.toggle('hidden', !v); }
+  // Interface size follows the window (1600×900 = 1, eased so it neither balloons on big
+  // screens nor shrinks to unreadable on small ones) times the player's own setting.
+  applyScale() {
+    const fit = Math.min(innerWidth / 1600, innerHeight / 900);
+    const s = clamp(Math.pow(fit, 0.8), 0.68, 1.5) * clamp((G.settings.ui ?? 100) / 100, 0.75, 1.35);
+    document.documentElement.style.setProperty('--ui', s.toFixed(3));
+    this.uiScale = s;
+  }
 
   // ---------------- vitals ----------------
   updateHearts(hurt = false) {
@@ -173,7 +197,8 @@ export class HUD {
     const P = G.player;
     for (const e of ELEMENTS) {
       const n = this.elNodes[e];
-      n.classList.toggle('locked', !P.unlocked.has(e));
+      // an element the player has not awakened stays out of sight: finding it is the surprise
+      n.classList.toggle('gone', !P.unlocked.has(e));
       n.classList.toggle('active', P.element === e);
       n.classList.toggle('prev', P.prevElement === e && P.prevElement !== P.element);
       if (unlockEl === e) { n.classList.remove('unlock'); void n.offsetWidth; n.classList.add('unlock'); }
@@ -191,6 +216,7 @@ export class HUD {
     this.el.weaveCost.innerHTML = wKnown ? `<i></i>${WEAVE_COST}` : '미습득';
     const hKnown = P.canHeavy();
     this.el.heavySlot.classList.toggle('locked', !hKnown);
+    this.el.heavySlot.classList.toggle('hidden', !hKnown && !(G.skills && Object.values(SIG).some((id) => G.skills.has(id))));
     this.el.heavyName.textContent = HEAVY[P.element].name;
     this.el.heavyName.style.color = hKnown ? EL_INFO[P.element].css : '';
     this.el.heavyCost.innerHTML = hKnown ? `<i></i>${HEAVY[P.element].cost}` : '미습득';
@@ -226,6 +252,11 @@ export class HUD {
   }
   chainEnd(n, xp) { if (this.chainEl) { this.chainEl.innerHTML = `<span class="cn">${n}</span><span class="cl">연쇄 반응 · +${xp} XP</span>`; this.chainEl.classList.add('out'); } }
   discovered(r) {
+    if (r.startsWith('f:')) {
+      const m = FIELD_MIX[r.slice(2)];
+      if (m) this.toast(`<span style="color:${m.color}">땅의 흔적 변화 발견 — <b>${m.name}</b></span> · ${m.desc}`, 5200);
+      return;
+    }
     const info = REACTIONS[r];
     if (!info) return;
     this.toast(`<span style="color:${info.color}">새로운 반응 발견 — <b>${info.name}</b></span> · ${info.desc}`, 5200);
@@ -233,6 +264,17 @@ export class HUD {
   cooldownFlash(k) {
     const n = k === 'weave' ? this.el.weaveSlot : this.el.heavySlot;
     n.animate([{ transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'none' }], { duration: 200 });
+  }
+  // charged basic spell: a ring around the crosshair fills while the button is held
+  chargeRing(k, ready, el, affordable = true) {
+    let r = this.chargeEl;
+    if (!r) { r = this.chargeEl = document.createElement('div'); r.className = 'ch-charge'; this.el.crosshair.appendChild(r); }
+    if (k <= 0) { r.classList.remove('on', 'ready', 'short'); return; }
+    r.style.setProperty('--k', k.toFixed(3));
+    r.style.setProperty('--c', EL_INFO[el]?.css ?? '#fff');
+    r.classList.add('on');
+    r.classList.toggle('ready', ready);
+    r.classList.toggle('short', !affordable);
   }
   castPulse() { const c = this.el.crosshair; c.classList.remove('cast'); void c.offsetWidth; c.classList.add('cast'); }
   castName(name, els, big = false) {
@@ -317,15 +359,35 @@ export class HUD {
     this.el.prompt.classList.remove('hidden');
     this.el.promptT.textContent = text;
   }
+  // Tutorial tips sit in a card at the left edge, away from the aim point. A tip that
+  // arrives while another is still fresh waits its turn, and the timer only runs in free
+  // play so a tip shown during a dialogue is not lost behind it.
   hint(html, dur = 6) {
     const h = this.el.hint;
+    if (this.hintT > 0 && this.hintAge < 2.5 && h.innerHTML !== html) {
+      if (!this.hintQ.some((q) => q.html === html) && this.hintQ.length < 3) this.hintQ.push({ html, dur });
+      return;
+    }
+    this.hintAge = 0;
     h.innerHTML = html;
     h.classList.remove('hidden');
     h.style.animation = 'none'; void h.offsetWidth; h.style.animation = '';
     this.hintT = dur;
   }
-  hideHint() { this.el.hint.classList.add('hidden'); this.hintT = 0; }
+  hideHint() {
+    this.el.hint.classList.add('hidden'); this.hintT = 0;
+    const q = this.hintQ.shift();
+    if (q) setTimeout(() => this.hint(q.html, q.dur), 400);
+  }
+  // not enough stamina for a climbing lunge: the wheel shakes red
+  staminaShort() {
+    const e = this.el.stamina;
+    e.classList.remove('short'); void e.offsetWidth; e.classList.add('short');
+    G.audio.play('mana_empty', { v: 0.5 });
+  }
+  inCombat() { return !!(G.bossActive || (G.enemies && G.enemies.inCombat())); }
   areaTitle(name, en) {
+    if (this.inCombat()) return; // a region name mid-fight is noise
     const a = this.el.area;
     a.querySelector('.at-name').textContent = name;
     a.querySelector('.at-sub').textContent = en;
@@ -336,6 +398,7 @@ export class HUD {
     if (!this.bannerBusy) this.nextBanner();
   }
   nextBanner() {
+    if (G.game && G.game.menu && this.bannerQ.length) { this.bannerBusy = true; setTimeout(() => this.nextBanner(), 300); return; }
     const b = this.bannerQ.shift();
     if (!b) { this.bannerBusy = false; return; }
     this.bannerBusy = true;
@@ -343,8 +406,18 @@ export class HUD {
     el.querySelector('.bn-small').textContent = b.small;
     const big = el.querySelector('.bn-big'); big.textContent = b.big; big.style.color = b.color;
     el.querySelector('.bn-desc').innerHTML = b.desc;
+    // in a fight the banner shrinks to a thin ribbon under the compass instead of a band across the middle
+    const compact = this.inCombat();
+    el.classList.toggle('compact', compact);
     el.classList.remove('hidden', 'out');
-    setTimeout(() => { el.classList.add('out'); setTimeout(() => { el.classList.add('hidden'); this.nextBanner(); }, 600); }, b.ms);
+    // a menu opened on top (the level-up crossroads, the map…) holds the banner; it gets a
+    // moment of its own once the menu closes instead of bleeding through the menu
+    const finish = () => {
+      if (G.game && G.game.menu) { this.bannerHeld = true; setTimeout(finish, 300); return; }
+      if (this.bannerHeld) { this.bannerHeld = false; setTimeout(finish, 1400); return; }
+      el.classList.add('out'); setTimeout(() => { el.classList.add('hidden'); this.nextBanner(); }, 600);
+    };
+    setTimeout(finish, compact ? Math.min(b.ms, 2600) : b.ms);
   }
   toast(html, ms = 3500) {
     const t = document.createElement('div');
@@ -398,11 +471,12 @@ export class HUD {
   // ---------------- per-frame ----------------
   update(dt) {
     const P = G.player;
+    if (G.mode === 'free' && !G.game.menu) this.minimap.update(dt, this.ensureMapBase());
     // mana & stamina
     this.updateMana();
     const sf = P.stamina / P.maxStamina;
     this.el.stFill.style.strokeDashoffset = 251.3 * (1 - sf);
-    const showSt = sf < 0.995 || P.sprinting || P.gliding;
+    const showSt = sf < 0.995 || P.sprinting || P.gliding || !!P.climbing;
     this.el.stamina.classList.toggle('on', showSt && G.mode === 'free');
     this.el.stamina.classList.toggle('tired', P.exhausted);
     const sp = this.project(v3.set(P.pos.x, P.pos.y + 1.2, P.pos.z));
@@ -475,6 +549,8 @@ export class HUD {
       if (st.chill > 0 || st.frozen > 0) s += `<i style="color:${EL_INFO.frost.css}${st.frozen > 0 ? ';box-shadow:0 0 8px #fff' : ''}"></i>`;
       if (st.shock > 0) s += `<i style="color:${EL_INFO.storm.css}"></i>`;
       if (st.wet > 0) s += `<i style="color:#4a8aff"></i>`;
+      if (st.electro > 0) s += `<i style="color:${EL_INFO.storm.css};box-shadow:0 0 6px ${EL_INFO.storm.css}"></i>`;
+      if (st.steam > 0) s += `<i style="color:#e8f4ff;opacity:.8"></i>`;
       if (b._s !== s) { b._st.innerHTML = s; b._s = s; }
       if (b._ar) b._ar.style.opacity = st.armorBroken > 0 ? 0 : 1;
     }
@@ -512,34 +588,39 @@ export class HUD {
       this.qmark.querySelector('.d').textContent = Math.round(d) + 'm';
     } else this.qmark.style.display = 'none';
     // hint / companion timers
-    if (this.hintT > 0) { this.hintT -= dt; if (this.hintT <= 0) this.hideHint(); }
+    if (this.hintT > 0 && G.mode === 'free' && !G.paused) { this.hintT -= dt; this.hintAge += dt; if (this.hintT <= 0) this.hideHint(); }
     if (this.compT > 0) { this.compT -= dt; if (this.compT <= 0) this.el.comp.classList.remove('show'); }
     this.compassT = (this.compassT || 0) - dt;
     if (this.compassT <= 0) { this.compassT = 0.05; this.updateCompass(); }
   }
 
   // ---------------- map ----------------
+  // Terrain colours with hillshade, one pixel per terrain sample; shared by the map and the minimap.
+  ensureMapBase() {
+    if (this.mapBase) return this.mapBase;
+    const T = G.world.terrain;
+    const off = document.createElement('canvas'); off.width = off.height = T.N;
+    const og = off.getContext('2d'); const img = og.createImageData(T.N, T.N);
+    const toS = (c) => Math.round(Math.pow(Math.min(1, c), 1 / 2.2) * 255);
+    for (let i = 0; i < T.N * T.N; i++) {
+      const h = T.h[i];
+      let r = T.col[i * 3], gg = T.col[i * 3 + 1], b = T.col[i * 3 + 2];
+      // hillshade
+      const ix = i % T.N, iz = Math.floor(i / T.N);
+      const hl = T.h[iz * T.N + Math.max(0, ix - 1)], hu = T.h[Math.max(0, iz - 1) * T.N + ix];
+      const shade = clamp(1 + (hl - h) * 0.06 + (hu - h) * 0.06, 0.6, 1.3);
+      r *= shade; gg *= shade; b *= shade;
+      if (h < 0) { const k = clamp(-h / 6, 0, 1); r = 0.25 - k * 0.15; gg = 0.55 - k * 0.2; b = 0.62 - k * 0.1; }
+      img.data[i * 4] = toS(r); img.data[i * 4 + 1] = toS(gg); img.data[i * 4 + 2] = toS(b); img.data[i * 4 + 3] = 255;
+    }
+    og.putImageData(img, 0, 0);
+    this.mapBase = off;
+    return this.mapBase;
+  }
   drawMap() {
     const cv = $('#map-canvas'); const g = cv.getContext('2d');
-    const S = cv.width, T = G.world.terrain;
-    if (!this.mapBase) {
-      const off = document.createElement('canvas'); off.width = off.height = T.N;
-      const og = off.getContext('2d'); const img = og.createImageData(T.N, T.N);
-      const toS = (c) => Math.round(Math.pow(Math.min(1, c), 1 / 2.2) * 255);
-      for (let i = 0; i < T.N * T.N; i++) {
-        const h = T.h[i];
-        let r = T.col[i * 3], gg = T.col[i * 3 + 1], b = T.col[i * 3 + 2];
-        // hillshade
-        const ix = i % T.N, iz = Math.floor(i / T.N);
-        const hl = T.h[iz * T.N + Math.max(0, ix - 1)], hu = T.h[Math.max(0, iz - 1) * T.N + ix];
-        const shade = clamp(1 + (hl - h) * 0.06 + (hu - h) * 0.06, 0.6, 1.3);
-        r *= shade; gg *= shade; b *= shade;
-        if (h < 0) { const k = clamp(-h / 6, 0, 1); r = 0.25 - k * 0.15; gg = 0.55 - k * 0.2; b = 0.62 - k * 0.1; }
-        img.data[i * 4] = toS(r); img.data[i * 4 + 1] = toS(gg); img.data[i * 4 + 2] = toS(b); img.data[i * 4 + 3] = 255;
-      }
-      og.putImageData(img, 0, 0);
-      this.mapBase = off;
-    }
+    const S = cv.width;
+    this.ensureMapBase();
     g.imageSmoothingEnabled = true;
     g.drawImage(this.mapBase, 0, 0, S, S);
     // parchment tint
@@ -564,6 +645,14 @@ export class HUD {
       g.fillStyle = L.lit ? '#ffc870' : 'rgba(80,80,80,.8)'; g.fill();
       g.strokeStyle = '#1a1208'; g.lineWidth = 2; g.stroke();
       if (L.lit) this.mapLanterns.push({ L, sx, sz });
+      if (L.lit && this.mapHover === L) {
+        // hovered waystone: halo and its name, so fast travel shows what it will do
+        g.beginPath(); g.arc(sx, sz, 13, 0, Math.PI * 2); g.lineWidth = 2.5; g.strokeStyle = '#fff4d0'; g.stroke();
+        g.font = "600 17px 'Hahmlet', serif"; g.textAlign = 'center';
+        const t = `${L.name || '등석'} — 이동`;
+        g.lineWidth = 4; g.strokeStyle = 'rgba(0,0,0,.75)'; g.strokeText(t, sx, sz - 20);
+        g.fillStyle = '#ffe2a8'; g.fillText(t, sx, sz - 20);
+      }
     }
     // quest markers
     const qm = S_ && S_.markers();
@@ -580,8 +669,10 @@ export class HUD {
     const cv = $('#map-canvas');
     const r = cv.getBoundingClientRect();
     const x = ((ev.clientX - r.left) / r.width) * cv.width, y = ((ev.clientY - r.top) / r.height) * cv.height;
-    for (const m of this.mapLanterns || []) if (Math.hypot(m.sx - x, m.sz - y) < 14) return m.L;
-    return null;
+    // generous target (about 40 px on screen): the nearest lit waystone within reach
+    let best = null, bd = 24;
+    for (const m of this.mapLanterns || []) { const d = Math.hypot(m.sx - x, m.sz - y); if (d < bd) { bd = d; best = m.L; } }
+    return best;
   }
 
   // ---------------- journal ----------------
@@ -599,23 +690,40 @@ export class HUD {
       let h = `<div class="jsec">속성의 노래 · 레벨 ${P.level} · 마법 위력 ${P.power().toFixed(1)} · 울림점 ${K ? K.points : 0} (<kbd>K</kbd> 울림 나무)</div><p style="opacity:.75;font-size:13px">마나 ${Math.floor(P.mana)} / ${P.maxMana} · 전투 중 초당 ${P.manaRegenRate(true).toFixed(1)}, 전투 밖 초당 ${P.manaRegenRate(false)} 회복 (마지막 시전 1.4초 뒤부터). 적을 쓰러뜨리면 떨어지는 마나 방울, 원소 반응(+3), 완벽 회피(+15)로 되찾는다.</p>`;
       for (const e of ELEMENTS) {
         const u = P.unlocked.has(e);
+        if (!u) continue;
         const ult = ultInfo(e);
         const hasUlt = K && K.ultFor(e);
-        h += `<div class="jsp ${u ? '' : 'locked'}"><div class="ic" style="color:${EL_INFO[e].css}">${EL_SVG[e]}</div><div><h4 style="color:${EL_INFO[e].css}">${u ? EL_INFO[e].name + '의 노래' : '??? 의 노래'}${u && K ? `<small>울림 나무 ${K.spentIn(e)}점</small>` : ''}</h4>${u ? `<p>${EL_INFO[e].desc}</p><p><b>좌클릭 · ${BOLT[e].name}</b>${BOLT[e].cost ? ` (마나 ${BOLT[e].cost})` : ''} — ${BOLT[e].desc}</p>${K && !K.has(SIG[e]) ? `<p style="opacity:.6"><b>우클릭 · ${HEAVY[e].name}</b> (마나 ${HEAVY[e].cost}) — 아직 익히지 못한 기술. 울림 나무(<kbd>K</kbd>) ${EL_INFO[e].name}의 뿌리에서 울림점 ${NODES[SIG[e]].cost}점으로 익히거나, 레벨이 오를 때 <b>울림의 갈림길</b>에서 고를 수 있다.</p>` : `<p><b>우클릭 · ${HEAVY[e].name}</b> (마나 ${HEAVY[e].cost} · 재사용 ${HEAVY[e].cd}초) — ${HEAVY[e].desc}</p>`}<p style="opacity:${hasUlt ? 1 : 0.5}"><b>F · ${ult.name}</b> ${hasUlt ? '' : '(울림 나무 끝에서 익힐 수 있다)'} — ${ult.desc(1).replace('궁극기 (F). ', '')}</p>` : '<p>아직 배우지 못한 노래.</p>'}</div></div>`;
+        h += `<div class="jsp ${u ? '' : 'locked'}"><div class="ic" style="color:${EL_INFO[e].css}">${EL_SVG[e]}</div><div><h4 style="color:${EL_INFO[e].css}">${u ? EL_INFO[e].name + '의 노래' : '??? 의 노래'}${u && K ? `<small>울림 나무 ${K.spentIn(e)}점</small>` : ''}</h4>${u ? `<p>${EL_INFO[e].desc}</p><p><b>좌클릭 · ${BOLT[e].name}</b>${BOLT[e].cost ? ` (마나 ${BOLT[e].cost})` : ''} — ${BOLT[e].desc}</p><p><b>좌클릭 누르고 있다가 떼기 · ${CHARGED[e].name}</b> (마나 ${CHARGED[e].cost}) — ${CHARGED[e].desc}</p>${K && !K.has(SIG[e]) ? `<p style="opacity:.6"><b>우클릭 · ${HEAVY[e].name}</b> (마나 ${HEAVY[e].cost}) — 아직 익히지 못한 기술. 울림 나무(<kbd>K</kbd>) ${EL_INFO[e].name}의 뿌리에서 울림점 ${NODES[SIG[e]].cost}점으로 익히거나, 레벨이 오를 때 <b>울림의 갈림길</b>에서 고를 수 있다.</p>` : `<p><b>우클릭 · ${HEAVY[e].name}</b> (마나 ${HEAVY[e].cost} · 재사용 ${HEAVY[e].cd}초) — ${HEAVY[e].desc}</p>`}<p style="opacity:${hasUlt ? 1 : 0.5}"><b>F · ${ult.name}</b> ${hasUlt ? '' : '(울림 나무 끝에서 익힐 수 있다)'} — ${ult.desc(1).replace('궁극기 (F). ', '')}</p>` : '<p>아직 배우지 못한 노래.</p>'}</div></div>`;
       }
+      if (P.unlocked.size < ELEMENTS.length) h += `<p class="jsp-more">아직 듣지 못한 노래가 골짜기 어딘가에 잠들어 있다.</p>`;
       const wk = !K || K.has(WEAVE_NODE);
       h += `<div class="jsec">엮기 (Q) — 지금 속성 + 직전 속성 · 마나 ${WEAVE_COST} · 재사용 ${WEAVE_CD}초</div>${wk ? '' : `<p style="opacity:.7">아직 익히지 못한 기술. 두 가지 속성을 깨우친 뒤 울림 나무(<kbd>K</kbd>) 조화의 뿌리 <b>두 노래 엮기</b>를 익히면 쓸 수 있다.</p>`}<div class="react-grid" style="opacity:${wk ? 1 : 0.6}">`;
       for (const [k, w] of Object.entries(WEAVE)) {
         const els = k === 'arcane' ? ['arcane'] : k.split('+');
         const u = els.every((e) => P.unlocked.has(e));
-        h += `<div style="opacity:${u ? 1 : 0.35}"><b>${k === 'arcane' ? '비전 + 아무 속성' : els.map((e) => EL_INFO[e].name).join(' + ')} → ${w.name}</b><br>${w.desc}</div>`;
+        if (!u) continue;
+        h += `<div><b>${k === 'arcane' ? '비전 + 아무 속성' : els.map((e) => EL_INFO[e].name).join(' + ')} → ${w.name}</b><br>${w.desc}</div>`;
       }
       const disc = K ? K.discovered : new Set();
       h += `</div><div class="jsec">원소 반응 도감 — ${[...disc].filter((r) => REACTIONS[r]).length} / ${Object.keys(REACTIONS).length} 발견</div><div class="react-grid codex">`;
-      const ic = (e) => (e === '*' ? '<span class="cx-any">✦</span>' : `<span style="color:${EL_INFO[e].css}">${EL_SVG[e]}</span>`);
+      // unknown elements show as a plain '?', and so does the recipe that needs them
+      const known = (e) => e === '*' || P.unlocked.has(e);
+      const ic = (e) => (e === '*' ? '<span class="cx-any">✦</span>' : !known(e) ? '<span class="cx-any">?</span>' : `<span style="color:${EL_INFO[e].css}">${EL_SVG[e]}</span>`);
       for (const [id, r] of Object.entries(REACTIONS)) {
         const d = disc.has(id);
-        h += `<div class="cx ${d ? '' : 'unk'}"><span class="cx-els">${ic(r.els[0])}<i>+</i>${ic(r.els[1])}</span><span><b style="color:${d ? r.color : '#8a8478'}">${d ? r.name : '??? '}</b> — ${r.desc}</span></div>`;
+        const hid = !d && !r.els.every(known);
+        h += `<div class="cx ${d ? '' : 'unk'}"><span class="cx-els">${ic(r.els[0])}<i>+</i>${ic(r.els[1])}</span><span><b style="color:${d ? r.color : '#8a8478'}">${d ? r.name : '??? '}</b> — ${hid ? '아직 모르는 노래가 있어야 일어난다.' : r.desc}</span></div>`;
+      }
+      h += '</div>';
+      // lingering fields and what a second element turns them into
+      const fm = Object.entries(FIELD_MIX);
+      h += `<div class="jsec">땅의 흔적 — 불길·서리밭·물웅덩이·김·대전된 땅에 다른 속성을 더하면 모습이 바뀐다 · ${fm.filter(([k]) => disc.has('f:' + k)).length} / ${fm.length} 발견</div><div class="react-grid codex">`;
+      for (const [k, m] of fm) {
+        const d = disc.has('f:' + k);
+        const [from, by] = k.includes('+') ? k.split('+') : k.startsWith('whirl:') ? [null, k.slice(6)] : [null, 'arcane'];
+        const src = from ? `<span class="cx-f" style="color:${FIELDS[from].color}">${FIELDS[from].name}</span>` : k.startsWith('whirl:') ? '<span class="cx-any">◎</span>' : '<span class="cx-any">✦</span>';
+        const hid = !d && (!known(by) || (from && !P.unlocked.has(FIELDS[from].el || 'arcane')));
+        h += `<div class="cx ${d ? '' : 'unk'}"><span class="cx-els">${hid && from ? '<span class="cx-any">?</span>' : src}<i>+</i>${ic(by)}</span><span><b style="color:${d ? m.color : '#8a8478'}">${d ? m.name : '??? '}</b> — ${hid ? '아직 모르는 노래가 있어야 일어난다.' : m.desc}</span></div>`;
       }
       h += '</div>';
       body.innerHTML = h;
@@ -630,7 +738,7 @@ export class HUD {
     } else {
       const rows = [
         ['W A S D', '이동'], ['마우스', '시점 · 조준 (화면 클릭 시 마우스 고정)'], ['Shift 누르기', '달리기'], ['Shift 짧게', '순간이동 (회피, 무적 시간)'],
-        ['Space', '점프 / 공중에서 누르고 있기: 활공'], ['좌클릭', '기본 마법 (누르고 있으면 연사)'], ['우클릭', '고유 마법 (울림 나무에서 익힌 속성만)'], ['Q', '엮기: 현재 속성 + 직전 속성 (조화 · 두 노래 엮기)'],
+        ['Space', '점프 / 공중에서 누르고 있기: 활공'], ['좌클릭', '기본 마법 (누르고 있다가 떼면 모아 쏘기)'], ['우클릭', '고유 마법 (울림 나무에서 익힌 속성만)'], ['Q', '엮기: 현재 속성 + 직전 속성 (조화 · 두 노래 엮기)'],
         ['F', '궁극기 (울림 게이지가 가득 찼을 때)'], ['1 ~ 6 / 휠', '속성 전환'], ['T / 휠 클릭', '대상 고정'], ['E', '대화 · 조사 · 상호작용'], ['M', '지도 (등석 클릭: 빠른 이동)'], ['Tab / J', '여정 · 마법서'], ['K', '울림 나무 (스킬 트리)'], ['1 / 2 / 3', '울림의 갈림길에서 고르기 (레벨업 후)'], ['Esc', '일시 정지'],
       ];
       body.innerHTML = `<div class="jsec" style="text-align:center">조작</div><div class="ctrl-grid">${rows.map(([k, v]) => `<kbd>${k}</kbd><span>${v}</span>`).join('')}</div>
@@ -686,7 +794,7 @@ export class HUD {
     root.querySelector('.sk-points b').textContent = K.points;
     // tabs
     const tabs = root.querySelector('.sk-tabs');
-    tabs.innerHTML = TREE_ORDER.map((t) => {
+    tabs.innerHTML = TREE_ORDER.filter((t) => t === 'harmony' || K.treeOpen(t)).map((t) => {
       const open = K.treeOpen(t);
       const col = t === 'harmony' ? '#f1d48a' : EL_INFO[t].css;
       const icon = t === 'harmony' ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="8.5" cy="12" r="5.5"/><circle cx="15.5" cy="12" r="5.5"/></svg>' : EL_SVG[t];
@@ -742,10 +850,11 @@ export class HUD {
       const why = K.blocker(n.id);
       const state = r >= n.max ? 'max' : r > 0 ? 'some' : !why ? 'avail' : 'locked';
       let icon;
-      if (n.kind === 'harmony') icon = `<span class="pair">${n.els.map((e) => e === '*' ? '<span style="color:#f1d48a">✦</span>' : `<span style="color:${EL_INFO[e].css}">${EL_SVG[e]}</span>`).join('')}</span>`;
+      const veil = veiled(n);
+      if (n.kind === 'harmony') icon = `<span class="pair">${n.els.map((e) => e === '*' ? '<span style="color:#f1d48a">✦</span>' : !elKnown(e) ? '<span style="color:#8a8478">?</span>' : `<span style="color:${EL_INFO[e].css}">${EL_SVG[e]}</span>`).join('')}</span>`;
       else icon = `<span class="gl" style="color:${col}">${this.skTree === 'harmony' ? harmIcon : EL_SVG[this.skTree]}</span>`;
       const pips = n.max > 1 ? `<span class="pips">${Array.from({ length: n.max }, (_, i) => `<i class="${i < r ? 'on' : ''}"></i>`).join('')}</span>` : '';
-      return `<div class="sk-node ${state} k-${n.kind} ${this.skSel === n.id ? 'sel' : ''}" data-id="${n.id}" style="left:${p.x}px;top:${p.y}px;--c:${col}">${n.kind === 'active' ? '<span class="sk-badge">기술</span>' : n.kind === 'ult' ? '<span class="sk-badge ult">궁극기</span>' : ''}<div class="sk-orb">${icon}${pips}</div><div class="sk-name">${n.name}${n.kind === 'harmony' ? `<small>${kindName[n.kind]}</small>` : ''}</div></div>`;
+      return `<div class="sk-node ${state} k-${n.kind} ${this.skSel === n.id ? 'sel' : ''}" data-id="${n.id}" style="left:${p.x}px;top:${p.y}px;--c:${col}">${n.kind === 'active' ? '<span class="sk-badge">기술</span>' : n.kind === 'ult' ? '<span class="sk-badge ult">궁극기</span>' : ''}<div class="sk-orb">${icon}${pips}</div><div class="sk-name">${veil ? '???' : n.name}${n.kind === 'harmony' ? `<small>${kindName[n.kind]}</small>` : ''}</div></div>`;
     }).join('');
     nodes.querySelectorAll('.sk-node').forEach((el) => {
       const id = el.dataset.id;
@@ -772,6 +881,10 @@ export class HUD {
       return;
     }
     const n = NODES[id];
+    if (veiled(n)) {
+      box.innerHTML = `<div class="si-head" style="color:#8a8478"><div class="si-name">???</div><div class="si-kind">조화</div></div><div class="si-row"><p>아직 듣지 못한 노래와 엮이는 갈래. 그 노래를 깨우치면 모습을 드러낸다.</p></div>`;
+      return;
+    }
     const r = K.r(id);
     const why = K.blocker(id);
     const col = n.tree === 'harmony' ? '#f1d48a' : EL_INFO[n.tree].css;

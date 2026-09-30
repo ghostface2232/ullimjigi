@@ -123,6 +123,7 @@
         <div id="hint" class="hidden"></div>
         <div id="area-title"><div class="at-line"></div><div class="at-name"></div><div class="at-sub"></div><div class="at-line"></div></div>
         <div id="banner" class="hidden"><div class="bn-small"></div><div class="bn-big"></div><div class="bn-desc"></div></div>
+        <div id="minimap"><canvas></canvas></div>
         <div id="toasts"></div>
         <div id="companion-line"></div>
         <div id="barks"></div>
@@ -233,6 +234,7 @@
               <option value="low">낮음</option>
             </select>
           </label>
+          <label class="set-row">인터페이스 크기 <input type="range" min="75" max="135" step="5" data-set="ui" /></label>
           <label class="set-row">마우스 Y축 반전 <input type="checkbox" data-set="invertY" /></label>
           <button class="tbtn small" data-act="settings-close">돌아가기</button>
         </div>
@@ -245,7 +247,7 @@
       </div>
 
       <div id="fade"></div>
-      <div id="click-to-play" class="hidden">클릭하여 계속</div>
+      <div id="click-to-play" class="hidden">클릭하거나 아무 키나 누르면 이어집니다</div>
     </div>
   </div>
   <script type="module" src="/src/main.js"></script>

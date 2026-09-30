@@ -155,7 +155,15 @@ export class Game {
     const bm = G.vfx.beam('arcane'); bm.done = true;
     G.vfx.rings.forEach((r) => (r.m.visible = true));
     G.scene.add(grp);
-    try { await G.renderer.renderer.compileAsync(G.scene, G.camera); } catch (_) { G.renderer.renderer.compile(G.scene, G.camera); }
+    // compile against the HDR scene target: programs are keyed by output colour space /
+    // tone mapping, and the frame is drawn into the composer's target, not the canvas
+    const R = G.renderer.renderer, prevRT = R.getRenderTarget();
+    const rt = G.renderer.composer && G.renderer.composer.readBuffer;
+    if (rt) R.setRenderTarget(rt);
+    let pr = null;
+    try { pr = R.compileAsync(G.scene, G.camera); } catch (_) { try { R.compile(G.scene, G.camera); } catch (e) { /* ignore */ } }
+    R.setRenderTarget(prevRT);
+    try { if (pr) await pr; } catch (_) { /* ignore */ }
     G.vfx.rings.forEach((r) => (r.m.visible = false));
     G.scene.remove(grp);
     G.vfx.disposeOrb(orb);
@@ -169,22 +177,34 @@ export class Game {
     });
     $('#name-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onButton('name-ok'); e.stopPropagation(); });
     document.querySelectorAll('.jr-tabs button').forEach((b) => b.addEventListener('click', () => { G.audio.play('page'); G.hud.drawJournal(b.dataset.tab); this.jTab = b.dataset.tab; }));
+    // sliders show their value, so a change can be judged and undone
+    const FMT = { sens: (v) => `${(v / 100).toFixed(1)}×`, ui: (v) => `${v}%` };
     document.querySelectorAll('[data-set]').forEach((el) => {
       const k = el.dataset.set;
       if (el.type === 'checkbox') el.checked = !!G.settings[k]; else el.value = G.settings[k];
+      let out = null;
+      if (el.type === 'range') {
+        out = document.createElement('span'); out.className = 'set-val';
+        el.after(out); out.textContent = (FMT[k] || String)(+el.value);
+      }
       el.addEventListener('input', () => {
+        if (out) out.textContent = (FMT[k] || String)(+el.value);
         G.settings[k] = el.type === 'checkbox' ? el.checked : el.type === 'range' ? +el.value : el.value;
         G.audio.applyVolumes();
         if (k === 'quality') { G.renderer.applyQuality(); G.world.grass.setQuality(el.value); }
+        if (k === 'ui') G.hud.applyScale();
         this.saveSettings();
       });
     });
+    // the mouse stays captured through dialogue and cutscenes (choices take keys, wheel or click);
+    // only menus release it. Any key or click re-captures it (Input.wantLock).
+    G.input.wantLock = () => G.state === 'play' && !this.menu && !G.paused;
     $('#game').addEventListener('click', () => {
-      if (G.state === 'play' && G.mode === 'free' && !this.menu && !G.input.locked && !G.player.dead) G.input.requestLock();
+      if (G.input.wantLock() && !G.input.locked) G.input.requestLock();
     });
     $('#map-canvas').addEventListener('click', (e) => this.onMapClick(e));
     G.input.onLockChange = (locked) => {
-      $('#click-to-play').classList.toggle('hidden', locked || G.state !== 'play' || !!this.menu);
+      if (locked) $('#click-to-play').classList.add('hidden');
       if (!locked && G.state === 'play' && !this.menu && G.mode === 'free' && !G.player.dead && !this.ignoreUnlock) this.openMenu('pause');
       this.ignoreUnlock = false;
     };
@@ -235,7 +255,8 @@ export class Game {
     G.audio.play(name === 'crossroads' ? (G.audio.S && G.audio.S.levelup_open ? 'levelup_open' : 'ui_open') : 'ui_open');
     $('#click-to-play').classList.add('hidden');
     if (name === 'pause') $('#pause').classList.remove('hidden');
-    if (name === 'settings') $('#settings').classList.remove('hidden');
+    if (name === 'settings') { $('#pause').classList.add('hidden'); $('#settings').classList.remove('hidden'); }
+    $('#ui').classList.add('menu-open');
     if (name === 'map') { G.hud.drawMap(); $('#map').classList.remove('hidden'); }
     if (name === 'journal') { G.hud.drawJournal(this.jTab || 'quests'); $('#journal').classList.remove('hidden'); }
     if (name === 'skills') { $('#skills').classList.remove('hidden'); G.hud.openSkills(); }
@@ -256,15 +277,18 @@ export class Game {
   closeMenu() {
     if (!this.menu) return;
     for (const id of ['#pause', '#settings', '#map', '#journal', '#skills', '#crossroads']) $(id).classList.add('hidden');
+    $('#ui').classList.remove('menu-open');
     this.menu = null;
     G.paused = false;
     G.audio.play('ui_close');
-    if (G.state === 'play') { G.input.requestLock(); $('#click-to-play').classList.toggle('hidden', G.input.locked); }
+    if (G.state === 'play') G.input.requestLock();
     G.input.clear();
   }
 
   // ------------------------------------------------------------ flow
   async newGame() {
+    if (this.starting) return; // Enter + click, double clicks: start exactly once
+    this.starting = true;
     this.confirmNew = false;
     try { localStorage.removeItem(SAVE_KEY); } catch (_) {}
     $('#title-screen').classList.add('hidden');
@@ -299,9 +323,11 @@ export class Game {
   }
 
   continueGame() {
+    if (this.starting) return;
     let d;
     try { d = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (_) { return; }
     if (!d) return;
+    this.starting = true;
     $('#title-screen').classList.add('hidden');
     G.playerName = d.name || '리안';
     const P = G.player;
@@ -323,6 +349,8 @@ export class Game {
   }
 
   startPlay(story, d) {
+    // a second story would run its own chapter coroutine and spawn a second cast
+    if (G.story && G.state === 'play') return;
     G.story = story;
     G.state = 'play'; G.mode = 'free';
     G.cameraRig.mode = 'follow';
@@ -339,7 +367,6 @@ export class Game {
       const f = $('#fade'); f.style.transition = 'opacity 1.2s'; f.style.opacity = 0;
       G.hud.areaTitle(regionAt(G.player.pos.x, G.player.pos.z).name, regionAt(G.player.pos.x, G.player.pos.z).en);
     }
-    $('#click-to-play').classList.toggle('hidden', G.input.locked);
   }
 
   save(auto = true) {
@@ -578,9 +605,11 @@ export class Game {
       G.music.update();
     }
     if (G.state === 'play') G.hud.update(raw);
-    if (I.locked && (G.state !== 'play' || G.mode !== 'free' || this.menu || G.player.dead)) { this.ignoreUnlock = true; I.exitLock(); }
+    if (I.locked && (G.state !== 'play' || this.menu)) { this.ignoreUnlock = true; I.exitLock(); }
+    // a quiet reminder only when the mouse has stayed free for a moment (any key also resumes)
     const ctp = $('#click-to-play');
-    const wantCtp = G.state === 'play' && !I.locked && !this.menu && G.mode === 'free' && !G.player.dead;
+    this.ctpT = G.state === 'play' && !I.locked && !this.menu && G.mode === 'free' && !G.player.dead ? (this.ctpT || 0) + raw : 0;
+    const wantCtp = this.ctpT > 1.2;
     if (ctp.classList.contains('hidden') === wantCtp) ctp.classList.toggle('hidden', !wantCtp);
   }
 }

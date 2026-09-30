@@ -126,6 +126,7 @@ export class Story {
 
   // ------------------------------------------------------------ world setup
   setupNPCs() {
+    if (G.npcs.get('mora')) return; // already built (the story restarted in this session)
     const add = (id, key, x, z, yaw, o) => { const n = G.npcs.add(new NPC(id, key, x, z, yaw, o)); n.onTalk = () => this.talkNPC(id); return n; };
     add('mora', 'mora', -6, 142, -2.2);
     add('bau', 'bau', 9, 16.5, 0.2);
@@ -143,7 +144,7 @@ export class Story {
     paper.rotation.x = -Math.PI / 2; paper.position.y = 0.9; tb.add(paper);
     for (const sx of [-0.7, 0.7]) for (const sz of [-0.35, 0.35]) { const l = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.85, 0.06), new THREE.MeshToonMaterial({ color: 0x6a4a34 })); l.position.set(sx, 0.42, sz); tb.add(l); }
     tb.position.set(19.3, G.world.h(19.3, 25.2), 25.2); tb.rotation.y = -0.6; G.scene.add(tb);
-    G.world.col.addBox(19.3, 25.2, 0.85, 0.5, -0.6, -10, 30);
+    G.world.col.addBox(19.3, 25.2, 0.85, 0.5, -0.6, -10, G.world.h(19.3, 25.2) + 0.9);
     // cat
     const cat = (this.cat = makeCat());
     cat.pos = V(POI.island.x - 0.8, 0, POI.island.z + 0.6);
@@ -332,7 +333,7 @@ export class Story {
         await this.say('mora', '그럼 지팡이를 들어 보렴. 마음속으로 조용히… 네 안에서 울리는 소리를 느껴 보는 거야.');
         await this.say('mora', '그 소리를 저 *떠 있는 수정*들에게 보내 주렴. 세 개 모두.');
       });
-      this.hint(`${KBD('마우스')} 조준 · ${KBD('좌클릭')} 비전 화살 — 누르고 있으면 연사`, 10);
+      this.hint(`${KBD('마우스')} 조준 · ${KBD('좌클릭')} 비전 화살 — 누르고 있다가 떼면 모아 쏜다`, 10);
       let n = 0;
       for (const t of W.training.targets) {
         t.onHit = () => {
@@ -443,12 +444,25 @@ export class Story {
     const dodam = this.npc('dodam');
     if (!this.flag('v_arrive')) {
       this.obj('q_bell', '하늬 마을로 내려가 바우 영감 찾기', [{ x: POI.bellTower.x, z: POI.bellTower.z, h: 16 }]);
-      await this.wait(() => this.near(POI.village.x, POI.village.z, 50) && G.mode === 'free');
-      const P = G.player.pos;
-      const tx = P.x + (0 - P.x) * 0.15, tz = P.z + (20 - P.z) * 0.15;
-      dodam.walkTo(tx + 1.5, tz - 1.5, 5);
-      await this.wait(() => !dodam.walkTarget || dodam.pos.distanceTo(G.player.pos) < 3);
-      await this.conv(async () => {
+      await this.wait(() => (this.near(POI.village.x, POI.village.z, 50) && G.mode === 'free') || this.flag('v_bau'));
+      // Dodam spots the player and runs up to them, re-aiming at wherever they are now;
+      // once close, the player stops so the two actually meet face to face
+      if (!this.flag('v_bau')) G.hud.bark(dodam, '어? 어어! 마법사님이다!');
+      let met = false;
+      await this.wait(() => {
+        if (this.flag('v_bau') || this.flag('v_arrive')) return true; // went to Bau first
+        const P = G.player.pos;
+        const dx = dodam.pos.x - P.x, dz = dodam.pos.z - P.z, d = Math.hypot(dx, dz);
+        if (d < 10) G.player.frozenInput = true;
+        if (d < 2.2) { met = true; return true; }
+        const k = 1.7 / Math.max(d, 1e-3);
+        dodam.walkTarget = null; dodam.walkRes = null;
+        dodam.walkTo(P.x + dx * k, P.z + dz * k, 6.5);
+        return false;
+      });
+      dodam.walkTarget = null; dodam.walkRes = null;
+      G.player.frozenInput = false;
+      if (met && !this.flag('v_arrive')) await this.conv(async () => {
         await this.say('dodam', '우와아! 마법사님이다! 모라 할머니네 탑에서 온 마법사님 맞죠? 맞죠?', { expr: 'laugh', gesture: 'wave' });
         await this.say('dodam', '봤어요? 아침에 종이 안 울렸어요! 우리 아빠가 그러는데 백 년 만에 처음이래요! 아, 아빠가 백 살이라는 건 아니고요, 할아버지의 할아버지의… 아무튼 엄청 오래됐대요!');
         const c = await this.choose(['바우 영감님은 어디 계셔?', '종이 왜 안 울린 거야?']);
@@ -1140,7 +1154,9 @@ export class Story {
     const n = this.npc(id);
     const ch = this.chapter;
     // --- main story beats first
-    if (id === 'bau' && ch === 'village' && this.flag('v_arrive') && !this.flag('v_bau')) return this.conv(async () => {
+    if (id === 'bau' && ch === 'village' && !this.flag('v_bau')) return this.conv(async () => {
+      // talked to Bau first: skip Dodam's greeting instead of blocking the quest
+      if (!this.flag('v_arrive')) { this.set('v_arrive'); const d = this.npc('dodam'); d.walkTarget = null; d.walkRes = null; G.player.frozenInput = false; d.walkTo(0, 24, 3.5); }
       await this.say('bau', '…왔는감.', { gesture: 'nod' });
       await this.say('bau', '모라 할매가 보냈구먼. 그 할매 발소리보다 네 발소리가 먼저 들릴 날이 올 줄 알았지.');
       await this.say('bau', '종 얘기 들으러 왔쥬? …그려. 안 울어. 줄을 당겨도 쇠가 입을 꾹 다문 것 같어.');

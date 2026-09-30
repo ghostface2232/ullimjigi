@@ -1965,8 +1965,8 @@ class Plate {
   receive(h) {
     if (!this.alive) return 0;
     const weak = WARD[this.ward].weak, weak2 = WARD[this.ward].weak2;
-    // the weak element breaks a ward fast; anything else still wears it down, just slowly
-    let mult = h.el === weak ? 3 : weak2 && h.el === weak2 ? 2.4 : h.el === 'arcane' ? 0.6 : 0.3;
+    // the weak element breaks a ward in a couple of hits; anything else barely scratches it
+    let mult = h.el === weak ? 4 : weak2 && h.el === weak2 ? 3.2 : h.el === 'arcane' ? 0.35 : 0.12;
     let dmg = Math.max(1, Math.round(h.dmg * mult));
     this.hp -= dmg; this.flash = 1; this.barT = 5;
     G.hud.damage(this.pos, dmg, h.el, false, null);

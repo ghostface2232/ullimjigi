@@ -170,7 +170,7 @@ export class Spells {
   // notify the world systems (wildfire, weather, water ice...) if present.
   // kind: 'bolt' | 'heavy' | 'weave' | 'ult' | 'field' | 'charged'
   touch(el, pos, r = 1, kind = 'bolt', source = 'player') {
-    if (!pos) return;
+    if (!pos || this.airHit) return; // a hit on a raised target (lantern, brazier, crystal…) never reaches the ground
     this.fields.infuse(el, pos, r, kind, source);
     const env = G.env;
     // world systems get the ground point under the impact (hits on a body land at chest height)
@@ -182,6 +182,7 @@ export class Spells {
   }
   // ground point under `p` (or null when p is high in the air)
   groundAt(p, maxUp = 3.5) {
+    if (this.airHit) return null;
     const g = p.clone(); g.y = G.world.ground(g.x, g.z, g.y + 1);
     return p.y - g.y > maxUp ? null : g;
   }
@@ -1575,7 +1576,10 @@ export class Spells {
       for (const t of W.targets) {
         if (t.pos.distanceTo(p.pos) < t.r + p.r) {
           t.baseHit && t.baseHit(p.el, p); t.onHit && t.onHit(p.el, p);
-          if (p.onImpact) p.onImpact(p.pos.clone(), null); else this.impact(p, null);
+          // lanterns, braziers, crystals, dummies… take the hit themselves: no grass fire or
+          // ground trace under them. Only targets on the ground (`ground: true`) pass it on.
+          if (!t.ground) this.airHit = (this.airHit || 0) + 1;
+          try { if (p.onImpact) p.onImpact(p.pos.clone(), null); else this.impact(p, null); } finally { if (!t.ground) this.airHit--; }
           this.remove(p); return true;
         }
       }

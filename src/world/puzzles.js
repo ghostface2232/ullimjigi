@@ -34,7 +34,7 @@ const LINGER = {
   wheels: '바람개비가 셋이로구나. 바람을 기다리는 모양이니라.',
   buoy: '저 유리 부표 안에 씨앗이 들었구나! 물결 따라 떠도니 잘 겨누거라.',
   thorns: '가시덤불이 씨앗을 칭칭 감쌌구나. 가시가 무엇에 약한지 생각해 보거라.',
-  sky: '허공에 씨앗이 떠 있구나. 날개가 없으니… 높은 데서 뛰어내리는 수밖에.',
+  sky: '허공에 씨앗이 떠 있구나. 높은 데서 뛰어내려 이 몸의 바람을 타 보거라.',
 };
 const LINGER_T = 20; // seconds nearby before Borum speaks
 const HOLD_SPIN = 4;  // a puzzle wind wheel keeps turning this long after a gust
@@ -336,7 +336,7 @@ export class Puzzles {
       const bush = { m, x, z, y, sc: m.scale.clone(), alive: true, burn: 0, col: null, T };
       bush.col = W.col.addCircle(x, z, 0.95 * sc, -10, y + 2.3 * sc);
       bush.col.climb = false; bush.col.noTop = true;
-      bush.target = W.addTarget({ id: 'thorn', pos: new THREE.Vector3(x, y + 1.1, z), r: 1, baseHit: (el) => { if (el === 'fire') this.ignite(bush); } });
+      bush.target = W.addTarget({ id: 'thorn', ground: true, pos: new THREE.Vector3(x, y + 1.1, z), r: 1, baseHit: (el) => { if (el === 'fire') this.ignite(bush); } });
       T.bushes.push(bush);
     }
     this.thickets.push(T);

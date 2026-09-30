@@ -156,6 +156,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 
 ### 땅의 흔적과 착탄 훅
 - 마법이 땅이나 영역에 닿는 지점에서는 `G.spells.touch(el, pos, r, kind)`를 부르세요. `kind`는 `'bolt' | 'heavy' | 'weave' | 'ult' | 'charged'`. 이 한 번의 호출이 ① 겹친 땅의 흔적을 변화시키고(`Fields.infuse`) ② 월드 시스템 훅 `G.env?.onSpell({ el, pos, r, kind, source })`를 부릅니다(`pos`는 착탄 지점 아래 지면, `charged`는 `'bolt'`로 전달). 흔적은 살아 있는 동안 0.5초마다 `kind: 'field'`로 같은 훅을 부릅니다. `G.env`가 없으면 아무 일도 없습니다.
+- **떠 있는 목표물 적중은 땅에 닿지 않습니다.** 투사체가 월드 표적(등석·화로·수정·허수아비·바람개비·노래하는 돌·얼음 등)에 맞으면 그 처리 동안 `Spells.airHit`이 켜져 `touch()`와 `groundAt()`이 아무것도 하지 않습니다. 그래서 불 마법(화염구 폭발·잔불 포함)으로 맞혀도 풀에 불이 붙거나 흔적이 생기지 않습니다. 바닥에 놓인 표적만 `addTarget({ ground: true, … })`로 예외입니다(물리 소품, 가시덤불).
 - `explode()`·`strike()`·투사체 `impact()`·`wave()`는 이미 `touch()`를 부릅니다. `explode(..., { kind })`, `strike(..., { kind, charge: { r, dur } })`로 종류와 대전된 땅을 지정합니다. `onImpact`가 있는 투사체는 `impact()`를 거치지 않으므로 콜백 안에서 `explode()`나 `touch()`를 부르세요.
 - 흔적 만들기: `G.spells.fields.add(kind, pos, { r, dur, dmg, maxR, noGround })` (`kind`: `blaze`·`plasma`·`rime`·`frostfog`·`puddle`·`steam`·`charged`·`shockfog`·`shockwater`). 같은 종류가 가까이 있으면 합쳐지고, 12개가 넘으면 오래된 것부터 지웁니다. 반응 뒤의 흔적은 `Combat.leave(kind, target, o)`로 발밑에 깝니다.
 - 새 변화는 `fields.js`의 `mix()` `switch`와 `FIELD_MIX`(도감 이름·설명)에 함께 추가합니다. 흔적 틱 피해는 `source: 'dot'`(숫자는 `hud.damage(..., small)`로 직접)라 적중 정지·반동·게이지가 없습니다.

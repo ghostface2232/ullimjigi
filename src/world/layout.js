@@ -37,6 +37,12 @@ export const REGIONS = [
   { id: 'woods', name: '속삭이는 숲', en: 'WHISPERING WOODS', x: -92, z: 128, r: 50, lv: 0 },
   { id: 'bluffs', name: '동쪽 벼랑', en: 'EASTERN BLUFFS', x: 150, z: 10, r: 50, lv: 1 },
 ];
+// Paved stone yards: no grass (so nothing burns) and a flagstone tint in the terrain.
+// Used by the trials (world/trials.js).
+export const PADS = [
+  { x: 118, z: 104, r: 11 }, // 들불 오르기: the last lookout stands in a stone yard
+  { x: 40, z: 148, r: 9 },   // 노래하는 돌
+];
 export const DEFAULT_REGION = { id: 'vale', name: '하늬 골짜기', en: 'HANUI VALE', lv: 0 };
 
 export function regionAt(x, z) {

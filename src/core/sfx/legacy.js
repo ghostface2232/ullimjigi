@@ -189,6 +189,21 @@ S.chest_open = function (o) {
   this.noise({ out, f: 300, f2: 900, q: 3, a: 0.05, d: 0.35, v: 0.25 });
   [62, 66, 69, 74].forEach((m, i) => this.note(out, m + 12, 0.25 + i * 0.05, 0.05, 1.8));
 };
+// singing stone (trial): a struck stone bell at a given pitch, from the stone
+S.stone_note = function (o) {
+  const out = this.bus(o.pos, 1.1, 0.8); if (!out) return;
+  const m = o.m || 69;
+  this.note(out, m, 0, 0.01, 2.4);
+  this.note(out, m + 12, 0, 0.01, 1.2);
+  this.tone({ out, f: mtof(m) * 2.76, a: 0.003, d: 0.5, v: 0.02 });
+  this.noise({ out, f: 1800, q: 1.2, d: 0.05, v: 0.12 });
+};
+// wrong note / frozen stone: a dull knock
+S.stone_thud = function (o) {
+  const out = this.bus(o.pos, 1, 0.3); if (!out) return;
+  this.tone({ out, type: 'sine', f: 110, f2: 70, a: 0.005, d: 0.35, v: 0.2 });
+  this.noise({ out, f: 400, q: 1, d: 0.12, v: 0.2 });
+};
 S.seed_hum = function (o) {
   const out = this.bus(o.pos, 0.5, 0.6); if (!out) return;
   this.note(out, o.m || 86, 0, 0.03, 1.2);

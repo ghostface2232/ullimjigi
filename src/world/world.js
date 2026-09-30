@@ -12,6 +12,7 @@ import { Wildfire } from './wildfire.js';
 import { Env } from './env.js';
 import { WorldObjects } from './objects.js';
 import { Puzzles } from './puzzles.js';
+import { Trials } from './trials.js';
 import { Props, makeTree } from './props.js';
 import { Colliders } from './collision.js';
 import { POI, PATHS, regionAt } from './layout.js';
@@ -83,6 +84,7 @@ export class World {
     this.buildMemories();
     this.puzzles = new Puzzles(this);
     this.puzzles.build();
+    this.trials = new Trials(this);
     this.ambT = 0;
     this.region = null;
     onProgress(0.72, '돌을 다듬는 중…');
@@ -748,7 +750,7 @@ export class World {
     U.time.value = G.time;
     U.wind.value = 1 + Math.sin(G.time * 0.3) * 0.35 + Math.sin(G.time * 1.1) * 0.15;
     this.weather.update(dt, camPos, playerPos);
-    if (G.player) { this.fire.update(dt, camPos, playerPos); this.objects.update(dt, playerPos); this.puzzles.update(dt, playerPos); }
+    if (G.player) { this.fire.update(dt, camPos, playerPos); this.objects.update(dt, playerPos); this.puzzles.update(dt, playerPos); this.trials.update(dt, playerPos); }
     this.sky.update(dt, playerPos, 1, camPos);
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);

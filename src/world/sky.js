@@ -121,8 +121,8 @@ void main(){
 function rangeGeometry() {
   const noise = createNoise2D(9001);
   const rings = [
-    { r: 640, h0: 55, h1: 190, k: 2.2, off: 0 },
-    { r: 930, h0: 110, h1: 330, k: 1.6, off: 40 },
+    { r: 1080, h0: 90, h1: 300, k: 2.2, off: 0 },
+    { r: 1360, h0: 150, h1: 440, k: 1.6, off: 40 },
   ];
   const pos = [], hs = [], ls = [], idx = [];
   const N = 240, ROWS = 4;
@@ -133,7 +133,8 @@ function rangeGeometry() {
       const cx = Math.cos(a), sz = Math.sin(a);
       const rg = ridged(noise, cx * R.k + R.off, sz * R.k - R.off, 5);
       const peak = Math.pow(clamp(rg, 0, 1), 1.35);
-      const top = R.h0 + (R.h1 - R.h0) * peak;
+      // the southern horizon is open sea: the ranges sink away there
+      const top = (R.h0 + (R.h1 - R.h0) * peak) * (1 - 0.92 * smoothstep(0.25, 0.8, sz));
       const rr = R.r + (noise(cx * 3 + 11 + li, sz * 3) * 50);
       for (let j = 0; j <= ROWS; j++) {
         const t = j / ROWS;
@@ -284,6 +285,8 @@ export class Sky {
     this.scene.fog.density = this.fogBase * (1 + this.hush * 1.4 + oc * 0.9 + st * 0.6);
     U.rimColor.value.copy(this.sun.color).multiplyScalar(lerp(a.rim, b.rim, t) * 0.9);
     this.mesh.position.copy(center);
+    // the far ranges stay at one distance wherever you are on the map (they are the horizon)
+    this.ranges.position.set((camPos || center).x, 0, (camPos || center).z);
     this.night = night;
 
     // --- shared lighting uniforms ---------------------------------------

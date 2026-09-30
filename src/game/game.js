@@ -18,6 +18,7 @@ import { Dialogue } from './dialogue.js';
 import { HUD } from './hud.js';
 import { Story } from './story.js';
 import { Skills } from './skills.js';
+import { Atlas } from './atlas.js';
 import { fillName } from '../core/util.js';
 
 const SAVE_KEY = 'ullimjigi_save_v1';
@@ -75,6 +76,7 @@ export class Game {
     G.vfx = new VFX(G.scene);
     await nextFrame();
     G.world = new World(G.scene, (p, t) => this.progress(p, t));
+    G.atlas = new Atlas(G.world.terrain);
     this.progress(0.75, '사람들을 깨우는 중…');
     await nextFrame();
     G.cameraRig = new CameraRig(G.camera);
@@ -104,6 +106,7 @@ export class Game {
       ld.classList.add('hidden');
       G.playerName = '리안';
       this.devStart(new URLSearchParams(location.search).get('dev'));
+      if (new URLSearchParams(location.search).has('rec')) import('./devrec.js').then((m) => m.startRecorder());
       return;
     }
     ld.classList.add('ready'); // the loading star blooms
@@ -133,6 +136,8 @@ export class Game {
       rift: { ch: 'rift', flags: [...pro, ...vil, ...bel, ...mor, 'water_learn'], els: ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'], lv: 10, pos: [96, -90] },
       lake: { ch: 'bells', flags: [...pro, ...vil], els: ['arcane', 'fire', 'wind'], lv: 4, pos: [-34, 52] },
       skills: { ch: 'mora', flags: [...pro, ...vil, ...bel, 'water_learn'], els: ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'], lv: 12, pos: [4, 60] },
+      // the south pass saddle, facing the outer lands (glide / scale checks for the 1280 m map)
+      outer: { ch: 'mora', flags: [...pro, ...vil, ...bel, 'water_learn'], els: ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'], lv: 12, pos: [37, 240] }, // yaw 0 faces south
     }[preset];
     if (!P_) { this.startPlay(new Story(), null); return; }
     const flags = {}; P_.flags.forEach((f) => (flags[f] = true));
@@ -159,6 +164,7 @@ export class Game {
     G.vfx.rings.forEach((r) => (r.m.visible = true));
     G.scene.add(grp);
     G.world.props.update(G.camera);
+    G.world.terrain.update(G.camera, Infinity);
     try { await this.compileScene(); } catch (_) { /* ignore */ }
     G.vfx.rings.forEach((r) => (r.m.visible = false));
     G.scene.remove(grp);
@@ -274,7 +280,7 @@ export class Game {
     if (name === 'pause') $('#pause').classList.remove('hidden');
     if (name === 'settings') { $('#pause').classList.add('hidden'); $('#settings').classList.remove('hidden'); }
     $('#ui').classList.add('menu-open');
-    if (name === 'map') { G.hud.drawMap(); $('#map').classList.remove('hidden'); }
+    if (name === 'map') { G.hud.openMap(); $('#map').classList.remove('hidden'); }
     if (name === 'journal') { G.hud.drawJournal(this.jTab || 'quests'); $('#journal').classList.remove('hidden'); }
     if (name === 'skills') { $('#skills').classList.remove('hidden'); G.hud.openSkills(); }
     if (name === 'crossroads') $('#crossroads').classList.remove('hidden');
@@ -354,6 +360,7 @@ export class Game {
     if (d.player.hat) P.setHat(true);
     const story0 = new Story(d.story);
     let techMigrated = false;
+    G.atlas.load(d.atlas); // older saves: only the vale is known
     if (d.skills) techMigrated = G.skills.load(d.skills);
     else { G.skills.points = Skills.expected(P.level, story0); G.skills.earned = G.skills.points; G.skills.grantBasics(); this.migratedSkills = true; }
     for (const id of d.lanterns || []) if (G.world.lanterns[id]) G.world.lanterns[id].setLit(true);
@@ -398,6 +405,7 @@ export class Game {
       respawn: this.respawn ? this.respawn.id : null,
       story: G.story.save(),
       skills: G.skills.save(),
+      atlas: G.atlas.save(),
     };
     if (!d.player.pos) delete d.player.pos;
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(d)); } catch (e) { console.warn(e); }
@@ -606,6 +614,7 @@ export class Game {
     } else {
       G.cameraRig.update(raw, P, I);
       G.world.update(dt, G.camera.position, P.pos);
+      if (G.state === 'play') G.atlas.update(dt);
     }
     G.vfx.add.setScale(G.renderer.renderer.domElement.height, G.camera.fov);
     G.vfx.norm.setScale(G.renderer.renderer.domElement.height, G.camera.fov);

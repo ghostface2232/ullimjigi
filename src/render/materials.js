@@ -132,7 +132,10 @@ THREE.ShaderChunk.fog_fragment = /* glsl */ `
   float _fd = length( vFogRay );
   vec3 _rd = vFogRay / max( _fd, 1e-4 );
   #ifdef FOG_EXP2
-    float _od = fogDensity * fogDensity * _fd * _fd;
+    // exp² up to 240 m (the vale's near look), then growing only linearly, so ridges and
+    // landmarks half a kilometre away and more stay readable as hazy silhouettes
+    float _dn = min( _fd, 240.0 );
+    float _od = fogDensity * fogDensity * ( _dn * _dn + 140.0 * max( _fd - 240.0, 0.0 ) );
   #else
     float _od = - log( max( 1.0 - smoothstep( fogNear, fogFar, vFogDepth ), 1e-4 ) );
   #endif
@@ -505,7 +508,7 @@ const cache = new Map();
  * Create (or reuse) a toon material.
  * opts: { emissive, emissiveIntensity, rim, vertexColors, flat, side, transparent, opacity, sway, swayBase, terrain, key,
  *         foliage (bool), leafy (ragged crown edges), tex ('plaster'|'wood'|'planks'|'stone'|'roof'|'rock'|'bark'), noAO (bool),
- *         noMoss (bool: no moss on 'stone'/'rock' surfaces) }
+ *         noMoss (bool: no moss on 'stone'/'rock' surfaces), lodFade (bool: per-instance `aFade` dither, props only) }
  * RGBA vertex colours: alpha is a foliage mask (1 = leaves) for translucency, bark detail and leafy edges.
  */
 export function toon(color = 0xffffff, opts = {}) {
@@ -538,6 +541,7 @@ export function patch(m, opts = {}) {
   m.userData.dissolve = dissolve;
   m.userData.dissolveColor = dissolveColor;
   const isTerrain = !!opts.terrain;
+  const lodFade = !!opts.lodFade;
   const hasSway = (opts.sway ?? 0) > 0;
   const foliage = opts.foliage ?? hasSway;
   const texKind = opts.tex || '';
@@ -576,13 +580,24 @@ export function patch(m, opts = {}) {
     fs = fs.replace('#include <opaque_fragment>', RIM_FRAG).replace('#include <clipping_planes_fragment>', DISSOLVE_CLIP);
     sh.fragmentShader = defs + 'uniform float uRim;\nuniform vec3 uRimColor;\n' + DISSOLVE_PARS + fs;
     sh.vertexShader = 'uniform float uTime;\nuniform float uWind;\nuniform float uSway;\nuniform float uSwayBase;\nvarying vec3 vDWP;\n' + sh.vertexShader.replace('#include <project_vertex>', DISSOLVE_VERT);
+    if (lodFade) {
+      // per-instance cross-fade between a near and a far model: > 0 dithers this instance out
+      // by that fraction, < 0 keeps only that fraction; the two use the same pattern so they
+      // add up to one whole object (props.js LOD band)
+      sh.vertexShader = 'attribute float aFade;\nvarying float vFade;\n' + sh.vertexShader.replace('void main() {', 'void main() {\n  vFade = aFade;');
+      sh.fragmentShader = 'varying float vFade;\n' + sh.fragmentShader.replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+  if (vFade != 0.0) {
+    float _ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    if (vFade > 0.0 ? _ign < vFade : _ign >= -vFade) discard;
+  }`);
+    }
     if (hasSway) sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', WIND_VERT);
     if (isTerrain) {
       sh.vertexShader = TERRAIN_VERT_PARS + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWNrm = normal;');
       sh.fragmentShader = TERRAIN_FRAG_PARS + sh.fragmentShader.replace('#include <color_fragment>', TERRAIN_FRAG);
     }
   };
-  m.customProgramCacheKey = () => `toon3|${hasSway}|${isTerrain}|${foliage}|${texKind}|${!!opts.noAO}|${!!opts.leafy}|${!!opts.noMoss}`;
+  m.customProgramCacheKey = () => `toon3|${hasSway}|${isTerrain}|${foliage}|${texKind}|${!!opts.noAO}|${!!opts.leafy}|${!!opts.noMoss}|${lodFade}`;
   return m;
 }
 

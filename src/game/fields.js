@@ -205,6 +205,10 @@ export class Fields {
   }
 
   clear() { for (const f of this.list) this.end(f, 0.3); this.list.length = 0; }
+  // after a long jump (fast travel, waking at a waystone) nothing is left burning behind
+  clearFar(pos, r) {
+    this.list = this.list.filter((f) => { if (Math.hypot(f.pos.x - pos.x, f.pos.z - pos.z) <= r) return true; this.end(f, 0.3); return false; });
+  }
 
   // vortex zones (wind / water whirl) take part in transformations too
   bindWhirl(zone, pos, r, el, tor) {

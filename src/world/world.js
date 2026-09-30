@@ -93,6 +93,7 @@ export class World {
     onProgress(0.72, '돌을 다듬는 중…');
     this.bakeStatics();
     this.objects = new WorldObjects(scene, this);
+    this.terrain.dropLegacy();
   }
 
   // Merge static building meshes per material into a few big meshes (draw-call reduction)
@@ -762,6 +763,7 @@ export class World {
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);
     this.props.update(G.camera);
+    this.terrain.update(G.camera);
     const n = this.sky.night;
     B.windowMat.color.setRGB(1.6, 1.1, 0.5).multiplyScalar(0.25 + n * 1.3);
     for (const a of this.anims) a(dt);
@@ -785,7 +787,7 @@ export class World {
     if (this.resTree) this.resTree.userData.lanterns.forEach((l, i) => { l.position.y += Math.sin(G.time * 1.3 + i) * 0.002; });
     // seeds
     for (const s of this.seeds) {
-      if (s.taken) continue;
+      if (s.taken || s.hidden) continue;
       s.orb.position.y = 0.9 + Math.sin(G.time * 2 + s.i) * 0.15;
       s.orb.rotation.y += dt * 2;
       const d = Math.hypot(s.x - playerPos.x, s.z - playerPos.z);
@@ -811,7 +813,8 @@ export class World {
     const reg = regionAt(playerPos.x, playerPos.z);
     if (n > 0.5 && rand() < dt * 6 * q && reg.id !== 'rift') G.vfx.burst(playerPos, 'firefly', 1, { spread: 16 });
     if (n < 0.4 && rand() < dt * 5 * q) G.vfx.burst(playerPos, 'pollen', 1, { spread: 16 });
-    if ((playerPos.z < -95 || playerPos.y > 42) && rand() < dt * 40 * q) G.vfx.burst(playerPos, 'snow', 1, { spread: 18 });
+    const outer = Math.hypot(playerPos.x, playerPos.z) > 250;
+    if ((outer ? this.terrain.snowAt(playerPos.x, playerPos.z) > 0.3 : playerPos.z < -95 || playerPos.y > 42) && rand() < dt * 40 * q) G.vfx.burst(playerPos, 'snow', 1, { spread: 18 });
     if (reg.id === 'rift' && rand() < dt * 18 * q) G.vfx.burst(tmp.set(playerPos.x + randRange(-14, 14), playerPos.y, playerPos.z + randRange(-14, 14)), 'ash', 1, { spread: 1 });
   }
 }

@@ -63,6 +63,7 @@ button { font-family: inherit; }
 .tbtn:hover, .tbtn.focus { color: var(--gold); letter-spacing: 0.22em; }
 .tbtn:hover::before, .tbtn.focus::before { opacity: 1; transform: translateY(-50%) scale(1); }
 .tbtn:disabled { opacity: 0.3; cursor: default; }
+.title-note { margin-top: 14px; max-width: 420px; font-size: 13px; line-height: 1.6; color: #ffd0a0; text-align: center; text-wrap: pretty; }
 .tbtn.small { font-size: 16px; }
 .tbtn.ghost { color: var(--ink-dim); }
 

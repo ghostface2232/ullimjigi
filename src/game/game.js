@@ -21,10 +21,14 @@ import { Skills } from './skills.js';
 import { Atlas } from './atlas.js';
 import { fillName } from '../core/util.js';
 
-const SAVE_KEY = 'ullimjigi_save_v1';
 const SET_KEY = 'ullimjigi_settings';
 const $ = (s) => document.querySelector(s);
 const DEV = new URLSearchParams(location.search).has('dev');
+// dev presets keep their own save, so trying things never overwrites a real journey
+// (in dev, loading falls back to the real save when there is no dev save yet: ?dev=continue)
+const REAL_SAVE = 'ullimjigi_save_v1';
+const SAVE_KEY = DEV ? 'ullimjigi_save_dev' : REAL_SAVE;
+const readSave = () => { try { return localStorage.getItem(SAVE_KEY) || (DEV ? localStorage.getItem(REAL_SAVE) : null); } catch (_) { return null; } };
 // dev presets tick on a timer so a hidden window keeps running; &raf uses real frames (measuring)
 const TIMER = DEV && !new URLSearchParams(location.search).has('raf');
 const raf = (fn) => (TIMER ? setTimeout(fn, 16) : requestAnimationFrame(fn));
@@ -261,11 +265,19 @@ export class Game {
     }
   }
 
-  hasSave() { try { return !!localStorage.getItem(SAVE_KEY); } catch (_) { return false; } }
+  hasSave() { return !!readSave(); }
+  // a line of explanation under the title buttons (why continue failed…)
+  titleNote(text) {
+    let n = $('#title-screen .title-note');
+    if (!n) { n = document.createElement('div'); n.className = 'title-note'; $('.title-menu') ? $('.title-menu').after(n) : $('#title-screen').appendChild(n); }
+    n.textContent = text;
+  }
 
   showTitle() {
     $('#title-screen').classList.remove('hidden');
-    $('[data-act="continue"]').disabled = !this.hasSave();
+    const c = $('[data-act="continue"]');
+    c.disabled = !this.hasSave();
+    c.title = c.disabled ? '이 브라우저에 저장된 여정이 없습니다' : '';
   }
 
   openMenu(name) {
@@ -348,8 +360,18 @@ export class Game {
   continueGame() {
     if (this.starting) return;
     let d;
-    try { d = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (_) { return; }
-    if (!d) return;
+    try { d = JSON.parse(readSave()); } catch (_) { this.titleNote('저장된 여정이 손상되어 불러올 수 없습니다.'); return; }
+    if (!d) { this.titleNote('이 브라우저에 저장된 여정이 없습니다. 저장은 브라우저와 주소마다 따로 남습니다.'); return; }
+    try { this.loadSave(d); } catch (e) {
+      // never leave a black screen: back to the title with the reason
+      console.error('continue failed', e);
+      this.starting = false;
+      $('#fade').style.opacity = 0;
+      $('#title-screen').classList.remove('hidden');
+      this.titleNote(`저장을 불러오지 못했습니다: ${e && e.message ? e.message : e}`);
+    }
+  }
+  loadSave(d) {
     this.starting = true;
     $('#title-screen').classList.add('hidden');
     G.playerName = d.name || '리안';

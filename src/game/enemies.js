@@ -132,6 +132,7 @@ export class Enemy {
     // bosses (and story bosses built from ordinary types) use the break meter instead of poise
     this.brk = def.boss || opts.brk ? newBreak() : null;
     this.phase = 1; this.phaseMul = 1;
+    this.atkGen = 0;
     this.rig = def.make();
     this.root = this.rig.root;
     this.root.rotation.order = 'YXZ';
@@ -248,8 +249,15 @@ export class Enemy {
     }
     G.audio.play('enemy_hurt', { pos: this.pos, f: this.base === 'brute' ? 380 : this.base === 'wailer' ? 1100 : 720, gap: 0.08 });
   }
+  // A delayed follow-up attack (second ring, next volley). It is dropped if the enemy was
+  // staggered or collapsed (break meter), frozen or killed in the meantime.
+  followUp(fn, ms) {
+    const gen = this.atkGen;
+    G.later(() => { if (this.alive && gen === this.atkGen && this.st.frozen <= 0) fn(); }, ms);
+  }
   stagger(t, quiet = false) {
     this.releaseToken();
+    this.atkGen++; // cancels queued follow-ups
     this.telegraph = false; this.slashing = false;
     if (this.state === 'down') { this.downT = Math.max(this.downT, this.stateT + t); return; }
     if (this.armor) this.st.armorBroken = Math.max(this.st.armorBroken, 6);
@@ -917,7 +925,7 @@ class Brute extends Enemy {
           // last phase: a wider second ring catches those who only stepped back
           if (this.phase >= 3) {
             G.vfx.telegraph(this.pos, 10, 0.8, 0x9ad8ff);
-            G.later(() => this.alive && this.frostNova(10), 800);
+            this.followUp(() => this.frostNova(10), 800);
           }
           this.novaCD = this.phase >= 3 ? randRange(6, 8) : randRange(8, 10);
           this.setState('recover');
@@ -1856,7 +1864,7 @@ class Knight extends Enemy {
           this.telegraph = false;
           this.cd.wave = this.phase >= 2 ? 6 : 9;
           this.shockwave(this.pos.clone(), 18, 13);
-          if (this.phase >= 2) G.later(() => this.alive && this.shockwave(this.pos.clone(), 18, 13), 650);
+          if (this.phase >= 2) this.followUp(() => this.shockwave(this.pos.clone(), 18, 13), 650);
           this.setState('recover');
         }
         break;
@@ -1870,7 +1878,7 @@ class Knight extends Enemy {
           this.telegraph = false;
           this.boltStrike(this.boltPts);
           // last phase: a second volley lands where the player dodged to
-          if (P3) G.later(() => { if (!this.alive) return; const pts = this.boltVolley(3); G.later(() => this.alive && this.boltStrike(pts), 900); }, 250);
+          if (P3) this.followUp(() => { const pts = this.boltVolley(3); this.followUp(() => this.boltStrike(pts), 900); }, 250);
           this.cd.bolts = P3 ? 6 : 7;
           this.setState('recover');
         }
@@ -1997,6 +2005,7 @@ class Heart {
     this.maxHp = Math.round(1400 * (1 + 0.18 * (level - 1))); this.hp = this.maxHp;
     this.brk = newBreak(6); // drains slowly: ward hits between volleys count too
     this.phaseMul = 1; this.phaseAt = [0.66, 0.33];
+    this.atkGen = 0; // bumped by a collapse to cancel queued orbs and shockwaves
     this.alive = true; this.hittable = false; this.radius = 1.9; this.height = 3;
     this.st = newStatus(); this.resist = {}; this.armor = 0; this.freezeAt = 10; this.freezeTime = 1.5;
     this.pos = center.clone().setY(center.y + 6); this.home = this.pos.clone();
@@ -2045,6 +2054,7 @@ class Heart {
   addBreak(v) { if (addBreak(this, v)) this.collapse(); }
   // Collapse: any wards left shatter at once, and the heart sinks low and stays exposed longer.
   collapse() {
+    this.atkGen++;
     const wasExposed = this.exposed > 0;
     for (const p of this.plates) if (p.alive) p.die();
     this.plates = [];
@@ -2138,12 +2148,13 @@ class Heart {
     return true;
   }
   volley() {
+    const gen = this.atkGen;
     const c = this.core.position.clone();
     const n = 6 + this.phase * 2;
     G.audio.play('wailer_charge', { pos: c });
     for (let i = 0; i < n; i++) {
       G.later(() => {
-        if (!this.alive) return;
+        if (!this.alive || gen !== this.atkGen) return;
         const toP = G.player.center().sub(c).normalize();
         const a = (i / n) * Math.PI * 2;
         const side = new THREE.Vector3(Math.cos(a), 0.3, Math.sin(a)).multiplyScalar(0.8);
@@ -2154,14 +2165,15 @@ class Heart {
     }
   }
   wave() {
+    const gen = this.atkGen;
     const c = this.center0.clone();
     const n = this.phase >= 2 ? 2 : 1;
     for (let k = 0; k < n; k++) {
       G.later(() => {
-        if (!this.alive) return;
+        if (!this.alive || gen !== this.atkGen) return;
         G.vfx.telegraph(c, 4, 0.7, 0xb080ff);
         G.later(() => {
-          if (!this.alive) return;
+          if (!this.alive || gen !== this.atkGen) return;
           G.audio.play('shockwave', { pos: c }); G.cameraRig.shake(0.35);
           let r = 2, hit = false;
           const maxR = 34, sp = 12;

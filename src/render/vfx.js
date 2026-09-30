@@ -2025,10 +2025,13 @@ export class VFX {
     }
     switch (el) {
       case 'fire': {
-        // bright rolling fireball that erodes into lit, rising smoke
-        this.sphere('fire', pos, { r0: r * 0.25, r1: r * 0.9, dur: 1.15, grow: 4.5, erodeAt: 0.3, erode1: 1.05, alpha: 1, rise: 1.4 });
-        for (let i = 0; i < 3; i++) { sphereV(tmpV); tmpV.y = Math.abs(tmpV.y) * 0.6; this.sphere('fire', tmpV.multiplyScalar(r * 0.4).add(pos), { r0: r * 0.12, r1: r * randRange(0.4, 0.55), dur: randRange(0.8, 1.05), grow: 4, erodeAt: 0.3, alpha: 1, rise: 2.4, delay: randRange(0, 0.08) }); }
-        for (let i = 0; i < 5; i++) { sphereV(tmpV); tmpV.y = Math.abs(tmpV.y) * 0.5 + 0.35; const d = tmpV.clone(); this.sphere('smoke', tmpV.multiplyScalar(r * 0.3).add(pos), { r0: r * 0.22, r1: r * randRange(0.45, 0.6), dur: randRange(2.4, 3.2), grow: 2.2, erodeAt: 0.3, rise: randRange(1.0, 1.8), drift: d.multiplyScalar(r * 0.22), emiss: 2.2, emissPow: 2.5, delay: randRange(0.18, 0.32), alpha: 1 }); }
+        // bright rolling fireball that erodes into lit, rising smoke. The volumes are drawn at
+        // 70 % of the blast radius (rings and scorch still show the full reach), so a big blast
+        // reads as a ball of fire rather than a wall that swallows the screen.
+        const v = r * 0.7;
+        this.sphere('fire', pos, { r0: v * 0.25, r1: v * 0.9, dur: 1.15, grow: 4.5, erodeAt: 0.3, erode1: 1.05, alpha: 1, rise: 1.4 });
+        for (let i = 0; i < 3; i++) { sphereV(tmpV); tmpV.y = Math.abs(tmpV.y) * 0.6; this.sphere('fire', tmpV.multiplyScalar(v * 0.4).add(pos), { r0: v * 0.12, r1: v * randRange(0.4, 0.55), dur: randRange(0.8, 1.05), grow: 4, erodeAt: 0.3, alpha: 1, rise: 2.4, delay: randRange(0, 0.08) }); }
+        for (let i = 0; i < 5; i++) { sphereV(tmpV); tmpV.y = Math.abs(tmpV.y) * 0.5 + 0.35; const d = tmpV.clone(); this.sphere('smoke', tmpV.multiplyScalar(v * 0.3).add(pos), { r0: v * 0.22, r1: v * randRange(0.45, 0.6), dur: randRange(2.4, 3.2), grow: 2.2, erodeAt: 0.3, rise: randRange(1.0, 1.8), drift: d.multiplyScalar(v * 0.22), emiss: 2.2, emissPow: 2.5, delay: randRange(0.18, 0.32), alpha: 1 }); }
         this.burst(pos, 'fire', 20 * k, { speed: 8, spread: 0.8, size: 1.4, alpha: 0.7 });
         this.burst(pos, 'ember', 22 * k, { speed: 10 });
         this.chunks(pos, 'ember', Math.round(14 * k), { speed: 11, up: 0.7 });

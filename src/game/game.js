@@ -104,6 +104,7 @@ export class Game {
       this.devStart(new URLSearchParams(location.search).get('dev'));
       return;
     }
+    ld.classList.add('ready'); // the loading star blooms
     $('.load-text').textContent = '클릭하여 시작';
     $('.load-text').style.animation = 'nextBob 1.4s infinite';
     await new Promise((r) => ld.addEventListener('click', r, { once: true }));

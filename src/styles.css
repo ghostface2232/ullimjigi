@@ -712,3 +712,6 @@ html, body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grays
 .dmg { font-size: calc(20px * var(--uiw)); }
 .dmg.crit { font-size: calc(30px * var(--uiw)); }
 .dmg.small { font-size: calc(14px * var(--uiw)); }
+#stamina.short { animation: stShort 0.45s ease-out; }
+#stamina.short .st-fill { stroke: #ff6a4a; }
+@keyframes stShort { 20% { transform: translateX(-4px); } 50% { transform: translateX(4px); } 80% { transform: translateX(-2px); } }

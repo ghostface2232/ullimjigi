@@ -134,7 +134,10 @@ export class Weather {
     const story = G.story;
     const calm = G.mode !== 'free' || G.bossActive || !story || !story.flag || !story.flag('worldOpen');
     this.stateT -= dt;
-    if (this.stateT <= 0 && !this.locked) this.set(calm ? 'clear' : this.pick(reg.id));
+    // a dialogue or boss fight clears the sky right away (over the usual ~40 s fade)
+    // instead of waiting for the next scheduled roll
+    if (calm && !this.locked && this.next !== 'clear') this.set('clear');
+    else if (this.stateT <= 0 && !this.locked) this.set(calm ? 'clear' : this.pick(reg.id));
     if (reg.id === 'rift' && story && story.chapter !== 'post' && !this.locked && (this.next === 'rain' || this.next === 'storm')) this.next = 'cloudy';
     const T = STATES[this.next];
     // weather rolls in over ~25 s and clears over ~40 s
@@ -196,7 +199,8 @@ export class Weather {
       const p = this.pending[i]; p.t -= dt;
       if (p.t <= 0) { this.pending.splice(i, 1); G.audio.play('thunder', { v: p.v, near: p.near }); }
     }
-    if (this.storm > 0.6 && this.snow < 0.7 && G.mode === 'free') {
+    // no lightning while the storm fades out of a boss fight
+    if (this.storm > 0.6 && this.snow < 0.7 && G.mode === 'free' && !G.bossActive) {
       this.updateCharge(dt);
       this.strikeT -= dt;
       if (this.strikeT <= 0) {

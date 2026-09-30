@@ -379,6 +379,12 @@ export class HUD {
     const q = this.hintQ.shift();
     if (q) setTimeout(() => this.hint(q.html, q.dur), 400);
   }
+  // not enough stamina for a climbing lunge: the wheel shakes red
+  staminaShort() {
+    const e = this.el.stamina;
+    e.classList.remove('short'); void e.offsetWidth; e.classList.add('short');
+    G.audio.play('mana_empty', { v: 0.5 });
+  }
   inCombat() { return !!(G.bossActive || (G.enemies && G.enemies.inCombat())); }
   areaTitle(name, en) {
     if (this.inCombat()) return; // a region name mid-fight is noise

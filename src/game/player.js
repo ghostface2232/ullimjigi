@@ -10,6 +10,7 @@ import { toon, addOutline } from '../render/materials.js';
 
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
 const GRAV = 26;
+const CLIMB_JUMP_COST = 20;
 
 export function xpNeed(lv) { return Math.round(30 * Math.pow(lv, 1.6)); }
 
@@ -446,12 +447,14 @@ export class Player {
     // climb jump: a burst of stamina for a quick lunge; S + Space kicks off the wall
     if (act && input.hit('Space') && this.climbJump <= 0) {
       if (iz < -0.3) { this.wallKick(); return; }
-      if (this.stamina >= 6) {
-        this.stamina -= 20; this.staminaUse = 1.2;
+      // the lunge costs its full price up front; too tired for it, the wheel flashes
+      // instead of starting a jump that would exhaust the player and drop them off the wall
+      if (this.stamina >= CLIMB_JUMP_COST) {
+        this.stamina -= CLIMB_JUMP_COST; this.staminaUse = 1.2;
         this.climbJump = 0.34; this.cjDir = [ix, Math.abs(ix) + Math.abs(iz) < 0.2 ? 1 : iz];
         G.audio.play('climb_jump', { pos: this.pos });
         G.vfx.burst(this.center(), 'dust', 5, { speed: 2.5, size: 0.4 });
-      }
+      } else if (G.hud.staminaShort) G.hud.staminaShort();
     }
     let mx = ix, my = iz, speed = 2.3;
     if (this.climbJump > 0) {
@@ -514,7 +517,8 @@ export class Player {
   }
   wallKick() {
     const C = this.climbing;
-    this.stamina -= 12; this.staminaUse = 1.2;
+    // kicking off is also the way out, so it is never refused, but it cannot exhaust you mid-air
+    this.stamina = Math.max(1, this.stamina - 12); this.staminaUse = 1.2;
     this.climbing = null; this.regrabT = 0.45;
     this.vel.set(C.nx * 6.5, 7.5, C.nz * 6.5);
     this.yaw = Math.atan2(C.nx, C.nz);

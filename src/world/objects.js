@@ -183,8 +183,13 @@ export class WorldObjects {
     b.vel.x += dx * push; b.vel.z += dz * push;
     if (el === 'wind' || o.power > 1.4) b.vel.y += push * (b.kind === 'boulder' ? 0.15 : 0.35);
     if (b.kind === 'barrel') {
-      if ((el === 'fire' || el === 'storm') && b.fuse <= 0 && b.wetT <= 0) this.light(b, o.chain ? 0.28 : 1.1);
-      else if (el === 'water' && b.fuse > 0) { b.fuse = 0; b.wetT = 12; G.vfx.burst(this.center(b), 'smoke', 6, { size: 1, alpha: 0.35, color: new THREE.Color(0.9, 0.92, 0.95) }); G.audio.play('fizzle', { pos: b.pos }); }
+      if ((el === 'fire' || el === 'storm') && b.wetT <= 0) {
+        // a neighbouring blast shortens a fuse that is already burning: the explosion's own area
+        // hit reaches this barrel first with the normal fuse, the chain hit follows right after
+        const fuse = o.chain ? 0.28 : 1.1;
+        if (b.fuse <= 0) this.light(b, fuse);
+        else if (fuse < b.fuse) b.fuse = fuse;
+      } else if (el === 'water' && b.fuse > 0) { b.fuse = 0; b.wetT = 12; G.vfx.burst(this.center(b), 'smoke', 6, { size: 1, alpha: 0.35, color: new THREE.Color(0.9, 0.92, 0.95) }); G.audio.play('fizzle', { pos: b.pos }); }
       else if (el === 'water') b.wetT = 12;
     } else if (b.kind === 'crate') {
       if (el === 'fire' && b.burn <= 0) b.burn = 3.2;

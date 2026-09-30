@@ -177,6 +177,18 @@ S.seed = function (o) {
   this.note(out, (o.m || 81) + 12, 0.02, 0.03, 1.6);
   this.noise({ out, type: 'highpass', f: 6000, a: 0.1, d: 0.8, v: 0.04 });
 };
+// a sleeping seed wakes (puzzle solved): the theme's opening notes as a soft rising arpeggio
+S.seed_wake = function (o) {
+  const out = this.bus(o.pos, 1, 0.7); if (!out) return;
+  [69, 74, 78, 81, 86].forEach((m, i) => this.note(out, m, i * 0.09, 0.06, 1.6 - i * 0.15));
+  this.noise({ out, type: 'highpass', f: 5000, a: 0.3, d: 1.2, v: 0.05 });
+};
+// chest lid: wooden creak, then a warm chord
+S.chest_open = function (o) {
+  const out = this.bus(o.pos, 1, 0.5); if (!out) return;
+  this.noise({ out, f: 300, f2: 900, q: 3, a: 0.05, d: 0.35, v: 0.25 });
+  [62, 66, 69, 74].forEach((m, i) => this.note(out, m + 12, 0.25 + i * 0.05, 0.05, 1.8));
+};
 S.seed_hum = function (o) {
   const out = this.bus(o.pos, 0.5, 0.6); if (!out) return;
   this.note(out, o.m || 86, 0, 0.03, 1.2);

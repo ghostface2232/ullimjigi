@@ -265,7 +265,8 @@ export class Story {
     for (const s of G.world.seeds) {
       if (s.taken) continue;
       if (this.seeds.has(s.i)) { s.taken = true; s.g.visible = false; continue; }
-      if (Math.hypot(P.pos.x - s.x, P.pos.z - s.z) < 1.4 && Math.abs(P.pos.y - s.y) < 2.5) this.takeSeed(s);
+      if (s.locked) continue; // still asleep: see world/puzzles.js
+      if (Math.hypot(P.pos.x - s.x, P.pos.z - s.z) < (s.pickR || 1.4) && Math.abs(P.pos.y - s.y) < 2.5) this.takeSeed(s);
     }
     // memories
     for (const m of Object.values(G.world.memoryObjs)) {

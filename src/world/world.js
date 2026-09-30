@@ -11,6 +11,7 @@ import { Weather } from './weather.js';
 import { Wildfire } from './wildfire.js';
 import { Env } from './env.js';
 import { WorldObjects } from './objects.js';
+import { Puzzles } from './puzzles.js';
 import { Props, makeTree } from './props.js';
 import { Colliders } from './collision.js';
 import { POI, PATHS, regionAt } from './layout.js';
@@ -33,8 +34,9 @@ export const LANTERNS = [
   { id: 'riftroad', name: '잿빛 비탈', x: 74, z: -56 },
 ];
 
+// [x, z, height above ground]. Some are locked by a small puzzle (puzzles.js SEED_PUZZLES).
 export const SEEDS = [
-  [-45, 150], [26, 118], [-87, 67], [-112, 92], [-122, 140], [-66, 158], [62, 102], [112, 72],
+  [-45, 150], [26, 118], [-60, 44], [-112, 92], [-108, 128], [-58, 150, 15], [62, 102], [112, 72],
   [150, -8], [42, -58], [-62, -62], [-8, -128], [-60, -150], [-142, -72], [-190, 22], [96, -152],
 ];
 
@@ -79,6 +81,8 @@ export class World {
     this.buildLanterns();
     this.buildSeeds();
     this.buildMemories();
+    this.puzzles = new Puzzles(this);
+    this.puzzles.build();
     this.ambT = 0;
     this.region = null;
     onProgress(0.72, '돌을 다듬는 중…');
@@ -438,13 +442,14 @@ export class World {
     return tgt;
   }
 
-  makeWindWheel(x, z, ry, id) {
+  // `hold`: keep turning only that many seconds after a gust instead of staying on (puzzles)
+  makeWindWheel(x, z, ry, id, o = {}) {
     const w = B.windWheel(); this.place(w, x, z, ry);
     this.col.addCircle(x, z, 0.4, -10, this.h(x, z) + 3.5).climb = false;
-    const tgt = this.addTarget({ id, pos: new THREE.Vector3(x, this.h(x, z) + 3.3, z), r: 1.6, obj: w, spin: 0, active: false, onHit: null });
+    const tgt = this.addTarget({ id, pos: new THREE.Vector3(x, this.h(x, z) + 3.3, z), r: 1.6, obj: w, spin: 0, active: false, onHit: null, hold: o.hold || 0, holdT: 0 });
     tgt.baseHit = (el) => {
       if (el === 'wind') {
-        tgt.spin = 1;
+        tgt.spin = 1; tgt.holdT = tgt.hold;
         if (!tgt.active) {
           tgt.active = true;
           G.audio.play('updraft', { pos: tgt.pos });
@@ -454,6 +459,10 @@ export class World {
       }
     };
     this.anims.push((dt) => {
+      if (tgt.hold && tgt.active) {
+        tgt.holdT -= dt;
+        if (tgt.holdT <= 0) { tgt.active = false; G.audio.play('fizzle', { pos: tgt.pos, v: 0.3 }); if (tgt.onStop) tgt.onStop(tgt); }
+      }
       const sp = tgt.active ? 1 : tgt.spin;
       w.userData.rotor.rotation.z += dt * (0.3 + sp * 9);
       tgt.spin = Math.max(0, tgt.spin - dt * 0.2);
@@ -682,8 +691,8 @@ export class World {
     const geo = crystalGeometry('prism', { double: true, sides: 5, radius: 0.55, tip: 0.6, seed: 17 });
     const mat = crystalMaterial({ color: 0xdcffb0, glow: 0xb8ff70, intensity: 1.25, seed: 4 });
     const sproutMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.45, 1.1, 0.55) });
-    SEEDS.forEach(([x, z], i) => {
-      const y = this.h(x, z);
+    SEEDS.forEach(([x, z, dy = 0], i) => {
+      const y = this.h(x, z) + dy;
       const g = new THREE.Group(); g.position.set(x, y, z); g.userData.noBake = true;
       const sprout = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.6, 5), sproutMat);
       sprout.position.y = 0.3; g.add(sprout);
@@ -739,7 +748,7 @@ export class World {
     U.time.value = G.time;
     U.wind.value = 1 + Math.sin(G.time * 0.3) * 0.35 + Math.sin(G.time * 1.1) * 0.15;
     this.weather.update(dt, camPos, playerPos);
-    if (G.player) { this.fire.update(dt, camPos, playerPos); this.objects.update(dt, playerPos); }
+    if (G.player) { this.fire.update(dt, camPos, playerPos); this.objects.update(dt, playerPos); this.puzzles.update(dt, playerPos); }
     this.sky.update(dt, playerPos, 1, camPos);
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);

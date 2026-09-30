@@ -51,6 +51,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | | `buildings.js` | 건물·소품 생성 함수(집·종탑·탑·풍차·우물·노점·성소·등석·화로·바람개비·틈의 문 등)와 마을 소품 조각(통·상자·수레·빨랫줄·깃발줄·가로등·텃밭·돌담·화분·이정표·돌탑·선착장) |
 | | `collision.js` | 원·박스 충돌체와 밟을 수 있는 발판 |
 | | `weather.js` · `wildfire.js` · `env.js` · `objects.js` | 날씨(비·뇌우·눈, 벼락), 들불 격자 시뮬레이션과 상승 기류, 마법↔환경 디스패처 `G.env`, 물리 소품(화약 통·상자·바위) |
+| | `puzzles.js` | 작은 퍼즐: 잠든 노래 씨앗(`SEED_PUZZLES`), 반응으로만 열리는 상자(`CHESTS`), 불에 타는 가시덤불(`buildThicket`) |
 | | `world.js` | 위 모든 것의 배치, 등석·씨앗·기억 물건, 정적 메시 합치기, 환경 연출 |
 | `game/` | `game.js` | 부팅, 타이틀, 메인 루프, 메뉴, 저장·불러오기, 사망, 등석, 음악 선택 |
 | | `player.js` | 이동(달리기·순간이동·점프·활공·수영), 시전, 능력치 |
@@ -128,6 +129,13 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
   - `fire.ignite(x, z, r, vigor = 1)`, `fire.extinguish(x, z, r)`, `fire.fan(x, z, dirX, dirZ, r)`.
 - **물리 소품**(`world/objects.js`, `G.world.objects`): 화약 통·상자·바위를 종류별 InstancedMesh 하나로 그립니다. 각 물체는 `world.targets`에 등록되어(`id: 'prop'`) 모든 마법의 `baseHit(el, src)`를 받습니다. 원소별 밀기(`PUSH`), 화염·번개 → 화약 통 도화선(1.1초, 연쇄 0.28초. 이미 타는 도화선도 이웃 폭발이 0.28초로 줄임) → `Spells.explode` 반경 5.2, 상자는 3번 맞으면 부서져 마나 방울(불에 타면 3초 뒤 재), 바위는 경사를 따라 구르며 적을 치고 물에 빠지면 가라앉습니다. 멈추면 잠들어 계산하지 않고, 사라진 것은 플레이어가 45m 밖에 있을 때 제자리에 다시 생깁니다. 배치는 `place()`(야영지마다 통 2·상자 1·오르막 바위 1). 마을 110m, 모라의 언덕·시작 오두막 60m 안에는 화약 통을 두지 않습니다(그 야영지는 상자 2개).
 - **환경 디스패처**(`G.env`): 마법이 착탄하면 `G.env.onSpell({ el, pos, r, kind, source })`를 부릅니다. 화염은 풀에 불을 붙이고, 물·서리는 끄고, 바람은 불길을 바람 방향으로 번지게, 번개는 가끔 불씨를 만듭니다. 새 환경 규칙은 여기에 추가하세요.
+
+### 작은 퍼즐 (`world/puzzles.js`)
+- 새 규칙 없이 이미 있는 것만 씁니다: 월드 표적(`target.baseHit(el, src)`), 들불 격자, 땅의 흔적. 열기 판정은 `Puzzles.heatAt(pos, r)`(들불·`blaze`·`plasma`)입니다.
+- 노래 씨앗 중 `SEED_PUZZLES`에 있는 것은 `s.locked`인 동안 주울 수 없고(`Story.update`), 풀리면 `Puzzles.wake(L)`가 봉오리를 열고 수정을 키웁니다. 씨앗 좌표는 `SEEDS`의 `[x, z, 지면 위 높이]`이고, 번호가 저장 키이므로 **순서를 바꾸지 마세요**. 퍼즐을 풀고 줍지 않은 채 불러오면 퍼즐은 처음 상태로 돌아갑니다.
+- 상자(`CHESTS`)는 잠금(`ice`·`thorns`)이 풀린 뒤 <kbd>E</kbd>로 엽니다. 연 상자는 스토리 플래그 `chest_<id>`로 저장되고, 불러오면 열린 채로 놓입니다.
+- 가시덤불은 불(마법·흔적·들불)에 타서 이웃 덤불과 발밑 풀로 번지고, 플레이어가 45m 밖에 있으면 200초 뒤 다시 자랍니다.
+- 플레이어가 풀지 못하고 20초 넘게 머물면 보름이 한 번 귀띔합니다(`LINGER`). 안내 없이 알아채는지가 0단계의 시험이므로 더 빨리 말하게 하지 마세요.
 
 ### 땅의 흔적과 착탄 훅
 - 마법이 땅이나 영역에 닿는 지점에서는 `G.spells.touch(el, pos, r, kind)`를 부르세요. `kind`는 `'bolt' | 'heavy' | 'weave' | 'ult' | 'charged'`. 이 한 번의 호출이 ① 겹친 땅의 흔적을 변화시키고(`Fields.infuse`) ② 월드 시스템 훅 `G.env?.onSpell({ el, pos, r, kind, source })`를 부릅니다(`pos`는 착탄 지점 아래 지면, `charged`는 `'bolt'`로 전달). 흔적은 살아 있는 동안 0.5초마다 `kind: 'field'`로 같은 훅을 부릅니다. `G.env`가 없으면 아무 일도 없습니다.

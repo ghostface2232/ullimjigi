@@ -1,4 +1,5 @@
 import './styles.css';
+import './styles-fantasy.css';
 import { Game } from './game/game.js';
 import { G } from './core/context.js';
 

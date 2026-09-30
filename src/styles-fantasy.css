@@ -1,0 +1,228 @@
+/* ==========================================================================
+   Fantasy skin: a "starlit manuscript" layer over styles.css.
+   Night-indigo panels, a double gold frame with filigree corners, a faint star
+   dust pattern, ornamental dividers and a rune-circle watermark. Everything is
+   a static background (no animation, no backdrop filter), so it costs nothing
+   per frame. The ornament SVGs below are generated; edit the shapes in one
+   place and every frame follows.
+   ========================================================================== */
+:root {
+  --orn-tl: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 60'%3E%3Cg transform=''%3E%3Cg fill='none' stroke='%23f1d48a' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 40 V11 Q3 3 11 3 H40' stroke-width='1.5'/%3E%3Cpath d='M9 30 V15 Q9 9 15 9 H30' stroke-width='0.9' opacity='.65'/%3E%3Cpath d='M40 3 H58' stroke-width='1' opacity='.45'/%3E%3Cpath d='M3 40 V58' stroke-width='1' opacity='.45'/%3E%3Cpath d='M15 9 C21 9 23 14 20 17 C18 19 15 17 16 15' stroke-width='1'/%3E%3Cpath d='M9 15 C9 21 14 23 17 20' stroke-width='1' opacity='.8'/%3E%3Cpath d='M22 3 q4 -3 8 0' stroke-width='.9' opacity='.7'/%3E%3Cpath d='M3 22 q-3 4 0 8' stroke-width='.9' opacity='.7'/%3E%3C/g%3E%3Cpath d='M6 0.8 L11.2 6 L6 11.2 L0.8 6Z' fill='%23f1d48a'/%3E%3Cpath d='M6 3.8 L8.2 6 L6 8.2 L3.8 6Z' fill='%23fff6d6'/%3E%3Ccircle cx='40' cy='3' r='1.3' fill='%23f1d48a'/%3E%3Ccircle cx='3' cy='40' r='1.3' fill='%23f1d48a'/%3E%3C/g%3E%3C/svg%3E");
+  --orn-tr: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 60'%3E%3Cg transform='translate(60 0) scale(-1 1)'%3E%3Cg fill='none' stroke='%23f1d48a' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 40 V11 Q3 3 11 3 H40' stroke-width='1.5'/%3E%3Cpath d='M9 30 V15 Q9 9 15 9 H30' stroke-width='0.9' opacity='.65'/%3E%3Cpath d='M40 3 H58' stroke-width='1' opacity='.45'/%3E%3Cpath d='M3 40 V58' stroke-width='1' opacity='.45'/%3E%3Cpath d='M15 9 C21 9 23 14 20 17 C18 19 15 17 16 15' stroke-width='1'/%3E%3Cpath d='M9 15 C9 21 14 23 17 20' stroke-width='1' opacity='.8'/%3E%3Cpath d='M22 3 q4 -3 8 0' stroke-width='.9' opacity='.7'/%3E%3Cpath d='M3 22 q-3 4 0 8' stroke-width='.9' opacity='.7'/%3E%3C/g%3E%3Cpath d='M6 0.8 L11.2 6 L6 11.2 L0.8 6Z' fill='%23f1d48a'/%3E%3Cpath d='M6 3.8 L8.2 6 L6 8.2 L3.8 6Z' fill='%23fff6d6'/%3E%3Ccircle cx='40' cy='3' r='1.3' fill='%23f1d48a'/%3E%3Ccircle cx='3' cy='40' r='1.3' fill='%23f1d48a'/%3E%3C/g%3E%3C/svg%3E");
+  --orn-bl: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 60'%3E%3Cg transform='translate(0 60) scale(1 -1)'%3E%3Cg fill='none' stroke='%23f1d48a' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 40 V11 Q3 3 11 3 H40' stroke-width='1.5'/%3E%3Cpath d='M9 30 V15 Q9 9 15 9 H30' stroke-width='0.9' opacity='.65'/%3E%3Cpath d='M40 3 H58' stroke-width='1' opacity='.45'/%3E%3Cpath d='M3 40 V58' stroke-width='1' opacity='.45'/%3E%3Cpath d='M15 9 C21 9 23 14 20 17 C18 19 15 17 16 15' stroke-width='1'/%3E%3Cpath d='M9 15 C9 21 14 23 17 20' stroke-width='1' opacity='.8'/%3E%3Cpath d='M22 3 q4 -3 8 0' stroke-width='.9' opacity='.7'/%3E%3Cpath d='M3 22 q-3 4 0 8' stroke-width='.9' opacity='.7'/%3E%3C/g%3E%3Cpath d='M6 0.8 L11.2 6 L6 11.2 L0.8 6Z' fill='%23f1d48a'/%3E%3Cpath d='M6 3.8 L8.2 6 L6 8.2 L3.8 6Z' fill='%23fff6d6'/%3E%3Ccircle cx='40' cy='3' r='1.3' fill='%23f1d48a'/%3E%3Ccircle cx='3' cy='40' r='1.3' fill='%23f1d48a'/%3E%3C/g%3E%3C/svg%3E");
+  --orn-br: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 60'%3E%3Cg transform='translate(60 60) scale(-1 -1)'%3E%3Cg fill='none' stroke='%23f1d48a' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 40 V11 Q3 3 11 3 H40' stroke-width='1.5'/%3E%3Cpath d='M9 30 V15 Q9 9 15 9 H30' stroke-width='0.9' opacity='.65'/%3E%3Cpath d='M40 3 H58' stroke-width='1' opacity='.45'/%3E%3Cpath d='M3 40 V58' stroke-width='1' opacity='.45'/%3E%3Cpath d='M15 9 C21 9 23 14 20 17 C18 19 15 17 16 15' stroke-width='1'/%3E%3Cpath d='M9 15 C9 21 14 23 17 20' stroke-width='1' opacity='.8'/%3E%3Cpath d='M22 3 q4 -3 8 0' stroke-width='.9' opacity='.7'/%3E%3Cpath d='M3 22 q-3 4 0 8' stroke-width='.9' opacity='.7'/%3E%3C/g%3E%3Cpath d='M6 0.8 L11.2 6 L6 11.2 L0.8 6Z' fill='%23f1d48a'/%3E%3Cpath d='M6 3.8 L8.2 6 L6 8.2 L3.8 6Z' fill='%23fff6d6'/%3E%3Ccircle cx='40' cy='3' r='1.3' fill='%23f1d48a'/%3E%3Ccircle cx='3' cy='40' r='1.3' fill='%23f1d48a'/%3E%3C/g%3E%3C/svg%3E");
+  --orn-rule: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 16'%3E%3Cdefs%3E%3ClinearGradient id='g' gradientUnits='userSpaceOnUse' x1='0' y1='0' x2='320' y2='0'%3E%3Cstop offset='0' stop-color='%23f1d48a' stop-opacity='0'/%3E%3Cstop offset='.4' stop-color='%23f1d48a' stop-opacity='.9'/%3E%3Cstop offset='.6' stop-color='%23f1d48a' stop-opacity='.9'/%3E%3Cstop offset='1' stop-color='%23f1d48a' stop-opacity='0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M6 8 H138 M182 8 H314' stroke='url(%23g)' stroke-width='1.5'/%3E%3Cg fill='none' stroke='%23f1d48a' stroke-width='1.1' stroke-linecap='round'%3E%3Cpath d='M138 8 q6 -6 12 -2'/%3E%3Cpath d='M138 8 q6 6 12 2'/%3E%3Cpath d='M182 8 q-6 -6 -12 -2'/%3E%3Cpath d='M182 8 q-6 6 -12 2'/%3E%3Cpath d='M160 1 L167 8 L160 15 L153 8Z'/%3E%3C/g%3E%3Cpath d='M160 4.5 L163.5 8 L160 11.5 L156.5 8Z' fill='%23f1d48a'/%3E%3Ccircle cx='148' cy='8' r='1.3' fill='%23f1d48a'/%3E%3Ccircle cx='172' cy='8' r='1.3' fill='%23f1d48a'/%3E%3C/svg%3E");
+  --pat-stars: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Ccircle cx='51.8' cy='24.1' r='0.5' fill='%23dfe8ff' fill-opacity='0.07'/%3E%3Ccircle cx='85.7' cy='58.5' r='0.5' fill='%23dfe8ff' fill-opacity='0.21'/%3E%3Ccircle cx='34.4' cy='13.8' r='0.9' fill='%23dfe8ff' fill-opacity='0.07'/%3E%3Ccircle cx='14.5' cy='67.9' r='1.1' fill='%23dfe8ff' fill-opacity='0.08'/%3E%3Ccircle cx='35.7' cy='100.4' r='0.5' fill='%23dfe8ff' fill-opacity='0.15'/%3E%3Ccircle cx='63.5' cy='156.2' r='0.5' fill='%23dfe8ff' fill-opacity='0.15'/%3E%3Ccircle cx='21.3' cy='67.1' r='1.1' fill='%23dfe8ff' fill-opacity='0.08'/%3E%3Ccircle cx='49.4' cy='130.6' r='0.6' fill='%23dfe8ff' fill-opacity='0.08'/%3E%3Ccircle cx='91.4' cy='30.1' r='0.5' fill='%23dfe8ff' fill-opacity='0.15'/%3E%3Ccircle cx='10.0' cy='9.5' r='0.6' fill='%23dfe8ff' fill-opacity='0.14'/%3E%3Ccircle cx='85.1' cy='124.4' r='0.9' fill='%23dfe8ff' fill-opacity='0.15'/%3E%3Ccircle cx='72.5' cy='48.0' r='0.6' fill='%23dfe8ff' fill-opacity='0.17'/%3E%3Ccircle cx='39.1' cy='91.9' r='1.1' fill='%23dfe8ff' fill-opacity='0.14'/%3E%3Ccircle cx='55.0' cy='71.8' r='1.1' fill='%23dfe8ff' fill-opacity='0.22'/%3E%3Ccircle cx='18.9' cy='66.9' r='0.7' fill='%23dfe8ff' fill-opacity='0.08'/%3E%3Ccircle cx='78.2' cy='6.3' r='0.5' fill='%23dfe8ff' fill-opacity='0.18'/%3E%3Ccircle cx='91.7' cy='140.1' r='0.7' fill='%23dfe8ff' fill-opacity='0.11'/%3E%3Ccircle cx='56.0' cy='79.5' r='0.9' fill='%23dfe8ff' fill-opacity='0.07'/%3E%3Ccircle cx='15.0' cy='43.2' r='0.5' fill='%23dfe8ff' fill-opacity='0.07'/%3E%3Ccircle cx='112.2' cy='103.5' r='0.9' fill='%23dfe8ff' fill-opacity='0.11'/%3E%3Ccircle cx='61.7' cy='107.0' r='0.5' fill='%23dfe8ff' fill-opacity='0.21'/%3E%3Ccircle cx='56.9' cy='97.7' r='0.9' fill='%23dfe8ff' fill-opacity='0.07'/%3E%3Ccircle cx='122.9' cy='20.7' r='0.6' fill='%23dfe8ff' fill-opacity='0.12'/%3E%3Ccircle cx='146.7' cy='79.4' r='0.6' fill='%23dfe8ff' fill-opacity='0.13'/%3E%3Ccircle cx='87.9' cy='141.3' r='0.9' fill='%23dfe8ff' fill-opacity='0.20'/%3E%3Ccircle cx='44.5' cy='66.4' r='0.7' fill='%23dfe8ff' fill-opacity='0.17'/%3E%3Cpath d='M38 48.8 L38.704 51.296 L41.2 52 L38.704 52.704 L38 55.2 L37.296 52.704 L34.8 52 L37.296 51.296Z' fill='%23f6e6b8' fill-opacity='0.16'/%3E%3Cpath d='M118 121.4 L118.572 123.428 L120.6 124 L118.572 124.572 L118 126.6 L117.428 124.572 L115.4 124 L117.428 123.428Z' fill='%23f6e6b8' fill-opacity='0.12'/%3E%3Cpath d='M38 52 L71 30 L96 44' stroke='%23f1d48a' stroke-opacity='.05' fill='none'/%3E%3C/svg%3E");
+  --orn-rune: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Cg fill='none' stroke='%23f1d48a' stroke-width='1' stroke-opacity='.16'%3E%3Ccircle cx='200' cy='200' r='194'/%3E%3Ccircle cx='200' cy='200' r='170'/%3E%3Ccircle cx='200' cy='200' r='146'/%3E%3Cpath d='M376.0 200.0 L386.0 200.0 M378.3 215.6 L382.3 215.9 M376.3 231.1 L380.2 231.8 M372.9 246.3 L376.8 247.4 M368.2 261.2 L372.0 262.6 M362.2 275.6 L365.9 277.3 M352.4 288.0 L361.1 293.0 M346.6 302.7 L349.9 305.0 M337.1 315.1 L340.2 317.6 M326.6 326.6 L329.4 329.4 M315.1 337.1 L317.6 340.2 M302.7 346.6 L305.0 349.9 M288.0 352.4 L293.0 361.1 M275.6 362.2 L277.3 365.9 M261.2 368.2 L262.6 372.0 M246.3 372.9 L247.4 376.8 M231.1 376.3 L231.8 380.2 M215.6 378.3 L215.9 382.3 M200.0 376.0 L200.0 386.0 M184.4 378.3 L184.1 382.3 M168.9 376.3 L168.2 380.2 M153.7 372.9 L152.6 376.8 M138.8 368.2 L137.4 372.0 M124.4 362.2 L122.7 365.9 M112.0 352.4 L107.0 361.1 M97.3 346.6 L95.0 349.9 M84.9 337.1 L82.4 340.2 M73.4 326.6 L70.6 329.4 M62.9 315.1 L59.8 317.6 M53.4 302.7 L50.1 305.0 M47.6 288.0 L38.9 293.0 M37.8 275.6 L34.1 277.3 M31.8 261.2 L28.0 262.6 M27.1 246.3 L23.2 247.4 M23.7 231.1 L19.8 231.8 M21.7 215.6 L17.7 215.9 M24.0 200.0 L14.0 200.0 M21.7 184.4 L17.7 184.1 M23.7 168.9 L19.8 168.2 M27.1 153.7 L23.2 152.6 M31.8 138.8 L28.0 137.4 M37.8 124.4 L34.1 122.7 M47.6 112.0 L38.9 107.0 M53.4 97.3 L50.1 95.0 M62.9 84.9 L59.8 82.4 M73.4 73.4 L70.6 70.6 M84.9 62.9 L82.4 59.8 M97.3 53.4 L95.0 50.1 M112.0 47.6 L107.0 38.9 M124.4 37.8 L122.7 34.1 M138.8 31.8 L137.4 28.0 M153.7 27.1 L152.6 23.2 M168.9 23.7 L168.2 19.8 M184.4 21.7 L184.1 17.7 M200.0 24.0 L200.0 14.0 M215.6 21.7 L215.9 17.7 M231.1 23.7 L231.8 19.8 M246.3 27.1 L247.4 23.2 M261.2 31.8 L262.6 28.0 M275.6 37.8 L277.3 34.1 M288.0 47.6 L293.0 38.9 M302.7 53.4 L305.0 50.1 M315.1 62.9 L317.6 59.8 M326.6 73.4 L329.4 70.6 M337.1 84.9 L340.2 82.4 M346.6 97.3 L349.9 95.0 M352.4 112.0 L361.1 107.0 M362.2 124.4 L365.9 122.7 M368.2 138.8 L372.0 137.4 M372.9 153.7 L376.8 152.6 M376.3 168.9 L380.2 168.2 M378.3 184.4 L382.3 184.1'/%3E%3Cpath d='M200.0 54.0 L303.2 303.2 L54.0 200.0 L303.2 96.8 L200.0 346.0 L96.8 96.8 L346.0 200.0 L96.8 303.2Z' stroke-opacity='.35'/%3E%3Cpath d='M200.0 54.0 L346.0 200.0 L200.0 346.0 L54.0 200.0Z'/%3E%3Cpath d='M303.2 96.8 L303.2 303.2 L96.8 303.2 L96.8 96.8Z'/%3E%3Ccircle cx='200' cy='200' r='60'/%3E%3Ccircle cx='200' cy='200' r='52' stroke-dasharray='2 5'/%3E%3Cg transform='translate(200.0 42.0) rotate(0)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(279.0 63.2) rotate(30)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(336.8 121.0) rotate(60)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(358.0 200.0) rotate(90)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(336.8 279.0) rotate(120)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(279.0 336.8) rotate(150)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(200.0 358.0) rotate(180)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(121.0 336.8) rotate(210)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(63.2 279.0) rotate(240)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(42.0 200.0) rotate(270)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(63.2 121.0) rotate(300)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(121.0 63.2) rotate(330)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+:root {
+  --orn-rune-soft: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Cg fill='none' stroke='%23f1d48a' stroke-width='1' stroke-opacity='.09'%3E%3Ccircle cx='200' cy='200' r='194'/%3E%3Ccircle cx='200' cy='200' r='170'/%3E%3Cpath d='M376.0 200.0 L386.0 200.0 M378.3 215.6 L382.3 215.9 M376.3 231.1 L380.2 231.8 M372.9 246.3 L376.8 247.4 M368.2 261.2 L372.0 262.6 M362.2 275.6 L365.9 277.3 M352.4 288.0 L361.1 293.0 M346.6 302.7 L349.9 305.0 M337.1 315.1 L340.2 317.6 M326.6 326.6 L329.4 329.4 M315.1 337.1 L317.6 340.2 M302.7 346.6 L305.0 349.9 M288.0 352.4 L293.0 361.1 M275.6 362.2 L277.3 365.9 M261.2 368.2 L262.6 372.0 M246.3 372.9 L247.4 376.8 M231.1 376.3 L231.8 380.2 M215.6 378.3 L215.9 382.3 M200.0 376.0 L200.0 386.0 M184.4 378.3 L184.1 382.3 M168.9 376.3 L168.2 380.2 M153.7 372.9 L152.6 376.8 M138.8 368.2 L137.4 372.0 M124.4 362.2 L122.7 365.9 M112.0 352.4 L107.0 361.1 M97.3 346.6 L95.0 349.9 M84.9 337.1 L82.4 340.2 M73.4 326.6 L70.6 329.4 M62.9 315.1 L59.8 317.6 M53.4 302.7 L50.1 305.0 M47.6 288.0 L38.9 293.0 M37.8 275.6 L34.1 277.3 M31.8 261.2 L28.0 262.6 M27.1 246.3 L23.2 247.4 M23.7 231.1 L19.8 231.8 M21.7 215.6 L17.7 215.9 M24.0 200.0 L14.0 200.0 M21.7 184.4 L17.7 184.1 M23.7 168.9 L19.8 168.2 M27.1 153.7 L23.2 152.6 M31.8 138.8 L28.0 137.4 M37.8 124.4 L34.1 122.7 M47.6 112.0 L38.9 107.0 M53.4 97.3 L50.1 95.0 M62.9 84.9 L59.8 82.4 M73.4 73.4 L70.6 70.6 M84.9 62.9 L82.4 59.8 M97.3 53.4 L95.0 50.1 M112.0 47.6 L107.0 38.9 M124.4 37.8 L122.7 34.1 M138.8 31.8 L137.4 28.0 M153.7 27.1 L152.6 23.2 M168.9 23.7 L168.2 19.8 M184.4 21.7 L184.1 17.7 M200.0 24.0 L200.0 14.0 M215.6 21.7 L215.9 17.7 M231.1 23.7 L231.8 19.8 M246.3 27.1 L247.4 23.2 M261.2 31.8 L262.6 28.0 M275.6 37.8 L277.3 34.1 M288.0 47.6 L293.0 38.9 M302.7 53.4 L305.0 50.1 M315.1 62.9 L317.6 59.8 M326.6 73.4 L329.4 70.6 M337.1 84.9 L340.2 82.4 M346.6 97.3 L349.9 95.0 M352.4 112.0 L361.1 107.0 M362.2 124.4 L365.9 122.7 M368.2 138.8 L372.0 137.4 M372.9 153.7 L376.8 152.6 M376.3 168.9 L380.2 168.2 M378.3 184.4 L382.3 184.1'/%3E%3Cg transform='translate(200.0 42.0) rotate(0)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(279.0 63.2) rotate(30)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(336.8 121.0) rotate(60)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(358.0 200.0) rotate(90)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(336.8 279.0) rotate(120)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(279.0 336.8) rotate(150)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(200.0 358.0) rotate(180)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(121.0 336.8) rotate(210)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(63.2 279.0) rotate(240)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(42.0 200.0) rotate(270)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(63.2 121.0) rotate(300)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3Cg transform='translate(121.0 63.2) rotate(330)'%3E%3Cpath d='M-3 -5 L0 5 L3 -5 M-4 0 H4' /%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+:root {
+  --night-1: rgba(22, 27, 46, 0.95);
+  --night-2: rgba(10, 12, 22, 0.97);
+  --gold-line: rgba(241, 212, 138, 0.5);
+  --gold-faint: rgba(241, 212, 138, 0.16);
+  /* panel surface: star dust over a faint moonlit top glow over deep indigo */
+  --panel-bg: var(--pat-stars), radial-gradient(120% 70% at 50% -10%, rgba(120, 140, 220, 0.14), transparent 62%), linear-gradient(180deg, var(--night-1), var(--night-2));
+  /* double gold frame: hairline, a dark gap, a fainter outer line, then depth */
+  --panel-frame: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 0 0 4px rgba(10, 12, 22, 0.92), 0 0 0 5px var(--gold-faint), 0 26px 64px rgba(0, 0, 0, 0.62), inset 0 0 50px rgba(0, 0, 0, 0.4);
+}
+
+/* ---------- framed panels ---------- */
+/* (#dialogue is already absolutely positioned, so it keeps its own position) */
+.jr-frame, .sk-frame, .lg-frame, .pz-frame, .ne-box, .map-frame { position: relative; }
+.jr-frame, .sk-frame, .lg-frame, .pz-frame, .ne-box, .map-frame, #dialogue {
+  background: var(--panel-bg); border: 1px solid var(--gold-line); border-radius: 4px; box-shadow: var(--panel-frame);
+}
+/* filigree corners sit over the frame line */
+.jr-frame::before, .sk-frame::before, .lg-frame::before, .pz-frame::before, .ne-box::before, .map-frame::before, #dialogue::before {
+  content: ''; position: absolute; inset: -9px; pointer-events: none; z-index: 3;
+  background: var(--orn-tl) left top / 58px 58px no-repeat, var(--orn-tr) right top / 58px 58px no-repeat, var(--orn-bl) left bottom / 58px 58px no-repeat, var(--orn-br) right bottom / 58px 58px no-repeat;
+}
+/* a small crest where the top edge meets the middle */
+.jr-frame::after, .sk-frame::after, .lg-frame::after, .pz-frame::after, .map-frame::after {
+  content: ''; position: absolute; left: 50%; top: -8px; width: 150px; height: 16px; margin-left: -75px; pointer-events: none; z-index: 3; background: var(--orn-rule) center / 150px 16px no-repeat;
+}
+/* the dim veil behind menus gets a soft vignette instead of a flat tint */
+#journal, #skills, #map, #pause, #settings, #dlg-log { background: radial-gradient(ellipse at 50% 45%, rgba(10, 12, 24, 0.72), rgba(3, 4, 9, 0.93) 75%); }
+
+/* ornamental divider used under titles */
+.orn-rule, .pz-title::after, .map-title::after, .sk-title::after, .title-sub::before, .death-sub::before, .lg-title::after {
+  content: ''; display: block; height: 16px; background: var(--orn-rule) center / contain no-repeat;
+}
+
+/* ---------- headings ---------- */
+.pz-title, .map-title, .sk-title, .lg-title, .si-name, .cr-title, .at-name, .bn-big {
+  text-shadow: 0 0 18px rgba(241, 212, 138, 0.32), 0 2px 4px rgba(0, 0, 0, 0.85);
+}
+.pz-title, .map-title, .lg-title { background: linear-gradient(180deg, #fff6d8, #e9c77a); -webkit-background-clip: text; background-clip: text; color: transparent; text-shadow: none; filter: drop-shadow(0 0 10px rgba(241, 212, 138, 0.28)) drop-shadow(0 2px 2px rgba(0, 0, 0, 0.8)); }
+.pz-title::after, .map-title::after { width: 100%; min-width: 220px; margin-top: 10px; filter: none; }
+
+/* ---------- title screen ---------- */
+.title-wrap { position: relative; }
+.title-wrap::before { content: ''; position: absolute; left: -110px; top: -205px; width: 470px; height: 470px; background: var(--orn-rune) center / contain no-repeat; opacity: 0.6; pointer-events: none; z-index: -1; }
+/* the loading rune sits in a faint circle of its own */
+.load-inner { position: relative; }
+.load-inner::before { content: ''; position: absolute; left: 50%; top: 45px; width: 300px; height: 300px; margin: -150px 0 0 -150px; background: var(--orn-rune-soft) center / contain no-repeat; pointer-events: none; }
+.title-main { background: linear-gradient(180deg, #fffdf2 0%, #f7e7bd 52%, #d9b56a 100%); -webkit-background-clip: text; background-clip: text; color: transparent; text-shadow: none;
+  filter: drop-shadow(0 0 22px rgba(241, 212, 138, 0.4)) drop-shadow(0 0 60px rgba(143, 200, 255, 0.18)) drop-shadow(0 3px 3px rgba(0, 0, 0, 0.7)); }
+.title-sub { text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85); }
+.title-sub::before { width: 360px; margin: 2px 0 14px -10px; opacity: 0.95; }
+.title-sub-en { text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); }
+.title-hint { text-shadow: 0 1px 3px #000; }
+
+/* menu buttons: a gold diamond leads, a thin gilded line draws in underneath */
+.tbtn { text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85); }
+.tbtn::after { content: ''; position: absolute; left: 26px; right: 18px; bottom: 3px; height: 1px; background: linear-gradient(90deg, var(--gold), transparent); transform: scaleX(0); transform-origin: left; transition: transform 0.3s ease-out; }
+.tbtn:hover::after, .tbtn.focus::after { transform: scaleX(1); }
+.tbtn:disabled::after { display: none; }
+.tbtn:active:not(:disabled) { transform: scale(0.97); }
+
+/* ---------- pause & settings: a centred illuminated card ---------- */
+.pz-frame { align-items: stretch; padding: 40px 58px 34px; min-width: 340px; }
+.pz-frame.wide { min-width: 500px; }
+.pz-title { text-align: center; margin-bottom: 18px; }
+.set-row { border-bottom: 1px solid rgba(241, 212, 138, 0.08); }
+.set-row select { background: #141a2c; border-color: var(--gold-line); border-radius: 4px; padding: 5px 10px; }
+
+/* ---------- journal ---------- */
+.jr-frame { border-radius: 4px; }
+.jr-tabs { gap: 30px; padding: 20px 0 14px; border-bottom: none; background: var(--orn-rule) center bottom / 420px 16px no-repeat; }
+.jr-tabs button { position: relative; padding: 6px 14px 10px; border: none !important; text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8); transition: color 0.2s; }
+.jr-tabs button:hover { color: var(--ink); }
+.jr-tabs button.on { color: var(--gold); text-shadow: 0 0 12px rgba(241, 212, 138, 0.45), 0 2px 4px #000; }
+.jr-tabs button.on::after { content: ''; position: absolute; left: 50%; bottom: 0; width: 7px; height: 7px; margin-left: -3.5px; transform: rotate(45deg); background: var(--gold); box-shadow: 0 0 8px var(--gold); }
+.jr-body { padding: 18px 56px 24px; }
+.jr-close, .lg-close, .map-close { letter-spacing: 0.14em; }
+/* section headings with flourishes on both sides */
+.jsec { display: flex; align-items: center; gap: 14px; letter-spacing: 0.18em; text-shadow: 0 0 10px rgba(241, 212, 138, 0.25); }
+.jsec::before, .jsec::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, rgba(241, 212, 138, 0.45)); }
+.jsec::after { background: linear-gradient(90deg, rgba(241, 212, 138, 0.45), transparent); }
+.jsec[style*="text-align:center"]::before, .jsec[style*="text-align:center"]::after { flex: 1; }
+.jq { border-bottom: none; background: linear-gradient(90deg, rgba(241, 212, 138, 0.14), transparent 70%) left bottom / 100% 1px no-repeat; padding: 16px 4px; }
+.jq h3 { letter-spacing: 0.06em; text-shadow: 0 0 10px rgba(241, 212, 138, 0.25); }
+.jq h3::before { content: ''; display: inline-block; width: 7px; height: 7px; margin: 0 10px 3px 0; transform: rotate(45deg); border: 1px solid var(--gold); vertical-align: middle; }
+.jq.done h3::before { background: var(--ink-dim); border-color: var(--ink-dim); }
+.jq p { line-height: 1.75; }
+.jq .obj { color: #cdeeff; }
+.jsp { border-bottom: none; background: linear-gradient(90deg, rgba(255, 255, 255, 0.07), transparent 80%) left bottom / 100% 1px no-repeat; }
+
+/* ---------- skill tree ---------- */
+.sk-frame { border-radius: 4px; }
+.sk-title::after { width: 240px; margin: 6px 0 0 -6px; background-position: left center; }
+.sk-tabs { border-bottom: none; background: linear-gradient(90deg, transparent, rgba(241, 212, 138, 0.22), transparent) center bottom / 80% 1px no-repeat; }
+.sk-tab { background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015)); border-color: rgba(241, 212, 138, 0.18); }
+.sk-tree { background: var(--orn-rune-soft) center 58% / min(88%, 520px) no-repeat, radial-gradient(ellipse at 50% 90%, rgba(241, 212, 138, 0.07), transparent 60%); }
+.sk-info { border-left: none; background: linear-gradient(180deg, transparent, rgba(241, 212, 138, 0.3), transparent) left center / 1px 90% no-repeat; }
+.sk-orb { box-shadow: 0 0 0 3px rgba(8, 10, 18, 0.9), 0 0 0 4px rgba(241, 212, 138, 0.16), 0 4px 10px rgba(0, 0, 0, 0.5); }
+.sk-learn { border-radius: 4px; background: linear-gradient(180deg, rgba(241, 212, 138, 0.3), rgba(241, 212, 138, 0.08)); box-shadow: inset 0 1px 0 rgba(255, 246, 216, 0.25), 0 0 0 3px rgba(8, 10, 18, 0.7), 0 0 0 4px rgba(241, 212, 138, 0.2); }
+.sk-foot { border-top: none; background: linear-gradient(90deg, transparent, rgba(241, 212, 138, 0.18), transparent) center top / 90% 1px no-repeat; }
+
+/* ---------- map ---------- */
+.map-frame { padding: 22px 26px 22px 22px; }
+#map-canvas { border: 1px solid rgba(241, 212, 138, 0.55); border-radius: 2px; box-shadow: 0 0 0 4px rgba(10, 12, 22, 0.95), 0 0 0 5px rgba(241, 212, 138, 0.2), 0 0 40px rgba(0, 0, 0, 0.6); }
+.map-legend { padding-top: 4px; }
+.map-keys { color: var(--ink); text-shadow: 0 1px 3px #000; }
+
+/* ---------- dialogue ---------- */
+#dialogue { border-radius: 4px; padding: 32px 48px 28px; }
+.dlg-text { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); }
+/* the speaker's name on a gilded ribbon */
+.dlg-name { isolation: isolate; top: -18px; left: 44px; padding: 6px 30px; border: none; border-radius: 0; background: linear-gradient(90deg, #b8913f, #f1d48a 50%, #b8913f);
+  clip-path: polygon(14px 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 14px 100%, 0 50%); color: #fff2cc; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9); z-index: 4; }
+.dlg-name::before { content: ''; position: absolute; inset: 1px; z-index: -1; background: linear-gradient(180deg, #3a2e17, #1c160b);
+  clip-path: polygon(13px 0, calc(100% - 13px) 0, 100% 50%, calc(100% - 13px) 100%, 13px 100%, 0 50%); }
+.dlg-next { color: var(--gold); text-shadow: 0 0 8px rgba(241, 212, 138, 0.7); }
+.dlg-choice { border-radius: 3px; border-color: rgba(241, 212, 138, 0.16); background: linear-gradient(90deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01)); position: relative; }
+.dlg-choice::before { content: ''; position: absolute; left: 10px; top: 50%; width: 6px; height: 6px; margin-top: -3px; transform: rotate(45deg) scale(0.4); background: var(--gold); opacity: 0; transition: opacity 0.15s, transform 0.15s; }
+.dlg-choice:hover::before, .dlg-choice.sel::before { opacity: 1; transform: rotate(45deg) scale(1); }
+.dlg-choice:hover, .dlg-choice.sel { background: linear-gradient(90deg, rgba(241, 212, 138, 0.18), rgba(241, 212, 138, 0.03)); }
+
+/* ---------- HUD ---------- */
+/* compass: a dark band with gilded hairlines so the letters read over bright sky */
+#compass { background: linear-gradient(180deg, transparent 0, rgba(8, 10, 20, 0.55) 22%, rgba(8, 10, 20, 0.55) 78%, transparent 100%); }
+#compass::before, #compass::after { content: ''; position: absolute; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(241, 212, 138, 0.55), transparent); }
+#compass::before { top: 3px; } #compass::after { bottom: 3px; }
+.compass-strip span.card { text-shadow: 0 0 8px rgba(241, 212, 138, 0.6), 0 1px 3px #000; }
+.compass-center { border-bottom-color: #fff2c8; filter: drop-shadow(0 0 4px var(--gold)); }
+
+/* quest tracker on a plate that fades into the scene */
+#quest-tracker { padding: 10px 18px 16px 80px; background: linear-gradient(270deg, rgba(8, 10, 20, 0.62), rgba(8, 10, 20, 0.42) 55%, transparent); -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent); mask-image: linear-gradient(180deg, #000 70%, transparent); }
+.qt-title::after { content: ''; display: block; width: 190px; height: 12px; margin: 4px 0 0 auto; background: var(--orn-rule) right center / 190px 12px no-repeat; opacity: 0.8; }
+.qt-title::before { content: '◆ '; color: var(--gold); }
+
+/* vitals */
+.mana-track { border-color: rgba(241, 212, 138, 0.4); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.65), 0 0 0 2px rgba(8, 10, 18, 0.7), 0 0 0 3px rgba(108, 198, 255, 0.18); }
+#xpbar { height: 3px; background: rgba(8, 10, 18, 0.65); box-shadow: 0 0 0 1px rgba(241, 212, 138, 0.18); border-radius: 2px; }
+.xp-fill { border-radius: 2px; background: linear-gradient(90deg, #c9a24e, #fff0c4); }
+.xp-lv { text-shadow: 0 0 8px rgba(241, 212, 138, 0.5), 0 1px 3px #000; }
+#sp-badge, #cr-badge { border-radius: 3px 14px 14px 3px; }
+
+/* element slots: a gem set in a gold bezel */
+.el { background: radial-gradient(circle at 50% 32%, color-mix(in srgb, currentColor 26%, #1c2236), #080a14 74%); border: 1px solid color-mix(in srgb, currentColor 40%, rgba(241, 212, 138, 0.45));
+  box-shadow: 0 0 0 3px rgba(8, 10, 18, 0.78), 0 0 0 4px rgba(241, 212, 138, 0.3), 0 5px 12px rgba(0, 0, 0, 0.5), inset 0 2px 6px rgba(255, 255, 255, 0.08); }
+.el.active { box-shadow: 0 0 0 3px rgba(8, 10, 18, 0.85), 0 0 0 4px currentColor, 0 0 20px currentColor, inset 0 0 14px rgba(255, 255, 255, 0.14); }
+.el .key { background: #0c0f1b; border: 1px solid rgba(241, 212, 138, 0.45); color: var(--gold); border-radius: 3px; }
+#weave-slot, #heavy-slot, #ult-slot { border: 1px solid rgba(241, 212, 138, 0.32); background: linear-gradient(90deg, rgba(10, 12, 22, 0.35), rgba(10, 12, 22, 0.88)); box-shadow: 0 0 0 2px rgba(8, 10, 18, 0.5), 0 4px 12px rgba(0, 0, 0, 0.4); }
+#weave-slot.ready { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(8, 10, 18, 0.5), 0 0 16px rgba(241, 212, 138, 0.35); }
+.weave-key { background: radial-gradient(circle at 40% 35%, #fff4cf, #e1b863 60%, #9c7632); box-shadow: 0 0 0 1px #3a2c10, 0 0 6px rgba(241, 212, 138, 0.5); }
+
+/* minimap: a gilded double bezel */
+#minimap { box-shadow: 0 0 0 2px rgba(10, 12, 22, 0.95), 0 0 0 3px rgba(241, 212, 138, 0.6), 0 0 0 7px rgba(10, 12, 22, 0.55), 0 0 0 8px rgba(241, 212, 138, 0.2), 0 8px 24px rgba(0, 0, 0, 0.5); }
+
+/* interaction prompt: the key as a gold gem */
+#prompt { padding: 7px 22px 7px 8px; background: linear-gradient(90deg, rgba(10, 12, 22, 0.92), rgba(10, 12, 22, 0.55)); border: 1px solid rgba(241, 212, 138, 0.3); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45); }
+.pk { background: radial-gradient(circle at 40% 35%, #fff6d6, #e6c173 58%, #9c7632); color: #22190a; box-shadow: 0 0 0 1px #3a2c10, 0 0 10px rgba(241, 212, 138, 0.45); }
+.pt { text-shadow: 0 1px 3px #000; }
+
+/* tips and toasts */
+#hint { background: var(--pat-stars), linear-gradient(90deg, rgba(14, 17, 32, 0.94), rgba(10, 12, 22, 0.72)); border-left: 1px solid var(--gold); box-shadow: -3px 0 0 -1px rgba(241, 212, 138, 0.35), 0 8px 22px rgba(0, 0, 0, 0.45); }
+#hint::before { content: ''; position: absolute; left: -5px; top: 14px; width: 8px; height: 8px; transform: rotate(45deg); background: var(--gold); box-shadow: 0 0 8px var(--gold); }
+#hint b { color: var(--gold); font-family: var(--blade); font-weight: 400; letter-spacing: 0.04em; }
+.toast { position: relative; border-left: none; padding: 7px 18px 7px 26px; border-radius: 2px 18px 18px 2px; background: linear-gradient(90deg, rgba(12, 14, 26, 0.92), rgba(12, 14, 26, 0.3)); box-shadow: inset 1px 0 0 rgba(241, 212, 138, 0.8); text-shadow: 0 1px 2px #000; }
+.toast::before { content: ''; position: absolute; left: 10px; top: 50%; width: 6px; height: 6px; margin-top: -3px; transform: rotate(45deg); background: var(--gold); box-shadow: 0 0 6px var(--gold); }
+.toast b { color: var(--gold); }
+
+/* banners and area titles use the ornament instead of plain lines */
+#banner { background: var(--pat-stars), linear-gradient(90deg, transparent, rgba(10, 12, 24, 0.86) 24%, rgba(10, 12, 24, 0.86) 76%, transparent); }
+#banner::before, #banner::after { left: 50%; right: auto; width: 480px; margin-left: -240px; height: 16px; background: var(--orn-rule) center / contain no-repeat; }
+#banner::before { top: -8px; } #banner::after { bottom: -8px; }
+#banner.compact::before, #banner.compact::after { width: 260px; margin-left: -130px; left: 50%; right: auto; height: 12px; }
+#banner.compact::before { top: -6px; } #banner.compact::after { bottom: -6px; }
+.bn-small { text-shadow: 0 0 10px rgba(241, 212, 138, 0.35); }
+.bn-small::before, .bn-small::after { content: '◆'; font-size: 8px; vertical-align: middle; margin: 0 12px; opacity: 0.8; }
+#banner.compact .bn-small::before, #banner.compact .bn-small::after { content: none; }
+.at-line { height: 16px; width: 460px; background: var(--orn-rule) center / contain no-repeat; }
+.at-line:last-child { transform: scaleY(-1); }
+
+/* companion line: a soft dark wash behind the text */
+#companion-line { padding: 8px 28px; border-radius: 30px; background: radial-gradient(ellipse at center, rgba(6, 8, 16, 0.6), transparent 72%); }
+
+/* boss bar: name between flourishes, gilded track */
+.boss-name { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.boss-name::before, .boss-name::after { content: ''; width: 90px; height: 12px; background: var(--orn-rule) center / 180px 12px no-repeat; }
+.boss-name::before { background-position: left center; } .boss-name::after { background-position: right center; }
+.boss-track { border-color: rgba(241, 212, 138, 0.5); box-shadow: 0 0 0 2px rgba(8, 10, 18, 0.8), 0 0 0 3px rgba(241, 212, 138, 0.18), 0 4px 12px rgba(0, 0, 0, 0.5); border-radius: 2px; }
+.boss-track::before, .boss-track::after { content: ''; position: absolute; top: 50%; width: 9px; height: 9px; margin-top: -4.5px; transform: rotate(45deg); background: var(--gold); box-shadow: 0 0 6px rgba(241, 212, 138, 0.7); z-index: 3; }
+.boss-track::before { left: -6px; } .boss-track::after { right: -6px; }
+
+/* level-up cards get the corner filigree too */
+.cr-card::after { content: ''; position: absolute; inset: 4px; pointer-events: none; opacity: 0.75; z-index: 1;
+  background: var(--orn-tl) left top / 40px 40px no-repeat, var(--orn-tr) right top / 40px 40px no-repeat, var(--orn-bl) left bottom / 40px 40px no-repeat, var(--orn-br) right bottom / 40px 40px no-repeat; }
+.cr-card { border-radius: 6px; }
+.cr-head::after { width: 480px; height: 16px; background: var(--orn-rule) center / contain no-repeat; }
+
+/* name entry, log, death */
+.ne-box { border-radius: 4px; padding: 44px 64px; }
+.lg-title { border-bottom: none; }
+.lg-title::after { width: 260px; margin: 8px auto 0; }
+.death-sub::before { width: 360px; margin: -6px auto 16px; opacity: 0.7; filter: hue-rotate(200deg) saturate(0.6); }
+.jsp p { line-height: 1.8; }
+.jsp { padding: 14px 0; }
+/* settings sliders: a thin gilded track with a gold gem handle */
+.set-row input[type=range] { -webkit-appearance: none; appearance: none; height: 18px; background: transparent; }
+.set-row input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(90deg, rgba(241, 212, 138, 0.75), rgba(241, 212, 138, 0.25)); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5); }
+.set-row input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -6.5px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #fff6d6, #e6c173 55%, #8f6a2a); box-shadow: 0 0 0 1px #3a2c10, 0 0 0 3px rgba(10, 12, 22, 0.9), 0 0 0 4px rgba(241, 212, 138, 0.45), 0 0 8px rgba(241, 212, 138, 0.4); }
+.set-row input[type=range]::-moz-range-track { height: 3px; background: rgba(241, 212, 138, 0.5); }
+.set-row input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border: 1px solid #3a2c10; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #fff6d6, #e6c173 55%, #8f6a2a); }

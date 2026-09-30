@@ -41,6 +41,8 @@ export const MAT = {
   hushRock: toon(0x3a3444, { flat: true, rim: 0.6, tex: 'rock', noMoss: true }),
   door: toon(0x6e4a30, { rim: 0.15, tex: 'planks' }),
   shutter: toon(0x3f8088, { rim: 0.2, tex: 'planks' }),
+  thatch: toon(0xc4a060, { rim: 0.25, tex: 'bark' }),
+  thatchDark: toon(0x9c7c44, { rim: 0.2, tex: 'bark' }),
   // vertex-coloured kits (one draw per baked cell for any number of colours)
   paint: toon(0xffffff, { vertexColors: true, rim: 0.2 }),
   paintDS: toon(0xffffff, { vertexColors: true, rim: 0.15, side: THREE.DoubleSide }),
@@ -208,6 +210,25 @@ function gableRoof(g, w, d, rh, yTop, mat, o = {}) {
   const half = w / 2, a = Math.atan2(rh, half);
   const run = half + overX, L = run / Math.cos(a), D = d + overZ * 2;
   const trim = o.trim ?? MAT.timber;
+  if (o.thatch) {
+    // thick, soft-edged straw roof: rounded slabs, a rolled eave and a fat ridge
+    for (const sx of [-1, 1]) {
+      const cxm = sx * run / 2, cym = yTop + rh - (run / 2) * Math.tan(a);
+      const nx = sx * Math.sin(a), ny = Math.cos(a);
+      mesh(chamferBox(L + 0.2, t, D + 0.2, Math.min(0.2, t * 0.4)), mat, cxm + nx * t / 2, cym + ny * t / 2, 0, g, { rz: -sx * a });
+      const ex = sx * run, ey = yTop + rh - run * Math.tan(a);
+      const lip = mesh(cylGeo(t * 0.6, t * 0.6, D + 0.24, 10), mat, ex + nx * t * 0.3, ey + ny * t * 0.3, 0, g, { rx: Math.PI / 2 });
+      lip.rotation.set(Math.PI / 2, 0, 0); lip.scale.set(1, 1, 0.7);
+    }
+    const ry = yTop + rh + t / Math.cos(a);
+    mesh(cylGeo(0.3, 0.3, D + 0.3, 10), o.cap ?? mat, 0, ry - 0.14, 0, g, { rx: Math.PI / 2 }).scale.set(1, 1, 0.8);
+    for (const sz of [-1, 1]) {
+      const z = sz * (d / 2 + 0.005);
+      const tri = sz > 0 ? triGeo([-half, 0, 0], [half, 0, 0], [0, rh, 0]) : triGeo([half, 0, 0], [-half, 0, 0], [0, rh, 0]);
+      mesh(tri, o.wall ?? MAT.plaster, 0, yTop, z, g);
+    }
+    return { eave: yTop + t / Math.cos(a), a, t, run, D, ridgeY: ry + 0.24 };
+  }
   for (const sx of [-1, 1]) {
     const cxm = sx * run / 2, cym = yTop + rh - (run / 2) * Math.tan(a);
     const nx = sx * Math.sin(a), ny = Math.cos(a);
@@ -351,6 +372,8 @@ export function house(opts = {}) {
   const roofMat = opts.roof ?? [MAT.roofRed, MAT.roofTeal, MAT.roofBlue, MAT.roofPlum][Math.floor(rnd() * 4)];
   const wallMat = opts.wall ?? WALLS()[Math.floor(rnd() * 4)];
   const shutterCol = opts.shutterCol ?? SHUTTERS[Math.floor(rnd() * SHUTTERS.length)];
+  const thatch = !!opts.thatch;
+  const hoodMat = thatch ? MAT.thatch : roofMat;
   const B0 = 0.6;
   // stone plinth with irregular corner quoins and a darker base course
   box(w + 0.34, 0.85, d + 0.34, MAT.stone, 0, 0.2, 0, g);
@@ -410,15 +433,15 @@ export function house(opts = {}) {
     box(2.2, 0.16, 0.16, MAT.timber, doorX, ph, pz, g);
     box(0.14, 0.14, 1.25, MAT.timber, doorX - 0.95, ph + 0.1, pz - 0.6, g);
     box(0.14, 0.14, 1.25, MAT.timber, doorX + 0.95, ph + 0.1, pz - 0.6, g);
-    box(2.5, 0.12, 1.7, roofMat, doorX, ph + 0.34, d / 2 + 0.7, g, { rx: 0.32 });
+    box(2.5, thatch ? 0.3 : 0.12, 1.7, hoodMat, doorX, ph + 0.34, d / 2 + 0.7, g, { rx: 0.32 });
   } else {
-    box(1.7, 0.1, 0.75, roofMat, doorX, B0 + 2.5, d / 2 + 0.42, g, { rx: 0.3 });
+    box(1.7, thatch ? 0.26 : 0.1, 0.75, hoodMat, doorX, B0 + 2.5, d / 2 + 0.42, g, { rx: 0.3 });
     for (const sx of [-1, 1]) beam(0, B0 + 2.1, 0.55, B0 + 2.45, 0.08, 0.08, MAT.timber, doorX + sx * 0.7, 'x', g);
   }
   // roof
   const rh = opts.roofH ?? W * 0.46;
   const gableStyle = opts.gable ?? (rnd() < 0.5 ? 'boards' : 'timber');
-  const roof = gableRoof(g, W, D, rh, yTop, roofMat, { wall: gableStyle === 'boards' ? MAT.wood : wallMat, overX: 0.6, overZ: 0.5 });
+  const roof = gableRoof(g, W, D, rh, yTop, thatch ? MAT.thatch : roofMat, thatch ? { wall: gableStyle === 'boards' ? MAT.wood : wallMat, overX: 0.7, overZ: 0.55, thatch: true, t: 0.5, cap: MAT.thatchDark } : { wall: gableStyle === 'boards' ? MAT.wood : wallMat, overX: 0.6, overZ: 0.5 });
   // gable-end detail: boarded or half-timbered, with an attic window
   for (const sz of [-1, 1]) {
     const z = sz * (D / 2 + 0.03);
@@ -437,7 +460,7 @@ export function house(opts = {}) {
     const wg = new THREE.Group(); wg.position.set(0, yTop + rh * (gableStyle === 'timber' ? 0.62 : 0.45), z + sz * 0.02); wg.rotation.y = sz > 0 ? 0 : Math.PI; g.add(wg);
     windowUnit(wg, rnd, { w: 0.55, h: 0.62, shutterCol, box: false, shutters: gableStyle === 'boards' });
     // crossed barge-board horns at the ridge ends
-    for (const sx of [-1, 1]) box(0.9, 0.16, 0.08, MAT.timber, sx * 0.28, roof.ridgeY + 0.22, sz * (roof.D / 2 + 0.05), g, { rz: sx * 0.75 });
+    if (!thatch) for (const sx of [-1, 1]) box(0.9, 0.16, 0.08, MAT.timber, sx * 0.28, roof.ridgeY + 0.22, sz * (roof.D / 2 + 0.05), g, { rz: sx * 0.75 });
   }
   // dormer on a long roof
   if (opts.dormer ?? (D > 5.5 && rnd() < 0.7)) {

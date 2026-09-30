@@ -179,10 +179,10 @@ export class World {
       { id: 'dodam', x: -17, z: 32, w: 6, d: 5, roof: B.MAT.roofBlue, wall: B.MAT.plasterSage },
       { id: 'inn', x: 22, z: 32, w: 8.5, d: 6.5, h: 2.7, floors: 2, roof: B.MAT.roofPlum, wall: B.MAT.plasterWarm, sign: 'inn', dormer: true },
       { id: 'h5', x: -3, z: 42, w: 6, d: 5, h: 2.7, floors: 2, roof: B.MAT.roofRed, wall: B.MAT.plasterRose },
-      { id: 'h6', x: 14, z: 46, w: 5.2, d: 4.6, roof: B.MAT.roofTeal, wall: B.MAT.plaster },
-      { id: 'h7', x: -30, z: 18, w: 5.6, d: 4.6, roof: B.MAT.roofPlum, wall: B.MAT.plasterRose },
+      { id: 'h6', x: 14, z: 46, w: 5.2, d: 4.6, roof: B.MAT.roofTeal, wall: B.MAT.plaster, thatch: true },
+      { id: 'h7', x: -30, z: 18, w: 5.6, d: 4.6, roof: B.MAT.roofPlum, wall: B.MAT.plasterRose, thatch: true },
       { id: 'h8', x: 31, z: 14, w: 6, d: 5, h: 2.7, floors: 2, roof: B.MAT.roofBlue, wall: B.MAT.plasterSage },
-      { id: 'h9', x: -26, z: -8, w: 5, d: 4.4, roof: B.MAT.roofRed, wall: B.MAT.plasterWarm },
+      { id: 'h9', x: -26, z: -8, w: 5, d: 4.4, roof: B.MAT.roofRed, wall: B.MAT.plasterWarm, thatch: true },
     ];
     this.houses = {};
     houses.forEach((hd, i) => {
@@ -237,7 +237,10 @@ export class World {
     this.props.clear(34, 50, 11);
     const wm = B.windmill();
     this.place(wm, 34, 50, this.faceTo(34, 50, 6, 14));
-    this.solid(wm, { r: 3.2 });
+    { // conical cap over a gallery ring
+      const by = wm.position.y;
+      this.solid(wm, { r: 3.2, top: by + 12.3, topFn: (lx, lz) => { const r = Math.hypot(lx, lz); return by + (r < 2.8 ? 12.3 - (r / 2.8) * 3.2 : 8.4); } });
+    }
     this.anims.push((dt) => { wm.userData.rotor.rotation.z += dt * 0.6 * U.wind.value; });
     // well, stalls, benches
     this.place(B.well(), -4, 16); this.col.addCircle(-4, 16, 1.5, this.h(-4, 16) - 1, this.h(-4, 16) + 1.2);
@@ -247,7 +250,7 @@ export class World {
     // fences at village edge
     for (const [x, z, r, l] of [[40, 30, 1.4, 12], [38, 4, 1.8, 10], [-38, 30, 1.7, 10], [-36, 2, 1.3, 12], [10, 58, 0.1, 14]]) this.place(B.fence(l), x, z, r);
     // dry-stone walls flanking the north road (the village gate) and at the edges
-    for (const [x, z, r, l] of [[-12, -17, 0.25, 7], [4, -18, -0.2, 7], [-40, 8, 1.45, 6], [42, 20, 1.6, 6]]) {
+    for (const [x, z, r, l] of [[-12, -17, 0.25, 7], [4, -18, -0.2, 7], [-40, -1, 1.45, 6], [38, -9, 2.0, 6]]) {
       const w = B.stoneWall(l, rnd); this.place(w, x, z, r);
       this.col.addBox(x, z, l / 2, 0.32, r, -10, this.h(x, z) + w.userData.top);
     }
@@ -282,8 +285,9 @@ export class World {
     };
     stack(17.8, 11.6, 0.4); stack(-5.2, 28.8, 2.6); stack(26.5, 36.5, -0.9); stack(-20.5, 9.5, 1.8);
     for (const [x, z, r] of [[36, 47, 0.3], [37.2, 48.6, 1.2], [30, 53, 2.2], [-30, -4, 0.6]]) {
-      const g = new THREE.Group(); B.hayBale(g, 0, 0.3, 0, 1, 0); if (rnd() < 0.6) B.hayBale(g, 0.15, 0.85, 0.05, 0.9, 0.3);
-      this.place(g, x, z, r); this.col.addBox(x, z, 0.6, 0.35, r, -10, this.h(x, z) + 0.6);
+      const g = new THREE.Group(); B.hayBale(g, 0, 0.3, 0, 1, 0);
+      const two = rnd() < 0.6; if (two) B.hayBale(g, 0.15, 0.85, 0.05, 0.9, 0.3);
+      this.place(g, x, z, r); this.col.addBox(x, z, 0.6, 0.35, r, -10, this.h(x, z) + (two ? 1.1 : 0.58));
     }
     // vegetable gardens behind the houses
     for (const [x, z, r, w, d] of [[-10, 46, 0.2, 3.4, 2.2], [7, 51, -0.3, 3, 2], [-22, -13, 0.5, 3.2, 2.2], [-36, 13, 1.4, 3, 2], [28, 24, 0.9, 2.8, 1.8]]) {
@@ -314,7 +318,10 @@ export class World {
   buildTowerHill() {
     const t = B.moraTower();
     this.place(t, POI.tower.x, POI.tower.z, 0);
-    this.solid(t, { r: 4.6 });
+    { // witch-hat roof: roughly a cone from the brim (r 5.6, +16 m) to the tip (+24 m)
+      const by = t.position.y;
+      this.solid(t, { r: 4.6, top: by + 24, topFn: (lx, lz) => by + 16 + Math.max(0, 1 - Math.hypot(lx, lz) / 5.6) * 8 });
+    }
     const an = t.children.find((c) => c.userData && c.userData.roofTop);
     const ty = t.position.y;
     this.annexCol = this.col.addBox(POI.tower.x - 2, POI.tower.z - 6.2, an ? an.userData.w / 2 : 2.9, an ? an.userData.d / 2 : 2.5, 0, -10, ty + (an ? an.userData.height : 6));

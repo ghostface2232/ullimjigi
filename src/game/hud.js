@@ -640,7 +640,8 @@ export class HUD {
     g.drawImage(this.mapBase, 0, 0, S, S);
     // parchment tint
     g.fillStyle = 'rgba(40,30,15,0.18)'; g.fillRect(0, 0, S, S);
-    const w2s = (x, z) => [((x + 240) / 480) * S, ((z + 240) / 480) * S];
+    const T = G.world.terrain;
+    const w2s = (x, z) => [((x + T.half) / T.size) * S, ((z + T.half) / T.size) * S];
     const label = (x, z, t, c = '#fff', size = 14) => { const [sx, sz] = w2s(x, z); g.font = `${size}px 'Hahmlet', serif`; g.fillStyle = 'rgba(0,0,0,.6)'; g.textAlign = 'center'; g.fillText(t, sx + 1, sz + 1); g.fillStyle = c; g.fillText(t, sx, sz); };
     label(0, 38, '하늬 마을', '#fff4d8', 16);
     label(POI.tower.x, POI.tower.z + 12, '모라의 탑', '#e0d0ff');

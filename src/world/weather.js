@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { G } from '../core/context.js';
 import { U } from '../render/materials.js';
-import { rand, randRange, damp, clamp, smoothstep } from '../core/util.js';
+import { rand, randRange, damp, clamp, smoothstep, lerp } from '../core/util.js';
 import { regionAt } from './layout.js';
 
 // State targets: cloud cover, precipitation, storm (lightning), wind strength
@@ -148,7 +148,9 @@ export class Weather {
     this.windS = damp(this.windS, T.wind, 0.1, dt);
     this.windAng += dt * 0.004 * Math.sin(G.time * 0.013);
     this.windVec.x = Math.cos(this.windAng); this.windVec.z = Math.sin(this.windAng); this.windVec.s = this.windS;
-    const cold = smoothstep(-80, -120, playerPos.z) * 0.6 + smoothstep(36, 46, playerPos.y) * 0.8;
+    // in the vale: north and high up; beyond the ring, wherever snow lies on the ground
+    const out = smoothstep(236, 300, Math.hypot(playerPos.x, playerPos.z));
+    const cold = lerp(smoothstep(-80, -120, playerPos.z) * 0.6 + smoothstep(36, 46, playerPos.y) * 0.8, G.world.terrain.snowAt(playerPos.x, playerPos.z) * 1.2, out);
     this.snow = damp(this.snow, clamp(cold, 0, 1) > 0.5 ? 1 : 0, 0.5, dt);
     this.wet = damp(this.wet, this.rain * (1 - this.snow), this.rain > this.wet ? 0.15 : 0.02, dt);
     U.wet.value = this.wet;

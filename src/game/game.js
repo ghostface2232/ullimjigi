@@ -159,6 +159,7 @@ export class Game {
     G.vfx.rings.forEach((r) => (r.m.visible = true));
     G.scene.add(grp);
     G.world.props.update(G.camera);
+    G.world.terrain.update(G.camera, Infinity);
     try { await this.compileScene(); } catch (_) { /* ignore */ }
     G.vfx.rings.forEach((r) => (r.m.visible = false));
     G.scene.remove(grp);

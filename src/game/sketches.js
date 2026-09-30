@@ -94,9 +94,9 @@ export class Sketchbook {
     const hide = [G.player.root, G.companion && G.companion.root, ...G.npcs.list.map((n) => n.root), ...G.enemies.list.map((e) => e.root)].filter(Boolean);
     const vis = hide.map((o) => o.visible);
     hide.forEach((o) => (o.visible = false));
-    W.props.update(cam);
+    W.props.update(cam); W.terrain.update(cam, Infinity);
     R.setRenderTarget(this.rt); R.render(G.scene, cam); R.setRenderTarget(null);
-    W.props.update(G.camera);
+    W.props.update(G.camera); W.terrain.update(G.camera, Infinity);
     hide.forEach((o, i) => (o.visible = vis[i]));
     // read back without waiting on the GPU in this frame
     const px = new Uint8Array(w * h * 4);

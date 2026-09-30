@@ -867,8 +867,10 @@ export class Props {
     this.dirty = true;
   }
 
+  // Scattered against the original 480 m map's grid (Terrain.legacy) so the vale keeps
+  // exactly the layout it had; instances still sit on the live terrain (add()).
   scatter(rnd, quality) {
-    const T = this.T;
+    const T = this.T, L = T.legacy();
     const q = quality === 'low' ? 0.5 : quality === 'medium' ? 0.75 : 1;
     const nv = T.noise;
     const forestAt = (x, z) => smoothstep(0.0, 0.5, fbm(nv, x * 0.012 + 50, z * 0.012, 2));
@@ -878,9 +880,9 @@ export class Props {
     // trees
     for (let i = 0; i < 8000 * q; i++) {
       const x = (rnd() - 0.5) * 460, z = (rnd() - 0.5) * 460;
-      const h = T.height(x, z);
+      const h = L.height(x, z);
       if (h < 0.8) continue;
-      const n = T.normal(x, z);
+      const n = L.normal(x, z);
       if (n.y < 0.8) continue;
       const dRift = Math.hypot(x - POI.rift.x, z - POI.rift.z);
       let dens = forestAt(x, z) * 0.8 + 0.04;
@@ -907,7 +909,7 @@ export class Props {
     // bushes
     for (let i = 0; i < 3600 * q; i++) {
       const x = (rnd() - 0.5) * 460, z = (rnd() - 0.5) * 460;
-      if (T.grassAt(x, z) < 0.6) continue;
+      if (L.grassAt(x, z) < 0.6) continue;
       if (this.excluded(x, z, -1)) continue;
       const dens = smoothstep(-0.2, 0.5, fbm(nv, x * 0.012 + 50, z * 0.012, 2)) * 0.7 + 0.1;
       if (rnd() > dens) continue;
@@ -916,21 +918,21 @@ export class Props {
     // ferns, mushrooms, stumps and fallen logs under the canopy
     for (let i = 0; i < 6000 * q; i++) {
       const x = (rnd() - 0.5) * 460, z = (rnd() - 0.5) * 460;
-      if (T.grassAt(x, z) < 0.45 || this.excluded(x, z, -1.5)) continue;
+      if (L.grassAt(x, z) < 0.45 || this.excluded(x, z, -1.5)) continue;
       const f = forestAt(x, z) + (1 - smoothstep(20, 60, woodsD(x, z))) * 0.8;
       if (rnd() > f * 0.8) continue;
       const k = rnd();
       if (k < 0.78) this.add('fern', x, z, 0.7 + rnd() * 0.6);
       else if (k < 0.93) this.add('mushroom', x, z, 0.8 + rnd() * 0.6);
       else if (k < 0.97) this.add('stump', x, z, 0.8 + rnd() * 0.4);
-      else if (T.normal(x, z).y > 0.93) this.add('log', x, z, 0.85 + rnd() * 0.3, { dy: 0.1 });
+      else if (L.normal(x, z).y > 0.93) this.add('log', x, z, 0.85 + rnd() * 0.3, { dy: 0.1 });
     }
     // wildflower patches: clumped by noise, rich on the sunset meadow
     for (let i = 0; i < 9000 * q; i++) {
       const meadowBias = i % 3 === 0;
       const a = rnd() * TAU, rr = Math.sqrt(rnd()) * 55;
       const x = meadowBias ? POI.meadow.x + Math.cos(a) * rr : (rnd() - 0.5) * 460, z = meadowBias ? POI.meadow.z + Math.sin(a) * rr : (rnd() - 0.5) * 460;
-      if (T.grassAt(x, z) < 0.55 || this.excluded(x, z, -9)) continue;
+      if (L.grassAt(x, z) < 0.55 || this.excluded(x, z, -9)) continue;
       const dm = meadowD(x, z);
       const patch = smoothstep(-0.15, 0.3, fbm(nv, x * 0.05 - 13, z * 0.05 + 7, 2));
       const p = patch * (0.35 + (1 - smoothstep(20, 55, dm)) * 0.9) * (1 - forestAt(x, z) * 0.6);
@@ -942,7 +944,7 @@ export class Props {
     for (let i = 0; i < 2400 * q; i++) {
       const a = rnd() * TAU, rr = POI.lake.r * (0.7 + rnd() * 0.55);
       const x = POI.lake.x + Math.cos(a) * rr, z = POI.lake.z + Math.sin(a) * rr;
-      const h = T.height(x, z);
+      const h = L.height(x, z);
       if (h < -0.75 || h > 1.1) continue;
       if (T.pathInfo(x, z).d < 3) continue;
       if (fbm(nv, x * 0.08, z * 0.08, 2) < -0.15) continue;
@@ -952,7 +954,7 @@ export class Props {
     for (let i = 0; i < 260 * q; i++) {
       const a = rnd() * TAU, rr = POI.lake.r * (0.95 + rnd() * 0.3);
       const x = POI.lake.x + Math.cos(a) * rr, z = POI.lake.z + Math.sin(a) * rr;
-      const h = T.height(x, z);
+      const h = L.height(x, z);
       if (h < -0.6 || h > 1.6 || T.pathInfo(x, z).d < 3) continue;
       if (rnd() < 0.55) this.add('pebbles', x, z, 0.9 + rnd() * 0.6);
       else { const s = 0.35 + rnd() * 0.55; this.add('rock', x, z, s, { col: s > 0.7 ? 0.8 : 0, v: rnd() < 0.5 ? 3 : 0 }); }
@@ -960,8 +962,8 @@ export class Props {
     // rocks + pebble scatter; big outcrops on steep ground and in the north
     for (let i = 0; i < 2800 * q; i++) {
       const x = (rnd() - 0.5) * 470, z = (rnd() - 0.5) * 470;
-      const h = T.height(x, z);
-      const n = T.normal(x, z);
+      const h = L.height(x, z);
+      const n = L.normal(x, z);
       const steep = 1 - n.y;
       if (n.y < 0.66) continue;
       if (rnd() > 0.25 + steep * 3 + (h > 30 ? 0.3 : 0)) continue;
@@ -975,9 +977,9 @@ export class Props {
     }
     for (let i = 0; i < 1600 * q; i++) {
       const x = (rnd() - 0.5) * 460, z = (rnd() - 0.5) * 460;
-      const pf = T.pathAt(x, z);
+      const pf = L.pathAt(x, z);
       if (!(pf > 0.15 && pf < 0.7) && rnd() > 0.15) continue;
-      if (T.height(x, z) < 0.3) continue;
+      if (L.height(x, z) < 0.3) continue;
       this.add('pebbles', x, z, 0.7 + rnd() * 0.6);
     }
   }

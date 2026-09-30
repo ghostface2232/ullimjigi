@@ -74,6 +74,9 @@ export class Wildfire {
     this.tex = new THREE.DataTexture(new Uint8Array(N * N * 4), N, N, THREE.RGBAFormat);
     this.tex.minFilter = this.tex.magFilter = THREE.LinearFilter;
     this.tex.needsUpdate = true;
+    this.stage = new THREE.DataTexture(this.tex.image.data, N, N, THREE.RGBAFormat);
+    this.texBox = new THREE.Box2(); this.texAt = new THREE.Vector2();
+    this.texCells = []; this.texZ0 = N; this.texZ1 = -1;
     U.burnTex.value = this.tex;
     this.acc = 0; this.hurtT = 0; this.fxT = 0; this.flameT = 0;
     this.dirty = false;
@@ -300,13 +303,26 @@ export class Wildfire {
     }
   }
 
+  // Only the rows that changed go to the GPU: the previous write's cells are cleared, the
+  // current ones set, and the band of rows spanning both is uploaded from `stage` (a view of
+  // the same pixels that is never uploaded on its own).
   writeTex() {
     this.dirty = false;
-    const d = this.tex.image.data;
-    // clear only what changed would be ideal; the grid is small (241²), a full pass is ~0.2 ms
-    d.fill(0);
-    for (const i of this.burning) { d[i * 4] = 110; d[i * 4 + 1] = 255; }
-    for (const i of this.scorched) { d[i * 4] = Math.round(255 * clamp(this.timer[i] / 40, 0, 1)); }
-    this.tex.needsUpdate = true;
+    const d = this.tex.image.data, N = this.N, prev = this.texCells;
+    let z0 = this.texZ0, z1 = this.texZ1;
+    for (let j = 0; j < prev.length; j++) { const i = prev[j] * 4; d[i] = 0; d[i + 1] = 0; }
+    const cells = (this.texCells = []);
+    let n0 = N, n1 = -1;
+    const mark = (i) => { cells.push(i); const r = (i / N) | 0; if (r < n0) n0 = r; if (r > n1) n1 = r; };
+    for (const i of this.burning) { d[i * 4] = 110; d[i * 4 + 1] = 255; mark(i); }
+    for (const i of this.scorched) { d[i * 4] = Math.round(255 * clamp(this.timer[i] / 40, 0, 1)); mark(i); }
+    this.texZ0 = n0; this.texZ1 = n1;
+    z0 = Math.min(z0, n0); z1 = Math.max(z1, n1);
+    const R = G.renderer && G.renderer.renderer;
+    if (z1 < z0) return;
+    if (!R) { this.tex.needsUpdate = true; return; }
+    this.texBox.min.set(0, z0); this.texBox.max.set(N, z1 + 1);
+    this.texAt.set(0, z0);
+    R.copyTextureToTexture(this.stage, this.tex, this.texBox, this.texAt);
   }
 }

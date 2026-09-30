@@ -113,7 +113,9 @@ export class WorldObjects {
   // ---------------------------------------------------------------- placement
   place() {
     const W = this.W, rnd = mulberry32(2024);
-    const flatAt = (x, z) => W.terrain.normal(x, z).y > 0.86 && W.h(x, z) > 0.8 && !W.col.pointHit(x, W.h(x, z) + 0.5, z, 0.9);
+    // spots are picked on the original map's grid (Terrain.legacy) so every camp keeps its layout
+    const L = W.terrain.legacy();
+    const flatAt = (x, z) => L.normal(x, z).y > 0.86 && L.height(x, z) > 0.8 && !W.col.pointHit(x, L.height(x, z) + 0.5, z, 0.9);
     const near = (x, z, r) => this.list.some((b) => Math.hypot(b.pos.x - x, b.pos.z - z) < r);
     // no powder anywhere near where people live: a stray spark there would burn the home region
     const settled = (x, z) => Math.hypot(x - POI.village.x, z - POI.village.z) < 110
@@ -135,9 +137,9 @@ export class WorldObjects {
       for (let t = 0; t < 60; t++) {
         const a = rnd() * Math.PI * 2, r = 12 + rnd() * 16;
         const x = c.x + Math.cos(a) * r, z = c.z + Math.sin(a) * r;
-        const h = W.h(x, z), n = W.terrain.normal(x, z);
-        if (h - W.h(c.x, c.z) < 3.5 || n.y < 0.72 || n.y > 0.96 || near(x, z, 3)) continue;
-        if (W.col.pointHit(x, h + 1, z, 1.4) || W.terrain.pathAt(x, z) > 0.3) continue;
+        const h = L.height(x, z), n = L.normal(x, z);
+        if (h - L.height(c.x, c.z) < 3.5 || n.y < 0.72 || n.y > 0.96 || near(x, z, 3)) continue;
+        if (W.col.pointHit(x, h + 1, z, 1.4) || L.pathAt(x, z) > 0.3) continue;
         this.add('boulder', x, z, 0.85 + rnd() * 0.4);
         break;
       }
@@ -148,8 +150,8 @@ export class WorldObjects {
     for (let t = 0, n = 0; t < 400 && n < 10; t++) {
       const x = (rnd() - 0.5) * 400, z = (rnd() - 0.5) * 400;
       if (Math.hypot(x, z) > 200 || Math.hypot(x - POI.village.x, z - POI.village.z) < 60) continue;
-      const nn = W.terrain.normal(x, z);
-      if (nn.y < 0.75 || nn.y > 0.92 || W.h(x, z) < 6 || near(x, z, 20) || W.col.pointHit(x, W.h(x, z) + 1, z, 1.4)) continue;
+      const nn = L.normal(x, z);
+      if (nn.y < 0.75 || nn.y > 0.92 || L.height(x, z) < 6 || near(x, z, 20) || W.col.pointHit(x, L.height(x, z) + 1, z, 1.4)) continue;
       this.add('boulder', x, z, 0.9 + rnd() * 0.5); n++;
     }
   }

@@ -320,7 +320,7 @@ export class Grass {
       if (d > R + S) continue;
       if (!this.chunks.has(key)) {
         if (built >= 3) continue;
-        if (Math.abs(cx * S) > 240 || Math.abs(cz * S) > 240) { this.chunks.set(key, { mesh: null }); continue; }
+        if (!this.terrain.inWorld(cx * S, cz * S) || !this.terrain.inWorld((cx + 1) * S, (cz + 1) * S)) { this.chunks.set(key, { mesh: null, cx, cz }); continue; }
         const r = this.build(cx, cz);
         if (r) { this.scene.add(r.mesh); if (r.flowers) this.scene.add(r.flowers); }
         this.chunks.set(key, { mesh: r ? r.mesh : null, flowers: r ? r.flowers : null, cx, cz });

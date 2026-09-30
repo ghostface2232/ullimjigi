@@ -1,5 +1,21 @@
 // World layout: landmarks, roads and named regions of the Hanui Vale.
 // North is -Z. Units are meters.
+
+// The whole map is a square of `size` metres centred on the origin; the Hanui Vale is the
+// ring-walled bowl in the middle (r ≈ 214). `bound` is how far the player can go.
+export const WORLD = { size: 1280, half: 640, bound: 612 };
+
+// Passes cut through the vale's ring mountains towards the outer lands: [x, z, floor height].
+// Inside the ring (r < 232) the terrain is only lowered towards the floor, never raised, so the
+// vale keeps its shape; outside, the floor is also filled in so the way through is smooth.
+export const PASSES = [
+  { id: 'south', w: 14, pts: [[30, 193, 7], [37, 240, 28], [44, 285, 30], [53, 340, 20]] },
+  { id: 'east', w: 14, pts: [[192, 32, 18], [247, 41, 40], [296, 49, 34], [336, 55, 28]] },
+  { id: 'west', w: 15, pts: [[-204, -21, 34], [-249, -26, 46], [-298, -31, 55], [-338, -35, 60]] },
+  { id: 'north', w: 14, pts: [[-34, -202, 57], [-41, -247, 70], [-50, -296, 80], [-56, -335, 86]] },
+  { id: 'northwest', w: 13, pts: [[-158, -114, 12], [-203, -146, 40], [-244, -175, 56], [-276, -198, 66]] },
+];
+
 export const POI = {
   tower: { x: -27, z: 153 },
   towerYard: { x: -14, z: 146, h: 24 },

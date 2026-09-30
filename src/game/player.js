@@ -264,8 +264,8 @@ export class Player {
       this.pos.z += this.vel.z * dt;
       this.pos.y += this.vel.y * dt;
       W.col.resolve(this.pos, 0.42, 1.8);
-      const rr = Math.hypot(this.pos.x, this.pos.z);
-      if (rr > 214) { this.pos.x *= 214 / rr; this.pos.z *= 214 / rr; }
+      const bd = W.terrain.bound;
+      this.pos.x = clamp(this.pos.x, -bd, bd); this.pos.z = clamp(this.pos.z, -bd, bd);
 
       // --- ground & water
       const ground = W.ground(this.pos.x, this.pos.z, this.pos.y + 0.6);

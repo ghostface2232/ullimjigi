@@ -132,7 +132,10 @@ THREE.ShaderChunk.fog_fragment = /* glsl */ `
   float _fd = length( vFogRay );
   vec3 _rd = vFogRay / max( _fd, 1e-4 );
   #ifdef FOG_EXP2
-    float _od = fogDensity * fogDensity * _fd * _fd;
+    // exp² up to 240 m (the vale's near look), then growing only linearly, so ridges and
+    // landmarks half a kilometre away and more stay readable as hazy silhouettes
+    float _dn = min( _fd, 240.0 );
+    float _od = fogDensity * fogDensity * ( _dn * _dn + 140.0 * max( _fd - 240.0, 0.0 ) );
   #else
     float _od = - log( max( 1.0 - smoothstep( fogNear, fogFar, vFogDepth ), 1e-4 ) );
   #endif

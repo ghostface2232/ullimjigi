@@ -952,11 +952,27 @@ export class VFX {
   }
 
   // ---------------- rune circle ----------------
+  // Rune circles draw themselves in: an angular wipe sweeps around the centre with a
+  // bright leading edge (uReveal 0 → 1), then the circle spins and fades as before.
   _circleMat(color, o) {
-    return new THREE.MeshBasicMaterial({
+    const mat = new THREE.MeshBasicMaterial({
       map: o.alt ? this.runeTex2 : this.runeTex, color: (color instanceof THREE.Color ? color.clone() : new THREE.Color(color)).multiplyScalar(o.intensity ?? 1.05),
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, opacity: 0,
     });
+    const rev = mat.userData.reveal = { value: 1 };
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uReveal = rev;
+      sh.fragmentShader = sh.fragmentShader.replace('void main() {', 'uniform float uReveal;\nvoid main() {').replace('#include <map_fragment>', `#include <map_fragment>
+        if (uReveal < 1.0) {
+          vec2 q = vMapUv - 0.5;
+          float ang = atan(q.x, q.y) / 6.2831853 + 0.5;
+          float lead = uReveal * 1.12 - ang;
+          if (lead < 0.0) discard;
+          diffuseColor.rgb *= 1.0 + smoothstep(0.1, 0.0, lead) * 2.5 * step(0.02, 1.0 - uReveal);
+        }`);
+    };
+    mat.customProgramCacheKey = () => 'rune-wipe';
+    return mat;
   }
   circle(pos, color, size = 2, dur = 1, o = {}) {
     const mat = this._circleMat(color, o);
@@ -973,11 +989,16 @@ export class VFX {
     this.nCircles++;
     let t = 0;
     const spin = o.spin ?? 1.2;
+    // longer-lived circles (signature spells, weaves, ultimates) are drawn in; quick muzzle circles pop
+    const wipe = o.wipe ?? (dur <= 0 || dur >= 0.5 ? 0.3 : 0);
+    const rev = mat.userData.reveal;
+    rev.value = wipe > 0 ? 0 : 1;
     const h = {
       mesh: m, done: false, follow: o.follow || null, offset: o.offset || null,
       end() { h.done = true; },
       update: (dt) => {
         t += dt;
+        if (wipe > 0) rev.value = Math.min(1, t / wipe);
         const inT = Math.min(1, t / 0.18);
         const s = size * (o.grow ? 0.5 + 0.5 * easeOutBack(inT) : easeOutBack(inT));
         let alpha = inT;

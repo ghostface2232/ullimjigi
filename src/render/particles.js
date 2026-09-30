@@ -66,6 +66,7 @@ void main(){
 const FS = /* glsl */ `
 uniform vec3 uFogColor;
 uniform float uAdditive;
+uniform float uOcc;
 uniform float uTime;
 varying vec4 vColor;
 varying float vShape;
@@ -190,7 +191,9 @@ void main(){
   float al = vColor.a * a;
   if (uAdditive > 0.5) {
     al *= smoothstep(0.3, 2.0, vDist);
-    gl_FragColor = vec4(vColor.rgb * tint * (1.0 - vFog * 0.9), al);
+    // "additive-over": premultiplied colour plus a little coverage, so glowing sprites
+    // also dim what's behind them and keep their hue over bright sky / snow
+    gl_FragColor = vec4(vColor.rgb * tint * (1.0 - vFog * 0.9) * al, al * uOcc);
   } else {
     al *= smoothstep(0.2, 1.2, vDist);
     gl_FragColor = vec4(mix(vColor.rgb * tint, uFogColor, vFog), min(al, 1.0));
@@ -237,13 +240,15 @@ export class Particles {
         uFogDensity: { value: 0.004 },
         uFogColor: { value: new THREE.Color() },
         uAdditive: { value: additive ? 1 : 0 },
+        uOcc: { value: 0.3 },
         uViewport: { value: new THREE.Vector2(1280, 720) },
         uHeightTex: U.heightTex,
         uHeightP: U.heightP,
         uTime: U.time,
       },
       transparent: true, depthWrite: false,
-      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+      blending: additive ? THREE.CustomBlending : THREE.NormalBlending,
+      blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendEquation: THREE.AddEquation,
     });
     this.points = new THREE.Points(g, this.mat);
     this.points.frustumCulled = false;

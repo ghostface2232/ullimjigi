@@ -99,9 +99,10 @@ export class World {
         if (!mat || !(mat.isMeshToonMaterial || mat.userData.bake) || mat.transparent || (mat.userData.sway && mat.userData.sway.value > 0)) return;
         if (m.children.some((c) => !c.userData.isOutline)) return;
         const wp = m.getWorldPosition(new THREE.Vector3());
-        const key = mat.uuid + '|' + Math.floor(wp.x / CELL) + ',' + Math.floor(wp.z / CELL) + '|' + (m.castShadow ? 1 : 0);
-        if (!buckets.has(key)) buckets.set(key, { mat, cast: m.castShadow, list: [] });
-        buckets.get(key).list.push(m);
+        // one bucket per material & cell; it casts if any member does
+        const key = mat.uuid + '|' + Math.floor(wp.x / CELL) + ',' + Math.floor(wp.z / CELL);
+        if (!buckets.has(key)) buckets.set(key, { mat, cast: false, list: [] });
+        const bk = buckets.get(key); bk.list.push(m); bk.cast = bk.cast || m.castShadow;
       });
     }
     let merged = 0;
@@ -232,7 +233,8 @@ export class World {
     this.solid(tree, { r: 1.5, climb: false, noTop: true });
     this.col.addPlatform({ type: 'disc', x: -8, z: -2, r: 3.7, top: this.h(-8, -2) + 0.45 });
     this.resTree = tree;
-    // windmill
+    // windmill (on the village's north-east edge: keep its meadow open)
+    this.props.clear(34, 50, 11);
     const wm = B.windmill();
     this.place(wm, 34, 50, this.faceTo(34, 50, 6, 14));
     this.solid(wm, { r: 3.2 });
@@ -545,6 +547,8 @@ export class World {
     const rnd = mulberry32(606);
     const P = this.props;
     // Lake willow (hairpin): a big weeping willow with stones and flowers at its roots
+    const TREES = ['oak', 'birch', 'willow', 'pine', 'poplar', 'maple', 'bush', 'rock', 'rockBig'];
+    P.clear(-49, 82, 6, TREES);
     const willow = makeTree('willow', 21, { trunkH: 3.0, size: 2.3, light: 0xb7d86a, dark: 0x4c8a40 });
     this.place(willow, -49, 82, 0.4); this.solid(willow, { r: 0.7, climb: false, noTop: true });
     for (let i = 0; i < 10; i++) {
@@ -572,6 +576,7 @@ export class World {
       for (let k = 0; k < 40 && this.h(s.x, s.z) > 0.25; k++) s.addScaledVector(d, 0.5);
       s.addScaledVector(d, -1.6);
       const len = 10, ry = Math.atan2(d.x, d.z);
+      for (let k = 0; k <= len; k += 2) P.clear(s.x + d.x * k, s.z + d.z * k, 2.4, ['reeds', 'rock', 'pebbles']);
       const dk = B.dock(len, 2.2, rnd);
       dk.position.set(s.x, 0.55, s.z); dk.rotation.y = ry; this.scene.add(dk);
       const c = s.clone().addScaledVector(d, len / 2);

@@ -7,6 +7,7 @@
 // produce, cloth trims, painted wood) use the vertex-colour `paint` materials
 // so they all bake into one draw per cell.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { toon, fresnelMat, glowMat, U } from '../render/materials.js';
 import { mulberry32 } from '../core/util.js';
 import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
@@ -134,6 +135,41 @@ function pball(r, color, x, y, z, p, o = {}) {
   m.scale.set(r * (o.sx ?? 1), r * (o.sy ?? 1), r * (o.sz ?? 1));
   return m;
 }
+// Merge a group's static meshes per material (for objects World.bakeStatics
+// leaves alone, e.g. interactive targets). `keep` subtrees stay untouched.
+export function consolidate(g, keep = []) {
+  g.updateMatrixWorld(true);
+  const skip = new Set();
+  for (const k of keep) if (k) k.traverse((c) => skip.add(c));
+  const inv = new THREE.Matrix4().copy(g.matrixWorld).invert();
+  const buckets = new Map();
+  g.traverse((m) => {
+    if (!m.isMesh || skip.has(m) || m.children.length || !m.material || m.material.transparent) return;
+    const k = m.material.uuid + (m.castShadow ? 'c' : '');
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(m);
+  });
+  const M = new THREE.Matrix4();
+  for (const list of buckets.values()) {
+    if (list.length < 2) continue;
+    const mat = list[0].material;
+    const geos = list.map((m) => {
+      const gg = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+      for (const a of Object.keys(gg.attributes)) if (a !== 'position' && a !== 'normal' && !(a === 'color' && mat.vertexColors)) gg.deleteAttribute(a);
+      if (!gg.attributes.normal) gg.computeVertexNormals();
+      gg.applyMatrix4(M.multiplyMatrices(inv, m.matrixWorld));
+      return gg;
+    });
+    const merged = mergeGeometries(geos, false);
+    if (!merged) continue;
+    const mm = new THREE.Mesh(merged, mat);
+    mm.castShadow = list[0].castShadow; mm.receiveShadow = true;
+    g.add(mm);
+    for (const m of list) m.parent.remove(m);
+  }
+  return g;
+}
+
 // Paving stone (vertex-coloured, stone surface), rotated about y
 export function pstone(p, w, h, d, color, x, y, z, ry = 0) { return pbox(w, h, d, color, x, y, z, p, { mat: MAT.paintStone, ry, cast: false }); }
 function lathe(profile, seg, mat, x, y, z, p, o) { return mesh(new THREE.LatheGeometry(profile.map(([a, b]) => new THREE.Vector2(a, b)), seg), mat, x, y, z, p, o); }
@@ -1032,6 +1068,7 @@ export function brazier() {
   cyl(0.5, 0.5, 0.05, 12, MAT.dark, 0, 1.35, 0, g);
   const coal = new THREE.Mesh(new THREE.DodecahedronGeometry(0.35, 0), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.15, 0.1, 0.1) }));
   coal.position.y = 1.45; coal.scale.y = 0.5; g.add(coal);
+  consolidate(g, [coal]);
   g.userData = { coal, fireY: 1.6 };
   return g;
 }
@@ -1059,6 +1096,8 @@ export function windWheel() {
   }
   const glow = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), glowMat(0x6effc0, 2, { nocache: true, opacity: 0 }));
   rotor.add(glow);
+  consolidate(g, [rotor]);
+  for (const arm of rotor.children) if (arm.isGroup) consolidate(arm);
   g.userData = { rotor, glow };
   return g;
 }
@@ -1313,6 +1352,7 @@ export function dummy() {
   // straw tufts at the wrists and a rope belt
   for (const sx of [-1, 1]) { const t = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.25, 6), MAT.straw); t.position.set(sx * 0.85, 1.6, 0); t.rotation.z = sx * Math.PI / 2; pivot.add(t); }
   const belt = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.04, 4, 12), MAT.straw); belt.position.y = 1.5; belt.rotation.x = Math.PI / 2; pivot.add(belt);
+  consolidate(pivot);
   g.userData = { pivot };
   return g;
 }

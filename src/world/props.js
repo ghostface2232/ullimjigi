@@ -242,11 +242,11 @@ function broadleaf(seed, lod, opts = {}) {
     anchors.push(pts[3]);
   }
   anchors.push(new THREE.Vector3(top.x, H + size * 1.05, top.z));
-  const per = opts.sub ?? 5;
+  const per = opts.sub ?? 4;
   anchors.forEach((an, i) => {
     const R = size * (i === anchors.length - 1 ? 0.95 : 0.8) * (0.9 + rnd() * 0.2);
     subCrown(M, rnd, an, R, per, lod ? 0 : 1, crown, colorer, {
-      hueJit: opts.hueJit ?? 0.05, flat: opts.flat ?? 0.84,
+      hueJit: opts.hueJit ?? 0.05, flat: opts.flat ?? 0.84, rs: opts.sub ? 1 : 1.12,
       // far model drops the small puffs hidden inside the crown
       skip: lod ? (k, r) => k > 0 && r < R * 0.5 : null,
     });
@@ -258,13 +258,16 @@ function broadleaf(seed, lod, opts = {}) {
 function birch(seed, lod) {
   const rnd = mulberry32(seed);
   const M = new Mesher();
-  const twin = rnd() < 0.45;
+  const twin = rnd() < 0.3;
   const white = hc(0xe2ddd0), mark = hc(0x3a3632), warm = hc(0xc8bca8);
+  // dark lenticel dashes: thin bands bounded by ring pairs so their edges stay crisp
+  let bands = [];
   const bark = (c, t, ang, p) => {
-    const row = Math.floor(p.y * 3.2), seg = Math.floor((ang / TAU) * 5 + row * 1.7);
-    const h = hash3(row, seg, 0.5);
-    c.copy(white).lerp(warm, hash3(row, 1, 2) * 0.35);
-    if (h > 0.72 && t < 0.92) c.lerp(mark, 0.85);
+    c.copy(white).lerp(warm, hash3(Math.floor(p.y * 2), 1, 2) * 0.3);
+    for (const b of bands) if (t > b.t0 + 1e-4 && t < b.t1 - 1e-4) {
+      const seg = Math.floor(((ang / TAU) * b.n + b.ph) % b.n);
+      if (hash3(b.id, seg, 0.5) > 0.35) c.lerp(mark, 0.88);
+    }
     if (p.y < 0.6) c.lerp(mark, smoothstep(0.6, 0.0, p.y) * 0.7);
     return 0;
   };
@@ -274,25 +277,34 @@ function birch(seed, lod) {
   for (let s = 0; s < stems; s++) {
     const h = (s ? 0.78 : 1) * (5.2 + rnd() * 1.4);
     const a = rnd() * TAU, lean = s ? 0.22 + rnd() * 0.1 : (rnd() - 0.5) * 0.12;
-    const ts = lod ? [0, 0.05, 0.15, 0.3, 0.5, 0.7, 0.85, 1] : [0, 0.03, 0.08, 0.14, 0.2, 0.27, 0.34, 0.42, 0.5, 0.58, 0.66, 0.74, 0.82, 0.9, 1];
+    let ts = [0, 0.05, 0.15, 0.3, 0.5, 0.7, 0.85, 1];
+    bands = [];
+    for (let k = 0; k < 7; k++) {
+      const t0 = 0.12 + k * 0.11 + rnd() * 0.05, t1 = t0 + (0.012 + rnd() * 0.012);
+      bands.push({ t0, t1, id: k + s * 10, n: 3 + Math.floor(rnd() * 3), ph: rnd() * 3 });
+    }
+    if (!lod) {
+      for (const b of bands) ts.push(b.t0, b.t0 + 0.002, b.t1 - 0.002, b.t1);
+      ts = ts.filter((t) => t <= 1).sort((x, y) => x - y);
+    }
     const pts = ts.map((t) => new THREE.Vector3(Math.cos(a) * lean * t * h + Math.sin(t * 5 + a) * 0.05, t * h - (t === 0 ? 0.3 : 0), Math.sin(a) * lean * t * h));
-    tube(M, pts, ts.map((t) => lerp(s ? 0.13 : 0.17, 0.05, t)), lod ? 5 : 7, bark, { flare: 0.5, flareT: 0.12, lobes: 4 });
+    tube(M, pts, ts.map((t) => lerp(s ? 0.13 : 0.17, 0.05, t)), lod ? 5 : 7, (c, t, ang, p) => bark(c, ts[Math.round(t * (ts.length - 1))], ang, p), { flare: 0.5, flareT: 0.12, lobes: 4 });
     // up-reaching twigs
     for (let b = 0; b < 4; b++) {
       const k = Math.floor((0.55 + rnd() * 0.3) * (pts.length - 1)), ba = rnd() * TAU;
       const tw = limbPath(rnd, pts[k], new THREE.Vector3(Math.cos(ba), 0.9, Math.sin(ba)), 0.9 + rnd() * 0.5, 2, 0.3, 0.2);
-      if (!lod) tube(M, tw, [0.04, 0.025, 0.015], 4, bark, {});
+      if (!lod) tube(M, tw, [0.04, 0.025, 0.015], 4, (c) => { c.copy(white).lerp(warm, 0.3); return 0; }, {});
     }
     crownPts.push({ top: pts[pts.length - 1], h });
   }
   for (const { top, h } of crownPts) {
     const crown = { c: new THREE.Vector3(top.x, top.y - h * 0.18, top.z), rx: 1.35, ry: h * 0.3 };
-    const nA = 4;
+    const nA = 3;
     for (let i = 0; i < nA; i++) {
       const t = i / (nA - 1);
       const a = rnd() * TAU, rr = 0.2 + rnd() * 0.3;
       const an = new THREE.Vector3(top.x + Math.cos(a) * rr * (1 - t * 0.6), top.y - h * 0.3 + t * h * 0.32, top.z + Math.sin(a) * rr * (1 - t * 0.6));
-      subCrown(M, rnd, an, (1.05 - t * 0.35) * (0.9 + rnd() * 0.2), 5, lod ? 0 : 1, crown, colorer, { hueJit: 0.06, flat: 0.85, vs: 1.0, rs: 1.05, skip: lod ? (k) => k > 1 : null });
+      subCrown(M, rnd, an, (1.1 - t * 0.35) * (0.9 + rnd() * 0.2), 4, lod ? 0 : 1, crown, colorer, { hueJit: 0.06, flat: 0.85, vs: 1.0, rs: 1.2, skip: lod ? (k) => k > 1 : null });
     }
   }
   return M.geometry();
@@ -308,13 +320,13 @@ function poplar(seed, lod) {
   tube(M, pts, ts.map((t) => lerp(0.26, 0.12, t)), lod ? 5 : 7, barkColor(BARK.oak, 0.3), { flare: 0.6, flareT: 0.18, tip: false });
   const crown = { c: new THREE.Vector3(0, H * 0.62, 0), rx: 1.4, ry: H * 0.42 };
   const colorer = leafColor({ light: 0xbcd96a, dark: 0x4f8a3a, deep: 0x356a30, tip: 0xd6e890 });
-  const n = 7;
+  const n = 6;
   for (let i = 0; i < n; i++) {
     const t = i / (n - 1);
     const y = H * (0.3 + t * 0.64);
     const w = Math.pow(Math.sin(Math.PI * (0.12 + t * 0.8)), 0.8) * 1.05 + 0.2;
     const a = rnd() * TAU;
-    subCrown(M, rnd, new THREE.Vector3(Math.cos(a) * 0.12, y, Math.sin(a) * 0.12), w * 0.8, 4, lod ? 0 : 1, crown, colorer, { flat: 1.15, vs: 0.7, rs: 1.3, hueJit: 0.035, bend: 0.7, skip: lod ? (k) => k > 1 : null });
+    subCrown(M, rnd, new THREE.Vector3(Math.cos(a) * 0.12, y, Math.sin(a) * 0.12), w * 0.85, 3, lod ? 0 : 1, crown, colorer, { flat: 1.15, vs: 0.7, rs: 1.4, hueJit: 0.035, bend: 0.7, skip: lod ? (k) => k > 1 : null });
   }
   return M.geometry();
 }
@@ -338,12 +350,12 @@ function willow(seed, lod, opts = {}) {
     const dir = new THREE.Vector3(Math.cos(a), 0.55, Math.sin(a));
     const lp = limbPath(rnd, top, dir, R * 0.75, 3, -0.3, 0.3);
     if (!lod) tube(M, lp, [0.18, 0.12, 0.08, 0.05], 5, barkColor(BARK.willow), {});
-    subCrown(M, rnd, lp[3], R * 0.55, 4, lod ? 0 : 1, crown, colorer, { flat: 0.7, hueJit: 0.04, skip: lod ? (k) => k > 1 : null });
+    subCrown(M, rnd, lp[3], R * 0.55, 3, lod ? 0 : 1, crown, colorer, { flat: 0.7, hueJit: 0.04, rs: 1.15, skip: lod ? (k) => k > 1 : null });
   }
   subCrown(M, rnd, new THREE.Vector3(top.x, cy + 0.5, top.z), R * 0.6, 5, lod ? 0 : 1, crown, colorer, { flat: 0.72, skip: lod ? (k) => k > 2 : null });
   // curtains: long leafy strands hanging from the rim
   const strandCol = leafColor({ light: 0xd2e68e, dark: 0x5f9a48, deep: 0x4a8040 });
-  const nS = 18;
+  const nS = 13;
   for (let i = 0; i < nS; i++) {
     const a = (i / nS) * TAU + rnd() * 0.3, rr = R * (0.8 + rnd() * 0.3);
     const L = 1.8 + rnd() * 1.3;
@@ -702,7 +714,7 @@ function rockShape(seed, detail, o = {}) {
   }
   // flat-shaded soup with per-face colour
   const P = [], C = [];
-  const base = hc(o.tone ?? 0x968e84), dark = hc(o.dark ?? 0x5c5750), moss = hc(0x5f8e3c), mossD = hc(0x44702e);
+  const base = hc(o.tone ?? 0xa39a8e), dark = hc(o.dark ?? 0x625c55), moss = hc(0x6a9442), mossD = hc(0x4e7a34);
   const c = new THREE.Color(), e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), fn = new THREE.Vector3();
   const band = o.bands ?? 0;
   for (let f = 0; f < idx.length; f += 3) {
@@ -711,7 +723,7 @@ function rockShape(seed, detail, o = {}) {
     const cy = (a.y + b.y + d.y) / 3 - (o.at ? o.at[1] : 0);
     c.copy(dark).lerp(base, smoothstep(-0.3 * sy, 0.5 * sy, cy)).multiplyScalar(0.86 + rnd() * 0.24);
     if (band) c.multiplyScalar(0.9 + 0.14 * Math.sin(cy * band));
-    const mo = (o.moss ?? 0.9) * smoothstep(0.5, 0.85, fn.y + (rnd() - 0.5) * 0.35);
+    const mo = (o.moss ?? 0.6) * smoothstep(0.62, 0.92, fn.y + (rnd() - 0.5) * 0.3);
     if (mo > 0) c.lerp(rnd() < 0.5 ? moss : mossD, mo);
     if (o.snow) c.lerp(hc(0xc6d0de), smoothstep(0.45, 0.8, fn.y) * o.snow);
     for (const v of [a, b, d]) { P.push(v.x, v.y, v.z); C.push(c.r, c.g, c.b, 0); }
@@ -730,8 +742,8 @@ function layeredRock(seed, detail, o = {}) {
   let y = -0.1;
   for (let i = 0; i < n; i++) {
     const w = 1.05 - i * 0.22 + rnd() * 0.1, th = 0.34 + rnd() * 0.12;
-    const tone = [0x9a9082, 0x8a8278, 0xa49a8a][i % 3];
-    const g = rockShape(Math.floor(rnd() * 1e6), detail, { scale: [w, th, w * (0.75 + rnd() * 0.2)], at: [(rnd() - 0.5) * 0.3, y + th * 0.35, (rnd() - 0.5) * 0.3], cuts: 4, moss: i === n - 1 ? 1 : 0.35, tone, ...o });
+    const tone = [0xa69c8c, 0x948c80, 0xb0a594][i % 3];
+    const g = rockShape(Math.floor(rnd() * 1e6), detail, { scale: [w, th, w * (0.75 + rnd() * 0.2)], at: [(rnd() - 0.5) * 0.3, y + th * 0.35, (rnd() - 0.5) * 0.3], cuts: 4, moss: i === n - 1 ? 0.6 : 0.2, tone, ...o });
     g.rotateY(rnd() * 0.8);
     parts.push(g);
     y += th * 0.85;
@@ -750,6 +762,7 @@ function rockVariant(kind, seed, lod, o = {}) {
 // Instanced scatter with per-instance LOD + culling
 const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpS = new THREE.Vector3(), tmpP = new THREE.Vector3(), tmpC = new THREE.Color();
 const frustum = new THREE.Frustum(), projM = new THREE.Matrix4(), sph = new THREE.Sphere();
+export const SHADOW_LAYER = 5;
 
 export class Props {
   constructor(scene, terrain, colliders, quality = 'high') {
@@ -765,7 +778,7 @@ export class Props {
     this.mats = { tree, fir, shrub, ground, solid, rockMat, small };
     // variants: [nearGeo, farGeo|null]; near: LOD switch distance; max: draw distance
     const pair = (fn) => [fn(false), fn(true)];
-    const T = (variants, mat, o = {}) => ({ variants, mat, items: [], shadow: o.shadow ?? true, near: o.near ?? 75, max: o.max ?? 1e9, tint: o.tint ?? 0.06, sunk: o.sunk ?? 0.15, keep: o.keep ?? 52 });
+    const T = (variants, mat, o = {}) => ({ variants, mat, items: [], shadow: o.shadow ?? true, near: o.near ?? 42, max: o.max ?? 1e9, tint: o.tint ?? 0.06, sunk: o.sunk ?? 0.15, keep: o.keep ?? 52 });
     const oak = (s, o) => pair((l) => broadleaf(s, l, o));
     this.types = {
       oak: T([oak(11, {}), oak(12, { size: 2.0, trunkH: 3.2 }), oak(13, { light: 0xc4d65c, dark: 0x5f8a36, deep: 0x3c6a2c, tip: 0xdce888 }), oak(14, { size: 1.6, limbs: 3 })], tree),
@@ -830,12 +843,28 @@ export class Props {
         // climbable, standable lump whose top matches the mesh
         const c = this.col.addCircle(x, z, b.rxz * s * o.col, ground - 1, top);
         c.rock = true;
+        it.col = c;
       } else {
         const c = this.col.addCircle(x, z, o.col * s, ground - 1, ground + (o.tall ?? 6) * s);
         c.climb = false; c.noTop = true;
+        it.col = c;
       }
     }
     return it;
+  }
+
+  // Remove scattered instances (and their colliders) within r of (x, z),
+  // e.g. to keep a landmark's surroundings clear. types: optional name list.
+  clear(x, z, r, types = null) {
+    for (const [name, t] of Object.entries(this.types)) {
+      if (types && !types.includes(name)) continue;
+      t.items = t.items.filter((it) => {
+        if (Math.hypot(it.x - x, it.z - z) >= r) return true;
+        if (it.col) this.col.remove(it.col);
+        return false;
+      });
+    }
+    this.dirty = true;
   }
 
   scatter(rnd, quality) {
@@ -885,7 +914,7 @@ export class Props {
       this.add('bush', x, z, 0.7 + rnd() * 0.6);
     }
     // ferns, mushrooms, stumps and fallen logs under the canopy
-    for (let i = 0; i < 3800 * q; i++) {
+    for (let i = 0; i < 6000 * q; i++) {
       const x = (rnd() - 0.5) * 460, z = (rnd() - 0.5) * 460;
       if (T.grassAt(x, z) < 0.45 || this.excluded(x, z, -1.5)) continue;
       const f = forestAt(x, z) + (1 - smoothstep(20, 60, woodsD(x, z))) * 0.8;
@@ -977,22 +1006,24 @@ export class Props {
           cols[i * 3] = tmpC.r; cols[i * 3 + 1] = tmpC.g; cols[i * 3 + 2] = tmpC.b;
           sphs[i * 4] = it.x; sphs[i * 4 + 1] = it.y + b.cy * it.sy; sphs[i * 4 + 2] = it.z; sphs[i * 4 + 3] = b.r * Math.max(it.s, it.sy) + 1;
         });
-        const mk = (geo, lod) => {
+        // Shadows come from a proxy on SHADOW_LAYER (seen only by the sun's
+        // shadow camera) using the cheap far model, so near detail isn't drawn twice.
+        const mk = (geo, kind) => {
           const im = new THREE.InstancedMesh(geo, t.mat, n);
           im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-          im.setColorAt(0, tmpC);
-          im.instanceColor.setUsage(THREE.DynamicDrawUsage);
+          if (kind !== 'shadow') { im.setColorAt(0, tmpC); im.instanceColor.setUsage(THREE.DynamicDrawUsage); }
           im.count = 0;
           im.frustumCulled = false;
-          im.castShadow = t.shadow && !lod;
-          im.receiveShadow = true;
-          im.name = name + (lod ? ':far' : '');
+          im.castShadow = t.shadow && (kind === 'shadow' || (kind === 'near' && !geoF));
+          im.receiveShadow = kind !== 'shadow';
+          if (kind === 'shadow') im.layers.set(SHADOW_LAYER);
+          im.name = name + (kind === 'near' ? '' : ':' + kind);
           im.userData.noBake = true;
           this.scene.add(im);
           this.meshes.push(im);
           return im;
         };
-        this.batches.push({ t, name, mats, cols, sphs, n, near: mk(geoN, false), far: geoF ? mk(geoF, true) : null });
+        this.batches.push({ t, name, mats, cols, sphs, n, near: mk(geoN, 'near'), far: geoF ? mk(geoF, 'far') : null, shadow: geoF && t.shadow ? mk(geoF, 'shadow') : null });
       });
     }
     this.dirty = false;
@@ -1001,6 +1032,10 @@ export class Props {
   // Re-sort instances into near/far meshes for the current camera.
   update(camera) {
     if (this.dirty) this.buildMeshes();
+    if (!this.sunLayer) {
+      const sun = this.scene.children.find((o) => o.isDirectionalLight && o.castShadow);
+      if (sun) { sun.shadow.camera.layers.enable(SHADOW_LAYER); this.sunLayer = true; }
+    }
     const L = this.last;
     camera.getWorldDirection(V);
     const moved = camera.position.distanceToSquared(L.p) > 1.2 * 1.2 || V.dot(L.d) < 0.9975;
@@ -1014,12 +1049,14 @@ export class Props {
       const { t, mats, cols, sphs, n } = b;
       const nA = b.near.instanceMatrix.array, nC = b.near.instanceColor.array;
       const fA = b.far ? b.far.instanceMatrix.array : null, fC = b.far ? b.far.instanceColor.array : null;
+      const sA = b.shadow ? b.shadow.instanceMatrix.array : null;
       const near2 = t.near * t.near, max2 = t.max * t.max, keep2 = t.keep * t.keep;
-      let nn = 0, nf = 0;
+      let nn = 0, nf = 0, ns = 0;
       for (let i = 0; i < n; i++) {
         const dx = sphs[i * 4] - cx, dy = sphs[i * 4 + 1] - cy, dz = sphs[i * 4 + 2] - cz;
         const d2 = dx * dx + dy * dy + dz * dz;
         if (d2 > max2) continue;
+        if (sA && d2 < keep2) { for (let k = 0; k < 16; k++) sA[ns * 16 + k] = mats[i * 16 + k]; ns++; }
         if (d2 > keep2) {
           sph.center.set(sphs[i * 4], sphs[i * 4 + 1], sphs[i * 4 + 2]); sph.radius = sphs[i * 4 + 3];
           if (!frustum.intersectsSphere(sph)) continue;
@@ -1038,11 +1075,12 @@ export class Props {
         im.count = c; im.visible = c > 0;
         if (c) {
           im.instanceMatrix.clearUpdateRanges(); im.instanceMatrix.addUpdateRange(0, c * 16); im.instanceMatrix.needsUpdate = true;
-          im.instanceColor.clearUpdateRanges(); im.instanceColor.addUpdateRange(0, c * 3); im.instanceColor.needsUpdate = true;
+          if (im.instanceColor) { im.instanceColor.clearUpdateRanges(); im.instanceColor.addUpdateRange(0, c * 3); im.instanceColor.needsUpdate = true; }
         }
       };
       setN(b.near, nn);
       if (b.far) setN(b.far, nf);
+      if (b.shadow) setN(b.shadow, ns);
     }
   }
 }

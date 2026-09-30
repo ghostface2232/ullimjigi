@@ -30,7 +30,7 @@ function finishTrial(id, name, pos) {
   G.audio.play('quest_done');
   G.vfx.burst(pos, 'soul', 40, { el: 'fire' });
   G.vfx.ring(pos, new THREE.Color(2.2, 1.7, 0.7), 6, 0.8, { thick: 0.18 });
-  G.later(() => G.hud.banner('시련', `${name} — 마침`, '울림이 깊어졌다', '#f1d48a', 4200), 700);
+  G.later(() => G.hud.banner('시련', `${name} — 마침`, '울림이 깊어졌다', '#f1d48a', 4200, { minor: true }), 700);
 }
 
 // ---------------------------------------------------------------- singing stones

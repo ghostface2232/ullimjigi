@@ -388,8 +388,10 @@ export class HUD {
     a.querySelector('.at-sub').textContent = en;
     a.classList.remove('show'); void a.offsetWidth; a.classList.add('show');
   }
-  banner(small, big, desc = '', color = '#fff', ms = 3800) {
-    this.bannerQ.push({ small, big, desc, color, ms });
+  // o.minor: frequent notices (quests, waystones, seeds, level-ups) always use the slim ribbon
+  // under the compass; the full band is kept for rare moments (a new song, Mora's memories…)
+  banner(small, big, desc = '', color = '#fff', ms = 3800, o = {}) {
+    this.bannerQ.push({ small, big, desc, color, ms, minor: !!o.minor });
     if (!this.bannerBusy) this.nextBanner();
   }
   nextBanner() {
@@ -404,6 +406,7 @@ export class HUD {
     // in a fight the banner shrinks to a thin ribbon under the compass instead of a band across the middle
     const compact = this.inCombat();
     el.classList.toggle('compact', compact);
+    el.classList.toggle('minor', !compact && b.minor);
     el.classList.remove('hidden', 'out');
     // a menu opened on top (the level-up crossroads, the map…) holds the banner; it gets a
     // moment of its own once the menu closes instead of bleeding through the menu

@@ -189,11 +189,11 @@
 #banner { background: var(--pat-stars), linear-gradient(90deg, transparent, rgba(10, 12, 24, 0.86) 24%, rgba(10, 12, 24, 0.86) 76%, transparent); }
 #banner::before, #banner::after { left: 50%; right: auto; width: 480px; margin-left: -240px; height: 16px; background: var(--orn-rule) center / contain no-repeat; }
 #banner::before { top: -8px; } #banner::after { bottom: -8px; }
-#banner.compact::before, #banner.compact::after { width: 260px; margin-left: -130px; left: 50%; right: auto; height: 12px; }
-#banner.compact::before { top: -6px; } #banner.compact::after { bottom: -6px; }
+#banner.compact::before, #banner.compact::after, #banner.minor::before, #banner.minor::after { width: 260px; margin-left: -130px; left: 50%; right: auto; height: 12px; }
+#banner.compact::before, #banner.minor::before { top: -6px; } #banner.compact::after, #banner.minor::after { bottom: -6px; }
 .bn-small { text-shadow: 0 0 10px rgba(241, 212, 138, 0.35); }
 .bn-small::before, .bn-small::after { content: '◆'; font-size: 8px; vertical-align: middle; margin: 0 12px; opacity: 0.8; }
-#banner.compact .bn-small::before, #banner.compact .bn-small::after { content: none; }
+#banner.compact .bn-small::before, #banner.compact .bn-small::after, #banner.minor .bn-small::before, #banner.minor .bn-small::after { content: none; }
 .at-line { height: 16px; width: 460px; background: var(--orn-rule) center / contain no-repeat; }
 .at-line:last-child { transform: scaleY(-1); }
 

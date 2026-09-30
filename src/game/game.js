@@ -420,7 +420,7 @@ export class Game {
     G.vfx.burst(L.pos, 'fire', 30, { speed: 3 }); G.vfx.burst(L.pos, 'soul', 20, { el: 'gold' });
     G.vfx.ring(L.pos.clone().setY(L.pos.y - 2.2), 0xffd88a, 5, 0.8);
     G.vfx.flash(L.pos, 0xffb060, 60, 14, 0.8);
-    G.hud.banner('등석을 밝혔다', L.name, '쓰러지면 이곳에서 깨어납니다 · 지도에서 이곳으로 이동할 수 있습니다', '#ffc870', 3000);
+    G.hud.banner('등석을 밝혔다', L.name, '쓰러지면 이곳에서 깨어납니다 · 지도에서 이곳으로 이동할 수 있습니다', '#ffc870', 3000, { minor: true });
     this.respawn = L;
     G.player.heal(G.player.maxHp);
     if (G.story && G.story.once('lantern_first')) G.hud.hint(`${'<kbd>E</kbd>'} 밝힌 등석에서 쉬면 체력을 회복하고 시간을 보낼 수 있습니다 · ${'<kbd>M</kbd>'} 지도에서 등석을 눌러 빠르게 이동`, 8);

@@ -98,7 +98,7 @@ export class Story {
     if (type === 'main') this.track = id;
     if (isNew) {
       G.audio.play('quest_start');
-      G.hud.banner(type === 'main' ? '새로운 이야기' : '곁가지 이야기', title, '', type === 'main' ? '#f1d48a' : '#bfe8ff', 2800);
+      G.hud.banner(type === 'main' ? '새로운 이야기' : '곁가지 이야기', title, '', type === 'main' ? '#f1d48a' : '#bfe8ff', 2800, { minor: true });
     }
     this.refreshTracker();
   }
@@ -113,7 +113,7 @@ export class Story {
     if (!q || q.state === 'done') return;
     q.state = 'done'; q.obj = ''; q.markers = []; this.dirty = true;
     G.audio.play('quest_done');
-    G.hud.banner('여정 완료', q.title, reward || '', '#f1d48a', 3000);
+    G.hud.banner('여정 완료', q.title, reward || '', '#f1d48a', 3000, { minor: true });
     if (this.track === id) this.track = null;
     this.refreshTracker();
   }
@@ -1525,7 +1525,7 @@ export class Story {
       P.hp = P.maxHp; P.mana = P.maxMana; P.stamina = P.maxStamina;
       G.hud.updateHearts();
       G.audio.play('levelup');
-      G.hud.banner('노래 씨앗', '울림이 깊어졌다', kind === 'heart' ? '생명력의 그릇이 하나 늘었다.' : kind === 'stamina' ? '기력이 늘었다.' : '마나가 늘었다.', '#9fffb0');
+      G.hud.banner('노래 씨앗', '울림이 깊어졌다', kind === 'heart' ? '생명력의 그릇이 하나 늘었다.' : kind === 'stamina' ? '기력이 늘었다.' : '마나가 늘었다.', '#9fffb0', 3800, { minor: true });
     } else if (n === 1) this.cSay('오호, 노래 씨앗이로구나! 잊힌 노래의 작은 조각이니라. 넷을 모으면 네 울림이 깊어질 게다. 귀를 기울이면 소리로 찾을 수 있지.', 'seed1', 7);
   }
 

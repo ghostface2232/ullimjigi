@@ -172,7 +172,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 적중 정지는 `G.hitstop`에 직접 쓰지 말고 `G.combat.stop(sec, force)`를 쓰세요. 한 프레임 안에서는 가장 센 값 + 나머지의 30%(최대 0.15초), 0.04초 미만은 0.3초에 한 번으로 제한됩니다(`force`로 무시). 궁극기 시전처럼 연출상 반드시 멈춰야 하는 곳만 직접 씁니다.
 - 빙결이 저절로 풀리면 `st.thaw`(2.5초, 보스 5초) 동안 한기로는 다시 얼지 않습니다. `freeze()`를 직접 부르는 반응은 예외입니다.
 - **보스 무너짐 게이지**(`enemies.js`의 `BREAK`, `t.brk`): `def.boss`이거나 `spawn(..., { brk: true })`로 만든 적은 경직 누적(`poise`) 대신 이 게이지를 씁니다. `onHit`에서 `breakFromHit`가 채우고, 가득 차면 `stagger(BREAK.down, true)` + `collapseFx`(→ `Story.onBossBreak`). 무너진 동안 `Combat.resolve`의 빈틈 배율이 1.5 → 1.75입니다. 게이지를 직접 더하려면 `addBreak(t, 양)`(최종 보스는 `heart.addBreak`). HUD의 금빛 줄은 `t.brk`가 있을 때만 보입니다.
-- **보스 단계**: `t.phaseAt`(체력 비율 문턱 배열)을 `phaseCheck(t, t.phaseAt)`로 확인하면 `t.phase`가 오르고 `t.phaseMul`(`PHASE_DMG`: 1 / 1.2 / 1.4)이 `hurtPlayer`의 피해에 곱해집니다. 문턱은 체력바에 눈금으로 그려지고, 단계 대사는 `Story.onBossPhase(boss, n)`에 있습니다. 새 보스는 `phaseAt`과 단계별 패턴을 함께 주세요.
+- **보스 단계**: `t.phaseAt`(체력 비율 문턱 배열)을 `phaseCheck(t, t.phaseAt)`로 확인하면 `t.phase`가 오르고 `t.phaseMul`(`PHASE_DMG`: 1 / 1.2 / 1.4)이 `hurtPlayer`의 피해에 곱해집니다. 문턱은 체력바에 눈금으로 그려지고, 단계 대사는 `Story.onBossPhase(boss, n)`에 있습니다. 단계가 오를 때는 체력 방울 1개와 마나 방울 4개, 무너질 때는 마나 방울 3개를 흘립니다(`EnemyManager.bossSpill`, `phaseCheck`·`collapseFx`가 부름). 긴 싸움의 숨구멍이라 일부러 적게 두었습니다. 새 보스는 `phaseAt`과 단계별 패턴을 함께 주세요.
 
 ### 울림 나무 (스킬)
 - 노드는 `skills.js`의 `TREES`에 데이터로 추가합니다: `{ id, name, tier, col, max, cost, req, kind, desc(r) }`. `req`는 **하나만** 익혀도 되는 선행 목록, `tier`는 나무에 쓴 점수 조건(`TIER_GATE = [0, 1, 2, 4, 7]`)과 화면 위치를, `col`(0~2)은 가로 위치를 정합니다. 속성 나무는 5단(0~4), 조화의 나무는 4단(0~3)이고 화면은 나무의 `maxTier`에 맞춰 배치됩니다. 조화 노드는 `els: [속성, 속성]`과 `req: ['h_weave']`를 씁니다.
@@ -237,7 +237,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 인물별 말투는 [docs/DESIGN.md](docs/DESIGN.md#인물과-말투)를 따르세요. 한 인물의 말투가 흔들리면 몰입이 크게 깨집니다.
 
 ### 저장
-- `localStorage`의 `ullimjigi_save_v1`(진행)과 `ullimjigi_settings`(설정)를 씁니다. 울림 나무는 `skills` 필드(`v: 2`, 단계, 남은 점수, 게이지, 반응 도감, `granted`, 남은 갈림길 `cross`)에 들어갑니다. `skills`가 없는 이전 저장은 `Skills.expected()`로 점수를 계산해 지급하고, `skills.v`가 없거나 2 미만이면 `grantBasics()`로 이미 쓰던 고유 마법과 엮기를 무료로 줍니다. `p_heavy` 플래그가 있으면 `Story.start`가 `f_sig`를 보장합니다.
+- `localStorage`의 `ullimjigi_save_v1`(진행)과 `ullimjigi_settings`(설정)를 씁니다. 브라우저와 주소(포트 포함)마다 따로 남습니다. **개발 프리셋(`?dev=…`)은 `ullimjigi_save_dev`에 따로 저장**하므로 시험하다가 진짜 여정을 덮어쓰지 않습니다(불러올 때 개발 저장이 없으면 진짜 저장을 읽으니 `?dev=continue`로 진짜 저장을 시험할 수 있음). 이어하기는 먼저 저장 형식을 검사해(`saveProblem`) 문제가 있으면 아무것도 바꾸지 않고 타이틀 버튼 아래에 이유를 적습니다(`Game.titleNote`). 불러오는 도중에 오류가 나면 이미 바뀐 상태를 되돌릴 수 없으니 페이지를 새로 불러오고, 타이틀에서 그 이유를 보여 줍니다(`sessionStorage`의 `ullimjigi_load_error`). 저장 형식을 바꾸면 `saveProblem`도 함께 고치세요. 울림 나무는 `skills` 필드(`v: 2`, 단계, 남은 점수, 게이지, 반응 도감, `granted`, 남은 갈림길 `cross`)에 들어갑니다. `skills`가 없는 이전 저장은 `Skills.expected()`로 점수를 계산해 지급하고, `skills.v`가 없거나 2 미만이면 `grantBasics()`로 이미 쓰던 고유 마법과 엮기를 무료로 줍니다. `p_heavy` 플래그가 있으면 `Story.start`가 `f_sig`를 보장합니다.
 - 탐험 기록은 `atlas` 필드(칸 크기, 칸 수, base64 비트열)입니다. 없거나 칸 설정이 다르면 골짜기(반지름 236m)만 드러난 상태로 시작합니다. 새로 본 칸이 60개 쌓일 때마다 자동 저장을 요청합니다.
 - 저장 형식을 바꾸면 기존 저장과 호환되는지 확인하세요. `Story.load`는 없는 필드에 기본값을 넣어 줍니다.
 

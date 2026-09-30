@@ -829,7 +829,8 @@ export class Story {
         if (first) {
           first = false;
           await this.conv(async () => {
-            G.cameraRig.setCine(V(S.pos.x + 8.5, S.y + 3, S.pos.z + 3.5), V(S.pos.x + 3.2, S.y + 2, S.pos.z + 0.5));
+            // inside the pillar ring, between two pillars (they stand at r 8.2, every 45° from 22.5°), facing the knight
+            G.cameraRig.setCine(V(S.pos.x + 7.4, S.y + 2.9, S.pos.z - 1.2), V(S.pos.x + 3.2, S.y + 2.1, S.pos.z + 0.5));
             G.audio.play('dissolve', { pos: k.pos });
             G.vfx.burst(k.center(), 'hush', 30, { size: 1.5 });
             await this.say('kaelShadow', '…돌아… 가라…', { cam: false });

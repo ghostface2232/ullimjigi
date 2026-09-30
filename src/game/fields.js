@@ -22,7 +22,7 @@ const STEAM_C = C(0.92, 0.95, 1.0), STEAM_C1 = C(0.82, 0.86, 0.92);
 const MIST_C = C(0.86, 0.95, 1.05), MIST_C1 = C(0.75, 0.88, 1.0);
 const SMOKE_C = C(0.14, 0.12, 0.12), SMOKE_C1 = C(0.32, 0.31, 0.32);
 const FIRE_W = C(3.2, 2.6, 1.8);
-const MAX_FIELDS = 14;
+const MAX_FIELDS = 12;
 
 // el: the element the field carries (what a wind blade picks up, what it applies)
 export const FIELDS = {
@@ -158,7 +158,8 @@ export class Fields {
       f.decalSeq = f.decal ? f.decal.seq : 0;
     }
     if (f.haze) { f.haze.end(); f.haze = null; }
-    if (f.kind === 'blaze' || f.kind === 'plasma' || f.kind === 'steam') f.haze = V.distort.haze(f.pos, f.r * 1.8, 0, { h: f.kind === 'steam' ? 1.8 : 1.3, amp: f.kind === 'steam' ? 0.009 : 0.012 });
+    // heat shimmer only over real fire seas: a live haze keeps the screen-refraction pass on
+    if ((f.kind === 'blaze' || f.kind === 'plasma') && f.r >= 3) f.haze = V.distort.haze(f.pos, f.r * 1.8, 0, { h: 1.3, amp: 0.012 });
     if (!grow) {
       if (f.snd) f.snd.stop(0.4);
       f.snd = def.loop ? this.loop(def.loop, f.pos, f.kind === 'blaze' ? 0.7 : 0.5) : NOLOOP;
@@ -326,7 +327,7 @@ export class Fields {
         V.react('flashfreeze', tmp.copy(c).setY(c.y + 0.6));
         V.ring(c, PAL.frost.core, f.r * 1.3, 0.5, { thick: 0.25 });
         A.play('react_flashfreeze', { pos: c });
-        for (const e of this.inside(f, 0.3)) if (e.alive && e.st && e.rig) CB.freeze(e, e.boss ? 0.8 : 2.4); else if (e.alive) CB.applyStatus(e, 'frost', 2, P);
+        for (const e of this.inside(f, 0.3)) if (e.alive && e.st && e.rig && !e.boss) CB.freeze(e, 2.4); else if (e.alive) CB.applyStatus(e, 'frost', 2, P);
         this.morph(f, 'rime', { dur: 7, r: f.r });
         break;
       }
@@ -459,7 +460,7 @@ export class Fields {
     } else if (el === 'frost') {
       V.react('flashfreeze', tmp.copy(c).setY(c.y + 0.6));
       A.play('react_flashfreeze', { pos: c });
-      for (const e of this.inside(f, 0.3)) if (e.alive && e.st && e.rig) G.combat.freeze(e, e.boss ? 0.8 : 2.5);
+      for (const e of this.inside(f, 0.3)) if (e.alive && e.st && e.rig && !e.boss) G.combat.freeze(e, 2.5); else if (e.alive) G.combat.applyStatus(e, 'frost', 2, P);
       z.kill = true;
       this.add('rime', c, { r: f.r * 0.8, dur: 7, P, noGround: true });
       this.announce('whirl:water', c, '얼어붙은 소용돌이');
@@ -491,6 +492,11 @@ export class Fields {
 
   // ------------------------------------------------------------
   update(dt) {
+    // shared emission budget: many overlapping fields thin out their ambience
+    // instead of stacking overdraw (big soft sprites are fill-rate heavy)
+    let live = 0;
+    for (const f of this.list) if (!f.ended && f.kind !== 'whirl') live++;
+    this.rateK = Math.min(1, 5 / Math.max(1, live)) * (G.settings && G.settings.quality === 'low' ? 0.5 : 1);
     for (let i = this.list.length - 1; i >= 0; i--) {
       const f = this.list[i];
       if (f.ended) { this.list.splice(i, 1); continue; }
@@ -546,7 +552,7 @@ export class Fields {
   // ambient emission for each field kind (rate scales with area, capped)
   visuals(f, dt, k) {
     const V = G.vfx, c = f.pos, r = f.r;
-    const area = Math.min(3, (r * r) / 5 + 0.4);
+    const area = Math.min(2.4, (r * r) / 5 + 0.4) * (this.rateK ?? 1);
     const pt = () => { const a = rand() * 6.28, rr = Math.sqrt(rand()) * r; return tmp.set(c.x + Math.cos(a) * rr, c.y + 0.08, c.z + Math.sin(a) * rr); };
     const every = (rate) => rand() < dt * rate * area * k;
     switch (f.kind) {
@@ -572,7 +578,7 @@ export class Fields {
         if (every(1.2)) { const p = pt(); V.norm.emit({ p: [p.x, p.y + 0.25, p.z], v: [0, 0.05, 0], life: 1.6, size: 1.4, size1: 2.2, color: MIST_C, color1: MIST_C1, alpha: 0.16 * k, alpha1: 0, drag: 1, shape: 8, fadeIn: 0.3 }); }
         break;
       case 'frostfog':
-        for (let i = 0; i < 2; i++) if (every(6)) { const p = pt(); V.norm.emit({ p: [p.x, p.y + randRange(0.2, 1.6), p.z], v: [randRange(-0.8, 0.8), randRange(-0.1, 0.3), randRange(-0.8, 0.8)], life: randRange(1.2, 1.8), size: 0.8, size1: randRange(2.2, 3), ease: 0.6, color: MIST_C, color1: MIST_C1, alpha: 0.26 * k, alpha1: 0, drag: 1, shape: 8, fadeIn: 0.25 }); }
+        for (let i = 0; i < 2; i++) if (every(5)) { const p = pt(); V.norm.emit({ p: [p.x, p.y + randRange(0.2, 1.6), p.z], v: [randRange(-0.8, 0.8), randRange(-0.1, 0.3), randRange(-0.8, 0.8)], life: randRange(1.2, 1.8), size: 0.7, size1: randRange(1.8, 2.4), ease: 0.6, color: MIST_C, color1: MIST_C1, alpha: 0.26 * k, alpha1: 0, drag: 1, shape: 8, fadeIn: 0.25 }); }
         if (every(10)) V.burst(pt().setY(c.y + randRange(0.5, 2.5)), 'snowflake', 1, { spread: 0.3 });
         break;
       case 'puddle':
@@ -581,7 +587,7 @@ export class Fields {
         break;
       case 'steam':
       case 'shockfog':
-        for (let i = 0; i < 2; i++) if (every(6)) { const p = pt(); V.norm.emit({ p: [p.x, p.y + randRange(0.1, 1.4), p.z], v: [randRange(-0.4, 0.4), randRange(0.4, 1.1), randRange(-0.4, 0.4)], life: randRange(1.3, 2.1), size: 0.9, size1: randRange(2.4, 3.4), ease: 0.6, color: STEAM_C, color1: STEAM_C1, alpha: 0.3 * k, alpha1: 0, drag: 1, grav: -0.2, shape: 8, fadeIn: 0.3 }); }
+        for (let i = 0; i < 2; i++) if (every(5)) { const p = pt(); V.norm.emit({ p: [p.x, p.y + randRange(0.1, 1.4), p.z], v: [randRange(-0.4, 0.4), randRange(0.4, 1.1), randRange(-0.4, 0.4)], life: randRange(1.3, 2.1), size: 0.8, size1: randRange(1.9, 2.6), ease: 0.6, color: STEAM_C, color1: STEAM_C1, alpha: 0.3 * k, alpha1: 0, drag: 1, grav: -0.2, shape: 8, fadeIn: 0.3 }); }
         if (f.kind === 'shockfog' && every(3.5)) { const a = pt().clone().setY(c.y + randRange(0.4, 2)); V.lightning(a, pt().clone().setY(c.y + randRange(0.4, 2)), { width: 0.05, dur: 0.16, branches: 1, segs: 8, jag: 0.25 }); if (rand() < 0.4) G.audio.play('zap', { pos: a, gap: 0.12, v: 0.5 }); }
         break;
       case 'charged':

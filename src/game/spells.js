@@ -46,24 +46,24 @@ export const CHARGED = {
   water: { name: '물폭탄', cost: 12, desc: '포물선을 그리며 날아가 넓게 터져 모두 적시고, 물웅덩이를 남긴다.' },
 };
 export const HEAVY = {
-  arcane: { name: '비전 파동', cost: 22, cd: 3.5, desc: '주위를 밀쳐내는 충격파. 적의 투사체를 지운다.' },
-  fire: { name: '화염구', cost: 30, cd: 4, desc: '거대한 불덩이가 폭발하며 넓은 범위를 불태운다.' },
-  wind: { name: '돌풍', cost: 24, cd: 3.2, desc: '전방의 적을 공중으로 띄운다. 공중에서 쓰면 상승 기류를 탄다.' },
-  frost: { name: '서리 창', cost: 28, cd: 4, desc: '땅을 따라 얼음 가시가 솟구친다. 물 위엔 얼음 길을 만든다.' },
-  storm: { name: '낙뢰', cost: 32, cd: 4.5, desc: '조준한 곳에 하늘의 번개를 내리꽂는다.' },
-  water: { name: '해일', cost: 26, cd: 3.8, desc: '앞으로 밀려가는 물결이 적을 밀쳐 내고 모두 적신다. 적의 투사체를 삼킨다.' },
+  arcane: { name: '비전 파동', cost: 22, cd: 3.5, desc: '주위를 밀쳐내는 충격파. 적의 투사체를 지우고, 닿은 땅의 흔적을 한꺼번에 터뜨린다.' },
+  fire: { name: '화염구', cost: 30, cd: 4, desc: '거대한 불덩이가 폭발하며 넓은 범위를 불태운다. 터진 자리에 잠시 불길이 남는다.' },
+  wind: { name: '돌풍', cost: 24, cd: 3.2, desc: '전방의 적을 공중으로 띄운다. 앞의 불길을 번지게 하고 김과 전기를 흩뜨린다. 공중에서 쓰면 상승 기류를 탄다.' },
+  frost: { name: '서리 창', cost: 28, cd: 4, desc: '땅을 따라 얼음 가시가 솟구치고, 지나간 자리에 한기를 뿜는 서리밭이 남는다. 물 위엔 얼음 길을 만든다.' },
+  storm: { name: '낙뢰', cost: 32, cd: 4.5, desc: '조준한 곳에 하늘의 번개를 내리꽂는다. 떨어진 자리가 잠시 대전된다.' },
+  water: { name: '해일', cost: 26, cd: 3.8, desc: '앞으로 밀려가는 물결이 적을 밀쳐 내고 모두 적시며, 지나간 자리에 물웅덩이를 남긴다. 적의 투사체를 삼킨다.' },
 };
 export const WEAVE = {
-  'fire+frost': { name: '증기 폭발', desc: '거대한 증기 폭발. 휘말린 적은 모두 젖는다 — 번개와 함께라면.' },
+  'fire+frost': { name: '증기 폭발', desc: '거대한 증기 폭발. 휘말린 적은 모두 젖고, 뜨거운 김 구름이 남는다 — 번개를 더하면 번개 안개.' },
   'fire+storm': { name: '플라즈마 구체', desc: '느리게 나아가며 주변 적을 지지다 폭발하는 구체.' },
   'fire+wind': { name: '화염 회오리', desc: '적을 빨아들이며 불태우는 회오리가 앞으로 나아간다.' },
   'frost+storm': { name: '결정 폭풍', desc: '얼음 파편과 번개가 한 지역에 쏟아진다. 파쇄가 연달아 일어난다.' },
   'frost+wind': { name: '눈보라 장막', desc: '주위에 눈보라를 두른다. 적은 얼어붙고, 받는 피해가 줄어든다.' },
   'storm+wind': { name: '뇌운', desc: '적을 쫓아다니며 번개를 내리치는 먹구름.' },
-  'fire+water': { name: '끓는 샘', desc: '땅속에서 끓는 물기둥이 연달아 솟구쳐 적을 띄우고, 데우고, 적신다.' },
+  'fire+water': { name: '끓는 샘', desc: '땅속에서 끓는 물기둥이 연달아 솟구쳐 적을 띄우고, 데우고, 적신다. 솟은 자리엔 김이 서린다.' },
   'frost+water': { name: '빙하 해일', desc: '거대한 물결이 밀려가며 휩쓴 적을 모두 얼려 버린다.' },
   'storm+water': { name: '전류 소용돌이', desc: '적을 빨아들이는 소용돌이에 전류가 흐른다. 젖은 적은 계속 감전된다.' },
-  'water+wind': { name: '폭풍우', desc: '비바람의 벽이 앞으로 휩쓸며 적을 밀어내고 적신다. 불을 끈다.' },
+  'water+wind': { name: '폭풍우', desc: '비바람의 벽이 앞으로 휩쓸며 적을 밀어내고 적신다. 불을 끄고, 물웅덩이를 남긴다.' },
   arcane: { name: '비전 광선', desc: '짝지은 속성으로 물든 광선을 내뿜는다. 계속 조준할 수 있다.' },
 };
 export const WEAVE_COST = 45, WEAVE_CD = 9;
@@ -173,7 +173,12 @@ export class Spells {
     if (!pos) return;
     this.fields.infuse(el, pos, r, kind, source);
     const env = G.env;
-    if (env && env.onSpell) env.onSpell({ el, pos: pos.clone(), r, kind: kind === 'charged' ? 'bolt' : kind, source });
+    // world systems get the ground point under the impact (hits on a body land at chest height)
+    if (env && env.onSpell) {
+      const g = this.groundAt(pos, 4) || pos.clone();
+      if (G.world.h(g.x, g.z) < -0.15) g.y = Math.max(g.y, 0); // over a lake: the water surface
+      env.onSpell({ el, pos: g, r, kind: kind === 'charged' ? 'bolt' : kind, source });
+    }
   }
   // ground point under `p` (or null when p is high in the air)
   groundAt(p, maxUp = 3.5) {
@@ -1594,6 +1599,7 @@ export class Spells {
     // water
     if (p.pos.y < 0.05 && gh < -0.15) {
       if (p.owner === 'player') {
+        if (!p.onImpact) this.touch(p.el, p.pos, p.touchR ?? 1.2, p.kind || (p.heavy ? 'heavy' : 'bolt'));
         if (p.el === 'frost') W.addIceFloe(p.pos.x, p.pos.z);
         else if (p.el === 'fire') { V.burst(p.pos, 'steam', 6); G.audio.play('fizzle', { pos: p.pos }); }
         else { V.burst(p.pos, 'splash', 6); V.burst(p.pos, 'trail', 8, { el: p.el === 'water' ? 'water' : 'frost', spread: 0.4 }); G.audio.play('splash', { pos: p.pos }); }

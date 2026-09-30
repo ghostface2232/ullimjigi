@@ -30,7 +30,7 @@ export const REACTIONS = {
 export function newStatus() {
   return {
     burn: 0, burnDmg: 0, burnTick: 0, chill: 0, chillT: 0, frozen: 0, shock: 0, stun: 0, wet: 0, armorBroken: 0, ice: null,
-    electro: 0, electroDmg: 0, electroTick: 0, steam: 0, bubble: 0, bubbleMesh: null, wetFrozen: false,
+    electro: 0, electroDmg: 0, electroTick: 0, steam: 0, bubble: 0, bubbleMesh: null, wetFrozen: false, thaw: 0,
   };
 }
 
@@ -463,6 +463,9 @@ export class Combat {
     const st = t.st;
     if (!st) return;
     if (st.frozen > 0) { st.frozen = Math.max(st.frozen, 1.5); return; }
+    // just thawed: chill still builds (and slows) but cannot refreeze yet, so rime
+    // fields and frost spam can't lock an enemy down forever
+    if (st.thaw > 0) { st.chill = Math.min(st.chill + n * 0.5, (t.freezeAt ?? 3) - 0.25); st.chillT = 3.5; return; }
     st.chill += n; st.chillT = 3.5;
     if (st.chill >= (t.freezeAt ?? 3)) { st.chill = 0; this.freeze(t, t.freezeTime ?? 3); }
   }
@@ -559,7 +562,7 @@ export class Combat {
     if (st.frozen > 0) {
       st.frozen -= dt;
       if (st.ice) st.ice.position.copy(t.pos);
-      if (st.frozen <= 0) { this.breakIce(t); st.wetFrozen = false; }
+      if (st.frozen <= 0) { this.breakIce(t); st.wetFrozen = false; st.thaw = t.boss ? 5 : 2.5; }
     }
     if (st.shock > 0) {
       st.shock -= dt;
@@ -581,6 +584,7 @@ export class Combat {
       if (st.bubble <= 0 || !t.alive) this.popBubble(t);
     }
     if (st.stun > 0) st.stun -= dt;
+    if (st.thaw > 0) st.thaw -= dt;
     if (st.armorBroken > 0) st.armorBroken -= dt;
     let mul = 1;
     if (st.chill > 0) mul *= 1 - 0.18 * Math.min(st.chill, 4);

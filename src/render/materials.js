@@ -237,6 +237,9 @@ float _dirShadow = 1.0;
 float _isDir = 0.0;
 float _cloudSh = 1.0;
 float _ndlOff = 0.0;
+// Foliage mask from the vertex colour alpha (RGBA vertex colours only):
+// 1 = leaves, 0 = wood/stone. -1 = not provided (fall back to hue tests).
+float _leafM = -1.0;
 float cloudShadowAt(vec3 p) {
   if (uCloud.w <= 0.0) return 1.0;
   vec2 q = p.xz + uSunW.xz * ((160.0 - p.y) / max(uSunW.y, 0.25));
@@ -260,7 +263,7 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
     reflectedLight.directDiffuse += irr * BRDF_Lambert( material.diffuseColor );
     #ifdef TOON_FOLIAGE
       float tr = pow( clamp( dot( -geometryViewDir, directLight.direction ), 0.0, 1.0 ), 3.0 );
-      float leaf = smoothstep( 0.0, 0.06, material.diffuseColor.g - material.diffuseColor.r );
+      float leaf = _leafM >= 0.0 ? _leafM : smoothstep( 0.0, 0.06, material.diffuseColor.g - material.diffuseColor.r );
       reflectedLight.directDiffuse += directLight.color * material.diffuseColor * vec3( 1.0, 1.05, 0.7 ) * tr * leaf * 0.32 * ( 0.3 + 0.7 * _dirShadow * _cloudSh );
     #endif
   } else {
@@ -380,6 +383,9 @@ const SURFACE_FRAG = `
     vec2 _uv = _top ? _p.xz : vec2(_an.x > _an.z ? _p.z : _p.x, _p.y);
     float _above = groundAbove(_p);
     float _leafN = 0.5;
+    #ifdef USE_COLOR_ALPHA
+      _leafM = clamp(vColor.a, 0.0, 1.0);
+    #endif
     #if defined( TEX_PLASTER )
     {
       float mott = texture2D(uNoiseTex, _uv * 0.11).g;
@@ -415,8 +421,10 @@ const SURFACE_FRAG = `
       vec3 hue = mix(vec3(1.03, 1.0, 0.95), vec3(0.95, 0.98, 1.04), fract(v.z * 7.3));
       float bump = 0.94 + 0.08 * smoothstep(0.0, 0.4, v.x);
       diffuseColor.rgb *= mix(vec3(0.95), hue * tone * mix(0.6, 1.0, mortar) * bump, detail);
+      #ifndef NO_MOSS
       float moss = smoothstep(0.55, 0.85, texture2D(uNoiseTex, _p.xz * 0.05 + _p.y * 0.02).g) * (0.4 + 0.6 * (1.0 - smoothstep(0.0, 1.6, _above)));
       diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.62, 0.8, 0.45), moss * 0.55 * (_top ? 1.0 : 0.6));
+      #endif
     }
     #elif defined( TEX_ROOF )
     {
@@ -443,18 +451,20 @@ const SURFACE_FRAG = `
       float crack = (1.0 - smoothstep(0.0, 0.02 + fw, abs(cr - 0.5))) * (1.0 - smoothstep(0.5, 1.5, fw));
       float grain = texture2D(uNoiseTex, _uv * 1.2).a;
       diffuseColor.rgb *= (0.9 + 0.16 * grain) * (1.0 - 0.3 * crack);
+      #ifndef NO_MOSS
       float moss = smoothstep(0.45, 0.8, _wn.y + (texture2D(uNoiseTex, _p.xz * 0.15).g - 0.5) * 0.6);
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.33, 0.1), moss * 0.5);
+      #endif
     }
     #elif defined( TEX_BARK )
     {
-      float brown = smoothstep(0.0, 0.035, diffuseColor.r - diffuseColor.g);
+      float brown = _leafM >= 0.0 ? 1.0 - _leafM : smoothstep(0.0, 0.035, diffuseColor.r - diffuseColor.g);
       if (brown > 0.0) {
         float a = (_an.x > _an.z ? _p.z : _p.x) * 2.2;
         float f = texture2D(uNoiseTex, vec2(a, _p.y * 0.12)).b;
         diffuseColor.rgb *= mix(1.0, mix(0.7, 1.08, smoothstep(0.3, 0.62, f)), brown);
       }
-      float green = smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
+      float green = _leafM >= 0.0 ? _leafM : smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
       #ifdef LEAFY_EDGE
         _leafN = _dn(_p * 3.3);
       #else
@@ -467,7 +477,7 @@ const SURFACE_FRAG = `
     {
       // ragged, leafy crown silhouettes: cut away noisy bits where the
       // (smoothed) foliage normal turns away from the viewer
-      float green = smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
+      float green = _leafM >= 0.0 ? _leafM : smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
       if (green > 0.5) {
         float e = 1.0 - abs(dot(normal, normalize(vViewPosition)));
         #ifdef TEX_BARK
@@ -494,7 +504,9 @@ const cache = new Map();
 /**
  * Create (or reuse) a toon material.
  * opts: { emissive, emissiveIntensity, rim, vertexColors, flat, side, transparent, opacity, sway, swayBase, terrain, key,
- *         foliage (bool), leafy (ragged crown edges), tex ('plaster'|'wood'|'planks'|'stone'|'roof'|'rock'|'bark'), noAO (bool) }
+ *         foliage (bool), leafy (ragged crown edges), tex ('plaster'|'wood'|'planks'|'stone'|'roof'|'rock'|'bark'), noAO (bool),
+ *         noMoss (bool: no moss on 'stone'/'rock' surfaces) }
+ * RGBA vertex colours: alpha is a foliage mask (1 = leaves) for translucency, bark detail and leafy edges.
  */
 export function toon(color = 0xffffff, opts = {}) {
   const key = opts.nocache ? null : JSON.stringify([color, opts]);
@@ -554,6 +566,7 @@ export function patch(m, opts = {}) {
       if (opts.leafy) defs += '#define LEAFY_EDGE\n';
       if (!isTerrain && !opts.noAO) defs += '#define TOON_GROUND_AO\n';
       if (texKind) defs += `#define TEX_${texKind.toUpperCase()}\n`;
+      if (opts.noMoss) defs += '#define NO_MOSS\n';
       fs = fs.replace('#include <lights_toon_pars_fragment>', TOON_LIGHT_PARS + SURFACE_PARS)
         .replace('#include <lights_fragment_begin>', LIGHTS_PRE + toonLightsBegin());
       if (!isTerrain) fs = fs.replace('#include <lights_toon_fragment>', SURFACE_FRAG);
@@ -569,7 +582,7 @@ export function patch(m, opts = {}) {
       sh.fragmentShader = TERRAIN_FRAG_PARS + sh.fragmentShader.replace('#include <color_fragment>', TERRAIN_FRAG);
     }
   };
-  m.customProgramCacheKey = () => `toon3|${hasSway}|${isTerrain}|${foliage}|${texKind}|${!!opts.noAO}|${!!opts.leafy}`;
+  m.customProgramCacheKey = () => `toon3|${hasSway}|${isTerrain}|${foliage}|${texKind}|${!!opts.noAO}|${!!opts.leafy}|${!!opts.noMoss}`;
   return m;
 }
 

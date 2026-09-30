@@ -135,6 +135,8 @@ export class Game {
       rift: { ch: 'rift', flags: [...pro, ...vil, ...bel, ...mor, 'water_learn'], els: ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'], lv: 10, pos: [96, -90] },
       lake: { ch: 'bells', flags: [...pro, ...vil], els: ['arcane', 'fire', 'wind'], lv: 4, pos: [-34, 52] },
       skills: { ch: 'mora', flags: [...pro, ...vil, ...bel, 'water_learn'], els: ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'], lv: 12, pos: [4, 60] },
+      // the south pass saddle, facing the outer lands (glide / scale checks for the 1280 m map)
+      outer: { ch: 'mora', flags: [...pro, ...vil, ...bel, 'water_learn'], els: ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'], lv: 12, pos: [37, 240] }, // yaw 0 faces south
     }[preset];
     if (!P_) { this.startPlay(new Story(), null); return; }
     const flags = {}; P_.flags.forEach((f) => (flags[f] = true));

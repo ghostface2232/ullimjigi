@@ -255,6 +255,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | `rift` | 4장 (틈 입구 근처, 물 포함 6속성) |
 | `lake` | 2장, 물의 노래를 얻기 전 거울 호숫가 |
 | `skills` | 3장, 6속성·Lv 12·울림점 26점·게이지 가득 (스킬 테스트용) |
+| `outer` | `skills`와 같되 남쪽 고개 마루에서 바깥 땅을 보고 시작 (활공·맵 크기 확인용) |
 
 `1`을 뺀 프리셋은 깨우친 속성의 고유 마법과 엮기를 무료로 받습니다(`grantBasics`). 갈림길을 보려면 `__G.player.addXP(5000)` 후 자유 이동 상태로 두세요(`village` 프리셋은 시작하자마자 대화가 이어지므로 `skills`가 편합니다).
 | `continue` | 저장 불러오기 |

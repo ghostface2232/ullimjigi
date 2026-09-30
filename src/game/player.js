@@ -174,7 +174,7 @@ export class Player {
       }
       if (input.hit('KeyT') || input.mHit(1)) this.toggleLock();
       if (!this.swimming && !G.spells.channel) {
-        this.basicInput(input, dt);
+        this.basicInput(input);
         if (input.mHit(2) && this.cd.heavy <= 0) this.castHeavy();
         else if (input.mHit(2)) G.hud.cooldownFlash('heavy');
         if (input.hit('KeyQ')) this.castWeave();
@@ -446,29 +446,26 @@ export class Player {
   // Basic spell input: a click fires a bolt (a click during the cooldown is buffered
   // briefly); keeping the button held past a short beat gathers a charged shot that is
   // released with the button once full (CHARGE_T). Releasing early just cancels it.
-  basicInput(input, dt) {
-    if (input.mHit(0)) { this.lmbT = 0; this.boltBuf = 0.2; }
-    if (this.boltBuf > 0) {
-      this.boltBuf -= dt;
-      if (this.cd.bolt <= 0 && !this.charge) { this.boltBuf = 0; this.castBolt(); }
-    }
+  // (hold timing runs on wall-clock time so hitstop, slow motion or long frames don't stretch the charge)
+  basicInput(input) {
+    const now = performance.now() / 1000;
+    if (input.mHit(0)) { this.lmbT = now; this.boltBuf = now + 0.2; }
+    if (this.boltBuf > now && this.cd.bolt <= 0 && !this.charge) { this.boltBuf = 0; this.castBolt(); }
     if (input.mDown(0)) {
-      this.lmbT += dt;
-      if (!this.charge && this.lmbT > 0.26 && this.boltBuf <= 0) this.beginCharge();
-      if (this.charge) this.updateCharge(dt);
+      if (!this.charge && now - this.lmbT > 0.26 && this.boltBuf <= now) this.beginCharge();
+      if (this.charge) this.updateCharge();
     } else if (this.charge) this.endCharge(this.charge.ready);
   }
   beginCharge() {
     const el = this.element;
-    this.charge = { el, t: 0, ready: false, fx: G.vfx.charge(el, () => this.staffTip(), CHARGE_T, { big: 0.85, hold: 60 }) };
+    this.charge = { el, t0: performance.now() / 1000, ready: false, fx: G.vfx.charge(el, () => this.staffTip(), CHARGE_T, { big: 0.85, hold: 60 }) };
     G.audio.play('charge_hold', { pos: this.staffTip() });
   }
-  updateCharge(dt) {
+  updateCharge() {
     const c = this.charge;
     if (c.el !== this.element) { this.endCharge(false); return; }
-    c.t += dt;
     this.castHold = Math.max(this.castHold, 0.35);
-    const k = Math.min(1, c.t / CHARGE_T);
+    const k = Math.min(1, (performance.now() / 1000 - c.t0) / CHARGE_T);
     if (!c.ready && k >= 1) {
       c.ready = true;
       const tip = this.staffTip();
@@ -495,6 +492,7 @@ export class Player {
     G.hud.castPulse();
     this.stats.casts++; this.stats.charged = (this.stats.charged || 0) + 1;
     if (G.story) G.story.onCast('charged', el);
+    if (G.story && G.story.once && G.story.once('charged1')) G.hud.hint(`<b>모아 쏘기 · ${def.name}</b> — 좌클릭을 누르고 있다가 고리가 차면 뗀다<br><small>모아 쏘기와 고유 마법은 땅에 흔적(불길·서리밭·물웅덩이…)을 남긴다. 흔적에 다른 속성을 더하면 모습이 바뀐다</small>`, 8);
   }
   castBolt() {
     const el = this.element, def = BOLT[el];

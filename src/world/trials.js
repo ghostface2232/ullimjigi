@@ -21,16 +21,16 @@ const tmp = new THREE.Vector3();
 const XP = 80;
 
 function banner(name, sub) { G.hud.banner('시련', name, sub, '#f1d48a', 4200); }
+// Rewards are granted in the same step as the flag (which marks the story for saving),
+// so an auto-save can never keep the completion without them. Only the banner waits.
 function finishTrial(id, name, pos) {
+  G.skills.gain(1, '시련을 마쳤다');
+  G.player.addXP(XP);
   G.story && G.story.set('trial_' + id);
   G.audio.play('quest_done');
   G.vfx.burst(pos, 'soul', 40, { el: 'fire' });
   G.vfx.ring(pos, new THREE.Color(2.2, 1.7, 0.7), 6, 0.8, { thick: 0.18 });
-  G.later(() => {
-    G.hud.banner('시련', `${name} — 마침`, '울림이 깊어졌다', '#f1d48a', 4200);
-    G.skills.gain(1, '시련을 마쳤다');
-    G.player.addXP(XP);
-  }, 700);
+  G.later(() => G.hud.banner('시련', `${name} — 마침`, '울림이 깊어졌다', '#f1d48a', 4200), 700);
 }
 
 // ---------------------------------------------------------------- singing stones

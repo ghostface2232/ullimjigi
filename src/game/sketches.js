@@ -142,7 +142,13 @@ export class Sketchbook {
     await S.conv(async () => {
       await S.say('mora', s.text, { cam: false, name: '모라의 스케치북' });
     });
+    // rewards go in with the flag, before any wait, so an auto-save can't split them
+    if (!s.mem) {
+      G.player.addXP(35);
+      G.skills.gain(1, '모라의 기억을 되찾았다');
+    }
     S.set('sk_' + s.id);
+    S.updateMemoryObj();
     this.show(s, 0, true);
     await S.sleep(0.4);
     this.show(null, 0);
@@ -153,11 +159,7 @@ export class Sketchbook {
       G.audio.play('echo', { pos: m.pos });
       G.vfx.burst(m.pos, 'soul', 24, { el: 'arcane' });
       G.hud.toast('그림 속 그 자리에서 무언가 희미하게 반짝인다…');
-    } else if (!s.mem) {
-      G.player.addXP(35);
-      G.skills.gain(1, '모라의 기억을 되찾았다');
     }
-    S.updateMemoryObj();
     this.busy = false;
   }
 

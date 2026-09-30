@@ -445,6 +445,8 @@ export class Puzzles {
     if (C.target) C.target.r = -99;
     if (C.thicket) C.thicket.keepCleared = true;
     if (silent) { C.g.userData.lid.rotation.x = -1.9; return; }
+    // XP goes in with the flag so a save can't keep the chest open without it
+    G.player.addXP(C.xp);
     G.story && G.story.set('chest_' + C.id);
     const p = new THREE.Vector3(C.x, C.y + 0.8, C.z);
     G.audio.play('chest_open', { pos: p });
@@ -454,7 +456,6 @@ export class Puzzles {
     G.later(() => {
       for (let i = 0; i < 4; i++) E.pickups.push(E.makePickup(p, 'mana', { v: 6, i, n: 4 }));
       E.pickups.push(E.makePickup(p, 'heal'));
-      G.player.addXP(C.xp);
       G.hud.toast(`상자를 열었다 — 경험치 <b>+${C.xp}</b>`);
     }, 450);
   }

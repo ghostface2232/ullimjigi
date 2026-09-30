@@ -984,8 +984,16 @@ export function shrine(el, runeTex, opts = {}) {
     let da = Bp.a - A.a; if (da < 0) da += TAU;
     if (Math.abs(da - TAU / N) > 0.01 || (opts.ruined && rnd() < 0.5)) continue;
     const am = A.a + da / 2, L = 2 * 8.2 * Math.sin(da / 2);
-    box(L + 0.8, 0.5, 0.9, MAT.stoneDark, Math.cos(am) * 8.2 * Math.cos(da / 2), A.y + 0.2, Math.sin(am) * 8.2 * Math.cos(da / 2), g, { ry: -am + Math.PI / 2 });
+    const lx = Math.cos(am) * 8.2 * Math.cos(da / 2), lz = Math.sin(am) * 8.2 * Math.cos(da / 2);
+    box(L + 0.8, 0.5, 0.9, MAT.stoneDark, lx, A.y + 0.2, lz, g, { ry: -am + Math.PI / 2 });
     snow(Math.cos(am) * 7.8, A.y + 0.5, Math.sin(am) * 7.8, 1.3, 0.4);
+    if (frost) for (let k = 0; k < 7; k++) {
+      // icicles hanging from the lintel's outer edge
+      const t = (k / 6 - 0.5) * (L - 0.4), len = 0.25 + rnd() * 0.5;
+      const ox = lx - Math.sin(am) * t + Math.cos(am) * 0.4, oz = lz + Math.cos(am) * t + Math.sin(am) * 0.4;
+      const ic = mesh(tinted(new THREE.ConeGeometry(0.06 + rnd() * 0.04, len, 5), 0xcfe6f4), MAT.paint, ox, A.y - 0.05 - len / 2, oz, g, { cast: false });
+      ic.rotation.x = Math.PI;
+    }
   }
   // altar: stepped plinth, carved body with element inlay, offering bowl rim
   box(2.6, 0.6, 2.6, MAT.stoneDark, 0, 1.15, 0, g);

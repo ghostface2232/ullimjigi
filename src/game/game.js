@@ -28,6 +28,19 @@ const DEV = new URLSearchParams(location.search).has('dev');
 // (in dev, loading falls back to the real save when there is no dev save yet: ?dev=continue)
 const REAL_SAVE = 'ullimjigi_save_v1';
 const SAVE_KEY = DEV ? 'ullimjigi_save_dev' : REAL_SAVE;
+const LOAD_ERR = 'ullimjigi_load_error'; // a failed load's reason, shown on the title after the reload
+// what is wrong with a parsed save, or '' when it has the shape loading expects
+function saveProblem(d) {
+  const P = d && d.player;
+  if (!P || typeof P !== 'object') return '플레이어 정보 없음';
+  for (const k of ['level', 'xp', 'maxHp', 'hp', 'maxMana', 'maxStamina']) if (!Number.isFinite(P[k])) return `플레이어 ${k}`;
+  if (!Array.isArray(P.unlocked)) return '깨우친 속성';
+  if (P.pos != null && !(Array.isArray(P.pos) && P.pos.length === 2 && P.pos.every(Number.isFinite))) return '위치';
+  if (!d.story || typeof d.story !== 'object') return '이야기 진행';
+  if (d.lanterns != null && !Array.isArray(d.lanterns)) return '등석';
+  if (d.skills != null && typeof d.skills !== 'object') return '울림 나무';
+  return '';
+}
 const readSave = () => { try { return localStorage.getItem(SAVE_KEY) || (DEV ? localStorage.getItem(REAL_SAVE) : null); } catch (_) { return null; } };
 // dev presets tick on a timer so a hidden window keeps running; &raf uses real frames (measuring)
 const TIMER = DEV && !new URLSearchParams(location.search).has('raf');
@@ -275,6 +288,7 @@ export class Game {
 
   showTitle() {
     $('#title-screen').classList.remove('hidden');
+    try { const err = sessionStorage.getItem(LOAD_ERR); if (err) { sessionStorage.removeItem(LOAD_ERR); this.titleNote(err); } } catch (_) { /* ignore */ }
     const c = $('[data-act="continue"]');
     c.disabled = !this.hasSave();
     c.title = c.disabled ? '이 브라우저에 저장된 여정이 없습니다' : '';
@@ -362,13 +376,15 @@ export class Game {
     let d;
     try { d = JSON.parse(readSave()); } catch (_) { this.titleNote('저장된 여정이 손상되어 불러올 수 없습니다.'); return; }
     if (!d) { this.titleNote('이 브라우저에 저장된 여정이 없습니다. 저장은 브라우저와 주소마다 따로 남습니다.'); return; }
+    // check the shape first, so a bad save is turned away before anything is changed
+    const bad = saveProblem(d);
+    if (bad) { this.titleNote(`저장된 여정을 읽을 수 없습니다 (${bad}).`); return; }
     try { this.loadSave(d); } catch (e) {
-      // never leave a black screen: back to the title with the reason
+      // loading had already changed the player, the story and the world: nothing to roll back
+      // cleanly, so start the page over and say why on the title
       console.error('continue failed', e);
-      this.starting = false;
-      $('#fade').style.opacity = 0;
-      $('#title-screen').classList.remove('hidden');
-      this.titleNote(`저장을 불러오지 못했습니다: ${e && e.message ? e.message : e}`);
+      try { sessionStorage.setItem(LOAD_ERR, `저장을 불러오지 못했습니다: ${e && e.message ? e.message : e}`); } catch (_) { /* ignore */ }
+      location.reload();
     }
   }
   loadSave(d) {

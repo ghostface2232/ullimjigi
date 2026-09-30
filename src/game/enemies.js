@@ -2392,7 +2392,7 @@ export class EnemyManager {
   bossSpill(pos, kind) {
     const n = kind === 'phase' ? 4 : 3;
     for (let i = 0; i < n; i++) this.pickups.push(this.makePickup(pos, 'mana', { v: 6, i, n }));
-    if (kind === 'phase') this.pickups.push(this.makePickup(pos, 'heal'));
+    if (kind === 'phase') this.pickups.push(this.makePickup(pos, 'heal', { hp: 4 })); // a whole heart (4 HP)
   }
   makePickup(pos, kind, o = {}) {
     if (kind === 'mana') {
@@ -2410,7 +2410,7 @@ export class EnemyManager {
     m.position.copy(pos);
     G.scene.add(m);
     const v = new THREE.Vector3(randRange(-3, 3), randRange(3, 6), randRange(-3, 3));
-    return { m, kind, v, t: 0, home: 0.6, ph: 0 };
+    return { m, kind, v, t: 0, home: 0.6, ph: 0, hp: o.hp || 2 };
   }
   removePickup(i) {
     const p = this.pickups[i];
@@ -2420,7 +2420,7 @@ export class EnemyManager {
   }
   absorbPickup(p, pc) {
     const P = G.player;
-    if (p.kind === 'heal') { P.heal(2); G.audio.play('heal'); G.hud.floatText(pc, '+♥', '#8fff9a', 'heal'); return; }
+    if (p.kind === 'heal') { P.heal(p.hp || 2); G.audio.play('heal'); G.hud.floatText(pc, '+♥', '#8fff9a', 'heal'); return; }
     // streak of motes → rising pitch
     this.moteN = G.realTime - (this.moteT || -9) < 0.45 ? Math.min(12, (this.moteN || 0) + 1) : 0;
     this.moteT = G.realTime;

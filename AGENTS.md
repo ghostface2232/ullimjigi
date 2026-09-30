@@ -237,7 +237,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 인물별 말투는 [docs/DESIGN.md](docs/DESIGN.md#인물과-말투)를 따르세요. 한 인물의 말투가 흔들리면 몰입이 크게 깨집니다.
 
 ### 저장
-- `localStorage`의 `ullimjigi_save_v1`(진행)과 `ullimjigi_settings`(설정)를 씁니다. 브라우저와 주소(포트 포함)마다 따로 남습니다. **개발 프리셋(`?dev=…`)은 `ullimjigi_save_dev`에 따로 저장**하므로 시험하다가 진짜 여정을 덮어쓰지 않습니다(불러올 때 개발 저장이 없으면 진짜 저장을 읽으니 `?dev=continue`로 진짜 저장을 시험할 수 있음). 이어하기가 실패하면 타이틀로 돌아와 버튼 아래에 이유를 적습니다(`Game.titleNote`). 울림 나무는 `skills` 필드(`v: 2`, 단계, 남은 점수, 게이지, 반응 도감, `granted`, 남은 갈림길 `cross`)에 들어갑니다. `skills`가 없는 이전 저장은 `Skills.expected()`로 점수를 계산해 지급하고, `skills.v`가 없거나 2 미만이면 `grantBasics()`로 이미 쓰던 고유 마법과 엮기를 무료로 줍니다. `p_heavy` 플래그가 있으면 `Story.start`가 `f_sig`를 보장합니다.
+- `localStorage`의 `ullimjigi_save_v1`(진행)과 `ullimjigi_settings`(설정)를 씁니다. 브라우저와 주소(포트 포함)마다 따로 남습니다. **개발 프리셋(`?dev=…`)은 `ullimjigi_save_dev`에 따로 저장**하므로 시험하다가 진짜 여정을 덮어쓰지 않습니다(불러올 때 개발 저장이 없으면 진짜 저장을 읽으니 `?dev=continue`로 진짜 저장을 시험할 수 있음). 이어하기는 먼저 저장 형식을 검사해(`saveProblem`) 문제가 있으면 아무것도 바꾸지 않고 타이틀 버튼 아래에 이유를 적습니다(`Game.titleNote`). 불러오는 도중에 오류가 나면 이미 바뀐 상태를 되돌릴 수 없으니 페이지를 새로 불러오고, 타이틀에서 그 이유를 보여 줍니다(`sessionStorage`의 `ullimjigi_load_error`). 저장 형식을 바꾸면 `saveProblem`도 함께 고치세요. 울림 나무는 `skills` 필드(`v: 2`, 단계, 남은 점수, 게이지, 반응 도감, `granted`, 남은 갈림길 `cross`)에 들어갑니다. `skills`가 없는 이전 저장은 `Skills.expected()`로 점수를 계산해 지급하고, `skills.v`가 없거나 2 미만이면 `grantBasics()`로 이미 쓰던 고유 마법과 엮기를 무료로 줍니다. `p_heavy` 플래그가 있으면 `Story.start`가 `f_sig`를 보장합니다.
 - 탐험 기록은 `atlas` 필드(칸 크기, 칸 수, base64 비트열)입니다. 없거나 칸 설정이 다르면 골짜기(반지름 236m)만 드러난 상태로 시작합니다. 새로 본 칸이 60개 쌓일 때마다 자동 저장을 요청합니다.
 - 저장 형식을 바꾸면 기존 저장과 호환되는지 확인하세요. `Story.load`는 없는 필드에 기본값을 넣어 줍니다.
 

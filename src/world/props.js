@@ -827,13 +827,13 @@ export class Props {
     return false;
   }
 
-  // Place one instance. o: { v (variant), ry, dy, col (collider radius factor), tall (trunk collider height) }
+  // Place one instance. o: { v (variant), vy (extra vertical-only scale), ry, dy, col (collider radius factor), tall (trunk collider height) }
   add(type, x, z, s = 1, o = {}) {
     const t = this.types[type], rnd = this.rnd;
     const v = o.v ?? Math.floor(rnd() * t.variants.length);
     const ground = this.T.height(x, z);
     const sunk = t.sunk * s;
-    const sy = s * (o.sy ?? (type.startsWith('rock') || type === 'pebbles' ? 1 : 0.92 + rnd() * 0.16));
+    const sy = s * (o.sy ?? (type.startsWith('rock') || type === 'pebbles' ? 1 : 0.92 + rnd() * 0.16)) * (o.vy ?? 1);
     const it = { x, y: ground - sunk + (o.dy ?? 0), z, s, sy, r: o.ry ?? rnd() * TAU, v };
     t.items.push(it);
     this.dirty = true;
@@ -900,13 +900,14 @@ export class Props {
       if (rnd() > dens) continue;
       if (this.excluded(x, z, 2)) continue;
       if (dRift < 60) { this.add('dead', x, z, 0.8 + rnd() * 0.5, { col: 0.35 }); continue; }
-      const s = (0.8 + rnd() * 0.5) * 1.18; // taller canopies keep the view open under the crown
+      const s = 0.8 + rnd() * 0.5;
+      const tv = { vy: 1.18 }; // taller only (not wider): keeps the view open under the crown
       const r = rnd();
-      if (h > 30 || z < -80) this.add(h > 38 ? 'pineSnow' : 'pine', x, z, s, { col: 0.4 });
-      else if (dm < 50) this.add(r < 0.6 ? 'maple' : r < 0.85 ? 'oak' : 'poplar', x, z, s, { col: 0.45 });
-      else if (shore) this.add(r < 0.4 ? 'willow' : r < 0.72 ? 'birch' : 'oak', x, z, s, { col: 0.45 });
-      else if (dW < 62) this.add(r < 0.45 ? 'oak' : r < 0.78 ? 'birch' : r < 0.9 ? 'pine' : 'poplar', x, z, s, { col: 0.4 });
-      else this.add(r < 0.62 ? 'oak' : r < 0.8 ? 'poplar' : r < 0.9 ? 'birch' : r < 0.95 ? 'maple' : 'pine', x, z, s, { col: 0.42 });
+      if (h > 30 || z < -80) this.add(h > 38 ? 'pineSnow' : 'pine', x, z, s, { col: 0.4, ...tv });
+      else if (dm < 50) this.add(r < 0.6 ? 'maple' : r < 0.85 ? 'oak' : 'poplar', x, z, s, { col: 0.45, ...tv });
+      else if (shore) this.add(r < 0.4 ? 'willow' : r < 0.72 ? 'birch' : 'oak', x, z, s, { col: 0.45, ...tv });
+      else if (dW < 62) this.add(r < 0.45 ? 'oak' : r < 0.78 ? 'birch' : r < 0.9 ? 'pine' : 'poplar', x, z, s, { col: 0.4, ...tv });
+      else this.add(r < 0.62 ? 'oak' : r < 0.8 ? 'poplar' : r < 0.9 ? 'birch' : r < 0.95 ? 'maple' : 'pine', x, z, s, { col: 0.42, ...tv });
     }
     // bushes
     for (let i = 0; i < 3600 * q; i++) {

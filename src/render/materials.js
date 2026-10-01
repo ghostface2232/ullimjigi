@@ -24,6 +24,10 @@ export const U = {
   burnTex: { value: (() => { const t = new THREE.DataTexture(new Uint8Array(4), 1, 1); t.needsUpdate = true; return t; })() },
   // Rain wetness of exposed surfaces, 0..1 (set by Weather)
   wet: { value: 0 },
+  // See-through foliage: leaves on the line from the camera (a) to the player (b) within radius r thin out (dithered)
+  seeA: { value: new THREE.Vector3() },
+  seeB: { value: new THREE.Vector3() },
+  seeR: { value: 0 },
 };
 
 // ---------------------------------------------------------------------------
@@ -187,6 +191,23 @@ float _dn(vec3 x){ vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
   return mix(mix(mix(_dh(i), _dh(i+vec3(1,0,0)), f.x), mix(_dh(i+vec3(0,1,0)), _dh(i+vec3(1,1,0)), f.x), f.y),
              mix(mix(_dh(i+vec3(0,0,1)), _dh(i+vec3(1,0,1)), f.x), mix(_dh(i+vec3(0,1,1)), _dh(i+vec3(1,1,1)), f.x), f.y), f.z); }
 float _dnoise(){ return _dn(vDWP * 2.6) * 0.65 + _dn(vDWP * 7.0) * 0.35; }
+`;
+const SEE_PARS = `
+uniform vec3 uSeeA;
+uniform vec3 uSeeB;
+uniform float uSeeR;
+// 0..1: how much a leaf at p should dissolve so the player stays visible through the canopy
+float seeFade(vec3 p){
+  if (uSeeR <= 0.0) return 0.0;
+  vec3 ab = uSeeB - uSeeA;
+  float L = max(length(ab), 0.001);
+  float s = clamp(dot(p - uSeeA, ab) / (L * L), 0.0, 1.0);
+  float d = length(p - (uSeeA + ab * s));
+  float inFront = 1.0 - smoothstep(L - 1.8, L - 0.6, s * L);
+  float tube = (1.0 - smoothstep(uSeeR * 0.55, uSeeR, d)) * inFront;
+  float close = 1.0 - smoothstep(1.2, 3.4, distance(p, uSeeA));
+  return max(tube, close);
+}
 `;
 const DISSOLVE_CLIP = `
   #include <clipping_planes_fragment>
@@ -489,6 +510,11 @@ const SURFACE_FRAG = `
           float lf = _dn(_p * 3.3) * 0.55 + _dn(_p * 9.0) * 0.45;
         #endif
         if (lf < (e - 0.4) * 1.6) discard;
+        float _sf = seeFade(_p);
+        if (_sf > 0.0) {
+          float _ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+          if (_ign < _sf * 0.88) discard;
+        }
         diffuseColor.rgb *= 1.0 - 0.18 * smoothstep(0.55, 0.3, lf) * smoothstep(0.2, 0.6, e);
       }
     }
@@ -560,6 +586,7 @@ export function patch(m, opts = {}) {
     sh.uniforms.uShadeTint = U.shadeTint;
     sh.uniforms.uHeightTex = U.heightTex;
     sh.uniforms.uHeightP = U.heightP;
+    sh.uniforms.uSeeA = U.seeA; sh.uniforms.uSeeB = U.seeB; sh.uniforms.uSeeR = U.seeR;
     if (isTerrain) { sh.uniforms.uBurnTex = U.burnTex; sh.uniforms.uWet = U.wet; }
     let fs = sh.fragmentShader;
     const isToon = fs.includes('#include <lights_toon_pars_fragment>');
@@ -578,6 +605,7 @@ export function patch(m, opts = {}) {
       fs = 'uniform sampler2D uNoiseTex;\n' + fs;
     }
     fs = fs.replace('#include <opaque_fragment>', RIM_FRAG).replace('#include <clipping_planes_fragment>', DISSOLVE_CLIP);
+    if (isToon && opts.leafy) fs = SEE_PARS + fs;
     sh.fragmentShader = defs + 'uniform float uRim;\nuniform vec3 uRimColor;\n' + DISSOLVE_PARS + fs;
     sh.vertexShader = 'uniform float uTime;\nuniform float uWind;\nuniform float uSway;\nuniform float uSwayBase;\nvarying vec3 vDWP;\n' + sh.vertexShader.replace('#include <project_vertex>', DISSOLVE_VERT);
     if (lodFade) {

@@ -38,19 +38,22 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | | `audio.js` | WebAudio 합성 엔진: 공간 음향(거리 고역 감쇠), 근거리·원거리 두 잔향, 리미터, 환경음, 반복음(`loop`), `OfflineAudioContext` 사전 렌더 변주 |
 | | `sfx/*.js` | 효과음 레시피(`spells`·`combat`·`ui`·`legacy`), 반복음(`loops`), 미리 만든 소리 질감(`textures`), 사전 렌더 목록(`registry`) |
 | | `music.js` | 분위기별 절차적 음악(`MOODS`), 주제 선율 `THEME` |
-| `render/` | `renderer.js` | 렌더러, MSAA 컴포저, 화면 굴절 패스(`distort`: 충격파·열기 아지랑이), 블룸, 색보정·충격 패스(`grade`) |
+| `render/` | `renderer.js` | 렌더러, MSAA 컴포저, 블룸(`BloomPass`: 밉만 만들고 합성은 마지막 패스에서), 마지막 패스(`grade`: 화면 굴절·블룸 더하기·색보정·충격·톤매핑·sRGB를 한 번에 캔버스로) |
 | | `materials.js` | 툰 재질(`toon`), 림 라이트, 바람 흔들림, 외곽선, 발광 재질 |
 | | `particles.js` | CPU 시뮬레이션 + GPU 포인트 스프라이트 파티클. 모양 15종(불꽃 혀·흩어지는 연기·물방울·눈송이·잎·룬·전기 불꽃·거품 등), 3단 색 변화(`color`→`color2`→`color1`), 크기 곡선(`ease`), 소용돌이 난류 |
 | | `fxmesh.js` | 메시 이펙트 부품: 노이즈로 일렁이며 침식되는 구체(`SPHERE_LOOK`: 불·연기·김·흙먼지·물·서리·비전·플라스마·번개·바람·먹구름), 초승달 베기(`slash`), 물보라 벽(`crown`), 물리 파편(`Debris`: 바위·얼음·불똥), 화면 굴절 물체(`Distort`) |
 | | `crystal.js` | 수정 재질(`crystalMaterial`: 면 분할, 가짜 굴절, 내부 발광, 반짝임, 얼음 변형)과 모양(`crystalGeometry`: 기둥·군집·보석·조각), 후광 스프라이트 |
 | | `vfx.js` | 파티클 프리셋, 조명 풀, 링, 룬 원진, 프랙탈 번개, 얼음 가시, 회오리, 광선, 경고 표시. 구체(`sphere`)·베기(`slash`)·물보라(`crownSplash`)·파편(`chunks`)·바람 선(`windLine`·`gustLines`)·굴절(`distort.ring`·`shell`·`haze`)·시전 모으기(`charge`)·습득 연출(`learn`). 속성별 레시피(`cast`·`impact`·`explode`·`strike`·`react`·`kill`·`dodge`·`ultCast`), 속도 방향 불꽃(`sparks`), 투사체 궤적(`ribbon`), 지형을 따르는 바닥 흔적(`decal`: 그을음·서리·물웅덩이·번개 자국 등), 충격 구체·빛기둥(`shock`·`pillar`), 잔여 효과(`linger`) |
-| `world/` | `layout.js` | 랜드마크 좌표(`POI`), 길(`PATHS`), 지역(`REGIONS`) |
-| | `terrain.js` | 높이맵 지형, 채색, 높이·법선·레이캐스트 조회 |
+| `world/` | `layout.js` | 맵 크기(`WORLD`), 고개(`PASSES`), 랜드마크 좌표(`POI`), 길(`PATHS`), 골짜기의 지역(`REGIONS`), `regionAt` |
+| | `regions/*.js` | 바깥 지역 데이터, 지역마다 파일 하나: 방향, 지형 함수, 채색, 기후, 음악, 레벨, 지도 이름 자리(`regions/README.md`) |
+| | `terrain.js` | 1280m 높이맵 지형(2m 격자), 채색, 높이·법선·레이캐스트 조회. 256m 청크 25개가 거리별 4단계 LOD로 그려짐(`update`), 골짜기 바깥 땅(`outerHeight`)과 고개(`carvePasses`), 소품 배치용 옛 480m 격자(`legacy`) |
 | | `sky.js` · `water.js` · `grass.js` | 하늘과 낮밤, 물, 풀(청크 단위 스트리밍) |
 | | `props.js` | 식생·바위: 줄기·가지·잎 뭉치 구조로 기르는 수종(참나무·단풍·꽃나무·자작·포플러·버드나무·전나무·고사목), 덤불·고사리·들꽃·갈대·버섯·그루터기·통나무, 깎은 면 바위. 가까운/먼 모델 두 벌, 카메라 기준 인스턴스 재정렬(`Props.update`), `add`·`clear` |
 | | `buildings.js` | 건물·소품 생성 함수(집·종탑·탑·풍차·우물·노점·성소·등석·화로·바람개비·틈의 문 등)와 마을 소품 조각(통·상자·수레·빨랫줄·깃발줄·가로등·텃밭·돌담·화분·이정표·돌탑·선착장) |
 | | `collision.js` | 원·박스 충돌체와 밟을 수 있는 발판 |
 | | `weather.js` · `wildfire.js` · `env.js` · `objects.js` | 날씨(비·뇌우·눈, 벼락), 들불 격자 시뮬레이션과 상승 기류, 마법↔환경 디스패처 `G.env`, 물리 소품(화약 통·상자·바위) |
+| | `puzzles.js` | 작은 퍼즐: 잠든 노래 씨앗(`SEED_PUZZLES`), 반응으로만 열리는 상자(`CHESTS`), 불에 타는 가시덤불(`buildThicket`) |
+| | `trials.js` | 시련: 노래하는 돌(`SingingStones`), 들불 오르기(`EmberClimb`). 가르치기 → 비틀기 → 조합 |
 | | `world.js` | 위 모든 것의 배치, 등석·씨앗·기억 물건, 정적 메시 합치기, 환경 연출 |
 | `game/` | `game.js` | 부팅, 타이틀, 메인 루프, 메뉴, 저장·불러오기, 사망, 등석, 음악 선택 |
 | | `player.js` | 이동(달리기·순간이동·점프·활공·수영), 시전, 능력치 |
@@ -67,13 +70,18 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | | `enemybodies.js` · `enemycreatures.js` | 적 몸체: 사람형 리그 위(허깨비·돌무덤·기사·방패지기·사수)와 생물 리그(울음탈·잿물·재나방·뿌리손·망루지기) |
 | | `npcs.js` · `dialogue.js` | NPC와 보름(동료), 대화창(타자 효과·목소리·선택지) |
 | | `story.js` | 장별 스크립트, 퀘스트, 곁가지, NPC 대화 분기, 이벤트 훅 |
-| | `hud.js` | HUD 전반, 지도, 여정·마법서(반응 도감), 울림 나무 화면 |
-| | `minimap.js` | 왼쪽 아래 원형 미니맵(북쪽 고정, 시야 부채꼴, 나침반 테두리, 목표·등석·마을 사람·추격 중인 적) |
+| | `sketches.js` | 모라의 스케치북: 전망점에서 장면을 그려 연필 그림으로 바꾸기(`ink`), 시점 맞추기(`align`), 여정의 스케치 목록 |
+| | `hud.js` | HUD 전반, 지도(보기 창·휠 확대·끌어 옮기기·탐험 안개), 여정·마법서(반응 도감), 울림 나무 화면 |
+| | `atlas.js` | 탐험 기록(`G.atlas`): 16m 칸마다 본 곳을 표시, 지도 안개와 저장(`atlas`) |
+| | `minimap.js` | 왼쪽 아래 원형 미니맵(북쪽 고정, 시야 부채꼴, 나침반 테두리, 목표·등석·마을 사람·추격 중인 적). 바탕은 64m 타일을 필요할 때 만들어 24장까지 보관 |
 
 ## 반드시 지킬 규칙
 
 ### 좌표와 높이
 - 북쪽이 `-Z`입니다. 지면 높이는 `G.world.h(x, z)`, 발판까지 포함한 높이는 `G.world.ground(x, z, y)`로 구합니다.
+- 맵은 원점 중심의 1280×1280m 정사각형입니다(`layout.js`의 `WORLD`). 하늬 골짜기는 가운데 반지름 약 214m의 분지이고, 둘레 산맥에 고개 다섯(`PASSES`: 남·동·서·북·북서)이 바깥 땅으로 이어집니다. 플레이어는 `WORLD.bound`(±612m) 안에만 있습니다. 크기를 직접 쓰지 말고 `terrain.half`·`size`·`inWorld()`를 쓰세요.
+- **골짜기 안(반지름 약 230m)의 지형은 480m 시절과 한 칸도 다르지 않아야 합니다.** 바깥 땅은 `outerHeight`가 r 236~340에서 섞여 들어오고, 고개는 골짜기 안에서는 깎기만 합니다. 소품(`Props.scatter`)과 야영지 물건(`WorldObjects.place`)은 옛 격자(`terrain.legacy()`)로 자리를 고르므로 배치가 그대로입니다. 이 난수 순서가 흔들리면 골짜기 전체의 나무·바위가 바뀌니, 산포 루프에서는 `legacy()`의 `height`·`normal`·`grassAt`·`pathAt`를 쓰세요(`World` 생성이 끝나면 버립니다).
+- 지형은 256m 청크(25개)마다 메시 하나이고, 카메라와의 거리로 LOD(2·4·8·16m 간격)를 고릅니다(`Terrain.update`, 월드 갱신과 스케치 렌더가 부름). 청크 테두리의 치마(skirt)가 LOD 사이 틈을 가립니다. 청크를 더 잘게 나누면 드로우콜마다 GPU 비용이 붙어(ANGLE/Metal에서 약 10µs) 오히려 느려졌습니다.
 - **컷씬 카메라와 연출 위치는 반드시 지면 기준으로 잡으세요.** `story.js`의 `GV(x, dy, z)`를 쓰면 됩니다. 절대 y값을 쓰다가 카메라가 지형 아래로 들어간 적이 있습니다(마을 지면이 y≈8).
 
 ### 시간
@@ -92,10 +100,13 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 ### 이펙트와 소리
 - 이펙트는 가능하면 풀을 쓰는 `G.vfx` 함수로 만듭니다. 새 `Mesh`·재질을 매번 만들면 첫 사용 때 셰이더 컴파일로 끊기니, 새 부품을 풀에 넣었다면 `VFX.prewarm()`에도 추가하세요. 다른 파일이 가진 풀 재질은 `G.vfx.keep(mat, geo)`로 등록하면 prewarm에서 함께 컴파일됩니다(예: 해일 물벽).
 - **재질을 쓰고 버리는 효과**(룬 원진, 구체 오브, 회오리, 광선 등)는 같은 프로그램을 쓰는 재질이 모두 dispose되면 three.js가 셰이더 프로그램을 해제해서, 다음 시전 때 다시 컴파일됩니다. 그래서 `prewarm()`이 버리지 않는 견본 재질(`_templates`)을 컴파일해 프로그램을 붙잡아 둡니다. 이런 효과를 새로 만들면 견본도 추가하세요.
-- 프로그램은 출력 색공간·톤매핑별로 따로 만들어집니다. 장면은 컴포저의 HDR 렌더 타깃(선형)에 그려지므로 **미리 컴파일할 때는 `composer.readBuffer`를 렌더 타깃으로 잡고** 컴파일해야 합니다(`Game.boot`의 compileAsync, `VFX.prewarm`). 캔버스(sRGB) 기준으로 컴파일하면 쓰이지 않는 프로그램 한 벌이 더 생기고 실제 사용 때 다시 컴파일됩니다.
+- 프로그램은 출력 색공간·톤매핑별로 따로 만들어집니다. 장면은 컴포저의 HDR 렌더 타깃(선형)에 그려지므로 **미리 컴파일할 때는 `composer.readBuffer`를 렌더 타깃으로 잡고** 컴파일해야 합니다(`Game.compileScene`, `VFX.prewarm`). 캔버스(sRGB) 기준으로 컴파일하면 쓰이지 않는 프로그램 한 벌이 더 생기고 실제 사용 때 다시 컴파일됩니다.
+- `Game.compileScene()`은 장면의 **숨은 물체까지** 잠깐 보이게 해서 컴파일합니다(`compile()`은 보이는 물체만 방문). 부팅 때와 이야기가 시작된 직후(동물·사람이 배치된 뒤) 한 번씩 부르고, 드라이버의 병렬 컴파일을 쓰므로 프레임을 막지 않습니다. 이야기 도중 새 종류의 재질을 가진 물체를 처음 만들면 이 함수를 다시 부르세요. 화면 굴절 재질은 조명·그림자가 없는 자기 장면에 그려지므로 `VFX.prewarm`이 `distortScene`·`distortRT` 기준으로 따로 컴파일합니다.
+- 효과 조명 풀은 4개입니다(`VFX.lights`). 점광원은 세기가 0이어도 화면의 모든 조명 받는 픽셀이 반복문을 돌기 때문에 늘리지 마세요. 넘치면 가장 어두운(사라지는 중인) 조명을 새 섬광이 가져갑니다.
 - 큰 구체(반지름 1.4m 이상)는 카메라에서 1.2~5.5m 안쪽 조각이 옅어집니다(`SPHERE_FS`). 가까운 화염구가 화면 전체를 덮지 않게 하기 위해서입니다. 작은 투사체 핵은 영향을 받지 않습니다.
 - 구체(`sphere(look, pos, o)`)는 `dur <= 0`이면 `end()`를 부를 때까지 유지되고, `follow`에 벡터를 주면 따라갑니다. 투사체 핵은 `mini: true` 풀(16개)을 쓰고, 모자라면 프레넬 구로 대신합니다.
-- 화면 굴절(`G.vfx.distort`)은 별도 장면에 그려 반해상도 목표에 오프셋을 쓰고, 활성 물체가 없으면 패스가 꺼집니다. 그래픽 품질 '낮음'에서는 만들지 않습니다.
+- 화면 굴절(`G.vfx.distort`)은 별도 장면에 그려 반해상도 목표에 오프셋을 쓰고, 마지막 패스(`grade`)가 그 오프셋으로 장면과 블룸을 함께 휘게 합니다. 활성 물체가 없으면 오프셋을 읽지 않습니다(`uDistort`). 그래픽 품질 '낮음'에서는 만들지 않습니다.
+- 후처리는 장면 → 블룸 밉 → 마지막 패스 한 번뿐입니다. 전체 화면 패스를 새로 더하면 고해상도에서 프레임당 약 0.5~1ms가 늘어나니, 가능하면 `GradeShader`에 합치세요.
 - 고유 마법은 `WINDUP`(속성별 0.1~0.2초) 동안 지팡이 끝에 힘을 모은 뒤(`charge_<속성>` 소리, `vfx.charge`) 그 순간의 조준점으로 나갑니다(`Spells.heavyRelease`).
 - 기본 마법 입력은 `player.basicInput()`: 클릭 = 기본 마법(재사용 중 클릭은 0.2초 버퍼), 0.26초 넘게 누르면 모으기 시작(`vfx.charge`, `charge_hold`), `CHARGE_T`(0.75초)가 차면 `charge_ready`, 떼면 `player.castCharged()` → `Spells.charged()`. 조준점 고리는 `HUD.chargeRing`.
 - 계속 나는 소리는 `G.audio.loop(name, { pos, v, max })`로 만들고 매 프레임 `set(pos)`, 끝날 때 `stop(fade)`를 부릅니다. 엔진이 준비되지 않았으면 아무것도 하지 않는 핸들이 돌아옵니다. `spells.js`의 `sndLoop()`를 쓰면 됩니다.
@@ -109,13 +120,14 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 
 ### 식생 (`props.js`)
 - 나무는 시드로 구조(뿌리가 퍼진 줄기, 가지, 가지 끝의 잎 뭉치)를 만들고 가까운 모델과 먼 모델을 같은 구조로 뽑습니다. 잎 뭉치의 법선은 수관 전체 쪽으로 기울여 부드러운 덩어리로 보이게 합니다.
-- 종류·변형마다 가까운/먼 `InstancedMesh` 한 쌍과 그림자 대리(먼 모델, `SHADOW_LAYER`에만 있어 해의 그림자 카메라만 봄)가 있습니다. `Props.update(camera)`가 카메라가 움직일 때 거리·시야·그림자 반경으로 인스턴스를 다시 나눕니다. 나무의 가까운 모델 거리는 42m입니다.
+- 종류·변형마다 가까운/먼 `InstancedMesh` 한 쌍과 그림자 대리(먼 모델, `SHADOW_LAYER`에만 있어 해의 그림자 카메라만 봄)가 있습니다. `Props.update(camera)`가 카메라가 움직일 때 거리·시야·그림자 반경으로 인스턴스를 다시 나눕니다. 나무의 가까운 모델 거리는 42m이고, 그 앞뒤 5m(`FADE`)에서는 두 모델에 모두 넣어 인스턴스별 `aFade`로 디더링해 섞습니다(`toon(..., { lodFade: true })`, 소품 재질 전용). 소품 형상에는 모두 `aFade` 속성이 붙어 있어야 합니다(없는 속성 자리는 다른 셰이더가 남긴 값을 읽을 수 있음).
 - 배치는 `props.add(종류, x, z, 크기, { v, ry, dy, col, tall })`, 랜드마크 주변 비우기는 `props.clear(x, z, r, [종류])`(충돌체도 함께 제거)로 합니다. 메시는 다음 `update`에서 다시 만들어집니다.
 
 ### 등반과 충돌체
 - 가파른 지형(법선 y < 0.64)과 충돌체 벽은 그쪽으로 계속 걸으면 붙잡습니다(`player.tryGrab` → `updateClimb`). 허리 높이(1.45m 미만) 턱은 뛰어넘고, 꼭대기에서는 `startMantle`로 올라섭니다. 등반 중 이동은 기력 10/초, 도약(<kbd>Space</kbd>) 20(기력이 20 미만이면 뛰지 않고 기력 고리가 흔들림, `hud.staminaShort`), 벽 차기(<kbd>S</kbd>+<kbd>Space</kbd>) 12(빠져나가는 수단이라 거절하지 않되 기력을 0으로 만들지는 않음), <kbd>Shift</kbd>는 놓기입니다.
 - 충돌체 윗면은 바닥입니다(`Colliders.surfaceTop`, `World.ground`). 그래서 **충돌체 높이 `h1`은 실제 모양의 꼭대기와 맞아야 합니다.** 건물·지형지물은 `World.solid(obj, { r | hw, hd, top?, topFn?, climb?, noTop? })`로 등록하면 경계 상자에서 높이를 잽니다. 지붕처럼 기운 윗면은 `topFn(lx, lz)`(로컬 좌표), 나무 줄기처럼 올라설 수 없는 것은 `climb: false, noTop: true`를 주세요.
-- `Player.teleport`는 등반·기어오르기·활공 상태를 풉니다. 플레이어 위치를 직접 바꿀 때는 이것을 쓰세요.
+- **활공은 1막 끝(첫째 종 장면 `windAndBell`)에 보름이 빌려주는 능력**입니다. 스토리 플래그 `glide`, 확인은 `player.canGlide()`. `v_wind`가 있는 이전 저장은 `Story.start`가 `glide`를 줍니다. 활공이 필요한 콘텐츠(허공 씨앗 `sky`, 시련 들불 오르기)는 이 플래그 전에는 숨기거나 시작하지 않습니다. 새로 활공이 필요한 것을 만들면 같이 막으세요.
+- `Player.teleport`는 등반·기어오르기·활공 상태를 풉니다. 60m 넘게 옮기면 떠난 자리의 땅의 흔적도 지웁니다(`Fields.clearFar`). 플레이어 위치를 직접 바꿀 때는 이것을 쓰세요.
 - 집은 `userData.roofTop(lx, lz)`(그룹 원점 기준 지붕 윗면 높이)를 주고, `buildVillage`가 이를 `topFn`으로 씁니다. `eave`·`roofH`·`roofHW`도 같은 선을 뜻합니다(`eave + roofH × max(0, 1 − |lx| / roofHW)`). 지붕 모양을 바꾸면 이 함수를 함께 고치세요. 모라의 탑과 풍차는 원뿔 모양 `topFn`을 씁니다.
 
 ### 날씨·들불·환경 (`world/weather.js`, `world/wildfire.js`, `world/env.js`)
@@ -129,8 +141,22 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - **물리 소품**(`world/objects.js`, `G.world.objects`): 화약 통·상자·바위를 종류별 InstancedMesh 하나로 그립니다. 각 물체는 `world.targets`에 등록되어(`id: 'prop'`) 모든 마법의 `baseHit(el, src)`를 받습니다. 원소별 밀기(`PUSH`), 화염·번개 → 화약 통 도화선(1.1초, 연쇄 0.28초. 이미 타는 도화선도 이웃 폭발이 0.28초로 줄임) → `Spells.explode` 반경 5.2, 상자는 3번 맞으면 부서져 마나 방울(불에 타면 3초 뒤 재), 바위는 경사를 따라 구르며 적을 치고 물에 빠지면 가라앉습니다. 멈추면 잠들어 계산하지 않고, 사라진 것은 플레이어가 45m 밖에 있을 때 제자리에 다시 생깁니다. 배치는 `place()`(야영지마다 통 2·상자 1·오르막 바위 1). 마을 110m, 모라의 언덕·시작 오두막 60m 안에는 화약 통을 두지 않습니다(그 야영지는 상자 2개).
 - **환경 디스패처**(`G.env`): 마법이 착탄하면 `G.env.onSpell({ el, pos, r, kind, source })`를 부릅니다. 화염은 풀에 불을 붙이고, 물·서리는 끄고, 바람은 불길을 바람 방향으로 번지게, 번개는 가끔 불씨를 만듭니다. 새 환경 규칙은 여기에 추가하세요.
 
+### 작은 퍼즐 (`world/puzzles.js`)
+- 새 규칙 없이 이미 있는 것만 씁니다: 월드 표적(`target.baseHit(el, src)`), 들불 격자, 땅의 흔적. 열기 판정은 `Puzzles.heatAt(pos, r)`(들불·`blaze`·`plasma`)입니다.
+- 노래 씨앗 중 `SEED_PUZZLES`에 있는 것은 `s.locked`인 동안 주울 수 없고(`Story.update`), 풀리면 `Puzzles.wake(L)`가 봉오리를 열고 수정을 키웁니다. 씨앗 좌표는 `SEEDS`의 `[x, z, 지면 위 높이]`이고, 번호가 저장 키이므로 **순서를 바꾸지 마세요**. 퍼즐을 풀고 줍지 않은 채 불러오면 퍼즐은 처음 상태로 돌아갑니다.
+- 상자(`CHESTS`)는 잠금(`ice`·`thorns`)이 풀린 뒤 <kbd>E</kbd>로 엽니다. 연 상자는 스토리 플래그 `chest_<id>`로 저장되고, 불러오면 열린 채로 놓입니다.
+- 가시덤불은 불(마법·흔적·들불)에 타서 이웃 덤불과 발밑 풀로 번지고, 플레이어가 45m 밖에 있으면 200초 뒤 다시 자랍니다.
+- 플레이어가 풀지 못하고 20초 넘게 머물면 보름이 한 번 귀띔합니다(`LINGER`). 안내 없이 알아채는지가 0단계의 시험이므로 더 빨리 말하게 하지 마세요.
+
+### 시련 (`world/trials.js`)
+- 한 곳에 메커니즘 하나를 **가르치기 → 비틀기 → 조합** 세 단계로 담습니다. 가까이 가면 배너로 목표만 한 줄 알립니다(방법은 말하지 않음). 마치면 스토리 플래그 `trial_<id>`, 울림점 1, 경험치 80.
+- **노래하는 돌**(40, 148): 돌 다섯(`STONES`, 키가 클수록 높은 음)이 부른 구절(`PHRASES`)을 아무 마법으로 두드려 따라 부릅니다. 1단계는 부르는 돌이 빛나고, 2단계는 소리만(돌 위치에서 들림), 3단계는 두 구절을 잇되 가장 높은 돌이 얼어 있어 불로 녹여야 울립니다(녹이는 동안 진행은 유지). 틀리면 처음부터 다시 부릅니다. 가운데 돌에서 <kbd>E</kbd>로 다시 듣기.
+- **들불 오르기**(106, 116): 오를 수 없는 현무암 기둥 셋(`POSTS`, `climb: false`). 높이는 실측값에 맞췄습니다: 들불 상승 기류 6~9m, 땅에서 돌풍 도약 약 10.5m, 기류 꼭대기에서 도약 약 15m, 활공은 3.3m에 1m 하강. 기둥을 옮기거나 이동·돌풍·들불 수치를 바꾸면 세 단계가 여전히 순서대로만 풀리는지 다시 재 보세요. 마지막 망대 둘레는 `layout.js`의 `PADS`(풀 없는 돌바닥)입니다.
+- `PADS`는 지형 채색과 풀·연료(`terrain.gf`)를 함께 지웁니다. 새 시련이나 광장에 쓸 수 있습니다.
+
 ### 땅의 흔적과 착탄 훅
 - 마법이 땅이나 영역에 닿는 지점에서는 `G.spells.touch(el, pos, r, kind)`를 부르세요. `kind`는 `'bolt' | 'heavy' | 'weave' | 'ult' | 'charged'`. 이 한 번의 호출이 ① 겹친 땅의 흔적을 변화시키고(`Fields.infuse`) ② 월드 시스템 훅 `G.env?.onSpell({ el, pos, r, kind, source })`를 부릅니다(`pos`는 착탄 지점 아래 지면, `charged`는 `'bolt'`로 전달). 흔적은 살아 있는 동안 0.5초마다 `kind: 'field'`로 같은 훅을 부릅니다. `G.env`가 없으면 아무 일도 없습니다.
+- **떠 있는 목표물 적중은 땅에 닿지 않습니다.** 투사체가 월드 표적(등석·화로·수정·허수아비·바람개비·노래하는 돌·얼음 등)에 맞으면 그 처리 동안 `Spells.airHit`이 켜져 `touch()`와 `groundAt()`이 아무것도 하지 않습니다(흔적을 직접 바꾸는 코드도 `airHit`을 확인해야 합니다. 예: 머금은 바람 칼날의 `impact()`). 그래서 불 마법(화염구 폭발·잔불 포함)으로 맞혀도 풀에 불이 붙거나 흔적이 생기지 않습니다. 바닥에 놓인 표적만 `addTarget({ ground: true, … })`로 예외입니다(물리 소품, 가시덤불).
 - `explode()`·`strike()`·투사체 `impact()`·`wave()`는 이미 `touch()`를 부릅니다. `explode(..., { kind })`, `strike(..., { kind, charge: { r, dur } })`로 종류와 대전된 땅을 지정합니다. `onImpact`가 있는 투사체는 `impact()`를 거치지 않으므로 콜백 안에서 `explode()`나 `touch()`를 부르세요.
 - 흔적 만들기: `G.spells.fields.add(kind, pos, { r, dur, dmg, maxR, noGround })` (`kind`: `blaze`·`plasma`·`rime`·`frostfog`·`puddle`·`steam`·`charged`·`shockfog`·`shockwater`). 같은 종류가 가까이 있으면 합쳐지고, 12개가 넘으면 오래된 것부터 지웁니다. 반응 뒤의 흔적은 `Combat.leave(kind, target, o)`로 발밑에 깝니다.
 - 새 변화는 `fields.js`의 `mix()` `switch`와 `FIELD_MIX`(도감 이름·설명)에 함께 추가합니다. 흔적 틱 피해는 `source: 'dot'`(숫자는 `hud.damage(..., small)`로 직접)라 적중 정지·반동·게이지가 없습니다.
@@ -146,7 +172,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 적중 정지는 `G.hitstop`에 직접 쓰지 말고 `G.combat.stop(sec, force)`를 쓰세요. 한 프레임 안에서는 가장 센 값 + 나머지의 30%(최대 0.15초), 0.04초 미만은 0.3초에 한 번으로 제한됩니다(`force`로 무시). 궁극기 시전처럼 연출상 반드시 멈춰야 하는 곳만 직접 씁니다.
 - 빙결이 저절로 풀리면 `st.thaw`(2.5초, 보스 5초) 동안 한기로는 다시 얼지 않습니다. `freeze()`를 직접 부르는 반응은 예외입니다.
 - **보스 무너짐 게이지**(`enemies.js`의 `BREAK`, `t.brk`): `def.boss`이거나 `spawn(..., { brk: true })`로 만든 적은 경직 누적(`poise`) 대신 이 게이지를 씁니다. `onHit`에서 `breakFromHit`가 채우고, 가득 차면 `stagger(BREAK.down, true)` + `collapseFx`(→ `Story.onBossBreak`). 무너진 동안 `Combat.resolve`의 빈틈 배율이 1.5 → 1.75입니다. 게이지를 직접 더하려면 `addBreak(t, 양)`(최종 보스는 `heart.addBreak`). HUD의 금빛 줄은 `t.brk`가 있을 때만 보입니다.
-- **보스 단계**: `t.phaseAt`(체력 비율 문턱 배열)을 `phaseCheck(t, t.phaseAt)`로 확인하면 `t.phase`가 오르고 `t.phaseMul`(`PHASE_DMG`: 1 / 1.2 / 1.4)이 `hurtPlayer`의 피해에 곱해집니다. 문턱은 체력바에 눈금으로 그려지고, 단계 대사는 `Story.onBossPhase(boss, n)`에 있습니다. 새 보스는 `phaseAt`과 단계별 패턴을 함께 주세요.
+- **보스 단계**: `t.phaseAt`(체력 비율 문턱 배열)을 `phaseCheck(t, t.phaseAt)`로 확인하면 `t.phase`가 오르고 `t.phaseMul`(`PHASE_DMG`: 1 / 1.2 / 1.4)이 `hurtPlayer`의 피해에 곱해집니다. 문턱은 체력바에 눈금으로 그려지고, 단계 대사는 `Story.onBossPhase(boss, n)`에 있습니다. 단계가 오를 때는 체력 방울 1개와 마나 방울 4개, 무너질 때는 마나 방울 3개를 흘립니다(`EnemyManager.bossSpill`, `phaseCheck`·`collapseFx`가 부름). 긴 싸움의 숨구멍이라 일부러 적게 두었습니다. 새 보스는 `phaseAt`과 단계별 패턴을 함께 주세요.
 
 ### 울림 나무 (스킬)
 - 노드는 `skills.js`의 `TREES`에 데이터로 추가합니다: `{ id, name, tier, col, max, cost, req, kind, desc(r) }`. `req`는 **하나만** 익혀도 되는 선행 목록, `tier`는 나무에 쓴 점수 조건(`TIER_GATE = [0, 1, 2, 4, 7]`)과 화면 위치를, `col`(0~2)은 가로 위치를 정합니다. 속성 나무는 5단(0~4), 조화의 나무는 4단(0~3)이고 화면은 나무의 `maxTier`에 맞춰 배치됩니다. 조화 노드는 `els: [속성, 속성]`과 `req: ['h_weave']`를 씁니다.
@@ -161,9 +187,10 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 ### UI와 입력
 - **마우스 잠금**은 메뉴(`Game.openMenu`)에서만 풉니다. 대화·컷씬·사망 중에도 잠근 채 두고(선택지는 숫자·W/S·휠·클릭), 풀렸을 때는 아무 키나 클릭(사용자 제스처)이 `Input.wantLock()`을 보고 다시 잠급니다. "클릭하거나 아무 키나 누르면 이어집니다"는 자유 이동 중 1.2초 넘게 풀려 있을 때만 화면 아래에 조용히 뜹니다.
 - **안내(`hud.hint`)**는 왼쪽 가장자리 카드입니다. 앞선 안내가 2.5초 안쪽이면 줄을 서고(최대 3개), 시간은 자유 이동 중에만 흐릅니다. 조준점 근처에 새 안내 UI를 두지 마세요.
-- **배너(`hud.banner`)**는 전투 중(`hud.inCombat()`)이면 나침반 아래 얇은 띠(`.compact`, 최대 2.6초)로 줄어듭니다. 지역 이름(`areaTitle`)은 전투 중에 띄우지 않습니다.
+- **배너(`hud.banner`)**는 두 가지입니다. 자주 뜨는 알림(이야기·곁가지 시작, 여정 완료, 등석, 노래 씨앗, 레벨 업, 시련 마침)은 `banner(…, ms, { minor: true })`로 늘 나침반 아래 얇은 띠(`.minor`, 설명은 아래 작은 한 줄)에 띄웁니다. 가로 띠(화면 위쪽 20%)는 새 속성·기술·모라의 기억처럼 드문 순간에만 씁니다. 새 알림은 기본을 `minor`로 생각하세요. 전투 중(`hud.inCombat()`)이면 어느 쪽이든 나침반 아래 띠(`.compact`, 설명 없이 최대 2.6초)로 줄어듭니다. 지역 이름(`areaTitle`)은 전투 중에 띄우지 않습니다.
 - **아직 깨우치지 않은 속성은 UI 어디에도 보이지 않습니다**: 속성 슬롯(`.el.gone`), 마법서, 반응 도감('?' 표시), 울림 나무 탭, 모르는 속성이 낀 조화 노드('???'). 새 UI에서 속성 목록을 그릴 때도 `G.player.unlocked`로 거르세요.
-- **미니맵**(`minimap.js`, `hud.minimap`): 큰 지도의 지형 이미지(`HUD.ensureMapBase`)를 1m당 3px로 키우고 건물 발자국(높이 1.6m 넘는 상자 충돌체)을 찍은 바탕을 한 번 만든 뒤, 초당 30번 반경 62m를 그립니다. 북쪽이 위로 고정이고, 화살표는 몸의 방향, 부채꼴은 카메라 방향입니다. 목표가 범위 밖이면 테두리에 붙이고 거리를 씁니다. 적은 플레이어를 쫓는 것(`aggroed`)만 보입니다. 대화 중에는 숨고, 메뉴가 열려 있으면 그리지 않습니다.
+- **미니맵**(`minimap.js`, `hud.minimap`): 큰 지도의 지형 이미지(`HUD.ensureMapBase`)를 1m당 3px로 키우고 건물 발자국(높이 1.6m 넘는 상자 충돌체)을 찍은 64m 타일을 보이는 만큼 만들어 두고(최근 24장), 초당 30번 반경 62m를 그립니다. 북쪽이 위로 고정이고, 화살표는 몸의 방향, 부채꼴은 카메라 방향입니다. 목표가 범위 밖이면 테두리에 붙이고 거리를 씁니다. 적은 플레이어를 쫓는 것(`aggroed`)만 보입니다. 대화 중에는 숨고, 메뉴가 열려 있으면 그리지 않습니다.
+- **장식 스킨**(`src/styles-fantasy.css`, `styles.css` 다음에 불러옴): 밤하늘 남색 패널, 금색 이중 테두리와 모서리 금세공, 장식 구분선, 별가루 무늬, 룬 원진을 덧입히는 층입니다. 장식은 SVG 데이터 URI 변수(`--orn-tl`·`--orn-tr`·`--orn-bl`·`--orn-br`, `--orn-rule`, `--pat-stars`, `--orn-rune`, 요소가 많은 화면용 `--orn-rune-soft`, 로딩용 `--orn-rune-bright`·`--orn-star`·`--orn-spark`)이고 `scripts/ornaments.py`가 만듭니다. 로딩 화면의 도는 별 원진(`.load-rune`의 `lr-*`)만 애니메이션이 있고, 불러오기가 끝나면 `#loading.ready`에서 별이 한 번 피어납니다. 새 패널은 파일 머리의 선택자 목록에 더하면 같은 틀을 받습니다. 모두 정적 배경이니 반복 애니메이션이나 `backdrop-filter`를 더하지 마세요. 이미 `position: absolute`인 요소(`#dialogue` 등)에 틀 규칙의 `position: relative`가 걸리지 않게 주의하세요.
 - **메뉴와 HUD 메시지**: 메뉴가 열리면 `#ui.menu-open`이 배너·안내·토스트·보름의 한마디를 숨기고, 배너 대기열과 표시 시간이 멈췄다가 메뉴가 닫힌 뒤 1.4초 더 보입니다. 설정은 일시정지 메뉴를 숨긴 채 열립니다.
 - **숫자**: 계속 바뀌는 숫자(마나, 비용, 레벨, 거리)는 `tabular-nums`와 고정 폭으로 흔들리지 않게 합니다. 설정 슬라이더는 값(`.set-val`)을 옆에 보여 줍니다.
 - **반복 애니메이션**: '지금 쓸 수 있다'는 상태(궁극기 준비, 울림 나무의 익힐 수 있는 노드)만 계속 숨쉬게 합니다. 울림점 배지는 점수를 받을 때 세 번 빛나고 멈춥니다.
@@ -197,6 +224,8 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
   - `this.scriptedWave(spawnFn, center, radius)`: 스크립트 전투 한 파. 플레이어가 쓰러지면 남은 적을 지우고 다시 생성합니다. 적이 모두 죽어야 끝나는 전투는 반드시 이것으로 감싸세요.
   - `this.bossFight(make, center, radius, tip)`: 보스전. 쓰러지면 보스를 초기화하고, 다시 다가가기 전에 보름이 `tip`을 말합니다.
 - 체크포인트: `set()`, `done()`, 기억·씨앗·보고 같은 진행이 일어나면 `this.dirty`가 서고, 플레이어가 전투 밖·지상·자유 상태가 되는 순간 자동 저장합니다. 새 진행 지점을 만들면 `this.dirty = true`를 잊지 마세요.
+- **종과 세계의 기억**: `Story.bellsRung()`(0~4: 첫째 종 `v_wind`, `frostBell`, `stormBell`, 합창 `m_choir`)이 색 보정 채도(`satFor`, 0.80 → 1.12, 종이 울린 뒤 몇 초에 걸쳐 돌아옴), 새소리 빈도(`Audio.updateAmbience`의 `bells`), 들판·밤·마을 음악의 악기 층(`Music.memory`)을 정합니다. 연출만 바뀌고 규칙은 없습니다.
+- **모라의 스케치북**(`game/sketches.js`, `G.sketches`): 단비가 건네면 플래그 `sketchbook`. 각 쪽(`SKETCHES`)은 전망점 `eye`에서 `look`을 바라본 장면을 렌더 타깃에 그려 CPU로 연필 선·빗금으로 바꾼 이미지입니다(플레이어가 전망점 110m 안에 들어오거나 여정이 열리면 그림. 렌더 → 비동기 읽기 → 3ms씩 나눠 잉크 → 비동기 JPEG로 여러 프레임에 나눠 처리해 끊기지 않음, `Sketchbook.pump`는 메뉴 중에도 게임 루프가 부름). 종 뒤에 열리는 쪽(`after`)은 봉인이 그림에 남지 않도록 열린 뒤에 그립니다. 게임 카메라가 전망점 7m 안에서 같은 방향(방위 ±20°, 기울기는 두 배 관대)을 보면 그림이 화면에 겹쳐 보이고(`#sketch-view`, 곱하기 합성), 0.7초 유지하면 쪽의 기억이 열려 `sk_<id>`가 저장됩니다. 기억의 물건 4개는 해당 쪽을 맞추기 전까지 보이지 않습니다. 전망점을 옮기면 여정에서 그림을 보고 구도를 확인하세요.
 - 보름의 `cSay(text, onceKey)` 1회성 대사는 `Story.saidOnce`에 `c:` 접두어로 저장됩니다.
 - NPC에게 말을 걸면 항상 `talkNPC(id)`로 들어옵니다. 메인 스토리 → 곁가지 → 일상 대화 순으로 분기합니다.
 - 대사 표기:
@@ -208,7 +237,8 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 인물별 말투는 [docs/DESIGN.md](docs/DESIGN.md#인물과-말투)를 따르세요. 한 인물의 말투가 흔들리면 몰입이 크게 깨집니다.
 
 ### 저장
-- `localStorage`의 `ullimjigi_save_v1`(진행)과 `ullimjigi_settings`(설정)를 씁니다. 울림 나무는 `skills` 필드(`v: 2`, 단계, 남은 점수, 게이지, 반응 도감, `granted`, 남은 갈림길 `cross`)에 들어갑니다. `skills`가 없는 이전 저장은 `Skills.expected()`로 점수를 계산해 지급하고, `skills.v`가 없거나 2 미만이면 `grantBasics()`로 이미 쓰던 고유 마법과 엮기를 무료로 줍니다. `p_heavy` 플래그가 있으면 `Story.start`가 `f_sig`를 보장합니다.
+- `localStorage`의 `ullimjigi_save_v1`(진행)과 `ullimjigi_settings`(설정)를 씁니다. 브라우저와 주소(포트 포함)마다 따로 남습니다. **개발 프리셋(`?dev=…`)은 `ullimjigi_save_dev`에 따로 저장**하므로 시험하다가 진짜 여정을 덮어쓰지 않습니다(불러올 때 개발 저장이 없으면 진짜 저장을 읽으니 `?dev=continue`로 진짜 저장을 시험할 수 있음). 이어하기는 먼저 저장 형식을 검사해(`saveProblem`) 문제가 있으면 아무것도 바꾸지 않고 타이틀 버튼 아래에 이유를 적습니다(`Game.titleNote`). 불러오는 도중에 오류가 나면 이미 바뀐 상태를 되돌릴 수 없으니 페이지를 새로 불러오고, 타이틀에서 그 이유를 보여 줍니다(`sessionStorage`의 `ullimjigi_load_error`). 저장 형식을 바꾸면 `saveProblem`도 함께 고치세요. 울림 나무는 `skills` 필드(`v: 2`, 단계, 남은 점수, 게이지, 반응 도감, `granted`, 남은 갈림길 `cross`)에 들어갑니다. `skills`가 없는 이전 저장은 `Skills.expected()`로 점수를 계산해 지급하고, `skills.v`가 없거나 2 미만이면 `grantBasics()`로 이미 쓰던 고유 마법과 엮기를 무료로 줍니다. `p_heavy` 플래그가 있으면 `Story.start`가 `f_sig`를 보장합니다.
+- 탐험 기록은 `atlas` 필드(칸 크기, 칸 수, base64 비트열)입니다. 없거나 칸 설정이 다르면 골짜기(반지름 236m)만 드러난 상태로 시작합니다. 새로 본 칸이 60개 쌓일 때마다 자동 저장을 요청합니다.
 - 저장 형식을 바꾸면 기존 저장과 호환되는지 확인하세요. `Story.load`는 없는 필드에 기본값을 넣어 줍니다.
 
 ## 테스트 방법
@@ -227,13 +257,18 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | `rift` | 4장 (틈 입구 근처, 물 포함 6속성) |
 | `lake` | 2장, 물의 노래를 얻기 전 거울 호숫가 |
 | `skills` | 3장, 6속성·Lv 12·울림점 26점·게이지 가득 (스킬 테스트용) |
+| `outer` | `skills`와 같되 남쪽 고개 마루에서 바깥 땅을 보고 시작 (활공·맵 크기 확인용) |
 
 `1`을 뺀 프리셋은 깨우친 속성의 고유 마법과 엮기를 무료로 받습니다(`grantBasics`). 갈림길을 보려면 `__G.player.addXP(5000)` 후 자유 이동 상태로 두세요(`village` 프리셋은 시작하자마자 대화가 이어지므로 `skills`가 편합니다).
 | `continue` | 저장 불러오기 |
 
 캐릭터만 따로 보려면 개발 서버에서 `/charview.html`을 엽니다(게임 빌드에는 포함되지 않는 뷰어).
 
-`?dev` 모드는 `requestAnimationFrame` 대신 16ms 타이머로 루프를 돕니다. **브라우저 창이 가려져 있으면 rAF가 멈추기 때문입니다.** 일반 모드(타이틀부터)는 창이 보이는 상태에서만 확인할 수 있습니다.
+`?dev` 모드는 `requestAnimationFrame` 대신 16ms 타이머로 루프를 돕니다. **브라우저 창이 가려져 있으면 rAF가 멈추기 때문입니다.** 보이는 창에서 실제 프레임을 재려면 `&raf`를 붙이세요(예: `?dev=skills&god&raf`). 일반 모드(타이틀부터)는 창이 보이는 상태에서만 확인할 수 있습니다.
+
+### 입력 기록 (`&rec`)
+`?dev=…&rec`로 열면 `game/devrec.js`가 원시 입력 이벤트(보조 키·포인터 잠금 포함), 매 프레임 플레이어 상태(위치·속도·방향·회피·시전·키 상태), 이동·시전 함수 호출과 그 호출 경로를 기록합니다. 사람이 직접 재현한 버그를 분석할 때 씁니다. 4초마다 `localStorage`(`ullimjigi_rec`)에 저장하고, 새로고침하면 직전 기록을 `_prev`로 한 번 보관합니다. 읽기: `__rec`(현재), `__rec.dump(true)`(직전), 프레임 열 이름은 `__rec.FRAME`.
+- 스크립트로 부른 함수와 사람의 입력은 같은 경로를 타지 않습니다. 예: 왼쪽 클릭으로 옆으로 튕기던 버그는 `Player.update` 안에서 이동 방향 계산과 사용 사이에 시전이 끼어 공용 임시 벡터를 덮어써서 생겼고, `castBolt()`를 직접 부르면 재현되지 않았습니다. 파일 공용 임시 벡터(`tmp`)는 다른 함수 호출을 건너 들고 다니지 마세요.
 
 ### 테스트 스위치
 주소에 `&god`(피해 없음), `&unseen`(적이 플레이어를 인지하지 않음)을 붙이거나 콘솔에서 `__G.dev.god = true`, `__G.dev.unseen = true`로 켭니다. 이동·등반·연출을 확인할 때 적에게 맞아 쓰러져 등석으로 돌아가는 일을 막아 줍니다. 적의 인지는 모두 `player.seen()`을 거칩니다.
@@ -250,6 +285,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - **헤드리스 스크린숏**: 소프트웨어 렌더링(swiftshader)에서는 스크린숏이 수십 초~수 분 걸릴 수 있습니다. 찍기 직전에 `__G.renderer.render`를 잠시 빈 함수로 바꿨다가 되돌리면 빨라집니다. 전체 화면 `backdrop-filter`나 큰 요소의 무한 애니메이션은 소프트웨어 합성에서 매우 느리니 메뉴 연출에 쓰지 마세요.
 
 ### 성능 기준
+프레임 목표는 게임 전반에서 60fps입니다. 1512×945 창(픽셀 배율 1.5, 약 320만 픽셀) 기준 GPU 측정값은 가만히 있을 때 약 4ms, 무거운 전투 순간(번개 궁극기·엮기) 5~8ms, CPU 갱신은 약 1.5ms입니다(Apple M5, 동기화 벤치마크 기준). 측정 방법: 게임을 멈추고(`G.paused = true`) `G.renderer.render()`를 수십 번 부른 뒤 `readPixels`로 GPU를 기다려 평균을 냅니다. 가려진 창에서는 GPU 시간 쿼리(`EXT_disjoint_timer_query`)가 클럭이 낮아 부풀려 나오니 쓰지 마세요.
 마을 기준으로 드로우콜 약 500-900, 삼각형 약 100만입니다(헤드리스 측정, 식생·조형 캐릭터 포함). 800×629 창 기준 최근 측정값은 마을 광장 드로우콜 약 400, 삼각형 약 110만, 빽빽한 숲 안 드로우콜 약 170, 삼각형 약 85만입니다. 캐릭터는 사람형 6,500-10,000, 일반 적 2,500-10,000 삼각형이며 형태별로 기하를 공유합니다. 이보다 크게 늘어나는 변경은 합치기나 인스턴싱을 검토하세요.
 
 ## 알려진 한계와 할 일

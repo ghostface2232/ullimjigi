@@ -11,6 +11,8 @@ import { Weather } from './weather.js';
 import { Wildfire } from './wildfire.js';
 import { Env } from './env.js';
 import { WorldObjects } from './objects.js';
+import { Puzzles } from './puzzles.js';
+import { Trials } from './trials.js';
 import { Props, makeTree } from './props.js';
 import { Colliders } from './collision.js';
 import { POI, PATHS, regionAt } from './layout.js';
@@ -33,17 +35,21 @@ export const LANTERNS = [
   { id: 'riftroad', name: '잿빛 비탈', x: 74, z: -56 },
 ];
 
+// [x, z, height above ground]. Some are locked by a small puzzle (puzzles.js SEED_PUZZLES).
 export const SEEDS = [
-  [-45, 150], [26, 118], [-87, 67], [-112, 92], [-122, 140], [-66, 158], [62, 102], [112, 72],
+  [-45, 150], [26, 118], [-60, 44], [-112, 92], [-108, 128], [-58, 150, 15], [62, 102], [112, 72],
   [150, -8], [42, -58], [-62, -62], [-8, -128], [-60, -150], [-142, -72], [-190, 22], [96, -152],
 ];
 
 export const MEMORIES = {
   hairpin: { name: '은빛 머리핀', x: -47, z: 80, desc: '작은 은방울꽃이 새겨진 머리핀. 끝이 조금 휘어 있다.' },
   book: { name: '눌러 말린 꽃 책', x: 81.5, z: 66, desc: '들꽃이 곱게 눌린 낡은 책. 첫 장에 두 사람의 이름이 있었던 자국.' },
-  musicbox: { name: '서리 오르골', x: -34, z: -163, desc: '태엽을 감으면 익숙한 노래가 흘러나오는 작은 오르골.', hidden: true },
-  badge: { name: '기사의 휘장', x: -163, z: -30, desc: '번개 문양이 새겨진 청동 휘장. 뒷면에 누군가 긁어 쓴 글씨.', hidden: true },
+  musicbox: { name: '서리 오르골', x: -34, z: -163, desc: '태엽을 감으면 익숙한 노래가 흘러나오는 작은 오르골.' },
+  badge: { name: '기사의 휘장', x: -163, z: -30, desc: '번개 문양이 새겨진 청동 휘장. 뒷면에 누군가 긁어 쓴 글씨.' },
 };
+
+const COAL = { lit: null, cold: null };
+let FLOE_GEO = null;
 
 export class World {
   constructor(scene, onProgress = () => {}) {
@@ -79,11 +85,15 @@ export class World {
     this.buildLanterns();
     this.buildSeeds();
     this.buildMemories();
+    this.puzzles = new Puzzles(this);
+    this.puzzles.build();
+    this.trials = new Trials(this);
     this.ambT = 0;
     this.region = null;
     onProgress(0.72, '돌을 다듬는 중…');
     this.bakeStatics();
     this.objects = new WorldObjects(scene, this);
+    this.terrain.dropLegacy();
   }
 
   // Merge static building meshes per material into a few big meshes (draw-call reduction)
@@ -422,17 +432,20 @@ export class World {
     const fl = { pos: new THREE.Vector3(x, this.h(x, z) + b.userData.fireY, z), lit: false, scale: 1 };
     this.flames.push(fl);
     const tgt = this.addTarget({ id, pos: fl.pos.clone().add(new THREE.Vector3(0, -0.2, 0)), r: 1.1, obj: b, flame: fl, lit: false, onHit: null });
+    // lit and cold coal, shared by every brazier (swapped, never rebuilt)
+    COAL.lit ||= new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 1.2, 0.3) });
+    COAL.cold ||= new THREE.MeshBasicMaterial({ color: new THREE.Color(0.15, 0.1, 0.1) });
     tgt.baseHit = (el) => {
       if (el === 'fire' && !tgt.lit) {
         tgt.lit = fl.lit = true;
-        b.userData.coal.material = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 1.2, 0.3) });
+        b.userData.coal.material = COAL.lit;
         G.audio.play('lantern', { pos: fl.pos });
         G.vfx.burst(fl.pos, 'fire', 24, { speed: 3 }); G.vfx.burst(fl.pos, 'ember', 12);
         G.vfx.flash(fl.pos, 0xff8a3a, 40, 12, 0.6);
         if (tgt.onLit) tgt.onLit(tgt);
       } else if ((el === 'frost' || el === 'wind' || el === 'water') && tgt.lit && !tgt.permanent) {
         tgt.lit = fl.lit = false;
-        b.userData.coal.material = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.15, 0.1, 0.1) });
+        b.userData.coal.material = COAL.cold;
         G.vfx.burst(fl.pos, 'smoke', 8); G.audio.play('fizzle', { pos: fl.pos });
         if (tgt.onOut) tgt.onOut(tgt);
       }
@@ -440,13 +453,14 @@ export class World {
     return tgt;
   }
 
-  makeWindWheel(x, z, ry, id) {
+  // `hold`: keep turning only that many seconds after a gust instead of staying on (puzzles)
+  makeWindWheel(x, z, ry, id, o = {}) {
     const w = B.windWheel(); this.place(w, x, z, ry);
     this.col.addCircle(x, z, 0.4, -10, this.h(x, z) + 3.5).climb = false;
-    const tgt = this.addTarget({ id, pos: new THREE.Vector3(x, this.h(x, z) + 3.3, z), r: 1.6, obj: w, spin: 0, active: false, onHit: null });
+    const tgt = this.addTarget({ id, pos: new THREE.Vector3(x, this.h(x, z) + 3.3, z), r: 1.6, obj: w, spin: 0, active: false, onHit: null, hold: o.hold || 0, holdT: 0 });
     tgt.baseHit = (el) => {
       if (el === 'wind') {
-        tgt.spin = 1;
+        tgt.spin = 1; tgt.holdT = tgt.hold;
         if (!tgt.active) {
           tgt.active = true;
           G.audio.play('updraft', { pos: tgt.pos });
@@ -456,6 +470,10 @@ export class World {
       }
     };
     this.anims.push((dt) => {
+      if (tgt.hold && tgt.active) {
+        tgt.holdT -= dt;
+        if (tgt.holdT <= 0) { tgt.active = false; G.audio.play('fizzle', { pos: tgt.pos, v: 0.3 }); if (tgt.onStop) tgt.onStop(tgt); }
+      }
       const sp = tgt.active ? 1 : tgt.spin;
       w.userData.rotor.rotation.z += dt * (0.3 + sp * 9);
       tgt.spin = Math.max(0, tgt.spin - dt * 0.2);
@@ -684,8 +702,8 @@ export class World {
     const geo = crystalGeometry('prism', { double: true, sides: 5, radius: 0.55, tip: 0.6, seed: 17 });
     const mat = crystalMaterial({ color: 0xdcffb0, glow: 0xb8ff70, intensity: 1.25, seed: 4 });
     const sproutMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.45, 1.1, 0.55) });
-    SEEDS.forEach(([x, z], i) => {
-      const y = this.h(x, z);
+    SEEDS.forEach(([x, z, dy = 0], i) => {
+      const y = this.h(x, z) + dy;
       const g = new THREE.Group(); g.position.set(x, y, z); g.userData.noBake = true;
       const sprout = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.6, 5), sproutMat);
       sprout.position.y = 0.3; g.add(sprout);
@@ -709,7 +727,7 @@ export class World {
       g.add(core);
       const halo = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.03, 6, 20), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.8, 1.6, 2.4) }));
       g.add(halo);
-      g.visible = !m.hidden;
+      g.visible = false; // shown once its sketchbook page is matched (game/sketches.js)
       this.scene.add(g);
       this.memoryObjs[id] = { id, ...m, g, core, halo, taken: false, pos: new THREE.Vector3(m.x, y + 0.5, m.z) };
     }
@@ -719,7 +737,8 @@ export class World {
   // Ice floe (frost on water) — walkable
   addIceFloe(x, z) {
     if (this.iceFloes.length > 14) this.removeIceFloe(this.iceFloes[0]);
-    const m = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.3, 0.7, 6), G.vfx.iceMat);
+    FLOE_GEO ||= new THREE.CylinderGeometry(1.6, 1.3, 0.7, 6);
+    const m = new THREE.Mesh(FLOE_GEO, G.vfx.iceMat);
     m.position.set(x, -0.1, z); m.rotation.y = rand() * 3; m.scale.set(0.01, 1, 0.01);
     m.castShadow = true; m.receiveShadow = true;
     this.scene.add(m);
@@ -746,11 +765,12 @@ export class World {
     const camD = camPos.distanceTo(U.seeB.value);
     U.seeR.value = camD < 14 ? 2.1 : 0;
     this.weather.update(dt, camPos, playerPos);
-    if (G.player) { this.fire.update(dt, camPos, playerPos); this.objects.update(dt, playerPos); }
+    if (G.player) { this.fire.update(dt, camPos, playerPos); this.objects.update(dt, playerPos); this.puzzles.update(dt, playerPos); this.trials.update(dt, playerPos); }
     this.sky.update(dt, playerPos, 1, camPos);
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);
     this.props.update(G.camera);
+    this.terrain.update(G.camera);
     const n = this.sky.night;
     B.windowMat.color.setRGB(1.6, 1.1, 0.5).multiplyScalar(0.25 + n * 1.3);
     for (const a of this.anims) a(dt);
@@ -774,7 +794,7 @@ export class World {
     if (this.resTree) this.resTree.userData.lanterns.forEach((l, i) => { l.position.y += Math.sin(G.time * 1.3 + i) * 0.002; });
     // seeds
     for (const s of this.seeds) {
-      if (s.taken) continue;
+      if (s.taken || s.hidden) continue;
       s.orb.position.y = 0.9 + Math.sin(G.time * 2 + s.i) * 0.15;
       s.orb.rotation.y += dt * 2;
       const d = Math.hypot(s.x - playerPos.x, s.z - playerPos.z);
@@ -800,7 +820,8 @@ export class World {
     const reg = regionAt(playerPos.x, playerPos.z);
     if (n > 0.5 && rand() < dt * 6 * q && reg.id !== 'rift') G.vfx.burst(playerPos, 'firefly', 1, { spread: 16 });
     if (n < 0.4 && rand() < dt * 5 * q) G.vfx.burst(playerPos, 'pollen', 1, { spread: 16 });
-    if ((playerPos.z < -95 || playerPos.y > 42) && rand() < dt * 40 * q) G.vfx.burst(playerPos, 'snow', 1, { spread: 18 });
+    const outer = Math.hypot(playerPos.x, playerPos.z) > 250;
+    if ((outer ? this.terrain.snowAt(playerPos.x, playerPos.z) > 0.3 : playerPos.z < -95 || playerPos.y > 42) && rand() < dt * 40 * q) G.vfx.burst(playerPos, 'snow', 1, { spread: 18 });
     if (reg.id === 'rift' && rand() < dt * 18 * q) G.vfx.burst(tmp.set(playerPos.x + randRange(-14, 14), playerPos.y, playerPos.z + randRange(-14, 14)), 'ash', 1, { spread: 1 });
   }
 }

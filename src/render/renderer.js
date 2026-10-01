@@ -3,34 +3,58 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { G } from '../core/context.js';
 import './materials.js'; // installs the global aerial-perspective fog chunks before any compile
 
-// Screen-space refraction: offsets written by effect meshes (shock rings,
-// shells, heat haze) into a half-res float target bend the scene colour,
-// with a slight chromatic split along the offset.
-const DistortShader = {
-  uniforms: { tDiffuse: { value: null }, tDistort: { value: null } },
-  vertexShader: /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-  fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse, tDistort; varying vec2 vUv;
-    void main(){
-      vec2 off = texture2D(tDistort, vUv).xy;
-      off = clamp(off, vec2(-0.08), vec2(0.08));
-      vec3 c;
-      c.r = texture2D(tDiffuse, vUv + off * 1.08).r;
-      c.g = texture2D(tDiffuse, vUv + off).g;
-      c.b = texture2D(tDiffuse, vUv + off * 0.92).b;
-      // faint brightening where the refraction is strongest (shock front sheen)
-      c *= 1.0 + min(length(off) * 3.0, 0.12);
-      gl_FragColor = vec4(c, 1.0);
-    }`,
-};
+// Bloom that stops after compositing its mips. The grade pass adds the result while it
+// already reads the frame, instead of a separate full-resolution additive blend.
+class BloomPass extends UnrealBloomPass {
+  get texture() { return this.renderTargetsHorizontal[0].texture; }
+  render(renderer, writeBuffer, readBuffer) {
+    renderer.getClearColor(this._oldClearColor);
+    this._oldClearAlpha = renderer.getClearAlpha();
+    const oldAutoClear = renderer.autoClear;
+    renderer.autoClear = false;
+    renderer.setClearColor(this.clearColor, 0);
+    const q = this._fsQuad;
+    this.highPassUniforms.tDiffuse.value = readBuffer.texture;
+    this.highPassUniforms.luminosityThreshold.value = this.threshold;
+    q.material = this.materialHighPassFilter;
+    renderer.setRenderTarget(this.renderTargetBright); renderer.clear(); q.render(renderer);
+    let inp = this.renderTargetBright;
+    for (let i = 0; i < this.nMips; i++) {
+      const m = this.separableBlurMaterials[i];
+      q.material = m;
+      m.uniforms.colorTexture.value = inp.texture;
+      m.uniforms.direction.value = UnrealBloomPass.BlurDirectionX;
+      renderer.setRenderTarget(this.renderTargetsHorizontal[i]); renderer.clear(); q.render(renderer);
+      m.uniforms.colorTexture.value = this.renderTargetsHorizontal[i].texture;
+      m.uniforms.direction.value = UnrealBloomPass.BlurDirectionY;
+      renderer.setRenderTarget(this.renderTargetsVertical[i]); renderer.clear(); q.render(renderer);
+      inp = this.renderTargetsVertical[i];
+    }
+    const c = this.compositeMaterial;
+    q.material = c;
+    c.uniforms.bloomStrength.value = this.strength;
+    c.uniforms.bloomRadius.value = this.radius;
+    c.uniforms.bloomTintColors.value = this.bloomTintColors;
+    renderer.setRenderTarget(this.renderTargetsHorizontal[0]); renderer.clear(); q.render(renderer);
+    renderer.setClearColor(this._oldClearColor, this._oldClearAlpha);
+    renderer.autoClear = oldAutoClear;
+  }
+}
 
+// Final pass, straight to the canvas, so the frame is read and written once after the scene:
+// screen-space refraction, bloom add, colour grade, then tone mapping + sRGB (what OutputPass
+// did). Refraction offsets come from effect meshes (shock rings, shells, heat haze) drawn
+// into a half-res float target; they bend the scene and its bloom with a slight chromatic
+// split along the offset.
 const GradeShader = {
   uniforms: {
     tDiffuse: { value: null },
+    tBloom: { value: null },
+    tDistort: { value: null },
+    uDistort: { value: 0 },
     uTime: { value: 0 },
     uImpact: { value: 0 },
     uHurt: { value: 0 },
@@ -49,23 +73,28 @@ const GradeShader = {
     void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
   `,
   fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse;
-    uniform float uTime, uImpact, uHurt, uLowHp, uSat, uVignette, uFlash, uMono, uAspect, uSlowmo;
+    uniform sampler2D tDiffuse, tBloom, tDistort;
+    uniform float uDistort, uTime, uImpact, uHurt, uLowHp, uSat, uVignette, uFlash, uMono, uAspect, uSlowmo;
     uniform vec3 uFlashColor;
     varying vec2 vUv;
     void main(){
       vec2 uv = vUv;
       vec2 c = uv - 0.5;
+      vec2 off = vec2(0.0);
+      if (uDistort > 0.5) off = clamp(texture2D(tDistort, uv).xy, vec2(-0.08), vec2(0.08));
       float ca = 0.0012 + uImpact * 0.010;
+      vec2 ur = uv - c * ca + off * 1.08, ug = uv + off, ub = uv + c * ca + off * 0.92;
       vec3 col;
-      col.r = texture2D(tDiffuse, uv - c * ca).r;
-      col.g = texture2D(tDiffuse, uv).g;
-      col.b = texture2D(tDiffuse, uv + c * ca).b;
+      col.r = texture2D(tDiffuse, ur).r + texture2D(tBloom, ur).r;
+      col.g = texture2D(tDiffuse, ug).g + texture2D(tBloom, ug).g;
+      col.b = texture2D(tDiffuse, ub).b + texture2D(tBloom, ub).b;
       if (uImpact > 0.02) {
         vec3 acc = col;
-        for (int i = 1; i < 6; i++) acc += texture2D(tDiffuse, uv - c * float(i) * 0.014 * uImpact).rgb;
+        for (int i = 1; i < 6; i++) { vec2 o = ug - c * float(i) * 0.014 * uImpact; acc += texture2D(tDiffuse, o).rgb + texture2D(tBloom, o).rgb; }
         col = mix(col, acc / 6.0, clamp(uImpact * 1.4, 0.0, 1.0));
       }
+      // faint brightening where the refraction is strongest (shock front sheen)
+      col *= 1.0 + min(length(off) * 3.0, 0.12);
       float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
       col = mix(vec3(l), col, uSat * (1.0 - uMono));
       // painterly split tone: cool shadows, warm highlights
@@ -89,6 +118,8 @@ const GradeShader = {
       col = mix(col, vec3(0.55, 0.02, 0.04) * (0.6 + l), clamp(edge * hurt, 0.0, 0.85));
       col += uFlashColor * uFlash;
       gl_FragColor = vec4(col, 1.0);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
     }
   `,
 };
@@ -123,15 +154,12 @@ export class Renderer {
     // distortion objects live in their own scene and render into a half-res float target
     this.distortScene = new THREE.Scene();
     this.distortRT = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: false });
-    this.distort = new ShaderPass(DistortShader);
-    this.distort.uniforms.tDistort.value = this.distortRT.texture;
-    this.distort.enabled = false;
-    this.composer.addPass(this.distort);
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.42, 0.5, 1.35);
+    this.bloom = new BloomPass(new THREE.Vector2(256, 256), 0.42, 0.5, 1.35);
     this.composer.addPass(this.bloom);
     this.grade = new ShaderPass(GradeShader);
+    this.grade.uniforms.tBloom.value = this.bloom.texture;
+    this.grade.uniforms.tDistort.value = this.distortRT.texture;
     this.composer.addPass(this.grade);
-    this.composer.addPass(new OutputPass());
   }
 
   applyQuality() {
@@ -158,7 +186,7 @@ export class Renderer {
     u.uTime.value = G.realTime;
     const D = G.vfx && G.vfx.distort;
     const on = !!(D && D.active);
-    this.distort.enabled = on;
+    u.uDistort.value = on ? 1 : 0;
     if (on) {
       const r = this.renderer;
       const prevRT = r.getRenderTarget(), prevA = r.getClearAlpha();

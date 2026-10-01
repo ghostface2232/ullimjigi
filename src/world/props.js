@@ -23,6 +23,7 @@ import { POI } from './layout.js';
 
 const V = new THREE.Vector3(), V2 = new THREE.Vector3(), V3 = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
+const FADE = 5; // metres either side of a type's near/far switch over which the two models dither into each other
 const hc = (h) => new THREE.Color(h);
 const TAU = Math.PI * 2;
 // cheap deterministic hash in [0,1)
@@ -768,13 +769,14 @@ export class Props {
   constructor(scene, terrain, colliders, quality = 'high') {
     this.scene = scene; this.T = terrain; this.col = colliders;
     this.quality = quality;
-    const tree = toon(0xffffff, { vertexColors: true, sway: 0.028, swayBase: 2.4, rim: 0.35, tex: 'bark', leafy: true });
-    const fir = toon(0xffffff, { vertexColors: true, sway: 0.02, swayBase: 1.6, rim: 0.3, tex: 'bark', leafy: true });
-    const shrub = toon(0xffffff, { vertexColors: true, sway: 0.05, swayBase: 0, rim: 0.3, tex: 'bark', leafy: true });
-    const ground = toon(0xffffff, { vertexColors: true, sway: 0.09, swayBase: 0.05, rim: 0.25, side: THREE.DoubleSide });
-    const solid = toon(0xffffff, { vertexColors: true, rim: 0.3, tex: 'bark' });
-    const rockMat = toon(0xffffff, { vertexColors: true, flat: true, rim: 0.15, tex: 'rock' });
-    const small = toon(0xffffff, { vertexColors: true, rim: 0.3 });
+    // lodFade: near and far models cross-fade with a dither across the LOD band (update())
+    const tree = toon(0xffffff, { vertexColors: true, sway: 0.028, swayBase: 2.4, rim: 0.35, tex: 'bark', leafy: true, lodFade: true });
+    const fir = toon(0xffffff, { vertexColors: true, sway: 0.02, swayBase: 1.6, rim: 0.3, tex: 'bark', leafy: true, lodFade: true });
+    const shrub = toon(0xffffff, { vertexColors: true, sway: 0.05, swayBase: 0, rim: 0.3, tex: 'bark', leafy: true, lodFade: true });
+    const ground = toon(0xffffff, { vertexColors: true, sway: 0.09, swayBase: 0.05, rim: 0.25, side: THREE.DoubleSide, lodFade: true });
+    const solid = toon(0xffffff, { vertexColors: true, rim: 0.3, tex: 'bark', lodFade: true });
+    const rockMat = toon(0xffffff, { vertexColors: true, flat: true, rim: 0.15, tex: 'rock', lodFade: true });
+    const small = toon(0xffffff, { vertexColors: true, rim: 0.3, lodFade: true });
     this.mats = { tree, fir, shrub, ground, solid, rockMat, small };
     // variants: [nearGeo, farGeo|null]; near: LOD switch distance; max: draw distance
     const pair = (fn) => [fn(false), fn(true)];
@@ -867,8 +869,10 @@ export class Props {
     this.dirty = true;
   }
 
+  // Scattered against the original 480 m map's grid (Terrain.legacy) so the vale keeps
+  // exactly the layout it had; instances still sit on the live terrain (add()).
   scatter(rnd, quality) {
-    const T = this.T;
+    const T = this.T, L = T.legacy();
     const q = quality === 'low' ? 0.5 : quality === 'medium' ? 0.75 : 1;
     const nv = T.noise;
     const forestAt = (x, z) => smoothstep(0.0, 0.5, fbm(nv, x * 0.012 + 50, z * 0.012, 2));
@@ -878,9 +882,9 @@ export class Props {
     // trees
     for (let i = 0; i < 8000 * q; i++) {
       const x = (rnd() - 0.5) * 460, z = (rnd() - 0.5) * 460;
-      const h = T.height(x, z);
+      const h = L.height(x, z);
       if (h < 0.8) continue;
-      const n = T.normal(x, z);
+      const n = L.normal(x, z);
       if (n.y < 0.8) continue;
       const dRift = Math.hypot(x - POI.rift.x, z - POI.rift.z);
       let dens = forestAt(x, z) * 0.8 + 0.04;
@@ -907,7 +911,7 @@ export class Props {
     // bushes
     for (let i = 0; i < 3600 * q; i++) {
       const x = (rnd() - 0.5) * 460, z = (rnd() - 0.5) * 460;
-      if (T.grassAt(x, z) < 0.6) continue;
+      if (L.grassAt(x, z) < 0.6) continue;
       if (this.excluded(x, z, -1)) continue;
       const dens = smoothstep(-0.2, 0.5, fbm(nv, x * 0.012 + 50, z * 0.012, 2)) * 0.7 + 0.1;
       if (rnd() > dens) continue;
@@ -916,21 +920,21 @@ export class Props {
     // ferns, mushrooms, stumps and fallen logs under the canopy
     for (let i = 0; i < 6000 * q; i++) {
       const x = (rnd() - 0.5) * 460, z = (rnd() - 0.5) * 460;
-      if (T.grassAt(x, z) < 0.45 || this.excluded(x, z, -1.5)) continue;
+      if (L.grassAt(x, z) < 0.45 || this.excluded(x, z, -1.5)) continue;
       const f = forestAt(x, z) + (1 - smoothstep(20, 60, woodsD(x, z))) * 0.8;
       if (rnd() > f * 0.8) continue;
       const k = rnd();
       if (k < 0.78) this.add('fern', x, z, 0.7 + rnd() * 0.6);
       else if (k < 0.93) this.add('mushroom', x, z, 0.8 + rnd() * 0.6);
       else if (k < 0.97) this.add('stump', x, z, 0.8 + rnd() * 0.4);
-      else if (T.normal(x, z).y > 0.93) this.add('log', x, z, 0.85 + rnd() * 0.3, { dy: 0.1 });
+      else if (L.normal(x, z).y > 0.93) this.add('log', x, z, 0.85 + rnd() * 0.3, { dy: 0.1 });
     }
     // wildflower patches: clumped by noise, rich on the sunset meadow
     for (let i = 0; i < 9000 * q; i++) {
       const meadowBias = i % 3 === 0;
       const a = rnd() * TAU, rr = Math.sqrt(rnd()) * 55;
       const x = meadowBias ? POI.meadow.x + Math.cos(a) * rr : (rnd() - 0.5) * 460, z = meadowBias ? POI.meadow.z + Math.sin(a) * rr : (rnd() - 0.5) * 460;
-      if (T.grassAt(x, z) < 0.55 || this.excluded(x, z, -9)) continue;
+      if (L.grassAt(x, z) < 0.55 || this.excluded(x, z, -9)) continue;
       const dm = meadowD(x, z);
       const patch = smoothstep(-0.15, 0.3, fbm(nv, x * 0.05 - 13, z * 0.05 + 7, 2));
       const p = patch * (0.35 + (1 - smoothstep(20, 55, dm)) * 0.9) * (1 - forestAt(x, z) * 0.6);
@@ -942,7 +946,7 @@ export class Props {
     for (let i = 0; i < 2400 * q; i++) {
       const a = rnd() * TAU, rr = POI.lake.r * (0.7 + rnd() * 0.55);
       const x = POI.lake.x + Math.cos(a) * rr, z = POI.lake.z + Math.sin(a) * rr;
-      const h = T.height(x, z);
+      const h = L.height(x, z);
       if (h < -0.75 || h > 1.1) continue;
       if (T.pathInfo(x, z).d < 3) continue;
       if (fbm(nv, x * 0.08, z * 0.08, 2) < -0.15) continue;
@@ -952,7 +956,7 @@ export class Props {
     for (let i = 0; i < 260 * q; i++) {
       const a = rnd() * TAU, rr = POI.lake.r * (0.95 + rnd() * 0.3);
       const x = POI.lake.x + Math.cos(a) * rr, z = POI.lake.z + Math.sin(a) * rr;
-      const h = T.height(x, z);
+      const h = L.height(x, z);
       if (h < -0.6 || h > 1.6 || T.pathInfo(x, z).d < 3) continue;
       if (rnd() < 0.55) this.add('pebbles', x, z, 0.9 + rnd() * 0.6);
       else { const s = 0.35 + rnd() * 0.55; this.add('rock', x, z, s, { col: s > 0.7 ? 0.8 : 0, v: rnd() < 0.5 ? 3 : 0 }); }
@@ -960,8 +964,8 @@ export class Props {
     // rocks + pebble scatter; big outcrops on steep ground and in the north
     for (let i = 0; i < 2800 * q; i++) {
       const x = (rnd() - 0.5) * 470, z = (rnd() - 0.5) * 470;
-      const h = T.height(x, z);
-      const n = T.normal(x, z);
+      const h = L.height(x, z);
+      const n = L.normal(x, z);
       const steep = 1 - n.y;
       if (n.y < 0.66) continue;
       if (rnd() > 0.25 + steep * 3 + (h > 30 ? 0.3 : 0)) continue;
@@ -975,9 +979,9 @@ export class Props {
     }
     for (let i = 0; i < 1600 * q; i++) {
       const x = (rnd() - 0.5) * 460, z = (rnd() - 0.5) * 460;
-      const pf = T.pathAt(x, z);
+      const pf = L.pathAt(x, z);
       if (!(pf > 0.15 && pf < 0.7) && rnd() > 0.15) continue;
-      if (T.height(x, z) < 0.3) continue;
+      if (L.height(x, z) < 0.3) continue;
       this.add('pebbles', x, z, 0.7 + rnd() * 0.6);
     }
   }
@@ -1009,6 +1013,9 @@ export class Props {
         // Shadows come from a proxy on SHADOW_LAYER (seen only by the sun's
         // shadow camera) using the cheap far model, so near detail isn't drawn twice.
         const mk = (geo, kind) => {
+          // every props geometry carries the fade attribute (zeros where it never fades), so the
+          // shader never reads an unbound attribute slot
+          if (!geo.attributes.aFade || geo.attributes.aFade.count < n) geo.setAttribute('aFade', new THREE.InstancedBufferAttribute(new Float32Array(n), 1).setUsage(THREE.DynamicDrawUsage));
           const im = new THREE.InstancedMesh(geo, t.mat, n);
           im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
           if (kind !== 'shadow') { im.setColorAt(0, tmpC); im.instanceColor.setUsage(THREE.DynamicDrawUsage); }
@@ -1050,7 +1057,10 @@ export class Props {
       const nA = b.near.instanceMatrix.array, nC = b.near.instanceColor.array;
       const fA = b.far ? b.far.instanceMatrix.array : null, fC = b.far ? b.far.instanceColor.array : null;
       const sA = b.shadow ? b.shadow.instanceMatrix.array : null;
-      const near2 = t.near * t.near, max2 = t.max * t.max, keep2 = t.keep * t.keep;
+      const nFd = b.near.geometry.attributes.aFade.array, fFd = b.far ? b.far.geometry.attributes.aFade.array : null;
+      const max2 = t.max * t.max, keep2 = t.keep * t.keep;
+      // LOD band: inside it an item is in both meshes, dithered from near to far
+      const b0 = fA ? t.near - FADE : 1e9, b1 = t.near + FADE, b02 = b0 * b0, b12 = b1 * b1;
       let nn = 0, nf = 0, ns = 0;
       for (let i = 0; i < n; i++) {
         const dx = sphs[i * 4] - cx, dy = sphs[i * 4 + 1] - cy, dz = sphs[i * 4 + 2] - cz;
@@ -1061,25 +1071,30 @@ export class Props {
           sph.center.set(sphs[i * 4], sphs[i * 4 + 1], sphs[i * 4 + 2]); sph.radius = sphs[i * 4 + 3];
           if (!frustum.intersectsSphere(sph)) continue;
         }
-        if (d2 < near2 || !fA) {
+        const fade = d2 <= b02 ? 0 : d2 >= b12 ? 1 : (Math.sqrt(d2) - b0) / (b1 - b0);
+        if (fade < 1) {
           for (let k = 0; k < 16; k++) nA[nn * 16 + k] = mats[i * 16 + k];
           nC[nn * 3] = cols[i * 3]; nC[nn * 3 + 1] = cols[i * 3 + 1]; nC[nn * 3 + 2] = cols[i * 3 + 2];
+          nFd[nn] = fade;
           nn++;
-        } else {
+        }
+        if (fade > 0) {
           for (let k = 0; k < 16; k++) fA[nf * 16 + k] = mats[i * 16 + k];
           fC[nf * 3] = cols[i * 3]; fC[nf * 3 + 1] = cols[i * 3 + 1]; fC[nf * 3 + 2] = cols[i * 3 + 2];
+          fFd[nf] = -fade;
           nf++;
         }
       }
-      const setN = (im, c) => {
+      const setN = (im, c, fd) => {
         im.count = c; im.visible = c > 0;
         if (c) {
           im.instanceMatrix.clearUpdateRanges(); im.instanceMatrix.addUpdateRange(0, c * 16); im.instanceMatrix.needsUpdate = true;
           if (im.instanceColor) { im.instanceColor.clearUpdateRanges(); im.instanceColor.addUpdateRange(0, c * 3); im.instanceColor.needsUpdate = true; }
+          if (fd) { const a = im.geometry.attributes.aFade; a.clearUpdateRanges(); a.addUpdateRange(0, c); a.needsUpdate = true; }
         }
       };
-      setN(b.near, nn);
-      if (b.far) setN(b.far, nf);
+      setN(b.near, nn, !!fA);
+      if (b.far) setN(b.far, nf, true);
       if (b.shadow) setN(b.shadow, ns);
     }
   }

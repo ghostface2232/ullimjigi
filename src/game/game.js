@@ -18,13 +18,33 @@ import { Dialogue } from './dialogue.js';
 import { HUD } from './hud.js';
 import { Story } from './story.js';
 import { Skills } from './skills.js';
+import { Atlas } from './atlas.js';
 import { fillName } from '../core/util.js';
 
-const SAVE_KEY = 'ullimjigi_save_v1';
 const SET_KEY = 'ullimjigi_settings';
 const $ = (s) => document.querySelector(s);
 const DEV = new URLSearchParams(location.search).has('dev');
-const raf = (fn) => (DEV ? setTimeout(fn, 16) : requestAnimationFrame(fn));
+// dev presets keep their own save, so trying things never overwrites a real journey
+// (in dev, loading falls back to the real save when there is no dev save yet: ?dev=continue)
+const REAL_SAVE = 'ullimjigi_save_v1';
+const SAVE_KEY = DEV ? 'ullimjigi_save_dev' : REAL_SAVE;
+const LOAD_ERR = 'ullimjigi_load_error'; // a failed load's reason, shown on the title after the reload
+// what is wrong with a parsed save, or '' when it has the shape loading expects
+function saveProblem(d) {
+  const P = d && d.player;
+  if (!P || typeof P !== 'object') return '플레이어 정보 없음';
+  for (const k of ['level', 'xp', 'maxHp', 'hp', 'maxMana', 'maxStamina']) if (!Number.isFinite(P[k])) return `플레이어 ${k}`;
+  if (!Array.isArray(P.unlocked)) return '깨우친 속성';
+  if (P.pos != null && !(Array.isArray(P.pos) && P.pos.length === 2 && P.pos.every(Number.isFinite))) return '위치';
+  if (!d.story || typeof d.story !== 'object') return '이야기 진행';
+  if (d.lanterns != null && !Array.isArray(d.lanterns)) return '등석';
+  if (d.skills != null && typeof d.skills !== 'object') return '울림 나무';
+  return '';
+}
+const readSave = () => { try { return localStorage.getItem(SAVE_KEY) || (DEV ? localStorage.getItem(REAL_SAVE) : null); } catch (_) { return null; } };
+// dev presets tick on a timer so a hidden window keeps running; &raf uses real frames (measuring)
+const TIMER = DEV && !new URLSearchParams(location.search).has('raf');
+const raf = (fn) => (TIMER ? setTimeout(fn, 16) : requestAnimationFrame(fn));
 const nextFrame = () => new Promise((r) => raf(() => r()));
 
 const INTRO = [
@@ -73,6 +93,7 @@ export class Game {
     G.vfx = new VFX(G.scene);
     await nextFrame();
     G.world = new World(G.scene, (p, t) => this.progress(p, t));
+    G.atlas = new Atlas(G.world.terrain);
     this.progress(0.75, '사람들을 깨우는 중…');
     await nextFrame();
     G.cameraRig = new CameraRig(G.camera);
@@ -102,8 +123,10 @@ export class Game {
       ld.classList.add('hidden');
       G.playerName = '리안';
       this.devStart(new URLSearchParams(location.search).get('dev'));
+      if (new URLSearchParams(location.search).has('rec')) import('./devrec.js').then((m) => m.startRecorder());
       return;
     }
+    ld.classList.add('ready'); // the loading star blooms
     $('.load-text').textContent = '클릭하여 시작';
     $('.load-text').style.animation = 'nextBob 1.4s infinite';
     await new Promise((r) => ld.addEventListener('click', r, { once: true }));
@@ -130,6 +153,8 @@ export class Game {
       rift: { ch: 'rift', flags: [...pro, ...vil, ...bel, ...mor, 'water_learn'], els: ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'], lv: 10, pos: [96, -90] },
       lake: { ch: 'bells', flags: [...pro, ...vil], els: ['arcane', 'fire', 'wind'], lv: 4, pos: [-34, 52] },
       skills: { ch: 'mora', flags: [...pro, ...vil, ...bel, 'water_learn'], els: ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'], lv: 12, pos: [4, 60] },
+      // the south pass saddle, facing the outer lands (glide / scale checks for the 1280 m map)
+      outer: { ch: 'mora', flags: [...pro, ...vil, ...bel, 'water_learn'], els: ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'], lv: 12, pos: [37, 240] }, // yaw 0 faces south
     }[preset];
     if (!P_) { this.startPlay(new Story(), null); return; }
     const flags = {}; P_.flags.forEach((f) => (flags[f] = true));
@@ -155,6 +180,23 @@ export class Game {
     const bm = G.vfx.beam('arcane'); bm.done = true;
     G.vfx.rings.forEach((r) => (r.m.visible = true));
     G.scene.add(grp);
+    G.world.props.update(G.camera);
+    G.world.terrain.update(G.camera, Infinity);
+    try { await this.compileScene(); } catch (_) { /* ignore */ }
+    G.vfx.rings.forEach((r) => (r.m.visible = false));
+    G.scene.remove(grp);
+    G.vfx.disposeOrb(orb);
+  }
+
+  // Compile every material in the scene so nothing compiles on first sight mid-play.
+  // compile() only visits visible objects, so everything hidden (the player before the intro,
+  // pooled effects, prop batches, characters placed by the story) is shown just for the
+  // synchronous visit and hidden again before any frame is drawn; the returned promise only
+  // waits for the driver to finish linking in the background. Lights stay as they are:
+  // their count is part of every program.
+  compileScene() {
+    const hidden = [];
+    G.scene.traverse((o) => { if (!o.visible && !o.isLight) { hidden.push(o); o.visible = true; } });
     // compile against the HDR scene target: programs are keyed by output colour space /
     // tone mapping, and the frame is drawn into the composer's target, not the canvas
     const R = G.renderer.renderer, prevRT = R.getRenderTarget();
@@ -163,10 +205,8 @@ export class Game {
     let pr = null;
     try { pr = R.compileAsync(G.scene, G.camera); } catch (_) { try { R.compile(G.scene, G.camera); } catch (e) { /* ignore */ } }
     R.setRenderTarget(prevRT);
-    try { if (pr) await pr; } catch (_) { /* ignore */ }
-    G.vfx.rings.forEach((r) => (r.m.visible = false));
-    G.scene.remove(grp);
-    G.vfx.disposeOrb(orb);
+    hidden.forEach((o) => (o.visible = false));
+    return pr || Promise.resolve();
   }
 
   // ------------------------------------------------------------ UI
@@ -238,11 +278,20 @@ export class Game {
     }
   }
 
-  hasSave() { try { return !!localStorage.getItem(SAVE_KEY); } catch (_) { return false; } }
+  hasSave() { return !!readSave(); }
+  // a line of explanation under the title buttons (why continue failed…)
+  titleNote(text) {
+    let n = $('#title-screen .title-note');
+    if (!n) { n = document.createElement('div'); n.className = 'title-note'; $('.title-menu') ? $('.title-menu').after(n) : $('#title-screen').appendChild(n); }
+    n.textContent = text;
+  }
 
   showTitle() {
     $('#title-screen').classList.remove('hidden');
-    $('[data-act="continue"]').disabled = !this.hasSave();
+    try { const err = sessionStorage.getItem(LOAD_ERR); if (err) { sessionStorage.removeItem(LOAD_ERR); this.titleNote(err); } } catch (_) { /* ignore */ }
+    const c = $('[data-act="continue"]');
+    c.disabled = !this.hasSave();
+    c.title = c.disabled ? '이 브라우저에 저장된 여정이 없습니다' : '';
   }
 
   openMenu(name) {
@@ -257,7 +306,7 @@ export class Game {
     if (name === 'pause') $('#pause').classList.remove('hidden');
     if (name === 'settings') { $('#pause').classList.add('hidden'); $('#settings').classList.remove('hidden'); }
     $('#ui').classList.add('menu-open');
-    if (name === 'map') { G.hud.drawMap(); $('#map').classList.remove('hidden'); }
+    if (name === 'map') { G.hud.openMap(); $('#map').classList.remove('hidden'); }
     if (name === 'journal') { G.hud.drawJournal(this.jTab || 'quests'); $('#journal').classList.remove('hidden'); }
     if (name === 'skills') { $('#skills').classList.remove('hidden'); G.hud.openSkills(); }
     if (name === 'crossroads') $('#crossroads').classList.remove('hidden');
@@ -325,8 +374,20 @@ export class Game {
   continueGame() {
     if (this.starting) return;
     let d;
-    try { d = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (_) { return; }
-    if (!d) return;
+    try { d = JSON.parse(readSave()); } catch (_) { this.titleNote('저장된 여정이 손상되어 불러올 수 없습니다.'); return; }
+    if (!d) { this.titleNote('이 브라우저에 저장된 여정이 없습니다. 저장은 브라우저와 주소마다 따로 남습니다.'); return; }
+    // check the shape first, so a bad save is turned away before anything is changed
+    const bad = saveProblem(d);
+    if (bad) { this.titleNote(`저장된 여정을 읽을 수 없습니다 (${bad}).`); return; }
+    try { this.loadSave(d); } catch (e) {
+      // loading had already changed the player, the story and the world: nothing to roll back
+      // cleanly, so start the page over and say why on the title
+      console.error('continue failed', e);
+      try { sessionStorage.setItem(LOAD_ERR, `저장을 불러오지 못했습니다: ${e && e.message ? e.message : e}`); } catch (_) { /* ignore */ }
+      location.reload();
+    }
+  }
+  loadSave(d) {
     this.starting = true;
     $('#title-screen').classList.add('hidden');
     G.playerName = d.name || '리안';
@@ -337,6 +398,7 @@ export class Game {
     if (d.player.hat) P.setHat(true);
     const story0 = new Story(d.story);
     let techMigrated = false;
+    G.atlas.load(d.atlas); // older saves: only the vale is known
     if (d.skills) techMigrated = G.skills.load(d.skills);
     else { G.skills.points = Skills.expected(P.level, story0); G.skills.earned = G.skills.points; G.skills.grantBasics(); this.migratedSkills = true; }
     for (const id of d.lanterns || []) if (G.world.lanterns[id]) G.world.lanterns[id].setLit(true);
@@ -362,6 +424,8 @@ export class Game {
       G.player.teleport(x, z, d.player.yaw ?? 0);
     } else G.player.teleport(POI.spawn.x, POI.spawn.z, 2.2);
     story.start();
+    // the story has placed its people and animals: compile whatever is new among them
+    this.compileScene().catch(() => {});
     G.input.requestLock();
     if (d) {
       const f = $('#fade'); f.style.transition = 'opacity 1.2s'; f.style.opacity = 0;
@@ -379,6 +443,7 @@ export class Game {
       respawn: this.respawn ? this.respawn.id : null,
       story: G.story.save(),
       skills: G.skills.save(),
+      atlas: G.atlas.save(),
     };
     if (!d.player.pos) delete d.player.pos;
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(d)); } catch (e) { console.warn(e); }
@@ -393,7 +458,7 @@ export class Game {
     G.vfx.burst(L.pos, 'fire', 30, { speed: 3 }); G.vfx.burst(L.pos, 'soul', 20, { el: 'gold' });
     G.vfx.ring(L.pos.clone().setY(L.pos.y - 2.2), 0xffd88a, 5, 0.8);
     G.vfx.flash(L.pos, 0xffb060, 60, 14, 0.8);
-    G.hud.banner('등석을 밝혔다', L.name, '쓰러지면 이곳에서 깨어납니다 · 지도에서 이곳으로 이동할 수 있습니다', '#ffc870', 3000);
+    G.hud.banner('등석을 밝혔다', L.name, '쓰러지면 이곳에서 깨어납니다 · 지도에서 이곳으로 이동할 수 있습니다', '#ffc870', 3000, { minor: true });
     this.respawn = L;
     G.player.heal(G.player.maxHp);
     if (G.story && G.story.once('lantern_first')) G.hud.hint(`${'<kbd>E</kbd>'} 밝힌 등석에서 쉬면 체력을 회복하고 시간을 보낼 수 있습니다 · ${'<kbd>M</kbd>'} 지도에서 등석을 눌러 빠르게 이동`, 8);
@@ -573,6 +638,7 @@ export class Game {
         if (G.story) G.story.update(dt);
       }
       G.dialogue.update(raw);
+      if (G.sketches) G.sketches.pump();
       this.updateInteract();
       this.combatHold -= dt;
     }
@@ -586,6 +652,7 @@ export class Game {
     } else {
       G.cameraRig.update(raw, P, I);
       G.world.update(dt, G.camera.position, P.pos);
+      if (G.state === 'play') G.atlas.update(dt);
     }
     G.vfx.add.setScale(G.renderer.renderer.domElement.height, G.camera.fov);
     G.vfx.norm.setScale(G.renderer.renderer.domElement.height, G.camera.fov);
@@ -598,6 +665,7 @@ export class Game {
       const reg = regionAt(P.pos.x, P.pos.z);
       G.audio.updateAmbience(raw, {
         altitude: P.pos.y, gliding: P.gliding, speed: Math.hypot(P.vel.x, P.vel.y, P.vel.z), hour: G.world.sky.hour,
+        bells: G.story ? G.story.bellsRung() : 4,
         rift: reg.id === 'rift' && G.story && G.story.chapter !== 'post', water: Math.max(0, 1 - Math.hypot(P.pos.x - POI.lake.x, P.pos.z - POI.lake.z) / 55),
       });
       const mood = this.pickMood();

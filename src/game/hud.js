@@ -9,6 +9,7 @@ import { xpNeed } from './player.js';
 import { wrapAngle, clamp, fillName, josa } from '../core/util.js';
 import { LANTERNS, MEMORIES } from '../world/world.js';
 import { POI } from '../world/layout.js';
+import { OUTER } from '../world/regions/index.js';
 import { Minimap } from './minimap.js';
 
 // Elements the player has not awakened stay hidden everywhere in the UI.
@@ -61,13 +62,7 @@ export class HUD {
     this.buildCompass();
     this.buildElements();
     this.minimap = new Minimap($('#minimap'));
-    $('#map-canvas').addEventListener('mousemove', (e) => {
-      const L = this.mapClick(e);
-      if (L === this.mapHover) return;
-      this.mapHover = L;
-      if (L) G.audio.play('ui_hover');
-      this.drawMap();
-    });
+    this.mapInput();
     this.applyScale();
     window.addEventListener('resize', () => this.applyScale());
     this.bossTarget = null;
@@ -387,14 +382,16 @@ export class HUD {
   }
   inCombat() { return !!(G.bossActive || (G.enemies && G.enemies.inCombat())); }
   areaTitle(name, en) {
-    if (this.inCombat()) return; // a region name mid-fight is noise
+    if (!name || this.inCombat()) return; // nameless between-lands; a region name mid-fight is noise
     const a = this.el.area;
     a.querySelector('.at-name').textContent = name;
     a.querySelector('.at-sub').textContent = en;
     a.classList.remove('show'); void a.offsetWidth; a.classList.add('show');
   }
-  banner(small, big, desc = '', color = '#fff', ms = 3800) {
-    this.bannerQ.push({ small, big, desc, color, ms });
+  // o.minor: frequent notices (quests, waystones, seeds, level-ups) always use the slim ribbon
+  // under the compass; the full band is kept for rare moments (a new song, Mora's memories…)
+  banner(small, big, desc = '', color = '#fff', ms = 3800, o = {}) {
+    this.bannerQ.push({ small, big, desc, color, ms, minor: !!o.minor });
     if (!this.bannerBusy) this.nextBanner();
   }
   nextBanner() {
@@ -409,6 +406,7 @@ export class HUD {
     // in a fight the banner shrinks to a thin ribbon under the compass instead of a band across the middle
     const compact = this.inCombat();
     el.classList.toggle('compact', compact);
+    el.classList.toggle('minor', !compact && b.minor);
     el.classList.remove('hidden', 'out');
     // a menu opened on top (the level-up crossroads, the map…) holds the banner; it gets a
     // moment of its own once the menu closes instead of bleeding through the menu
@@ -575,7 +573,7 @@ export class HUD {
         this.el.bossBreakFill.style.width = (b.v / 100) * 100 + '%';
         if (this.bossBrk !== st) { this.bossBrk = st; this.el.bossBreak.classList.toggle('down', st === 'down'); this.el.bossBreak.classList.toggle('lock', st === 'lock'); }
       }
-      if (!t.alive && t.hp <= 0) setTimeout(() => this.bossBar(null), 1500);
+      if (!t.alive && t.hp <= 0 && this.bossGone !== t) { this.bossGone = t; setTimeout(() => this.bossBar(null), 1500); }
     }
     // floats
     for (let i = this.floats.length - 1; i >= 0; i--) {
@@ -632,15 +630,83 @@ export class HUD {
     this.mapBase = off;
     return this.mapBase;
   }
+  // Map view: centre and width in metres. Opens on the player; the wheel zooms about the
+  // cursor, dragging pans. Places not yet seen lie under fog (G.atlas).
+  openMap() {
+    const P = G.player.pos;
+    this.mapView = { x: P.x, z: P.z, span: 520 };
+    this.clampMap();
+    this.drawMap();
+  }
+  clampMap() {
+    const T = G.world.terrain, V = this.mapView;
+    V.span = clamp(V.span, 200, T.size);
+    V.x = clamp(V.x, -T.half + V.span / 2, T.half - V.span / 2);
+    V.z = clamp(V.z, -T.half + V.span / 2, T.half - V.span / 2);
+  }
+  // canvas pixel under a mouse event
+  mapPx(ev) {
+    const cv = $('#map-canvas'), r = cv.getBoundingClientRect();
+    return [((ev.clientX - r.left) / r.width) * cv.width, ((ev.clientY - r.top) / r.height) * cv.height];
+  }
+  mapInput() {
+    const cv = $('#map-canvas');
+    let drag = null;
+    cv.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      if (!this.mapView) return;
+      const V = this.mapView, S = cv.width, [px, py] = this.mapPx(e);
+      const wx = V.x + (px / S - 0.5) * V.span, wz = V.z + (py / S - 0.5) * V.span;
+      V.span *= Math.pow(1.0015, e.deltaY);
+      this.clampMap();
+      // keep the point under the cursor where it was
+      V.x = wx - (px / S - 0.5) * V.span; V.z = wz - (py / S - 0.5) * V.span;
+      this.clampMap();
+      this.drawMap();
+    }, { passive: false });
+    cv.addEventListener('mousedown', (e) => { if (e.button === 0 && this.mapView) drag = { p: this.mapPx(e), x: this.mapView.x, z: this.mapView.z, moved: false }; });
+    window.addEventListener('mouseup', () => { if (drag) this.mapDragged = drag.moved; drag = null; });
+    cv.addEventListener('mousemove', (e) => {
+      if (drag) {
+        const [px, py] = this.mapPx(e), V = this.mapView, k = V.span / cv.width;
+        if (Math.hypot(px - drag.p[0], py - drag.p[1]) > 5) drag.moved = true;
+        if (drag.moved) { V.x = drag.x - (px - drag.p[0]) * k; V.z = drag.z - (py - drag.p[1]) * k; this.clampMap(); this.drawMap(); }
+        return;
+      }
+      const L = this.mapClick(e);
+      if (L === this.mapHover) return;
+      this.mapHover = L;
+      if (L) G.audio.play('ui_hover');
+      this.drawMap();
+    });
+  }
+
   drawMap() {
     const cv = $('#map-canvas'); const g = cv.getContext('2d');
     const S = cv.width;
     this.ensureMapBase();
-    g.imageSmoothingEnabled = true;
-    g.drawImage(this.mapBase, 0, 0, S, S);
+    if (!this.mapView) this.openMap();
+    const T = G.world.terrain, V = this.mapView, k = S / V.span;
+    const x0 = V.x - V.span / 2, z0 = V.z - V.span / 2;
+    const w2s = (x, z) => [(x - x0) * k, (z - z0) * k];
+    // terrain: one base pixel per 2 m sample (pixel centres on the samples)
+    const bk = 1 / T.step;
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    g.drawImage(this.mapBase, (x0 + T.half) * bk + 0.5, (z0 + T.half) * bk + 0.5, V.span * bk, V.span * bk, 0, 0, S, S);
     // parchment tint
     g.fillStyle = 'rgba(40,30,15,0.18)'; g.fillRect(0, 0, S, S);
-    const w2s = (x, z) => [((x + 240) / 480) * S, ((z + 240) / 480) * S];
+    // fog over what hasn't been seen: the atlas mask (one pixel per cell) scaled up smoothly
+    // gives soft edges; it is cut out of a flat fog layer
+    const fog = (this.mapFog ||= document.createElement('canvas'));
+    if (fog.width !== S) fog.width = fog.height = S;
+    const fg = fog.getContext('2d');
+    fg.globalCompositeOperation = 'source-over';
+    fg.fillStyle = '#1d2230'; fg.fillRect(0, 0, S, S);
+    fg.fillStyle = this.mapFogPattern(fg); fg.fillRect(0, 0, S, S);
+    fg.globalCompositeOperation = 'destination-out';
+    fg.imageSmoothingEnabled = true;
+    fg.drawImage(G.atlas.maskCanvas(), (-T.half - x0) * k, (-T.half - z0) * k, T.size * k, T.size * k);
+    g.drawImage(fog, 0, 0);
     const label = (x, z, t, c = '#fff', size = 14) => { const [sx, sz] = w2s(x, z); g.font = `${size}px 'Hahmlet', serif`; g.fillStyle = 'rgba(0,0,0,.6)'; g.textAlign = 'center'; g.fillText(t, sx + 1, sz + 1); g.fillStyle = c; g.fillText(t, sx, sz); };
     label(0, 38, '하늬 마을', '#fff4d8', 16);
     label(POI.tower.x, POI.tower.z + 12, '모라의 탑', '#e0d0ff');
@@ -652,10 +718,12 @@ export class HUD {
       label(POI.rift.x, POI.rift.z + 18, '고요의 틈', '#d0b0ff');
     }
     label(POI.meadow.x, POI.meadow.z + 10, '노을 들판', '#ffe0b0', 12);
+    for (const r of OUTER) if (r.name && r.label && G.atlas.seen(r.label[0], r.label[1])) label(r.label[0], r.label[1], r.name, '#f4ecd8', 17);
     // lanterns
     this.mapLanterns = [];
     for (const L of Object.values(G.world.lanterns)) {
       const [sx, sz] = w2s(L.x, L.z);
+      if (sx < -20 || sz < -20 || sx > S + 20 || sz > S + 20) continue;
       g.beginPath(); g.arc(sx, sz, L.lit ? 7 : 5, 0, Math.PI * 2);
       g.fillStyle = L.lit ? '#ffc870' : 'rgba(80,80,80,.8)'; g.fill();
       g.strokeStyle = '#1a1208'; g.lineWidth = 2; g.stroke();
@@ -677,13 +745,34 @@ export class HUD {
     g.save(); g.translate(px, pz); g.rotate(-P.yaw + Math.PI);
     g.beginPath(); g.moveTo(0, -12); g.lineTo(8, 9); g.lineTo(0, 4); g.lineTo(-8, 9); g.closePath();
     g.fillStyle = '#5ad0ff'; g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke(); g.restore();
+    // scale bar: 100 m
+    const bar = 100 * k;
+    g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(S - bar - 30, S - 34, bar + 16, 22);
+    g.fillStyle = '#f4ecd8'; g.fillRect(S - bar - 22, S - 20, bar, 2);
+    g.font = "12px 'Hahmlet', serif"; g.textAlign = 'center'; g.fillText('100m', S - bar / 2 - 22, S - 24);
     // legend
-    $('.map-keys').innerHTML = `<div><span style="color:#5ad0ff">▲</span> 현재 위치</div><div><span style="color:#f1d48a">◆</span> 목표</div><div><span style="color:#ffc870">●</span> 밝힌 등석<br><small style="opacity:.7">— 클릭하면 그곳으로 이동</small></div><div style="margin-top:14px;opacity:.8">노래 씨앗 ${G.story ? G.story.seedCount() : 0} / 16</div>`;
+    $('.map-keys').innerHTML = `<div><span style="color:#5ad0ff">▲</span> 현재 위치</div><div><span style="color:#f1d48a">◆</span> 목표</div><div><span style="color:#ffc870">●</span> 밝힌 등석<br><small style="opacity:.7">— 클릭하면 그곳으로 이동</small></div><div style="margin-top:14px;opacity:.8">노래 씨앗 ${G.story ? G.story.seedCount() : 0} / 16</div><div style="margin-top:14px;opacity:.6;font-size:12px;line-height:1.6">휠 · 확대와 축소<br>끌기 · 지도 옮기기</div>`;
+  }
+  // soft cloudy blotches over the fog (a seamless tile: every blob is drawn wrapped), made once
+  mapFogPattern(g) {
+    if (!this._fogPat) {
+      const n = 256, c = document.createElement('canvas'); c.width = c.height = n;
+      const x = c.getContext('2d');
+      for (let i = 0; i < 70; i++) {
+        const cx = Math.random() * n, cy = Math.random() * n, r = 14 + Math.random() * 40, a = 0.03 + Math.random() * 0.05;
+        for (const ox of [-n, 0, n]) for (const oy of [-n, 0, n]) {
+          const gr = x.createRadialGradient(cx + ox, cy + oy, 0, cx + ox, cy + oy, r);
+          gr.addColorStop(0, `rgba(170,180,210,${a})`); gr.addColorStop(1, 'rgba(170,180,210,0)');
+          x.fillStyle = gr; x.fillRect(cx + ox - r, cy + oy - r, r * 2, r * 2);
+        }
+      }
+      this._fogPat = c;
+    }
+    return g.createPattern(this._fogPat, 'repeat');
   }
   mapClick(ev) {
-    const cv = $('#map-canvas');
-    const r = cv.getBoundingClientRect();
-    const x = ((ev.clientX - r.left) / r.width) * cv.width, y = ((ev.clientY - r.top) / r.height) * cv.height;
+    if (this.mapDragged) { this.mapDragged = false; return null; } // the end of a drag is not a click
+    const [x, y] = this.mapPx(ev);
     // generous target (about 40 px on screen): the nearest lit waystone within reach
     let best = null, bd = 24;
     for (const m of this.mapLanterns || []) { const d = Math.hypot(m.sx - x, m.sz - y); if (d < bd) { bd = d; best = m.L; } }
@@ -743,7 +832,7 @@ export class HUD {
       h += '</div>';
       body.innerHTML = h;
     } else if (tab === 'memories') {
-      let h = `<div class="jsec">모라의 기억 — 골짜기에 두고 온 것들</div>`;
+      let h = (G.sketches ? G.sketches.html() : '') + `<div class="jsec">모라의 기억 — 골짜기에 두고 온 것들</div>`;
       for (const [id, m] of Object.entries(MEMORIES)) {
         const st = S ? S.memoryState(id) : 'none';
         h += `<div class="jq ${st === 'given' ? 'done' : ''}"><h3>${st === 'none' ? '???' : m.name}<small>${st === 'given' ? '전해 줌' : st === 'have' ? '가지고 있음' : ''}</small></h3><p>${st === 'none' ? '아직 찾지 못했다.' : m.desc}</p></div>`;
@@ -753,7 +842,7 @@ export class HUD {
     } else {
       const rows = [
         ['W A S D', '이동'], ['마우스', '시점 · 조준 (화면 클릭 시 마우스 고정)'], ['Shift 누르기', '달리기'], ['Shift 짧게', '순간이동 (회피, 무적 시간)'],
-        ['Space', '점프 / 공중에서 누르고 있기: 활공'], ['좌클릭', '기본 마법 (누르고 있다가 떼면 모아 쏘기)'], ['우클릭', '고유 마법 (울림 나무에서 익힌 속성만)'], ['Q', '엮기: 현재 속성 + 직전 속성 (조화 · 두 노래 엮기)'],
+        ['Space', G.story && G.story.flag('glide') ? '점프 / 공중에서 누르고 있기: 활공' : '점프'], ['좌클릭', '기본 마법 (누르고 있다가 떼면 모아 쏘기)'], ['우클릭', '고유 마법 (울림 나무에서 익힌 속성만)'], ['Q', '엮기: 현재 속성 + 직전 속성 (조화 · 두 노래 엮기)'],
         ['F', '궁극기 (울림 게이지가 가득 찼을 때)'], ['1 ~ 6 / 휠', '속성 전환'], ['T / 휠 클릭', '대상 고정'], ['E', '대화 · 조사 · 상호작용'], ['M', '지도 (등석 클릭: 빠른 이동)'], ['Tab / J', '여정 · 마법서'], ['K', '울림 나무 (스킬 트리)'], ['1 / 2 / 3', '울림의 갈림길에서 고르기 (레벨업 후)'], ['Esc', '일시 정지'],
       ];
       body.innerHTML = `<div class="jsec" style="text-align:center">조작</div><div class="ctrl-grid">${rows.map(([k, v]) => `<kbd>${k}</kbd><span>${v}</span>`).join('')}</div>

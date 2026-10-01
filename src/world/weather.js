@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { G } from '../core/context.js';
 import { U } from '../render/materials.js';
-import { rand, randRange, damp, clamp, smoothstep } from '../core/util.js';
+import { rand, randRange, damp, clamp, smoothstep, lerp } from '../core/util.js';
 import { regionAt } from './layout.js';
 
 // State targets: cloud cover, precipitation, storm (lightning), wind strength
@@ -52,10 +52,11 @@ void main(){
   w -= vel * tip * mix(0.85, 0.07, uSnow);
   // width across the view (after wrapping, so a streak never straddles the box edge)
   vec3 side = normalize(cross(vel, w - cameraPosition));
-  w += side * normal.x * mix(0.012, 0.035, uSnow);
+  w += side * normal.x * mix(0.007, 0.035, uSnow);
   float keep = step(aSeed, uAmount);
   float d = length(w.xz - uCam.xz);
-  vA = keep * (1.0 - smoothstep(${(RAIN_BOX * 0.6).toFixed(1)}, ${RAIN_BOX.toFixed(1)}, d)) * smoothstep(0.5, 3.0, d) * (1.0 - tip * 0.7);
+  // rain close to the lens fades out (the streaks nearest the camera are the ones that cover the view)
+  vA = keep * (1.0 - smoothstep(${(RAIN_BOX * 0.6).toFixed(1)}, ${RAIN_BOX.toFixed(1)}, d)) * mix(smoothstep(1.5, 5.0, d), smoothstep(0.5, 3.0, d), uSnow) * (1.0 - tip * 0.7);
   vSnow = uSnow;
   gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
 }`;
@@ -65,7 +66,7 @@ varying float vA;
 varying float vSnow;
 void main(){
   if (vA < 0.01) discard;
-  gl_FragColor = vec4(mix(uTint, vec3(0.95, 0.97, 1.0), vSnow), vA * mix(0.5, 0.85, vSnow));
+  gl_FragColor = vec4(mix(uTint, vec3(0.95, 0.97, 1.0), vSnow), vA * mix(0.3, 0.85, vSnow));
 }`;
 
 export class Weather {
@@ -116,7 +117,7 @@ export class Weather {
   get name() { return (this.snow > 0.5 && this.rain > 0.2 ? (this.storm > 0.5 ? '눈보라' : '눈') : STATES[this.next].name); }
 
   pick(region) {
-    const w = CLIMATE[region] || CLIMATE.default;
+    const w = region.climate || CLIMATE[region.id] || CLIMATE.default;
     // a storm tends to break into rain, rain into clouds — weather has momentum
     const bias = { clear: 1, cloudy: 1, rain: 1, storm: 1 };
     if (this.next === 'storm') { bias.rain = 2.5; bias.storm = 0.4; }
@@ -137,7 +138,7 @@ export class Weather {
     // a dialogue or boss fight clears the sky right away (over the usual ~40 s fade)
     // instead of waiting for the next scheduled roll
     if (calm && !this.locked && this.next !== 'clear') this.set('clear');
-    else if (this.stateT <= 0 && !this.locked) this.set(calm ? 'clear' : this.pick(reg.id));
+    else if (this.stateT <= 0 && !this.locked) this.set(calm ? 'clear' : this.pick(reg));
     if (reg.id === 'rift' && story && story.chapter !== 'post' && !this.locked && (this.next === 'rain' || this.next === 'storm')) this.next = 'cloudy';
     const T = STATES[this.next];
     // weather rolls in over ~25 s and clears over ~40 s
@@ -148,7 +149,9 @@ export class Weather {
     this.windS = damp(this.windS, T.wind, 0.1, dt);
     this.windAng += dt * 0.004 * Math.sin(G.time * 0.013);
     this.windVec.x = Math.cos(this.windAng); this.windVec.z = Math.sin(this.windAng); this.windVec.s = this.windS;
-    const cold = smoothstep(-80, -120, playerPos.z) * 0.6 + smoothstep(36, 46, playerPos.y) * 0.8;
+    // in the vale: north and high up; beyond the ring, wherever snow lies on the ground
+    const out = smoothstep(236, 300, Math.hypot(playerPos.x, playerPos.z));
+    const cold = lerp(smoothstep(-80, -120, playerPos.z) * 0.6 + smoothstep(36, 46, playerPos.y) * 0.8, G.world.terrain.snowAt(playerPos.x, playerPos.z) * 1.2, out);
     this.snow = damp(this.snow, clamp(cold, 0, 1) > 0.5 ? 1 : 0, 0.5, dt);
     this.wet = damp(this.wet, this.rain * (1 - this.snow), this.rain > this.wet ? 0.15 : 0.02, dt);
     U.wet.value = this.wet;

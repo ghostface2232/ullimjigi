@@ -88,6 +88,7 @@ function collapseFx(t, pos) {
   G.vfx.burst(pos, 'star', 1, { el: 'gold', size: 5, life: 0.4 });
   G.vfx.burst(pos, 'spark', 26, { el: 'gold', speed: 9 });
   G.combat.stop(0.14, true); G.cameraRig.shake(0.45);
+  if (G.enemies) G.enemies.bossSpill(pos, 'break');
   if (G.story && G.story.onBossBreak) G.story.onBossBreak(t);
 }
 
@@ -100,6 +101,7 @@ function phaseCheck(t, at) {
   for (const a of at) if (frac <= a) want++;
   if (want <= t.phase) return false;
   t.phase = want; t.phaseMul = PHASE_DMG[want - 1] ?? PHASE_DMG[PHASE_DMG.length - 1];
+  if (G.enemies) G.enemies.bossSpill(t.center(), 'phase');
   return true;
 }
 
@@ -668,6 +670,8 @@ export class Enemy {
 
   remove() {
     G.scene.remove(this.root);
+    // free the per-enemy bone textures now rather than whenever the wrappers get collected
+    this.root.traverse((o) => { if (o.isSkinnedMesh && o.skeleton && o.skeleton.boneTexture) o.skeleton.dispose(); });
     this.alive = false;
     this.releaseToken();
     const i = G.enemies.list.indexOf(this);
@@ -1946,7 +1950,7 @@ class Plate {
     this.heart = heart; this.ward = ward; this.idx = idx; this.n = n;
     this.alive = true; this.hittable = true;
     this.radius = 1.3; this.height = 2;
-    this.maxHp = Math.round(90 * (1 + 0.18 * (heart.level - 1))); this.hp = this.maxHp;
+    this.maxHp = Math.round(65 * (1 + 0.12 * (heart.level - 1))); this.hp = this.maxHp;
     this.st = newStatus(); this.level = heart.level; this.name = `${WARD[ward].name}의 결계`;
     this.pos = new THREE.Vector3();
     const g = new THREE.CylinderGeometry(1.2, 1.2, 0.35, 6); g.rotateX(Math.PI / 2);
@@ -1961,14 +1965,15 @@ class Plate {
   receive(h) {
     if (!this.alive) return 0;
     const weak = WARD[this.ward].weak, weak2 = WARD[this.ward].weak2;
-    let mult = h.el === weak ? 3 : weak2 && h.el === weak2 ? 2.4 : h.el === 'arcane' ? 0.35 : 0.12;
+    // the weak element breaks a ward in a couple of hits; anything else barely scratches it
+    let mult = h.el === weak ? 4 : weak2 && h.el === weak2 ? 3.2 : h.el === 'arcane' ? 0.35 : 0.12;
     let dmg = Math.max(1, Math.round(h.dmg * mult));
     this.hp -= dmg; this.flash = 1; this.barT = 5;
     G.hud.damage(this.pos, dmg, h.el, false, null);
     if (mult < 1) { if (rand() < 0.4) G.hud.floatText(this.pos.clone().setY(this.pos.y + 0.8), `저항 — ${josa(({ fire: '화염', frost: '서리', storm: '번개', wind: '바람' })[weak], '이')} 필요하다`, '#c9c0d8', 'info'); G.audio.play('hit_armor', { pos: this.pos }); }
     else { G.audio.play('shatter', { pos: this.pos, gap: 0.1 }); G.vfx.burst(this.pos, 'spark', 12, { el: h.el }); G.hitstop = Math.max(G.hitstop, 0.05); G.cameraRig.shake(0.15); }
     // the right element on a ward also wears the heart down (break meter)
-    if (mult >= 1 && h.source !== 'dot') this.heart.addBreak(4);
+    if (mult >= 1 && h.source !== 'dot') this.heart.addBreak(6);
     if (this.hp <= 0) { this.die(); this.heart.addBreak(10); }
     return dmg;
   }
@@ -2002,7 +2007,7 @@ class Heart {
     this.boss = true; this.type = 'heart'; this.name = '이름 삼킨 자'; this.def = { xp: 0, name: '이름 삼킨 자', boss: true };
     this.level = level;
     this.center0 = center.clone();
-    this.maxHp = Math.round(1400 * (1 + 0.18 * (level - 1))); this.hp = this.maxHp;
+    this.maxHp = Math.round(1150 * (1 + 0.18 * (level - 1))); this.hp = this.maxHp;
     this.brk = newBreak(6); // drains slowly: ward hits between volleys count too
     this.phaseMul = 1; this.phaseAt = [0.66, 0.33];
     this.atkGen = 0; // bumped by a collapse to cancel queued orbs and shockwaves
@@ -2059,11 +2064,11 @@ class Heart {
     for (const p of this.plates) if (p.alive) p.die();
     this.plates = [];
     if (!wasExposed) this.expose();
-    this.exposed += BREAK.down;
+    this.exposed += BREAK.down + 1.5; // a collapse keeps the heart down a little longer than other bosses
     collapseFx(this, this.core.position);
   }
   expose() {
-    this.exposed = 11.5;
+    this.exposed = 15;
     G.hud.floatText(this.core.position, '심장이 드러났다!', '#ffd86a');
     G.audio.play('shatter', { pos: this.core.position });
     G.vfx.ring(this.center0, PAL.hush.core, 12, 1, { thick: 0.2 });
@@ -2121,7 +2126,7 @@ class Heart {
     // phase checks
     const frac = this.hp / this.maxHp;
     const want = frac > 0.66 ? 1 : frac > 0.33 ? 2 : 3;
-    if (want > this.phase) { this.phase = want; this.phaseMul = PHASE_DMG[want - 1]; if (G.story) G.story.onBossPhase(this, want); G.audio.play('boss_roar', { pos: this.core.position }); }
+    if (want > this.phase) { this.phase = want; this.phaseMul = PHASE_DMG[want - 1]; G.enemies.bossSpill(this.core.position, 'phase'); if (G.story) G.story.onBossPhase(this, want); G.audio.play('boss_roar', { pos: this.core.position }); }
     // plates / exposure cycle
     this.plates = this.plates.filter((p) => p.update(dt));
     if (this.exposed > 0) {
@@ -2142,15 +2147,18 @@ class Heart {
       if (this.phase >= 3) opts.push('beam', 'beam');
       const a = pick(opts);
       this[a]();
-      this.atkT = a === 'beam' ? 6 : (this.phase === 3 ? 2.4 : this.phase === 2 ? 3 : 3.6);
+      this.atkT = a === 'beam' ? 6.5 : (this.phase === 3 ? 2.9 : this.phase === 2 ? 3.5 : 4.2);
     }
     for (let i = this.beams.length - 1; i >= 0; i--) if (!this.beams[i].tick(dt)) this.beams.splice(i, 1);
     return true;
   }
+  // attack damage grows 7% a level (not the 12% of ordinary enemies): the heart's level sits
+  // above the player's, and its patterns overlap
+  hurt(base) { return Math.round(base * (1 + 0.07 * (this.level - 1)) * this.phaseMul); }
   volley() {
     const gen = this.atkGen;
     const c = this.core.position.clone();
-    const n = 6 + this.phase * 2;
+    const n = 5 + this.phase;
     G.audio.play('wailer_charge', { pos: c });
     for (let i = 0; i < n; i++) {
       G.later(() => {
@@ -2159,7 +2167,7 @@ class Heart {
         const a = (i / n) * Math.PI * 2;
         const side = new THREE.Vector3(Math.cos(a), 0.3, Math.sin(a)).multiplyScalar(0.8);
         const dir = toP.clone().add(side).normalize();
-        G.spells.enemyOrb(c.clone().addScaledVector(dir, 2), dir, { speed: 9 + this.phase, dmg: Math.round(2 * (1 + 0.12 * (this.level - 1)) * this.phaseMul), homing: G.player, homingRate: 1.1, size: 0.35 });
+        G.spells.enemyOrb(c.clone().addScaledVector(dir, 2), dir, { speed: 9 + this.phase, dmg: this.hurt(1.6), homing: G.player, homingRate: 0.85, size: 0.35 });
         G.audio.play('wailer_shot', { pos: c, gap: 0.03 });
       }, i * 90);
     }
@@ -2182,7 +2190,7 @@ class Heart {
             r += sp * dt;
             const P = G.player;
             const dd = Math.hypot(P.pos.x - c.x, P.pos.z - c.z);
-            if (!hit && Math.abs(dd - r) < 1 && P.pos.y - G.world.ground(P.pos.x, P.pos.z) < 0.6) { hit = true; P.damage(Math.round(4 * (1 + 0.12 * (this.level - 1)) * this.phaseMul), { dir: new THREE.Vector3(P.pos.x - c.x, 0, P.pos.z - c.z).normalize(), knock: 8 }); }
+            if (!hit && Math.abs(dd - r) < 1 && P.pos.y - G.world.ground(P.pos.x, P.pos.z) < 0.6) { hit = true; P.damage(this.hurt(4), { dir: new THREE.Vector3(P.pos.x - c.x, 0, P.pos.z - c.z).normalize(), knock: 8 }); }
             if (Math.random() < 0.9) { const a = Math.random() * Math.PI * 2; G.vfx.burst(tmp.set(c.x + Math.cos(a) * r, c.y + 0.4, c.z + Math.sin(a) * r), 'hush', 1, { size: 0.6, spread: 0.2 }); }
           });
         }, 700);
@@ -2190,7 +2198,7 @@ class Heart {
     }
   }
   adds() {
-    this.addsCD = 16;
+    this.addsCD = 20;
     const live = G.enemies.list.filter((e) => e.alive && !e.boss && e.type !== undefined && !(e instanceof Plate)).length;
     if (live > 4) return;
     for (let i = 0; i < 3; i++) {
@@ -2231,7 +2239,7 @@ class Heart {
             const px = ax + dx * tt, pz = az + dz * tt;
             const dd = Math.hypot(P.pos.x - px, P.pos.z - pz);
             const airborne = P.pos.y - G.world.ground(P.pos.x, P.pos.z) > 1.1;
-            if (dd < 1.1 && !airborne && tt > 0.08) P.damage(Math.round(3 * (1 + 0.12 * (this.level - 1)) * this.phaseMul), { dir: new THREE.Vector3(-dz, 0, dx).normalize(), knock: 8 });
+            if (dd < 1.1 && !airborne && tt > 0.08) P.damage(this.hurt(3), { dir: new THREE.Vector3(-dz, 0, dx).normalize(), knock: 8 });
             if (Math.random() < 0.8) G.vfx.burst(end, 'hush', 1, { size: 0.8 });
             if (Math.random() < 0.8) G.vfx.burst(tmp.set(ax + dx * Math.random(), end.y, az + dz * Math.random()), 'trail', 1, { el: 'arcane', size: 0.6, spread: 0.3 });
           }
@@ -2379,6 +2387,13 @@ export class EnemyManager {
     for (let i = 0; i < n; i++) this.pickups.push(this.makePickup(pos, 'mana', { v, i, n }));
     if (rand() < (e.elite || e.type === 'watcher' ? 0.8 : 0.25)) this.pickups.push(this.makePickup(pos, 'heal'));
   }
+  // A little relief in a long fight: a boss entering a new phase lets fall a heart and a few
+  // mana motes, a collapse (break gauge) a few motes. Kept small on purpose.
+  bossSpill(pos, kind) {
+    const n = kind === 'phase' ? 4 : 3;
+    for (let i = 0; i < n; i++) this.pickups.push(this.makePickup(pos, 'mana', { v: 6, i, n }));
+    if (kind === 'phase') this.pickups.push(this.makePickup(pos, 'heal', { hp: 4 })); // a whole heart (4 HP)
+  }
   makePickup(pos, kind, o = {}) {
     if (kind === 'mana') {
       const m = G.vfx.acquireOrb('frost', 0.075, { halo: 0.62, haloI: 0.7 });
@@ -2395,7 +2410,7 @@ export class EnemyManager {
     m.position.copy(pos);
     G.scene.add(m);
     const v = new THREE.Vector3(randRange(-3, 3), randRange(3, 6), randRange(-3, 3));
-    return { m, kind, v, t: 0, home: 0.6, ph: 0 };
+    return { m, kind, v, t: 0, home: 0.6, ph: 0, hp: o.hp || 2 };
   }
   removePickup(i) {
     const p = this.pickups[i];
@@ -2405,7 +2420,7 @@ export class EnemyManager {
   }
   absorbPickup(p, pc) {
     const P = G.player;
-    if (p.kind === 'heal') { P.heal(2); G.audio.play('heal'); G.hud.floatText(pc, '+♥', '#8fff9a', 'heal'); return; }
+    if (p.kind === 'heal') { P.heal(p.hp || 2); G.audio.play('heal'); G.hud.floatText(pc, '+♥', '#8fff9a', 'heal'); return; }
     // streak of motes → rising pitch
     this.moteN = G.realTime - (this.moteT || -9) < 0.45 ? Math.min(12, (this.moteN || 0) + 1) : 0;
     this.moteT = G.realTime;

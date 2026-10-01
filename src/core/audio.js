@@ -568,7 +568,8 @@ export class AudioEngine {
     const day = info.hour > 5.5 && info.hour < 19;
     this.amb.birdT -= dt;
     if (day && this.amb.birdT <= 0) {
-      this.amb.birdT = randRange(1.5, 6);
+      // birds come back to the vale bell by bell (info.bells: 0..4)
+      this.amb.birdT = randRange(1.5, 6) * [4, 2.4, 1.6, 1.2, 1][info.bells ?? 4];
       this._bird();
     }
     this.amb.cricketT -= dt;

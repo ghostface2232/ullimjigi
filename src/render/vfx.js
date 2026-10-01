@@ -616,6 +616,8 @@ const DECAL = {
 };
 
 // ------------------------------------------------------------------
+const _circleC = new THREE.Color();
+
 export class VFX {
   constructor(scene) {
     this.scene = scene;
@@ -631,9 +633,11 @@ export class VFX {
     this.ambU = { value: 1 };
     this.nCircles = 0;
 
-    // Light pool
+    // Light pool. Every lit fragment on screen loops over these (even at intensity 0), so
+    // the pool stays small: more than four overlapping flashes is rare in the heaviest fights
+    // (~1 % of frames), and a new flash then takes over the dimmest, already fading one.
     this.lights = [];
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 4; i++) {
       const l = new THREE.PointLight(0xffffff, 0, 14, 1.4);
       l.castShadow = false;
       scene.add(l);
@@ -760,7 +764,6 @@ export class VFX {
     add(this.iceMat, spikeGeo(0)); add(this.iceMatT, this.crystalGeo);
     const sp = this._spike(false); if (sp) { add(sp.material, spikeGeo(0)); sp.userData.busy = false; }
     for (const pool of [this.debris.rock, this.debris.ice, this.debris.ember]) { const im = new THREE.InstancedMesh(pool.im.geometry, pool.im.material, 1); im.position.set(0, -500, 0); im.frustumCulled = false; sc.add(im); }
-    if (this.distort.scene) { const m = new THREE.Mesh(this.distort.quad, this.distort.base); m.position.set(0, -500, 0); m.frustumCulled = false; sc.add(m); }
     add(this.rings[0].m.material, this.ringGeo);
     add(this.minis[0].m.material, this.minis[0].m.geometry);
     // templates for per-use materials (see `keepers` in the constructor)
@@ -784,6 +787,15 @@ export class VFX {
     const rt = G.renderer.composer && G.renderer.composer.readBuffer;
     if (rt) R.setRenderTarget(rt);
     try { const p = R.compileAsync ? R.compileAsync(sc, G.camera, this.scene) : (R.compile(sc, G.camera, this.scene), null); if (p && p.then) p.then(done, done); else done(); } catch (e) { done(); }
+    // refraction meshes are drawn into their own scene (no lights, no shadows) and target,
+    // which makes a different program than compiling them against the main scene
+    const ds = this.distort.scene, drt = G.renderer.distortRT;
+    if (ds && drt) {
+      const dsc = new THREE.Scene();
+      const m = new THREE.Mesh(this.distort.quad, this.distort.base); m.frustumCulled = false; dsc.add(m);
+      R.setRenderTarget(drt);
+      try { const p = R.compileAsync ? R.compileAsync(dsc, G.camera, ds) : (R.compile(dsc, G.camera, ds), null); if (p && p.then) p.then(() => dsc.clear(), () => dsc.clear()); } catch (e) { /* ignore */ }
+    }
     R.setRenderTarget(prevRT);
   }
 
@@ -954,7 +966,12 @@ export class VFX {
   // ---------------- rune circle ----------------
   // Rune circles draw themselves in: an angular wipe sweeps around the centre with a
   // bright leading edge (uReveal 0 → 1), then the circle spins and fades as before.
+  // rune circle materials are pooled (per texture) instead of built and disposed per cast
   _circleMat(color, o) {
+    const pool = (this.circlePool ||= { a: [], b: [] })[o.alt ? 'b' : 'a'];
+    const c = color instanceof THREE.Color ? color : _circleC.set(color);
+    const reuse = pool.pop();
+    if (reuse) { reuse.color.copy(c).multiplyScalar(o.intensity ?? 1.05); reuse.opacity = 0; reuse.userData.reveal.value = 1; return reuse; }
     const mat = new THREE.MeshBasicMaterial({
       map: o.alt ? this.runeTex2 : this.runeTex, color: (color instanceof THREE.Color ? color.clone() : new THREE.Color(color)).multiplyScalar(o.intensity ?? 1.05),
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, opacity: 0,
@@ -1014,7 +1031,7 @@ export class VFX {
           if (h.offset) m.position.add(h.offset);
           if (!o.vertical) m.position.y += 0.08;
         }
-        if (h.done && alpha <= 0) { this.scene.remove(m); mat.dispose(); this.nCircles--; return false; }
+        if (h.done && alpha <= 0) { this.scene.remove(m); this.circlePool[mat.map === this.runeTex2 ? 'b' : 'a'].push(mat); this.nCircles--; return false; }
         return true;
       },
     };
@@ -1229,8 +1246,10 @@ export class VFX {
     grp.position.copy(pos);
     const mats = [];
     const layers = [[1.3, 3.2, 7, 0.9], [0.9, 2.3, 6, 1.4], [0.5, 1.4, 5, 2.1]];
-    for (const [rb, rt, h, sp] of layers) {
-      const geo = new THREE.CylinderGeometry(rt, rb, h, 20, 6, true); geo.translate(0, h / 2, 0);
+    // the three funnel layers share their geometry across casts
+    this.tornadoGeos ||= layers.map(([rb, rt, h]) => new THREE.CylinderGeometry(rt, rb, h, 20, 6, true).translate(0, h / 2, 0));
+    for (let i = 0; i < layers.length; i++) {
+      const geo = this.tornadoGeos[i], sp = layers[i][3];
       const mat = this._tornadoMat(p, sp);
       mats.push(mat);
       const m = new THREE.Mesh(geo, mat); m.renderOrder = 9; grp.add(m);
@@ -1281,7 +1300,7 @@ export class VFX {
             if (o.el === 'frost' && rand() < 0.4) this.burst(tmpV.set(gp.x + Math.cos(a) * r, gp.y + randRange(0.2, 3) * sc, gp.z + Math.sin(a) * r), 'snowflake', 1, { spread: 0.3 });
           }
         }
-        if (h.done && h.alpha <= 0) { this.scene.remove(grp); grp.traverse((c) => c.geometry && c.geometry.dispose()); mats.forEach((m) => m.dispose()); return false; }
+        if (h.done && h.alpha <= 0) { this.scene.remove(grp); mats.forEach((m) => m.dispose()); return false; }
         return true;
       },
     };
@@ -2006,10 +2025,13 @@ export class VFX {
     }
     switch (el) {
       case 'fire': {
-        // bright rolling fireball that erodes into lit, rising smoke
-        this.sphere('fire', pos, { r0: r * 0.25, r1: r * 0.9, dur: 1.15, grow: 4.5, erodeAt: 0.3, erode1: 1.05, alpha: 1, rise: 1.4 });
-        for (let i = 0; i < 3; i++) { sphereV(tmpV); tmpV.y = Math.abs(tmpV.y) * 0.6; this.sphere('fire', tmpV.multiplyScalar(r * 0.4).add(pos), { r0: r * 0.12, r1: r * randRange(0.4, 0.55), dur: randRange(0.8, 1.05), grow: 4, erodeAt: 0.3, alpha: 1, rise: 2.4, delay: randRange(0, 0.08) }); }
-        for (let i = 0; i < 5; i++) { sphereV(tmpV); tmpV.y = Math.abs(tmpV.y) * 0.5 + 0.35; const d = tmpV.clone(); this.sphere('smoke', tmpV.multiplyScalar(r * 0.3).add(pos), { r0: r * 0.22, r1: r * randRange(0.45, 0.6), dur: randRange(2.4, 3.2), grow: 2.2, erodeAt: 0.3, rise: randRange(1.0, 1.8), drift: d.multiplyScalar(r * 0.22), emiss: 2.2, emissPow: 2.5, delay: randRange(0.18, 0.32), alpha: 1 }); }
+        // bright rolling fireball that erodes into lit, rising smoke. The volumes are drawn at
+        // 70 % of the blast radius (rings and scorch still show the full reach), so a big blast
+        // reads as a ball of fire rather than a wall that swallows the screen.
+        const v = r * 0.7;
+        this.sphere('fire', pos, { r0: v * 0.25, r1: v * 0.9, dur: 1.15, grow: 4.5, erodeAt: 0.3, erode1: 1.05, alpha: 1, rise: 1.4 });
+        for (let i = 0; i < 3; i++) { sphereV(tmpV); tmpV.y = Math.abs(tmpV.y) * 0.6; this.sphere('fire', tmpV.multiplyScalar(v * 0.4).add(pos), { r0: v * 0.12, r1: v * randRange(0.4, 0.55), dur: randRange(0.8, 1.05), grow: 4, erodeAt: 0.3, alpha: 1, rise: 2.4, delay: randRange(0, 0.08) }); }
+        for (let i = 0; i < 5; i++) { sphereV(tmpV); tmpV.y = Math.abs(tmpV.y) * 0.5 + 0.35; const d = tmpV.clone(); this.sphere('smoke', tmpV.multiplyScalar(v * 0.3).add(pos), { r0: v * 0.22, r1: v * randRange(0.45, 0.6), dur: randRange(2.4, 3.2), grow: 2.2, erodeAt: 0.3, rise: randRange(1.0, 1.8), drift: d.multiplyScalar(v * 0.22), emiss: 2.2, emissPow: 2.5, delay: randRange(0.18, 0.32), alpha: 1 }); }
         this.burst(pos, 'fire', 20 * k, { speed: 8, spread: 0.8, size: 1.4, alpha: 0.7 });
         this.burst(pos, 'ember', 22 * k, { speed: 10 });
         this.chunks(pos, 'ember', Math.round(14 * k), { speed: 11, up: 0.7 });

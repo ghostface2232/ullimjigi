@@ -1,5 +1,22 @@
 // World layout: landmarks, roads and named regions of the Hanui Vale.
 // North is -Z. Units are meters.
+import { OUTER_R, outerRegion } from './regions/index.js';
+
+// The whole map is a square of `size` metres centred on the origin; the Hanui Vale is the
+// ring-walled bowl in the middle (r ≈ 214). `bound` is how far the player can go.
+export const WORLD = { size: 1280, half: 640, bound: 612 };
+
+// Passes cut through the vale's ring mountains towards the outer lands: [x, z, floor height].
+// Inside the ring (r < 232) the terrain is only lowered towards the floor, never raised, so the
+// vale keeps its shape; outside, the floor is also filled in so the way through is smooth.
+export const PASSES = [
+  { id: 'south', w: 14, pts: [[30, 193, 7], [37, 240, 28], [44, 285, 30], [53, 340, 20]] },
+  { id: 'east', w: 14, pts: [[192, 32, 18], [247, 41, 40], [296, 49, 34], [336, 55, 28]] },
+  { id: 'west', w: 15, pts: [[-204, -21, 34], [-249, -26, 46], [-298, -31, 55], [-338, -35, 60]] },
+  { id: 'north', w: 14, pts: [[-34, -202, 57], [-41, -247, 70], [-50, -296, 80], [-56, -335, 86]] },
+  { id: 'northwest', w: 13, pts: [[-158, -114, 12], [-203, -146, 40], [-244, -175, 56], [-276, -198, 66]] },
+];
+
 export const POI = {
   tower: { x: -27, z: 153 },
   towerYard: { x: -14, z: 146, h: 24 },
@@ -37,13 +54,22 @@ export const REGIONS = [
   { id: 'woods', name: '속삭이는 숲', en: 'WHISPERING WOODS', x: -92, z: 128, r: 50, lv: 0 },
   { id: 'bluffs', name: '동쪽 벼랑', en: 'EASTERN BLUFFS', x: 150, z: 10, r: 50, lv: 1 },
 ];
+// Paved stone yards: no grass (so nothing burns) and a flagstone tint in the terrain.
+// Used by the trials (world/trials.js).
+export const PADS = [
+  { x: 118, z: 104, r: 11 }, // 들불 오르기: the last lookout stands in a stone yard
+  { x: 40, z: 148, r: 9 },   // 노래하는 돌
+];
 export const DEFAULT_REGION = { id: 'vale', name: '하늬 골짜기', en: 'HANUI VALE', lv: 0 };
 
+// Named places in the vale first, then the vale itself; past the ring, the outer region by
+// direction (world/regions/).
 export function regionAt(x, z) {
   let best = null, bd = 1e9;
   for (const r of REGIONS) {
     const d = Math.hypot(x - r.x, z - r.z);
     if (d < r.r && d / r.r < bd) { bd = d / r.r; best = r; }
   }
-  return best || DEFAULT_REGION;
+  if (best) return best;
+  return Math.hypot(x, z) > OUTER_R ? outerRegion(x, z) : DEFAULT_REGION;
 }

@@ -9,6 +9,8 @@ import { PAL } from '../render/vfx.js';
 import { toon, addOutline } from '../render/materials.js';
 
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
+// the frame's move direction; its own vector, because casting (aimPoint) reuses tmp mid-update
+const moveV = new THREE.Vector3();
 const GRAV = 26;
 const CLIMB_JUMP_COST = 20;
 
@@ -61,6 +63,7 @@ export class Player {
   center() { return new THREE.Vector3(this.pos.x, this.pos.y + 0.95, this.pos.z); }
 
   teleport(x, z, yaw) {
+    if (Math.hypot(x - this.pos.x, z - this.pos.z) > 60 && G.spells && G.spells.fields) G.spells.fields.clearFar({ x, z }, 60);
     this.pos.set(x, G.world.ground(x, z) + 0.05, z);
     this.vel.set(0, 0, 0);
     this.climbing = null; this.mantle = null; this.grounded = true;
@@ -147,6 +150,8 @@ export class Player {
   // can enemies perceive the player right now?
   seen() { return !this.dead && G.mode === 'free' && !G.dev.unseen; }
   canAct() { return G.mode === 'free' && !this.dead && G.state === 'play' && !G.paused; }
+  // gliding is Borum's gift at the end of the first act (story flag 'glide')
+  canGlide() { return !!(G.story && G.story.flag('glide')); }
 
   // --------------------------------------------------------------
   update(dt, input) {
@@ -161,7 +166,7 @@ export class Player {
     }
     const il = Math.hypot(ix, iz); if (il > 1) { ix /= il; iz /= il; }
     const { f, r } = cr.moveBasis();
-    const move = tmp.set(f.x * iz + r.x * ix, 0, f.z * iz + r.z * ix);
+    const move = moveV.set(f.x * iz + r.x * ix, 0, f.z * iz + r.z * ix);
     const moving = move.lengthSq() > 0.01;
 
     // shift: tap = blink, hold = sprint
@@ -229,7 +234,7 @@ export class Player {
         G.audio.play('jump');
         G.vfx.burst(this.pos, 'dust', 4, { speed: 2, size: 0.4 });
       }
-      const wantGlide = act && input.down('Space') && !this.grounded && !this.swimming && (this.gliding || this.vel.y < 0) && !this.exhausted && this.stamina > 0 && this.coyote < -0.1;
+      const wantGlide = act && this.canGlide() && input.down('Space') && !this.grounded && !this.swimming && (this.gliding || this.vel.y < 0) && !this.exhausted && this.stamina > 0 && this.coyote < -0.1;
       if (wantGlide && !this.gliding) { G.audio.play('glide'); this.gliding = true; this.glideCircle = G.vfx.circle(this.pos, PAL[this.element].glow, 1.2, 0, { follow: this.root, offset: new THREE.Vector3(0, 2.6, 0), spin: 2, alpha: 0.7 }); }
       if (!wantGlide && this.gliding) { this.gliding = false; if (this.glideCircle) { this.glideCircle.end(); this.glideCircle = null; } }
 
@@ -245,7 +250,6 @@ export class Player {
         if (this.gliding && G.story && G.story.once('updraft1')) G.hud.toast('뜨거운 바람이 몸을 들어 올린다!');
       }
       this.vel.y = Math.max(this.vel.y, -42);
-      const prevGround = W.ground(this.pos.x, this.pos.z, this.pos.y + 0.6);
 
       const nx = this.pos.x + this.vel.x * dt, nz = this.pos.z + this.vel.z * dt;
       // steep slope blocking
@@ -265,8 +269,8 @@ export class Player {
       this.pos.z += this.vel.z * dt;
       this.pos.y += this.vel.y * dt;
       W.col.resolve(this.pos, 0.42, 1.8);
-      const rr = Math.hypot(this.pos.x, this.pos.z);
-      if (rr > 214) { this.pos.x *= 214 / rr; this.pos.z *= 214 / rr; }
+      const bd = W.terrain.bound;
+      this.pos.x = clamp(this.pos.x, -bd, bd); this.pos.z = clamp(this.pos.z, -bd, bd);
 
       // --- ground & water
       const ground = W.ground(this.pos.x, this.pos.z, this.pos.y + 0.6);
@@ -290,7 +294,6 @@ export class Player {
       if (this.grounded && !this.swimming && waterDepth < 0.5) {
         if (G.time % 1 < dt) this.lastSafe.copy(this.pos);
       }
-      void prevGround;
       this.tryGrab(dt, move, moving, act);
     }
     this.regrabT = Math.max(0, this.regrabT - dt);
@@ -850,7 +853,7 @@ export class Player {
       G.audio.play('levelup');
       if (G.skills) { G.skills.gain(2 * up); G.skills.cross = Math.min(5, (G.skills.cross || 0) + up); }
       const calm = G.mode === 'free' && !G.enemies.inCombat();
-      G.hud.banner('LEVEL UP', `울림이 깊어졌다 — Lv ${this.level}`, `마법의 위력이 강해졌다.${this.level % 2 === 0 ? ' 생명력의 그릇이 늘었다.' : ''}<br><b style="color:#f1d48a">울림점 +${2 * up}</b> · <b>울림의 갈림길</b>이 열린다${calm ? '' : ' — 싸움이 끝나면 새 기술을 고를 수 있다'}`, '#f1d48a');
+      G.hud.banner('LEVEL UP', `울림이 깊어졌다 — Lv ${this.level}`, `마법의 위력이 강해졌다.${this.level % 2 === 0 ? ' 생명력의 그릇이 늘었다.' : ''}<br><b style="color:#f1d48a">울림점 +${2 * up}</b> · <b>울림의 갈림길</b>이 열린다${calm ? '' : ' — 싸움이 끝나면 새 기술을 고를 수 있다'}`, '#f1d48a', 3800, { minor: true });
       G.vfx.burst(this.center(), 'soul', 30, { el: 'gold' });
       G.vfx.ring(this.pos, PAL.gold.core, 4, 0.8, { thick: 0.2 });
       G.hud.updateHearts();

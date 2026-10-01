@@ -8,7 +8,8 @@ import { G } from '../core/context.js';
 
 const PX_PER_M = 3;          // base resolution
 const VIEW_R = 62;           // metres from the centre to the rim
-const HALF = 240;            // world half-size (terrain is 480 m)
+const TILE = 64;             // base tiles (metres); built when first seen, the least recently used dropped
+const MAX_TILES = 24;
 const CARD = [['N', 0], ['E', Math.PI / 2], ['S', Math.PI], ['W', -Math.PI / 2]];
 
 export class Minimap {
@@ -17,36 +18,53 @@ export class Minimap {
     this.cv = root.querySelector('canvas');
     this.g = this.cv.getContext('2d');
     this.t = 0;
-    this.base = null;
+    this.tiles = new Map();
+    this.prints = null;
     this.size = 0;
   }
 
-  // Terrain colours with hillshade come from the big map's base image (241² for 480 m);
-  // upscaled here with smoothing, then building footprints are stamped on crisply.
-  buildBase(mapBase) {
-    const S = HALF * 2 * PX_PER_M;
-    const c = document.createElement('canvas'); c.width = c.height = S;
-    const g = c.getContext('2d');
-    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-    g.drawImage(mapBase, 0, 0, S, S);
-    // soften and darken slightly so markers read on top
-    g.fillStyle = 'rgba(20,16,10,0.16)'; g.fillRect(0, 0, S, S);
-    // footprints of buildings and walls (large, tall boxes); trees and small props are skipped
-    const W = G.world, seen = new Set();
-    g.fillStyle = 'rgba(58,40,28,0.92)'; g.strokeStyle = 'rgba(255,236,200,0.55)'; g.lineWidth = 1.5;
+  // Building footprints (large, tall boxes); trees and small props are skipped.
+  footprints() {
+    const W = G.world, seen = new Set(), out = [];
     for (const arr of W.col.grid.values()) for (const k of arr) {
       if (seen.has(k)) continue; seen.add(k);
       if (k.type !== 'box' || k.hw * k.hd < 3 || k.noTop) continue;
       const ground = W.h(k.x, k.z);
       if (k.h1 - ground < 1.6 || k.h1 > 1e8) continue;
+      out.push(k);
+    }
+    return out;
+  }
+
+  // One TILE×TILE m piece of the base: the big map's terrain colours and hillshade (one pixel
+  // per 2 m terrain sample) upscaled with smoothing, then footprints stamped on crisply.
+  tile(tx, tz, mapBase) {
+    const key = tx + ',' + tz;
+    let t = this.tiles.get(key);
+    if (t) { this.tiles.delete(key); this.tiles.set(key, t); return t; } // most recently used last
+    const T = G.world.terrain, S = TILE * PX_PER_M, x0 = tx * TILE, z0 = tz * TILE;
+    const c = document.createElement('canvas'); c.width = c.height = S;
+    const g = c.getContext('2d');
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    const k = 1 / T.step; // base pixels per metre (texel centres sit on the samples)
+    g.drawImage(mapBase, (x0 + T.half) * k + 0.5, (z0 + T.half) * k + 0.5, TILE * k, TILE * k, 0, 0, S, S);
+    // soften and darken slightly so markers read on top
+    g.fillStyle = 'rgba(20,16,10,0.16)'; g.fillRect(0, 0, S, S);
+    this.prints ||= this.footprints();
+    g.fillStyle = 'rgba(58,40,28,0.92)'; g.strokeStyle = 'rgba(255,236,200,0.55)'; g.lineWidth = 1.5;
+    for (const b of this.prints) {
+      const r = Math.hypot(b.hw, b.hd);
+      if (b.x + r < x0 || b.x - r > x0 + TILE || b.z + r < z0 || b.z - r > z0 + TILE) continue;
       g.save();
-      g.translate((k.x + HALF) * PX_PER_M, (k.z + HALF) * PX_PER_M);
-      g.rotate(-k.rot);
-      g.fillRect(-k.hw * PX_PER_M, -k.hd * PX_PER_M, k.hw * 2 * PX_PER_M, k.hd * 2 * PX_PER_M);
-      g.strokeRect(-k.hw * PX_PER_M, -k.hd * PX_PER_M, k.hw * 2 * PX_PER_M, k.hd * 2 * PX_PER_M);
+      g.translate((b.x - x0) * PX_PER_M, (b.z - z0) * PX_PER_M);
+      g.rotate(-b.rot);
+      g.fillRect(-b.hw * PX_PER_M, -b.hd * PX_PER_M, b.hw * 2 * PX_PER_M, b.hd * 2 * PX_PER_M);
+      g.strokeRect(-b.hw * PX_PER_M, -b.hd * PX_PER_M, b.hw * 2 * PX_PER_M, b.hd * 2 * PX_PER_M);
       g.restore();
     }
-    this.base = c;
+    this.tiles.set(key, c);
+    if (this.tiles.size > MAX_TILES) this.tiles.delete(this.tiles.keys().next().value);
+    return c;
   }
 
   resize() {
@@ -60,13 +78,13 @@ export class Minimap {
     this.t -= dt;
     if (this.t > 0) return;
     this.t = 1 / 30;
-    if (!this.base) { if (!mapBase) return; this.buildBase(mapBase); }
+    if (!mapBase) return;
     this.resize();
     if (!this.size) return;
-    this.draw();
+    this.draw(mapBase);
   }
 
-  draw() {
+  draw(mapBase) {
     const g = this.g, S = this.size, c = S / 2, R = S / 2 - S * 0.07; // leave room for the ring
     const P = G.player, cr = G.cameraRig;
     const fx = -Math.sin(cr.yaw), fz = -Math.cos(cr.yaw);
@@ -80,9 +98,15 @@ export class Minimap {
     g.fillStyle = '#1c2a2c'; g.fillRect(0, 0, S, S);
     g.translate(c, c); g.rotate(-heading);
     const src = VIEW_R * 1.45; // enough to cover the disc at any rotation
-    const sx = (P.pos.x - src + HALF) * PX_PER_M, sz = (P.pos.z - src + HALF) * PX_PER_M, sw = src * 2 * PX_PER_M;
     g.imageSmoothingEnabled = true;
-    g.drawImage(this.base, sx, sz, sw, sw, -src * k, -src * k, src * 2 * k, src * 2 * k);
+    const half = G.world.terrain.half;
+    for (let tz = Math.floor((P.pos.z - src) / TILE); tz * TILE < P.pos.z + src; tz++) {
+      for (let tx = Math.floor((P.pos.x - src) / TILE); tx * TILE < P.pos.x + src; tx++) {
+        if (tx * TILE < -half || tz * TILE < -half || (tx + 1) * TILE > half || (tz + 1) * TILE > half) continue;
+        // a pixel of overlap hides seams between smoothed tiles
+        g.drawImage(this.tile(tx, tz, mapBase), (tx * TILE - P.pos.x) * k - 0.5, (tz * TILE - P.pos.z) * k - 0.5, TILE * k + 1, TILE * k + 1);
+      }
+    }
     g.restore();
     // inner vignette
     const vg = g.createRadialGradient(c, c, R * 0.6, c, c, R);

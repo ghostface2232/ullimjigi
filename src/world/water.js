@@ -84,7 +84,9 @@ export class Water {
     this.uni.uCloud = U.cloud;
     this.uni.uNoiseTex = { value: noiseTexture() };
     const mat = new THREE.ShaderMaterial({ uniforms: this.uni, vertexShader: VS, fragmentShader: FS, transparent: true, fog: true, depthWrite: false });
-    const geo = new THREE.PlaneGeometry(terrain.size, terrain.size, 1, 1);
+    // wider than the map: the southern sea runs on to the horizon (the depth texture clamps
+    // at the border, so only the open sea continues past it)
+    const geo = new THREE.PlaneGeometry(terrain.size * 3, terrain.size * 3, 1, 1);
     geo.rotateX(-Math.PI / 2);
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.position.y = this.level;

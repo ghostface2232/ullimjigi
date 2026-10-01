@@ -165,6 +165,8 @@ export class World {
     c.base = base;
     return c;
   }
+  // shapes it would look odd to scale or stand on (lanterns, columns, braziers, altars)
+  noClimb(c) { c.climb = false; c.noTop = true; return c; }
   place(obj, x, z, ry = 0, dy = 0) {
     obj.position.set(x, this.h(x, z) + dy, z);
     obj.rotation.y = ry;
@@ -342,7 +344,7 @@ export class World {
     // grave (Seha's nameless stone)
     const gr = B.grave();
     this.place(gr, POI.grave.x, POI.grave.z, this.faceTo(POI.grave.x, POI.grave.z, -14, 146));
-    this.solid(gr, { r: 0.6 });
+    this.solid(gr, { r: 0.6, climb: false, noTop: true });
     const bench = B.bench(); this.place(bench, -20, 132, Math.PI);
     // training yard
     this.training = { targets: [], braziers: [], dummies: [] };
@@ -416,7 +418,7 @@ export class World {
 
   makeBrazier(x, z, id) {
     const b = B.brazier(); this.place(b, x, z);
-    this.col.addCircle(x, z, 0.5, -10, this.h(x, z) + 1.6);
+    this.noClimb(this.col.addCircle(x, z, 0.5, -10, this.h(x, z) + 1.6));
     const fl = { pos: new THREE.Vector3(x, this.h(x, z) + b.userData.fireY, z), lit: false, scale: 1 };
     this.flames.push(fl);
     const tgt = this.addTarget({ id, pos: fl.pos.clone().add(new THREE.Vector3(0, -0.2, 0)), r: 1.1, obj: b, flame: fl, lit: false, onHit: null });
@@ -471,12 +473,12 @@ export class World {
       this.scene.add(s);
       this.col.addPlatform({ type: 'disc', x: p.x, z: p.z, r: 10.6, top: y + 0.35 });
       this.col.addPlatform({ type: 'disc', x: p.x, z: p.z, r: 9.3, top: y + 0.8 });
-      this.col.addBox(p.x, p.z, 1.3, 1.3, 0, y, y + 3);
+      this.noClimb(this.col.addBox(p.x, p.z, 1.3, 1.3, 0, y, y + 3));
       for (let i = 0; i < 8; i++) {
         const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
-        this.col.addCircle(p.x + Math.cos(a) * 8.2, p.z + Math.sin(a) * 8.2, 0.7, y, y + 7);
+        this.noClimb(this.col.addCircle(p.x + Math.cos(a) * 8.2, p.z + Math.sin(a) * 8.2, 0.7, y, y + 7));
       }
-      for (const sx of [-1, 1]) this.col.addCircle(p.x + sx * 2, p.z - 5, 0.5, y, y + 7);
+      for (const sx of [-1, 1]) this.noClimb(this.col.addCircle(p.x + sx * 2, p.z - 5, 0.5, y, y + 7));
       const sealCol = this.col.addCircle(p.x, p.z, 11, y - 5, y + 12, 'seal');
       sealCol.climb = false; sealCol.noTop = true;
       const data = { el, group: s, pos: new THREE.Vector3(p.x, y + 0.8, p.z), sealCol, sealed: true, y };
@@ -507,7 +509,7 @@ export class World {
       e4.set((rnd() - 0.5) * 0.4, rnd() * 6.28, (rnd() - 0.5) * 0.4);
       m4.compose(tmp.set(x, this.h(x, z) - 0.3, z), q4.setFromEuler(e4), new THREE.Vector3(s * 1.15, s * 1.3, s * 1.15));
       iceXf[i % 3].push(m4.clone());
-      if (s > 1.4) this.col.addCircle(x, z, s * 0.35, -10, this.h(x, z) + s * 2);
+      if (s > 1.4) this.noClimb(this.col.addCircle(x, z, s * 0.35, -10, this.h(x, z) + s * 2));
     }
     iceXf.forEach((list, k) => {
       if (!list.length) return;
@@ -536,9 +538,9 @@ export class World {
         // one solid column per side (the arch between them stays open)
         for (const [lx, top] of o.userData.pillars) {
           const px = x + Math.cos(o.rotation.y) * lx, pz = z - Math.sin(o.rotation.y) * lx;
-          this.col.addCircle(px, pz, 0.62, -10, o.position.y + top);
+          this.noClimb(this.col.addCircle(px, pz, 0.62, -10, o.position.y + top));
         }
-      } else this.solid(o, { r: 0.7 });
+      } else this.solid(o, { r: 0.7, climb: false, noTop: true });
     }
     // Kael's broken shield
     const sh = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.12, 6), B.MAT.bronze);
@@ -631,7 +633,7 @@ export class World {
         if (!zoneClear(ox, oz)) return;
         const h = 1.0 + rnd() * 0.9;
         this.place(B.cairn(rnd, h), ox, oz, rnd() * 3);
-        this.col.addCircle(ox, oz, 0.45, -10, this.h(ox, oz) + h * 0.8);
+        this.noClimb(this.col.addCircle(ox, oz, 0.45, -10, this.h(ox, oz) + h * 0.8));
         if (rnd() < 0.6) this.place(B.cairn(rnd, h * 0.5), ox + 0.9, oz + 0.5, rnd() * 3);
       });
       if (path.id === 'storm') along(path, 30, (x, z, dx, dz) => {
@@ -643,7 +645,7 @@ export class World {
         const r = Math.atan2(dx, dz) + Math.PI / 2 + (rnd() - 0.5) * 0.5;
         this.place(w, ox, oz, r);
         this.col.addBox(ox, oz, l / 2, 0.32, r, -10, this.h(ox, oz) + w.userData.top);
-        if (rnd() < 0.5) { const pb = B.pillarBroken(1.5 + rnd() * 2, rnd); this.place(pb, ox + dx * 3, oz + dz * 3, rnd() * 3); this.solid(pb, { r: 0.7 }); }
+        if (rnd() < 0.5) { const pb = B.pillarBroken(1.5 + rnd() * 2, rnd); this.place(pb, ox + dx * 3, oz + dz * 3, rnd() * 3); this.solid(pb, { r: 0.7, climb: false, noTop: true }); }
       });
       if (path.id === 'rift') along(path, 18, (x, z, dx, dz) => {
         if (x < 40) return;
@@ -662,7 +664,7 @@ export class World {
     for (const L of LANTERNS) {
       const g = B.lanternStone();
       this.place(g, L.x, L.z, rand() * 3);
-      this.col.addCircle(L.x, L.z, 0.6, -10, this.h(L.x, L.z) + 3);
+      this.noClimb(this.col.addCircle(L.x, L.z, 0.6, -10, this.h(L.x, L.z) + 3));
       const pos = new THREE.Vector3(L.x, this.h(L.x, L.z) + g.userData.flameY, L.z);
       const fl = { pos, lit: false, scale: 0.6 };
       this.flames.push(fl);
@@ -738,6 +740,11 @@ export class World {
   update(dt, camPos, playerPos) {
     U.time.value = G.time;
     U.wind.value = 1 + Math.sin(G.time * 0.3) * 0.35 + Math.sin(G.time * 1.1) * 0.15;
+    // thin out leaves between the camera and the player (forests); off for far cameras (cutscenes)
+    U.seeA.value.copy(camPos);
+    U.seeB.value.set(playerPos.x, playerPos.y + 1.3, playerPos.z);
+    const camD = camPos.distanceTo(U.seeB.value);
+    U.seeR.value = camD < 14 ? 2.1 : 0;
     this.weather.update(dt, camPos, playerPos);
     if (G.player) { this.fire.update(dt, camPos, playerPos); this.objects.update(dt, playerPos); }
     this.sky.update(dt, playerPos, 1, camPos);

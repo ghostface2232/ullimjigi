@@ -896,7 +896,7 @@ export class Props {
       if (rnd() > dens) continue;
       if (this.excluded(x, z, 2)) continue;
       if (dRift < 60) { this.add('dead', x, z, 0.8 + rnd() * 0.5, { col: 0.35 }); continue; }
-      const s = 0.8 + rnd() * 0.5;
+      const s = (0.8 + rnd() * 0.5) * 1.18; // taller canopies keep the view open under the crown
       const r = rnd();
       if (h > 30 || z < -80) this.add(h > 38 ? 'pineSnow' : 'pine', x, z, s, { col: 0.4 });
       else if (dm < 50) this.add(r < 0.6 ? 'maple' : r < 0.85 ? 'oak' : 'poplar', x, z, s, { col: 0.45 });

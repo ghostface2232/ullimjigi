@@ -826,8 +826,16 @@ if (vSurfF < 0.5) {
 }
 #endif
 `;
+// Baked maps of a modelled character on a toon material (tex: { map, normalMap, orm }): the
+// albedo replaces the vertex colours, the normal map is read in the frame of the uv derivatives.
+function mapped(m, tex) {
+  m.map = tex.map; m.normalMap = tex.normalMap || null;
+  m.defines = { ...(m.defines || {}), CH_TEX: 1 };
+  return { uOrm: { value: tex.orm || null } };
+}
 export function skinMat(o = {}) {
-  const m = bodyMat(0xffffff, { rim: o.rim ?? 0.16, vertexColors: true });
+  const m = bodyMat(0xffffff, { rim: o.rim ?? 0.16, vertexColors: !o.tex });
+  if (o.tex) mapped(m, o.tex);
   extend(m, 'skin2', (sh) => {
     sh.vertexShader = 'attribute float surf;\nvarying float vSurfF;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurfF = surf;');
     let fs = 'varying float vSurfF;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\nif (vSurfF > 3.5 && vSurfF < 4.5) { _specK = 5.0; _rough = 0.25; }');
@@ -856,21 +864,25 @@ const EYE_FRAG = `
   col = mix(col, iris, 1.0 - smoothstep(ir - aa, ir + aa, r));
   float pr = ir * uEye.y;
   col = mix(col, vec3(0.012, 0.01, 0.018), 1.0 - smoothstep(pr - aa, pr + aa, r));
-  col *= mix(1.0, 0.72, smoothstep(0.25, 0.9, e.y) * (1.0 - smoothstep(ir * 0.9, ir * 1.1, r) * 0.0));  // lid shadow on the white
-  float h1 = 1.0 - smoothstep(0.17, 0.24, length((e / ir - vec2(-0.34, 0.4)) * vec2(1.0, 1.15)));
-  float h2 = 1.0 - smoothstep(0.06, 0.1, length(e / ir - vec2(0.36, -0.36)));
-  _eyeHi = max(h1, h2 * 0.7) * uEye.z;
+  // the lids' shadow lies on the ball in the head's frame, so it stays put when the eye turns:
+  // deep under the upper lid, a soft rim all round where the lids meet the ball
+  vec3 dh = uEyeR * vec3(e, sqrt(max(1.0 - r * r, 0.0)));
+  col *= mix(1.0, 0.52, smoothstep(0.02, 0.62, dh.y)) * mix(1.0, 0.8, smoothstep(0.35, 0.95, length(dh.xy)));
+  float h1 = 1.0 - smoothstep(0.1, 0.27, length((e / ir - vec2(-0.34, 0.4)) * vec2(1.0, 1.15)));
+  float h2 = 1.0 - smoothstep(0.03, 0.13, length(e / ir - vec2(0.36, -0.36)));
+  _eyeHi = max(h1 * 0.78, h2 * 0.45) * uEye.z * (1.0 - 0.6 * smoothstep(0.1, 0.6, dh.y));
   diffuseColor.rgb = col;
 }
 `;
 export function eyeMat(iris = 0x3a5a7a, o = {}) {
   const m = bodyMat(0xffffff, { rim: 0 });
-  const u = { uIrisC: { value: new THREE.Color(iris) }, uEye: { value: new THREE.Vector4(o.iris ?? 0.56, o.pupil ?? 0.4, 1, 0) } };
+  // uEyeR: the eye bones' turn out of their rest direction (HumanRig.updateFace)
+  const u = { uIrisC: { value: new THREE.Color(iris) }, uEye: { value: new THREE.Vector4(o.iris ?? 0.56, o.pupil ?? 0.4, 1, 0) }, uEyeR: { value: new THREE.Matrix3() } };
   m.userData.eye = u;
   extend(m, 'eye2', (sh) => {
     Object.assign(sh.uniforms, u);
     sh.vertexShader = 'varying vec2 vEyeUv;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvEyeUv = uv;');
-    let fs = 'varying vec2 vEyeUv;\nuniform vec3 uIrisC;\nuniform vec4 uEye;\nfloat _eyeHi = 0.0;\n' + sh.fragmentShader.replace('#include <color_fragment>', EYE_FRAG)
+    let fs = 'varying vec2 vEyeUv;\nuniform vec3 uIrisC;\nuniform vec4 uEye;\nuniform mat3 uEyeR;\nfloat _eyeHi = 0.0;\n' + sh.fragmentShader.replace('#include <color_fragment>', EYE_FRAG)
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n_specK = 7.0; _rough = 0.14;');
     const at = fs.indexOf('if (uDissolve > 0.0) outgoingLight +=');
     // eyes never go dead in shade; the painted catchlights sit on top of the lighting
@@ -931,14 +943,91 @@ const CLOTH_FRAG = `
   }
 }
 `;
+// With baked maps (o.tex) the ORM texture sets occlusion and roughness per texel and `surf` only
+// picks the kind of response.
+const CLOTH_TEX_FRAG = `
+#include <emissivemap_fragment>
+{
+  vec4 _mo = texture2D( uOrm, vMapUv );
+  float _nv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+  float _px = length(fwidth(vObj));
+  _rough = clamp(_mo.g, 0.08, 1.0); _cav = mix(1.0, _mo.r, 0.75);
+  if (vSurf < 0.5) {
+    // threads below the texel size of the maps; the nap catches light at grazing angles
+    vec3 q = vObj * 1500.0;
+    diffuseColor.rgb *= 1.0 + 0.06 * sin(q.y) * sin(q.x + q.z) * (1.0 - smoothstep(0.0009, 0.0026, _px));
+    diffuseColor.rgb *= 1.0 + 0.2 * pow(1.0 - _nv, 3.0) * _mo.g;
+    _specK = 0.35;
+  } else if (vSurf < 1.5) {
+    _specK = 1.1;
+  } else if (vSurf < 2.5) {
+    float e = reflect(-normalize(vViewPosition), normal).y;
+    diffuseColor.rgb *= 0.7 + 0.3 * smoothstep(-0.3, 0.1, e) + 0.22 * smoothstep(0.3, 0.6, e);
+    _specK = 5.0;
+  } else if (vSurf < 3.5) {
+    // hair: the strands run along v of their uv strips (never turned in the atlas). The locks are
+    // lit as one mass: their normals lean towards the head's own, so no lock has a dark side
+    _hairT = normalize(tbn[1] + vec3(1e-5)); _specK = 0.0; _shK = 0.3;      // and locks barely shadow each other
+    vec3 _hn = normalize(vHairN);
+    normal = normalize(mix(normal, _hn, 0.6)); nonPerturbedNormal = normalize(mix(nonPerturbedNormal, _hn, 0.6));
+  } else if (vSurf > 4.5) {
+    float e = reflect(-normalize(vViewPosition), normal).y;
+    diffuseColor.rgb *= 0.75 + 0.6 * smoothstep(0.1, 0.3, e);
+    totalEmissiveRadiance += diffuseColor.rgb * 0.3;
+    _specK = 9.0; _rough = 0.18;
+  } else {
+    _specK = 0.15;
+  }
+}
+`;
+// hair highlight (Kajiya-Kay about the strand direction, widened and softened), added to the lit result
+const CLOTH_TEX_OUT = `
+#if NUM_SUN_LIGHTS > 0
+{
+  // relief: the toon ramp is flat in the light and in the shade, so the baked forms are lit on
+  // their own: by the sun where it reaches, by the sky elsewhere
+  vec3 _dn = normal - nonPerturbedNormal;
+  float _sl = _dirShadow * _cloudSh * smoothstep(-0.1, 0.25, dot(nonPerturbedNormal, sunLights[0].direction));
+  float _rl = dot(_dn, sunLights[0].direction) * _sl + dot(_dn, normalize((viewMatrix * vec4(0.25, 1.0, 0.1, 0.0)).xyz)) * (0.55 - 0.3 * _sl);
+  outgoingLight *= 1.0 + clamp(_rl * uRelief, -0.5, 0.4);
+}
+if (vSurf > 2.5 && vSurf < 3.5) {
+  // a broad soft band across the strands (Kajiya-Kay), ruffled by the grooves of the normal map
+  vec3 _vd = normalize(vViewPosition), _l = sunLights[0].direction;
+  vec3 _t = normalize(_hairT + (normal - nonPerturbedNormal) * 0.55 + nonPerturbedNormal * 0.14);
+  vec3 _hv = normalize(_l + _vd);
+  float _th = dot(_t, _hv), _s1 = sqrt(max(1.0 - _th * _th, 0.0));
+  float _sh = 0.3 + 0.7 * _dirShadow * _cloudSh;
+  float _wrap = smoothstep(-0.2, 0.6, dot(nonPerturbedNormal, _l)) * smoothstep(0.0, 0.5, dot(nonPerturbedNormal, _vd));
+  // (dark hair needs a strong band to show at all; white hair must not burn out)
+  vec3 _hc = diffuseColor.rgb * mix(3.2, 0.45, smoothstep(0.08, 0.6, dot(diffuseColor.rgb, vec3(0.3, 0.6, 0.1)))) + vec3(0.05, 0.042, 0.035);
+  outgoingLight += sunLights[0].color * _hc * (pow(_s1, 9.0) * 0.2 + pow(_s1, 40.0) * 0.14) * _wrap * _sh * _cav;
+}
+#endif
+`;
 export function clothMat(o = {}) {
-  const m = bodyMat(0xffffff, { vertexColors: true, rim: o.rim ?? 0.34 });
+  const m = bodyMat(0xffffff, { vertexColors: !o.tex, rim: o.rim ?? 0.34 });
   const u = { uHairC: { value: new THREE.Vector4(0, 1.6, 0, 0.13) } };
+  if (o.tex) Object.assign(u, mapped(m, o.tex), { uRelief: { value: o.relief ?? 1.1 } });
   m.userData.cloth = u;
-  extend(m, 'cloth', (sh) => {
+  extend(m, o.tex ? 'clothT' : 'cloth', (sh) => {
     Object.assign(sh.uniforms, u);
     sh.vertexShader = 'attribute float surf;\nvarying float vSurf;\nvarying vec3 vObj;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvObj = position; vSurf = surf;');
-    sh.fragmentShader = CLOTH_PARS + sh.fragmentShader.replace('#include <emissivemap_fragment>', CLOTH_FRAG);
+    if (!o.tex) { sh.fragmentShader = CLOTH_PARS + sh.fragmentShader.replace('#include <emissivemap_fragment>', CLOTH_FRAG); return; }
+    // direction out of the head through the vertex, carried with the skin (hair shading)
+    sh.vertexShader = 'uniform vec4 uHairC;\nvarying vec3 vHairN;\n' + sh.vertexShader.replace('#include <defaultnormal_vertex>', `#include <defaultnormal_vertex>
+  vec3 _hn = position - uHairC.xyz;
+  #ifdef USE_SKINNING
+    _hn = ( skinMatrix * vec4( _hn, 0.0 ) ).xyz;
+  #endif
+  vHairN = normalMatrix * _hn;`);
+    let fs = CLOTH_PARS + 'varying vec3 vHairN;\nuniform sampler2D uOrm;\nuniform float uRelief;\nvec3 _hairT = vec3(0.0, 1.0, 0.0);\nfloat _shK = 1.0;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>', CLOTH_TEX_FRAG)
+      .replace('float lit = g * _dirShadow * _cloudSh;', 'float lit = g * mix( 1.0, _dirShadow, _shK ) * _cloudSh;')
+      // the sculpted forms read in the light as well as along the terminator
+      .replace('float g = texture2D( gradientMap, vec2( clamp( ndl * 0.5 + 0.5, 0.0, 1.0 ), 0.5 ) ).r;', 'float g = 0.6 * smoothstep( -0.14, 0.1, ndl ) + 0.4 * smoothstep( -0.1, 0.85, ndl );');
+    const at = fs.indexOf('if (uDissolve > 0.0) outgoingLight +=');
+    if (at > 0) fs = fs.slice(0, at) + CLOTH_TEX_OUT + fs.slice(at);
+    sh.fragmentShader = fs;
   });
   return m;
 }

@@ -147,6 +147,12 @@ function fromModel(gltf, def) {
   // the head (shape keys) stays a geometry of its own: morph textures cover every vertex of a geometry
   const face = meshes.filter((m) => m.geometry.morphAttributes.position);
   const built = mergeModel(meshes.filter((m) => !m.geometry.morphAttributes.position), def);
+  // baked maps per material group: albedo, tangent-space normal map, ORM (occlusion, roughness, metal)
+  built.tex = {};
+  for (const m of meshes) {
+    const mt = m.material;
+    if (mt.map) { built.tex[mt.name.replace(/^CH_/, '')] = { map: mt.map, normalMap: mt.normalMap, orm: mt.roughnessMap }; for (const t of [mt.map, mt.normalMap, mt.roughnessMap]) if (t) t.anisotropy = 4; }
+  }
   if (face.length) {
     const f = mergeModel(face, def);
     const src = face[0], dict = src.morphTargetDictionary;
@@ -389,7 +395,7 @@ export class HumanRig extends Rig {
     const M = (this.M = {});
     const F2 = T.built.face;      // authored, sculpted head
     if (T.v2) {
-      M.skin = skinMat(); M.eye = eyeMat(c.eyeColor ?? 0x3a5a7a, { iris: c.irisR, pupil: c.pupilR });
+      M.skin = skinMat({ tex: T.built.tex.skin }); M.eye = eyeMat(c.eyeColor ?? 0x3a5a7a, { iris: c.irisR, pupil: c.pupilR });
       this.faceU = { v2: true };
     } else if (F2) {
       const sp = F2.spec, F = T.face || HB.faceParams(c, T.L);
@@ -416,7 +422,7 @@ export class HumanRig extends Rig {
       u.uFaceX.value.set(F.fringeY, F.noseY, F.lip, F.lowLash);
       this.faceU = u;
     } else this.faceU = null;
-    M.main = clothMat({ rim: o.rim ?? 0.34 });
+    M.main = clothMat({ rim: o.rim ?? 0.34, tex: T.v2 ? T.built.tex.main : null });
     M.main.userData.cloth.uHairC.value.set(T.L.HC.x, T.L.HC.y, T.L.HC.z, T.L.hr);
     if (o.mats) Object.assign(M, o.mats);
     this.mats = Object.values(M).filter((m) => m.isMeshToonMaterial);
@@ -486,7 +492,8 @@ export class HumanRig extends Rig {
       if (ch.kind === 'cape') { col(B.chest, cp, 0, L.SY - 0.1, 0.03, 0.16 * bwf); col(B.hips, hp, 0, L.H - 0.02, 0, 0.15 * bwf); }
       if (ch.kind === 'scarf') col(B.chest, cp, 0, L.SY - 0.05, 0.06, 0.2 * bwf);
       if (ch.kind === 'hair') { col(B.head, T.def.pos('head'), L.HC.x, L.HC.y, L.HC.z, L.hr * 1.08); col(B.chest, cp, 0, L.SY - 0.1, 0.03, 0.15 * bwf); }
-      if (ch.kind === 'skirt') for (const th of [B.thighL, B.thighR]) for (const y of [-0.06, -0.17, -0.28]) cols.push({ obj: th, off: new V3(0, y, 0.005), r: 0.094 * bwf * (c.limb ?? 1) });
+      // (modelled characters wear trousers cut with ease: wider legs under the skirt)
+      if (ch.kind === 'skirt') for (const th of [B.thighL, B.thighR]) for (const y of T.v2 ? [-0.06, -0.12, -0.18, -0.24, -0.3] : [-0.06, -0.17, -0.28]) cols.push({ obj: th, off: new V3(0, y, 0.005), r: (T.v2 ? 0.112 : 0.094) * bwf * (c.limb ?? 1) });
       if (ch.kind === 'skirt' && ch.names.length > 2) for (const sh of [B.shinL, B.shinR]) for (const y of [-0.08, -0.22]) cols.push({ obj: sh, off: new V3(0, y, 0), r: 0.075 * bwf });
       else if (ch.kind !== 'plume') { cols.push({ obj: B.thighL, off: new V3(0, -0.2, 0), r: 0.1 * bwf }); cols.push({ obj: B.thighR, off: new V3(0, -0.2, 0), r: 0.1 * bwf }); }
       const opts = ch.opts || { cape: { stiff: 0.06, stiffTip: 0.02, damp: 0.1, grav: 9, drag: 1 }, scarf: { stiff: 0.05, stiffTip: 0.01, damp: 0.06, grav: 7, drag: 1.4 }, plume: { stiff: 0.12, stiffTip: 0.05, damp: 0.12, grav: 2, drag: 0.8 }, hair: { stiff: 0.14, stiffTip: 0.06, damp: 0.12, grav: 6, drag: 0.5 }, skirt: { stiff: 0.3, stiffTip: 0.16, damp: 0.25, grav: 5, drag: 0.4 } }[ch.kind];
@@ -1141,13 +1148,21 @@ export class HumanRig extends Rig {
       const cl = clamp(clamp(1 - open, 0, 1) * (1 - fx.happy) + Math.max(0, -ey) * 0.22, 0, 1);
       set('blinkH', 1 - Math.abs(2 * cl - 1)); set('blink', Math.max(0, 2 * cl - 1));
       set('wide', clamp((open - 1) * 3.5 + Math.max(0, ey) * 0.3, 0, 1));
-      set('happy', fx.happy); set('lidLow', fx.lower * (1 - fx.happy)); set('lidTilt', fx.tilt);
+      // tilt and lower lid narrow the eye on top of `open`: together they stop short of shutting it
+      const room = clamp(1 - cl * 1.6, 0, 1);
+      set('happy', fx.happy); set('lidLow', fx.lower * (1 - fx.happy) * (0.45 + 0.55 * room)); set('lidTilt', fx.tilt * (0.5 + 0.5 * room));
       set('mOpen', mo); set('smile', Math.max(0, fx.smile)); set('frown', Math.max(0, -fx.smile));
       set('round', clamp(fx.round + this.talkV * 0.25 + Math.max(0, 1 - fx.mW) * 1.2, 0, 1)); set('wideM', clamp((fx.mW - 1) * 2.5, 0, 1));
       set('browUp', Math.max(0, fx.raise)); set('browDown', Math.max(0, -fx.raise));
       set('browTilt', Math.max(0, fx.btilt)); set('browAngry', Math.max(0, -fx.btilt)); set('browFurrow', fx.furrow);
       const B = this.B;
-      if (B.eyeL) { B.eyeL.rotation.set(-ey * 0.3, ex * 0.42, 0); B.eyeR.rotation.set(-ey * 0.3, ex * 0.42, 0); }
+      if (B.eyeL) {
+        // the eyes rest a few degrees apart: the lid openings sit outside the eyeballs' centres, so
+        // parallel eyes read as crossed, most of all when the lids open wide
+        const dv = this.c.eyeDiv ?? 0.03;
+        B.eyeL.rotation.set(-ey * 0.3, ex * 0.42 + dv, 0); B.eyeR.rotation.set(-ey * 0.3, ex * 0.42 - dv, 0);
+        this.M.eye.userData.eye.uEyeR.value.setFromMatrix4(_m1.makeRotationFromEuler(_e1.set(-ey * 0.3, ex * 0.42, 0)));
+      }
       return;
     }
     if (this.morph) {

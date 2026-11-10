@@ -28,8 +28,12 @@
 //   (humanrig.js: collar, cuff, tunicTrim, sash, suspenders, bootH, shorts, ...).
 //   Secondary motion and foot IK run only near the camera (rig.lod).
 //   Modelled people (public/models/ch_<key>.glb, built in Blender from a base mesh by
-//   ref/blender/c2_*.py): `skin` (vertex-painted, softly lit, charkit skinMat), `eye` (eyeballs on
-//   the bones eyeL / eyeR, charkit eyeMat) and `main`. The model adds bones to the skeleton:
+//   ref/blender/c2_*.py): `skin` (softly lit, charkit skinMat), `eye` (eyeballs on the bones
+//   eyeL / eyeR, charkit eyeMat) and `main`. Each of skin and main has its own atlas of baked
+//   maps (albedo, normal map read in the uv-derivative frame so no tangents are stored; main
+//   also ORM), handed to skinMat / clothMat as `tex`; the vertex colours only tint the outline.
+//   Hair strips are never turned in the atlas: v runs along the strands (the highlight's
+//   direction). The model adds bones to the skeleton:
 //   fingers (f1a..f4c, tha..thc: driven from the pose channels fingL/R and thumbL/R), eyes, and
 //   verlet chains named c_<kind><n>_<k> (cape, skirt). Expressions drive shape keys (blinkH, blink,
 //   wide, lidLow, happy, lidTilt, mOpen, smile, frown, round, wideM, browUp, browDown, browTilt,

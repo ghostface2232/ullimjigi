@@ -14,12 +14,19 @@ const CH = 128;
 const LOD_R = [150, 420, 800];
 const LOD_KEEP = [450, 900];      // built LOD 0 / 1 geometry is freed beyond these distances
 const SKIRT = [3, 6, 12, 24];     // skirt depth per LOD: hides cracks between neighbouring LODs
-// Cliffs (Terrain.initCliffs): plan size (m) of a rock mass and of the facets cut into it,
-// and the half-width of the chamfer where two masses (at least) / two facets meet.
-const CL0 = 19, CL1 = 6.5, BEV0 = 1.0, BEV1 = 0.7;
-// Blocks the rock walls are broken into (Terrain.sculpt): size in plan and in height (m),
-// how far one may stand out or back from the face, half-width of the joint between two.
-const BK = 3.4, BKY = 2.0, BAMP = 0.34, BJ = 0.12;
+// Cliffs (Terrain.initCliffs): plan size (m) of a rock mass, the least half-width of the
+// face between two masses, and how far (m) the walls swell and hollow (Terrain.sculpt).
+const CL0 = 19, BEV0 = 1.0, BAMP = 0.45;
+// smooth value noise in 3D, 0..1
+const vn3 = (x, y, z) => {
+  const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
+  let u = x - ix, v = y - iy, w = z - iz;
+  u = u * u * (3 - 2 * u); v = v * v * (3 - 2 * v); w = w * w * (3 - 2 * w);
+  const h = (i, j, k) => hsh(ix + i + (iy + j) * 8191, iz + k, 31);
+  const a = lerp(lerp(h(0, 0, 0), h(1, 0, 0), u), lerp(h(0, 1, 0), h(1, 1, 0), u), v);
+  const b = lerp(lerp(h(0, 0, 1), h(1, 0, 1), u), lerp(h(0, 1, 1), h(1, 1, 1), u), v);
+  return a + (b - a) * w;
+};
 const RING = Array.from({ length: 8 }, (_, k) => [Math.cos(k * Math.PI / 4 + 0.3), Math.sin(k * Math.PI / 4 + 0.3)]);
 const hsh = (a, b, k) => { let h = Math.imul(a, 374761393) ^ Math.imul(b, 668265263) ^ Math.imul(k, 2246822519); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
 const _c = new THREE.Color(), _f = new THREE.Color(), _s = new THREE.Color();
@@ -118,12 +125,14 @@ export class Terrain {
 
   // Steep ground is rebuilt as rock. The smooth slope is replaced by masses (cells in plan,
   // each a tilted plane through the old surface: some nearly level benches, some leaning
-  // faces, each standing a little proud of or behind the slope) with smaller facets cut
-  // into them, all meeting in straight chamfered edges. It is still one height per (x, z),
-  // so walking, climbing, cameras and everything placed by height follow the same surface
-  // the eye sees. `base` keeps the smooth ground (the far LODs draw it), `cw` says how
-  // much of the rock form applies (0 on gentle ground and roads), and `h` is the final
-  // height at the grid points for whoever reads the grid directly.
+  // faces, each standing a little proud of or behind the slope) that meet in faces at their
+  // own angles, rounded at the shoulder and the foot. Everything is read through a slow warp
+  // of the plan (`warp`), so no outline is a straight cut: walls swell into buttresses and
+  // draw back into bays, tops roll a little. It is still one height per (x, z), so walking,
+  // climbing, cameras and everything placed by height follow the same surface the eye sees.
+  // `base` keeps the smooth ground (the far LODs draw it), `cw` says how much of the rock
+  // form applies (0 on gentle ground and roads), and `h` is the final height at the grid
+  // points for whoever reads the grid directly.
   initCliffs() {
     const N = this.N, cnt = N * N, st = this.step, H = this.h;
     this.base = H.slice();
@@ -143,8 +152,7 @@ export class Terrain {
     for (let i = 0; i < cnt; i++) w[i] = smoothstep(0.08, 0.5, w[i]);
     this.cw = w;
     this.sites = new Map();
-    this.bsites = new Map();
-    this._edge = 0; this._top = 1;
+    this._top = 1;
     for (let i = 0; i < cnt; i++) if (CWR(w[i]) > 0) H[i] = this.cliffAt(-this.half + (i % N) * st, -this.half + Math.floor(i / N) * st, this.base[i], CWR(w[i]));
     // 4 m blocks touched by rock are drawn by the cliff mesh instead of the grid
     const NB = (this.NB = this.seg / 2), bs = (this.blockSteep = new Uint8Array(NB * NB));
@@ -173,13 +181,11 @@ export class Terrain {
     return s;
   }
 
-  // The masses alone, at (x, z): the nearer one's plane, chamfered into its neighbour's.
-  // Which masses are nearest is judged from (x + ox, z + oz): that shift, different in every
-  // facet cell, steps the outline of a mass in plan without breaking its top into stairs.
-  // Leaves in `_e` how strongly the point sits on a rim (> 0) or in a crease (< 0), and in
-  // `_t` whether it is on a top gentle enough for grass (1) or on rock (0).
-  mass(x, z, ox, oz) {
-    const qx = x + ox, qz = z + oz, gx = Math.floor(qx / CL0), gz = Math.floor(qz / CL0);
+  // The masses alone, at (x, z): the nearer one's plane, eased into its neighbour's across
+  // the face between them. Leaves in `_t` whether the point is on a top gentle enough for
+  // grass (1) or on rock (0), and the face's edge distance and direction for `cliffSnap`.
+  mass(x, z) {
+    const qx = x, qz = z, gx = Math.floor(qx / CL0), gz = Math.floor(qz / CL0);
     let d1 = 1e18, d2 = 1e18, s1 = null, s2 = null;
     for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
       const s = this.site(gx + k, gz + j), dx = s.x - qx, dz = s.z - qz, d = dx * dx + dz * dz;
@@ -194,56 +200,35 @@ export class Terrain {
     this._bd = bd; this._bev = bev; this._nx = (s1.x - s2.x) / sd; this._nz = (s1.z - s2.z) / sd;
     this._e = Math.sign(p1 - p2) * Math.min(Math.abs(p1 - p2) / 3, 1) * Math.max(0, 1 - Math.abs(bd - bev) / 1.2) * (bd < bev ? 0.6 : 1);
     this._t = bd >= bev - 0.02 ? smoothstep(0.62, 0.38, s1.g) : 0;
-    return p1 + (p2 - p1) * 0.5 * Math.max(0, 1 - bd / bev);
+    // the face is steepest halfway and rolls over into the tops: a worn shoulder, a filled foot
+    const u = Math.max(0, 1 - bd / bev);
+    return p1 + (p2 - p1) * 0.5 * u * (0.3 + 0.7 * u);
   }
 
-  // Where a mesh vertex at (x, z) should sit so that the creases of the rock run along rows
-  // of vertices instead of zig-zagging between them: a vertex within `r` of the upper or
-  // lower edge of a chamfer (between masses, or between facet cells) moves onto that edge.
-  // Returns the moved position in `_sx`, `_sz`.
+  // The slow warp of the plan the rock is read through: leaves the place to read in `_qx`, `_qz`.
+  warp(x, z) {
+    const a = this.noise2, b = this.noise3;
+    this._qx = x + a(x * 0.045, z * 0.045) * 2.6 + a(x * 0.16 + 31, z * 0.16) * 0.7;
+    this._qz = z + b(x * 0.045 + 17, z * 0.045) * 2.6 + b(x * 0.16, z * 0.16 + 53) * 0.7;
+  }
+
+  // Where a mesh vertex at (x, z) should sit so that the edges of the rock faces run along
+  // rows of vertices instead of zig-zagging between them: a vertex within `r` of the upper or
+  // lower edge of a face moves onto that edge. Returns the moved position in `_sx`, `_sz`.
   cliffSnap(x, z, r) {
-    const fx = Math.floor(x / CL1), fz = Math.floor(z / CL1);
-    let d1 = 1e18, d2 = 1e18, ax = 0, az = 0, bx = 0, bz = 0, ac = 0, aj = 0;
-    for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
-      const cx = fx + k, cz = fz + j, sx = (cx + hsh(cx, cz, 11)) * CL1, sz = (cz + hsh(cx, cz, 12)) * CL1;
-      const dx = x - sx, dz = z - sz, d = dx * dx + dz * dz;
-      if (d < d1) { d2 = d1; bx = ax; bz = az; d1 = d; ax = sx; az = sz; ac = cx; aj = cz; }
-      else if (d < d2) { d2 = d; bx = sx; bz = sz; }
-    }
+    this.warp(x, z);
+    this.mass(this._qx, this._qz);
+    const em = this._bd - this._bev;
     this._sx = x; this._sz = z;
-    const fd = Math.hypot(bx - ax, bz - az) + 1e-6, bf = (d2 - d1) / (2 * fd);
-    this.mass(x, z, (hsh(ac, aj, 13) - 0.5) * 2.4, (hsh(ac, aj, 14) - 0.5) * 2.4);
-    // the nearer crease wins
-    const em = this._bd - this._bev, ef = bf - BEV1;
-    if (Math.abs(em) < r && Math.abs(em) <= Math.abs(ef)) { this._sx = x - em * this._nx; this._sz = z - em * this._nz; }
-    else if (Math.abs(ef) < r) { this._sx = x - ef * (ax - bx) / fd; this._sz = z - ef * (az - bz) / fd; }
+    // (the warp is nearly a shift over so short a way)
+    if (Math.abs(em) < r) { this._sx = x - em * this._nx; this._sz = z - em * this._nz; }
   }
 
   // The rock surface at (x, z), given the smooth ground hb and the cliff weight w there.
-  // Each facet cell reads the masses from a slightly shifted place, which steps the outline
-  // of every mass in plan: a wall becomes a row of upright faces at different depths, like
-  // jointed rock, and a leaning top a few broad steps. Leaves the rim / crease value in `_edge`.
   cliffAt(x, z, hb, w) {
-    const fx = Math.floor(x / CL1), fz = Math.floor(z / CL1);
-    let d1 = 1e18, d2 = 1e18, ax = 0, az = 0, bx = 0, bz = 0, ac = 0, aj = 0, bc = 0, bj = 0;
-    for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
-      const cx = fx + k, cz = fz + j, sx = (cx + hsh(cx, cz, 11)) * CL1, sz = (cz + hsh(cx, cz, 12)) * CL1;
-      const dx = x - sx, dz = z - sz, d = dx * dx + dz * dz;
-      if (d < d1) { d2 = d1; bx = ax; bz = az; bc = ac; bj = aj; d1 = d; ax = sx; az = sz; ac = cx; aj = cz; }
-      else if (d < d2) { d2 = d; bx = sx; bz = sz; bc = cx; bj = cz; }
-    }
-    let t = this.mass(x, z, (hsh(ac, aj, 13) - 0.5) * 2.4, (hsh(ac, aj, 14) - 0.5) * 2.4), e = this._e, top = this._t;
-    const bf = (d2 - d1) / (2 * Math.hypot(bx - ax, bz - az) + 1e-6);
-    if (bf < 0.9) {
-      const t2 = this.mass(x, z, (hsh(bc, bj, 13) - 0.5) * 2.4, (hsh(bc, bj, 14) - 0.5) * 2.4);
-      const dt = Math.abs(t - t2);
-      e += 0.6 * Math.sign(t - t2) * Math.min(dt / 1.5, 1) * (1 - bf / 0.9);
-      if (bf < BEV1) t += (t2 - t) * 0.5 * (1 - bf / BEV1);
-      // the step between two facet cells is a rock face too
-      if (bf < BEV1 - 0.02 && dt > 0.6) top = 0;
-    }
-    this._edge = Math.max(-1, Math.min(1, e)) * w;
-    this._top = top; this._dh = t - hb;
+    this.warp(x, z);
+    const t = this.mass(this._qx, this._qz);
+    this._top = this._t; this._dh = t - hb;
     return hb + (t - hb) * w;
   }
 
@@ -753,32 +738,15 @@ export class Terrain {
     return m;
   }
 
-  // One block of the rock at cell (cx, cy, cz) of a jittered 3D grid: its centre and how
-  // far it stands out (+) or back (-) from the face.
-  blockSite(cx, cy, cz) {
-    const key = ((cx + 512) * 1024 + cy + 512) * 1024 + cz + 512;
-    let s = this.bsites.get(key);
-    if (!s) {
-      const a = cx + cy * 8191;
-      const o = hsh(a, cz, 24);
-      s = [(cx + 0.5 + (hsh(a, cz, 21) - 0.5) * 0.85) * BK, (cy + 0.5 + (hsh(a, cz, 22) - 0.5) * 0.6) * BKY, (cz + 0.5 + (hsh(a, cz, 23) - 0.5) * 0.85) * BK,
-        // most stand near the face, a few well out or back
-        (o - 0.5) * Math.abs(o - 0.5) * 4 * BAMP];
-      this.bsites.set(key, s);
-    }
-    return s;
-  }
-
-  // Sculpts the rock walls of a cliff mesh. The lattice has vertices every st / K in plan
-  // only, so a wall is a few long triangles: first every steep edge longer than `L` is halved
-  // until none is (whether an edge is split depends on that edge alone, and it is split at
-  // its middle, so triangles sharing it agree and the mesh stays closed). Then the wall
-  // is broken into blocks (blockSite): each vertex on a steep face moves along the face's
-  // normal by the offset of the block it is in, and vertices near a joint between two blocks
-  // slide onto the edge of that joint first, so block faces stay flat and their edges crisp.
-  // Walkable tops are not touched (height() stays exact there); on a wall the eye and
-  // height() differ by at most BAMP. `wv` is the cliff weight per vertex; returns the new
-  // triangle list.
+  // Gives the rock walls of a cliff mesh their relief. The lattice has vertices every st / K
+  // in plan only, so a wall is a few long triangles: first every steep edge longer than `L` is
+  // halved until none is (whether an edge is split depends on that edge alone, and it is
+  // split at its middle, so triangles sharing it agree and the mesh stays closed). Then each
+  // vertex on a steep face moves along the face's normal by a slow 3D noise: the wall swells
+  // and hollows in broad, soft forms, taller than they are wide. No cells, joints or cracks:
+  // every such pattern read as masonry. Walkable tops are not touched (height() stays exact
+  // there); on a wall the eye and height() differ by at most BAMP. `wv` is the cliff weight
+  // per vertex; returns the new triangle list.
   *sculpt(pos, edge, wv, idx, L) {
     const L2 = L * L, mid = new Map(), tris = [], stack = [];
     // squared length of an edge that has to be split, 0 of one that stays
@@ -799,7 +767,7 @@ export class Terrain {
     };
     for (let t = 0; t < idx.length; t += 3) {
       if ((t & 8191) === 8190) yield;
-      if (idx[t] === idx[t + 1] && idx[t] === idx[t + 2]) continue;
+      if (idx[t] === idx[t + 1] || idx[t + 1] === idx[t + 2] || idx[t] === idx[t + 2]) continue;
       stack.push(idx[t], idx[t + 1], idx[t + 2]);
       while (stack.length) {
         const c = stack.pop(), b = stack.pop(), a = stack.pop();
@@ -810,7 +778,7 @@ export class Terrain {
         else { const m = half(c, a); stack.push(a, b, m, m, b, c); }
       }
     }
-    // the face's normal: of the smooth mesh, before any block moves
+    // the face's normal: of the mesh before anything moves
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setIndex(tris);
@@ -820,54 +788,21 @@ export class Terrain {
     g.dispose();
     for (let v = 0, n = pos.length / 3; v < n; v++) {
       if ((v & 4095) === 4095) yield;
-      const nx = N[v * 3], ny = N[v * 3 + 1], nz = N[v * 3 + 2];
-      let x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
+      const ny = N[v * 3 + 1], x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
       // (nothing moves along a chunk's border: the neighbour's mesh has to meet this one)
       const bx = (x + this.half) % cs, bz = (z + this.half) % cs, rim = Math.min(bx, cs - bx, bz, cs - bz);
       const wall = (1 - smoothstep(0.5, 0.78, ny)) * smoothstep(0.9, 1, wv[v]) * smoothstep(0.3, 1.3, rim);
       if (wall <= 0) continue;
-      // the three nearest blocks
-      const ix = Math.floor(x / BK), iy = Math.floor(y / BKY), iz = Math.floor(z / BK);
-      let d1 = 1e18, d2 = 1e18, d3 = 1e18, s1 = null, s2 = null, s3 = null;
-      for (let k = -1; k <= 1; k++) for (let j = -2; j <= 2; j++) for (let i = -1; i <= 1; i++) {
-        const s = this.blockSite(ix + i, iy + j, iz + k), dx = s[0] - x, dy = s[1] - y, dz = s[2] - z, d = dx * dx + dy * dy + dz * dz;
-        if (d < d1) { d3 = d2; s3 = s2; d2 = d1; s2 = s1; d1 = d; s1 = s; } else if (d < d2) { d3 = d2; s3 = s2; d2 = d; s2 = s; } else if (d < d3) { d3 = d; s3 = s; }
-      }
-      let jx = s1[0] - s2[0], jy = s1[1] - s2[1], jz = s1[2] - s2[2];
-      const jl = Math.hypot(jx, jy, jz), bd = (d2 - d1) / (2 * jl);
-      jx /= jl; jy /= jl; jz /= jl;
-      let d = s1[3] + (s2[3] - s1[3]) * 0.5 * Math.max(0, 1 - bd / BJ);
-      // Slide along the face onto the edge of the joint (not where the joint lies in the
-      // face). Every vertex within an edge's length of the joint goes, so no edge is left
-      // crossing it: the joint becomes a clean strip between two rows of vertices.
-      const m = BJ - bd, nj = nx * jx + ny * jy + nz * jz, k = 1 - nj * nj;
-      if (bd < L && k > 0.25 && wall > 0.5) {
-        const f = m / k;
-        x += (jx - nx * nj) * f; y += (jy - ny * nj) * f; z += (jz - nz * nj) * f;
-        d = s1[3];
-        // near a corner of the block, on along this joint's edge to the edge of the next one
-        let kx = s1[0] - s3[0], ky = s1[1] - s3[1], kz = s1[2] - s3[2];
-        const kl = Math.hypot(kx, ky, kz), b3 = (d3 - d1) / (2 * kl);
-        if (b3 < L) {
-          kx /= kl; ky /= kl; kz /= kl;
-          // (the edge runs along the face and along the first joint)
-          const ex = ny * jz - nz * jy, ey = nz * jx - nx * jz, ez = nx * jy - ny * jx, ek = ex * kx + ey * ky + ez * kz, e2 = ex * ex + ey * ey + ez * ez;
-          if (ek * ek > 0.1 * e2) { const g = (BJ - b3) / ek; x += ex * g; y += ey * g; z += ez * g; }
-        }
-      }
-      d *= wall;
-      pos[v * 3] = x + nx * d; pos[v * 3 + 1] = y + ny * d; pos[v * 3 + 2] = z + nz * d;
-      // blocks set back from the face, and the joints, sit in shade
-      edge[v * 2] *= 1 - wall * (0.3 * clamp(-d / BAMP, 0, 1) + 0.22 * clamp(1 - bd / BJ, 0, 1));
+      // rounded swells with soft folds between them, in two sizes (read through a slow
+      // drift, so no fold runs straight)
+      const wx = x + (vn3(x / 9, y / 9, z / 9 + 3.7) - 0.5) * 5, wy = y + (vn3(x / 9 + 5.3, y / 9, z / 9) - 0.5) * 5, wz = z + (vn3(x / 9, y / 9 + 8.1, z / 9) - 0.5) * 5;
+      const n1 = 1 - Math.abs(vn3(wx / 7.5, wy / 11, wz / 7.5) * 2 - 1), n2 = 1 - Math.abs(vn3(wx / 3.1 + 9.1, wy / 4.4, wz / 3.1) * 2 - 1);
+      const d = ((n1 * n1 - 0.4) * 1.4 + (n2 * n2 - 0.4) * 0.45) * BAMP * wall;
+      pos[v * 3] = x + N[v * 3] * d; pos[v * 3 + 1] = y + ny * d; pos[v * 3 + 2] = z + N[v * 3 + 2] * d;
+      // hollows sit in shade
+      edge[v * 2] *= 1 - 0.3 * clamp(-d / BAMP, 0, 1);
     }
-    // (triangles that the sliding closed up are dropped)
-    const out = new Uint32Array(tris.length);
-    let o = 0;
-    for (let t = 0; t < tris.length; t += 3) {
-      const a = tris[t], b = tris[t + 1], c = tris[t + 2];
-      if (a !== b && b !== c && a !== c) { out[o++] = a; out[o++] = b; out[o++] = c; }
-    }
-    return out.subarray(0, o);
+    return new Uint32Array(tris);
   }
 
   // a quality change alters how finely the rock is meshed

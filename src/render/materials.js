@@ -490,7 +490,7 @@ const TERRAIN_FRAG = `
       vec3 Tx = dFdx(vWPos), Ty = dFdy(vWPos);
       vec3 gn = normalize(cross(Tx, Ty));
       if (gn.y < 0.0) gn = -gn;
-      _wn = normalize(mix(normalize(vWNrm), gn, 0.5));
+      _wn = normalize(mix(normalize(vWNrm), gn, 0.4));
       float steep = 1.0 - smoothstep(0.62, 0.78, gn.y);
       // (for the tops: by the smooth normal, unless the face itself is level: a ramp at the
       // foot of the rock has triangles leaning either way, and would be cut in saw teeth)
@@ -504,7 +504,7 @@ const TERRAIN_FRAG = `
       float ta = dot(Tx, Tx), tb = dot(Tx, Ty), tc = dot(Ty, Ty);
       vec3 eg = ((tc * ex - tb * ey) * Tx + (ta * ey - tb * ex) * Ty) / max(ta * tc - tb * tb, 1e-12);
       float lip = (1.0 - vEdge.y) / max(length(eg), 1e-3);
-      float len = 0.15 + 1.1 * texture2D(uNoiseTex, p * 0.23).g * (0.4 + 1.2 * nq);
+      float len = 0.12 + 0.6 * texture2D(uNoiseTex, p * 0.23).g * (0.4 + 1.2 * nq);
       fringe = steep * step(0.0, eg.y) * (1.0 - smoothstep(0.55, 1.0, lip / len));
       rockK = 1.0 - max(top, fringe);
       fringe *= 1.0 - top;
@@ -525,7 +525,7 @@ const TERRAIN_FRAG = `
     rockC = mix(rockC, uPal[2], smoothstep(0.45, 0.8, texture2D(uNoiseTex, p * 0.005 + 0.37).g) * 0.5);
     rockC = mix(rockC, uPal[3], smoothstep(0.45, 0.8, texture2D(uNoiseTex, p * 0.0033 + 0.71).r) * 0.45);
     float up = smoothstep(-0.2, 0.7, _wn.y);
-    rockC *= (0.88 + 0.2 * up) * mix(vec3(0.95, 0.98, 1.05), vec3(1.05, 1.0, 0.94), up);
+    rockC *= (0.98 + 0.16 * up) * mix(vec3(0.99, 0.99, 1.01), vec3(1.06, 1.01, 0.93), up);
     // (snow, ash and wet sand lie on rock too)
     rockC = mix(rockC, gc, max(sp.b, max(sp.g, sp.a * 0.5)));
     vec3 col = mix(gc, rockC, rockK);
@@ -533,7 +533,7 @@ const TERRAIN_FRAG = `
     col *= mix(vec3(1.0), vec3(0.6, 0.76, 0.5), fringe);
     #ifdef CLIFF_SKIN
       // shut-in rock is darker and cooler: walls deepen below their lips, gullies most of all
-      col *= mix(vec3(0.72, 0.77, 0.88), vec3(1.0), smoothstep(0.0, 0.9, vEdge.x));
+      col *= mix(vec3(0.74, 0.78, 0.86), vec3(1.0), smoothstep(0.0, 0.9, vEdge.x));
     #endif
     // roads: the edge is drawn here from the distance to the road, so it is as crisp as the
     // pixel, ragged with noise; trampled grass along it, packed earth in the middle

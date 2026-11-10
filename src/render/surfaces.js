@@ -14,7 +14,39 @@ export const SURF = {
   grass: [0, 4], dirt: [1, 3], rock: [2, 6], sand: [3, 3], snow: [4, 4], stone: [5, 2.2],
   plaster: [6, 2.6], planks: [7, 1.5], roof: [8, 1.6], bark: [9, 1.1], paving: [10, 2.8], wood: [11, 1.0], boulder: [12, 3.2],
 };
-const LAYERS = 13;
+const LAYERS = 14;
+// Cliff rock is not drawn here: it is scanned rock (public/textures, see the README there),
+// copied into these layers once its files have loaded. layer -> file stem
+const SCANS = [[2, 'cliff_blocks'], [13, 'cliff_beds']];
+// _n: normal xy + occlusion, _h: height. Only the relief is taken: colour stays the terrain's.
+const SCAN_FS = /* glsl */ `
+precision highp float;
+uniform sampler2D uN, uHt;
+uniform int uOut;
+varying vec2 vUv;
+void main(){
+  vec4 n = texture2D(uN, vUv);
+  float h = texture2D(uHt, vUv).r;
+  if (uOut == 0) { gl_FragColor = vec4(vec3(0.5 * (0.72 + 0.32 * n.b) * (0.92 + 0.16 * h)), h); return; }
+  gl_FragColor = vec4(n.rg, 0.86, 0.3 + 0.7 * n.b * n.b);
+}`;
+function loadScans(renderer, A, N) {
+  const loader = new THREE.TextureLoader();
+  const get = (f) => loader.loadAsync('./textures/' + f + '.webp').then((t) => { t.colorSpace = THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; return t; });
+  for (const [layer, stem] of SCANS) {
+    Promise.all([get(stem + '_n'), get(stem + '_h')]).then(([n, h]) => {
+      const mat = new THREE.ShaderMaterial({
+        uniforms: { uN: { value: n }, uHt: { value: h }, uOut: { value: 0 } },
+        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: SCAN_FS, depthTest: false, depthWrite: false, toneMapped: false,
+      });
+      const quad = new FullScreenQuad(mat), prev = renderer.getRenderTarget();
+      for (const [o, rt] of [[0, A], [1, N]]) { mat.uniforms.uOut.value = o; renderer.setRenderTarget(rt, layer); quad.render(renderer); }
+      renderer.setRenderTarget(prev);
+      quad.dispose(); mat.dispose(); n.dispose(); h.dispose();
+    }).catch(() => { /* the painted layer stays */ });
+  }
+}
 
 const FS = /* glsl */ `
 precision highp float;
@@ -297,5 +329,6 @@ export function bakeSurfaces(renderer, size = 1024) {
   }
   renderer.setRenderTarget(prev);
   quad.dispose(); mat.dispose(); H.dispose();
+  loadScans(renderer, A, N);
   return (lib = { a: A.texture, n: N.texture });
 }

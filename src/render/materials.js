@@ -505,7 +505,8 @@ const TERRAIN_FRAG = `
       vec3 eg = ((tc * ex - tb * ey) * Tx + (ta * ey - tb * ex) * Ty) / max(ta * tc - tb * tb, 1e-12);
       float lip = (1.0 - vEdge.y) / max(length(eg), 1e-3);
       float len = 0.12 + 0.6 * texture2D(uNoiseTex, p * 0.23).g * (0.4 + 1.2 * nq);
-      fringe = steep * step(0.0, eg.y) * (1.0 - smoothstep(0.55, 1.0, lip / len));
+      // (only where the mark really falls away downwards: a face between two grass tops has no lip)
+      fringe = steep * smoothstep(0.03, 0.12, eg.y) * smoothstep(0.35, 0.65, eg.y / max(length(eg), 1e-3)) * (1.0 - smoothstep(0.55, 1.0, lip / len));
       rockK = 1.0 - max(top, fringe);
       fringe *= 1.0 - top;
     }
@@ -598,9 +599,14 @@ const TERRAIN_SURF = `
       // rock: projected from the sides on a face (the strokes run up it), from above on a top
       vec3 bw = abs(wn); bw *= bw; bw *= bw; bw /= bw.x + bw.y + bw.z;
       float wx = _wRock * bw.x, wy = _wRock * bw.y, wz = _wRock * bw.z;
-      GROUND(2.0, vWPos.zy / 11.0, wx, Z, Y, 0.0)
-      GROUND(2.0, vWPos.xy / 11.0, wz, X, Y, 0.0)
-      GROUND(12.0, p / 5.0, wy, X, Z, 1.0)
+      // two kinds of bedrock, each over its own country: big jointed blocks, thin beds
+      float beds = smoothstep(0.44, 0.56, texture2D(uNoiseTex, p * 0.0031 + 0.57).g);
+      GROUND(2.0, vWPos.zy / 9.0, wx * (1.0 - beds), Z, Y, 0.0)
+      GROUND(2.0, vWPos.xy / 9.0, wz * (1.0 - beds), X, Y, 0.0)
+      GROUND(13.0, vWPos.zy / 6.5, wx * beds, Z, Y, 0.0)
+      GROUND(13.0, vWPos.xy / 6.5, wz * beds, X, Y, 0.0)
+      GROUND(2.0, p / 9.0, wy * (1.0 - beds), X, Z, 1.0)
+      GROUND(13.0, p / 6.5, wy * beds, X, Z, 1.0)
     }
     float iw = 1.0 / max(ws, 1e-5);
     diffuseColor.rgb *= ws > 0.0 ? alb * iw * 2.0 : vec3(1.0);
@@ -648,7 +654,9 @@ void _tileSeed(vec2 q){
 void _layer(float L, vec2 uv, float turn, out vec4 a, out vec4 n){
   mat2 ra = turn > 0.5 ? _trA : mat2(1.0), rb = turn > 0.5 ? _trB : mat2(1.0);
   vec2 dx = dFdx(uv), dy = dFdy(uv);
-  vec3 ua = vec3(ra * uv + _toA, L), ub = vec3(rb * uv + _toB, L);
+  // (a layer with a direction is only shifted along it: bedding has to run on unbroken)
+  vec2 oa = turn > 0.5 ? _toA : vec2(_toA.x, 0.0), ob = turn > 0.5 ? _toB : vec2(_toB.x, 0.0);
+  vec3 ua = vec3(ra * uv + oa, L), ub = vec3(rb * uv + ob, L);
   vec4 a0 = textureGrad(uSurfA, ua, ra * dx, ra * dy), a1 = textureGrad(uSurfA, ub, rb * dx, rb * dy);
   float m = smoothstep(0.3, 0.7, _tf + (a1.a - a0.a) * 0.6);
   a = mix(a0, a1, m);

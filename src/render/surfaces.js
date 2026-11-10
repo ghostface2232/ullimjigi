@@ -53,17 +53,16 @@ struct Surf { float h; vec3 c; float r; float nk; };
 Surf surf(vec2 uv){
   Surf s; s.h = 0.5; s.c = vec3(1.0); s.r = 0.85; s.nk = 1.0;
   if (uLayer == 0) {
-    // turf: short tufts lying every which way over soft mounds
+    // turf: soft mounds and loose dabs of lighter and darker green. No direction to it: two
+    // crossed grains read as a woven mat when the ground is seen at a low angle.
     float m = fbm(uv, vec2(5.0), 3);
-    float a = vn(uv * vec2(110.0, 26.0), vec2(110.0, 26.0)), b = vn(uv * vec2(26.0, 110.0) + 3.1, vec2(26.0, 110.0));
-    float d = vn(uv * vec2(64.0) + 9.0, vec2(64.0));
-    float tuft = max(a * (0.6 + 0.4 * d), b * (1.0 - 0.4 * d));
-    float fine = fbm(uv, vec2(40.0), 3);
-    s.h = 0.3 * m + 0.5 * tuft + 0.2 * fine;
+    float dab = fbm(uv + 0.31, vec2(17.0), 3);
+    float fine = fbm(uv + 0.7, vec2(56.0), 2);
+    s.h = 0.4 * m + 0.4 * dab + 0.2 * fine;
     float patchy = fbm(uv + 0.37, vec2(3.0), 3);
-    s.c = vec3(0.86 + 0.3 * tuft) * mix(vec3(1.05, 1.0, 0.86), vec3(0.93, 1.0, 1.06), patchy);
+    s.c = vec3(0.9 + 0.2 * (dab - 0.5) + 0.08 * (fine - 0.5)) * mix(vec3(1.05, 1.0, 0.86), vec3(0.93, 1.0, 1.06), patchy);
     s.c *= 0.92 + 0.16 * m;
-    s.r = 0.9; s.nk = 0.9;
+    s.r = 0.9; s.nk = 0.7;
   } else if (uLayer == 1) {
     // packed earth: fine grit, half-buried pebbles, a few shallow ruts
     float m = fbm(uv, vec2(6.0), 5);

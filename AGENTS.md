@@ -50,7 +50,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 | | `vfx.js` | 파티클 프리셋, 조명 풀, 링, 룬 원진, 프랙탈 번개, 얼음 가시, 회오리, 광선, 경고 표시. 구체(`sphere`)·베기(`slash`)·물보라(`crownSplash`)·파편(`chunks`)·바람 선(`windLine`·`gustLines`)·굴절(`distort.ring`·`shell`·`haze`)·시전 모으기(`charge`)·습득 연출(`learn`). 속성별 레시피(`cast`·`impact`·`explode`·`strike`·`react`·`kill`·`dodge`·`ultCast`), 속도 방향 불꽃(`sparks`), 투사체 궤적(`ribbon`), 지형을 따르는 바닥 흔적(`decal`: 그을음·서리·물웅덩이·번개 자국 등), 충격 구체·빛기둥(`shock`·`pillar`), 잔여 효과(`linger`) |
 | `world/` | `layout.js` | 맵 크기(`WORLD`), 고개(`PASSES`), 랜드마크 좌표(`POI`), 길(`PATHS`), 골짜기의 지역(`REGIONS`), `regionAt` |
 | | `regions/*.js` | 바깥 지역 데이터, 지역마다 파일 하나: 방향, 지형 함수, 채색, 기후, 음악, 레벨, 지도 이름 자리(`regions/README.md`) |
-| | `terrain.js` | 1280m 높이맵 지형(2m 격자), 채색, 높이·법선·레이캐스트 조회. 256m 청크 25개가 거리별 4단계 LOD로 그려짐(`update`), 골짜기 바깥 땅(`outerHeight`)과 고개(`carvePasses`), 소품 배치용 옛 480m 격자(`legacy`) |
+| | `terrain.js` | 1280m 높이맵 지형(2m 격자), 채색, 높이·법선·레이캐스트 조회. 256m 청크 25개가 거리별 4단계 LOD로 그려짐(`update`), 골짜기 바깥 땅(`outerHeight`)과 고개(`carvePasses`), 소품 배치용 옛 480m 격자(`legacy`). 가파른 땅은 실제 암벽 형상으로 바뀜(`initCliffs`·`cliffAt`, 청크별 암벽 메시 `skinMesh`) |
 | | `sky.js` · `water.js` · `grass.js` | 하늘과 낮밤(캐스케이드 그림자를 가진 `SunLight`, 구름 돔 맵을 색으로 바꾸는 하늘 셰이더), 물(파도 노멀, 평면 반사 `Water.reflect`), 풀(청크 단위 스트리밍) |
 | | `props.js` | 식생·바위: 줄기·가지·잎 뭉치 구조로 기르는 수종(참나무·단풍·꽃나무·자작·포플러·버드나무·전나무·고사목), 덤불·고사리·들꽃·갈대·버섯·그루터기·통나무, 깎은 면 바위. 가까운/먼 모델 두 벌, 카메라 기준 인스턴스 재정렬(`Props.update`), `add`·`clear` |
 | | `buildings.js` | 건물·소품 생성 함수(집·종탑·탑·풍차·우물·노점·성소·등석·화로·바람개비·틈의 문 등)와 마을 소품 조각(통·상자·수레·빨랫줄·깃발줄·가로등·텃밭·돌담·화분·이정표·돌탑·선착장) |
@@ -101,11 +101,18 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 여러 색의 작은 소품은 `MAT.paint`·`paintDS`·`paintWood`·`paintStone`(정점 색 재질)으로 만들면 색 수와 상관없이 칸마다 드로우콜 하나로 합쳐집니다(`buildings.js`의 `pbox`·`pball`·`pcyl`).
 
 
+### 암벽 (가파른 지형)
+- 경사가 약 37° 넘는 땅은 매끈한 높이맵 대신 **암벽 형상**입니다(`Terrain.initCliffs`). 평면에서 19m쯤 되는 덩어리(`site`)마다 옛 비탈을 지나는 기운 평면 하나를 두고(절반은 거의 수평인 단, 절반은 완만한 경사), 이웃 덩어리와는 58°~거의 수직인 제 각도의 면으로 만납니다(`mass`). 6.5m 면 조각(`cliffAt`)이 덩어리의 소유 판정 위치만 조금씩 밀어, 윗면은 그대로 두고 벽의 윤곽만 계단지게 합니다. 여전히 (x, z)마다 높이가 하나라서 **`height()`·충돌·등반·배치가 눈에 보이는 면과 같습니다.**
+- `terrain.base`는 매끈한 원래 땅(먼 LOD와 채색이 씀), `terrain.cw`는 암벽 가중치(완만한 땅·길 0), `terrain.h`는 격자점에서의 최종 높이입니다. 높이가 필요하면 격자를 직접 읽지 말고 `height()`를 쓰세요. 골짜기 안도 가파른 곳은 바뀌므로 "480m 시절과 한 칸도 다르지 않다"는 규칙은 완만한 땅(가중치 0)에만 해당합니다. 소품 산포는 여전히 옛 격자(`legacy()`)로 자리를 고릅니다.
+- 그리기: 암벽이 닿는 4m 블록(`blockSteep`)은 격자 메시에서 빠지고(`chunkIndexFor`), 청크의 LOD 0·1에서 암벽 메시(`skinMesh`: 2m 칸마다 K×K 쿼드, `TIERS.cliff`)가 대신 그립니다. 정점은 능선 위로 옮겨지고(`cliffSnap`) 공유되어 모서리가 부드럽게 넘어갑니다. LOD 2 이상(420m 밖)은 매끈한 `base`를 그립니다.
+- 재질(`toon(..., { terrain: true, cliff: true })`, `CLIFF_SKIN`): 정점 속성 `color`(땅 색)·`aRock`(바위 색)·`aEdge`(x: 모서리 +/골 −, y: 풀이 자라는 윗면 1). 풀/바위는 법선이 아니라 이 값으로 가릅니다(법선으로 가르면 골마다 초록 줄이 생김). `Terrain.grassAt`·`colorAt`도 같은 규칙을 따라 풀잎이 벽면에 서지 않습니다.
+- 지형만 빨리 보려면 개발 서버에서 `/terrainview.html`(인자 `x`·`y`·`z`·`lx`·`ly`·`lz`·`h`·`fov`·`q`)을 여세요. `__tv.shot(name, [x, y, z], [lx, ly, lz], hour)`가 캔버스를 캡처해 로컬 수신기로 보냅니다.
+
 ### 렌더 파이프라인과 품질 단계
 - 해의 빛은 three.js의 `SunLight`(캐스케이드 2단)입니다. 방향은 `sun.position`(빛 쪽 방향 벡터), 그림자 도달 거리는 `sun.shadow.camera.far`(`tier().shadowDist`)입니다. `DirectionalLight`용 셰이더 청크(`directionalShadowMap` 등)는 쓰이지 않으니, 그림자를 읽는 커스텀 셰이더는 `getSunShadow( sunShadowMap[ 0 ], sunLightShadows[ 0 ], 0 )`를 쓰세요(예: `grass.js`).
 - 장면 타깃의 **알파는 오클루전 마스크**입니다(불투명 표면 1, 풀 0.3). 새 불투명 커스텀 셰이더는 알파 1을 쓰세요.
 - 표면 층은 `toon(..., { tex })`의 종류로 고릅니다(`materials.js`의 `SURF_OF`: 층 번호, 타일 크기, 요철 세기). 새 층은 `surfaces.js`의 `surf()`에 높이·색·거칠기 함수를 더하고 `LAYERS`를 늘리세요. 주기 노이즈(`vn`·`fbm`·`voro`의 `per`)만 써야 타일이 이어집니다.
-- 지형의 층 가중치는 `Terrain.paint`가 돌려주는 값으로 만든 스플랫 맵(`U.splatTex`: 잔디·흙·모래·눈, 나머지는 경사에 따라 암반/포석)입니다. 지형 색(정점 색)은 그대로 큰 색조를 맡고, 층은 디테일만 곱합니다. 절벽은 암반 층(2)을 옆면 투영으로 두 번 읽습니다: 7m 타일의 세부와, 같은 층을 31m로 키운 큰 면(2m 높이 격자가 깎지 못하는 절벽의 큰 각면과 색조). 바위 소품(`tex: 'rock'`)은 따로 풍화된 바위 층(12)을 씁니다. 암반 층은 격자 없이 `facets()`(흩어진 점마다 기울어진 면을 두고 그 위쪽 포락선을 취함: 능선이 직선이고 크기가 섞인 각면)로 만듭니다. 품질 '높음' 이상에서는 큰 각면의 높이를 시선 방향으로 따라가는 시차 차폐(`reliefShift`, 깊이 `U.relief` 2.6m, 260m 밖에서는 꺼짐)로 면이 실제로 들어가고 나온 것처럼 보이게 합니다. 실루엣은 바뀌지 않습니다(지형 메시는 그대로).
+- 지형의 층 가중치는 `Terrain.paint`가 돌려주는 값으로 만든 스플랫 맵(`U.splatTex`: 잔디·흙·모래·눈)입니다. 나머지 평지는 깐 돌(`U.paveTex`: 광장·시련 발판)이면 포석, 아니면 풍화된 바위 층이고, 경사면은 암반 층(2)입니다. 지형 색(정점 색)은 그대로 큰 색조를 맡고, 층은 디테일만 곱합니다. 바위 소품(`tex: 'rock'`)은 풍화된 바위 층(12)을 쓰고 지형과 같은 부드러운 명암 램프로 칠해집니다.
 - 잎 카드: `Mesher.card()`가 한 점에 모인 네 정점을 만들고, 셰이더(`LEAF_CARDS`)가 시점 쪽으로 펼쳐 잎 뭉치 텍스처(`leafTexture`)를 입힙니다. 가장자리는 `alphaToCoverage`(MSAA)로 처리합니다. `toon(..., { cards: true })` 재질로 그리는 형상에는 `aCard` 속성이 있어야 합니다(`Mesher`가 항상 붙임). 그림자 패스에서는 카드가 펼쳐지지 않으므로 그림자는 속 덩어리(먼 모델)가 냅니다.
 - 물의 평면 반사(`Water.reflect`)는 '최상'에서만, 물이 시야에 있을 때만 그립니다. 반사 패스는 직전 프레임의 그림자 맵을 재사용하고(`shadowMap.autoUpdate = false`), 비스듬한 근평면으로 수면 아래를 잘라 냅니다. `Props.update(camera, mirror)`의 둘째 인자가 반사 시야에 든 소품도 남깁니다.
 - 구름(`render/clouds.js`)은 실제 원근의 볼류메트릭 적운입니다(머리 위는 밑면, 수평선 쪽은 옆면). 모양은 세 단계로 정해집니다. ① `heaps()`가 밑면 위에 선 반타원체 돔들(둑·무리·홑구름·조각)을 20km 타일에 뿌리고, ② 모양 패스(`SHAPE_FS`)가 그 높이장을 노이즈로 밀고 구름 크기에 비례한 만(灣)을 파내 이어지고 갈라지는 윤곽을 만들고, ③ 마칭 셰이더가 3D 빌로 노이즈로 꽃양배추 같은 덩이와 가장자리를 깎습니다. 결과(햇빛 에너지·높이·거리·불투명도)는 위쪽 반구 전체를 담는 돔 맵(스테레오 투영)에 프레임마다 띠 하나씩 그려지고, 하늘 셰이더(`cloudAt`)가 그 뒤의 바람 이동과 카메라 이동만큼 다시 겨눠 읽어 색으로 바꿉니다. 그래서 색(시간대 팔레트)은 즉시 따라가고 비용은 화면 해상도와 무관합니다. 맵 크기·띠 수·스텝 수는 `TIERS.clouds`. 날씨의 덮임은 `clouds.cover`(돔이 자라남)와 `clouds.deck`(흐린 날의 층)으로 전합니다. 하늘만 띄워 조정하려면 개발 서버에서 `/skyview.html?h=13&pitch=30&yaw=200`(인자: `h`·`pitch`·`yaw`·`fov`·`oc`·`q`)을 여세요. 땅의 구름 그림자는 아직 별도 노이즈(`U.cloud`)라 하늘의 구름과 맞물리지 않습니다.
@@ -256,6 +263,9 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 저장 형식을 바꾸면 기존 저장과 호환되는지 확인하세요. `Story.load`는 없는 필드에 기본값을 넣어 줍니다.
 
 ## 테스트 방법
+
+### 화면 캡처 (브라우저 창이 숨겨져 있을 때)
+자동화 브라우저의 스크린숏은 창이 화면에 보일 때만 됩니다. 숨겨져 있으면 캔버스를 직접 내보내세요: 렌더 직후 같은 스크립트에서 `canvas.toBlob(...)`으로 만든 JPEG를 로컬 수신기(`python` 한 줄짜리 HTTP 서버, POST 본문을 파일로 저장)에 `fetch(url, { method: 'POST', mode: 'no-cors', body: blob })`로 보내고 그 파일을 읽습니다. 게임에서는 `__G.paused = true` 뒤 `__G.camera`를 직접 놓고 `__G.renderer.render(0.016)`을 몇 번 부르거나, `__G.game.update(1/60, 1/60)`을 반복해 시뮬레이션을 진행시킵니다.
 
 ### 개발용 프리셋
 주소에 `?dev=<프리셋>`을 붙이면 타이틀을 건너뜁니다.

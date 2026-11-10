@@ -17,7 +17,20 @@ const SKIRT = [3, 6, 12, 24];     // skirt depth per LOD: hides cracks between n
 // and the half-width of the chamfer where two masses (at least) / two facets meet.
 const CL0 = 19, CL1 = 6.5, BEV0 = 0.7, BEV1 = 0.45;
 const hsh = (a, b, k) => { let h = Math.imul(a, 374761393) ^ Math.imul(b, 668265263) ^ Math.imul(k, 2246822519); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
-const _c = new THREE.Color();
+const _c = new THREE.Color(), _f = new THREE.Color(), _s = new THREE.Color();
+// range of the road distance map (m)
+const PATH_D = 12;
+// a map on the height grid for the terrain shader: mipmapped, so it holds still far away
+const gridTex = (data, N, format, srgb) => {
+  const t = new THREE.DataTexture(data, N, N, format);
+  t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
+  t.generateMipmaps = true; t.anisotropy = 8;
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  t.needsUpdate = true;
+  return t;
+};
+const toSRGB = (v) => Math.round(255 * clamp(v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055, 0, 1));
 // the cliff weight as it is applied: a narrow band, so rock meets meadow at a clear foot
 const CWR = (w) => smoothstep(0.3, 0.7, w);
 // shared noise fields handed to the region height / paint functions (regions/README.md)
@@ -83,15 +96,18 @@ export class Terrain {
     const N = this.N;
     this.h = new Float32Array(N * N);
     this.pf = new Float32Array(N * N);
+    // distance to the nearest road (0..PATH_D m), for the shader to draw the road's edge
+    const pd = new Uint8Array(N * N);
     for (let iz = 0; iz < N; iz++) {
       for (let ix = 0; ix < N; ix++) {
         const x = -this.half + ix * this.step, z = -this.half + iz * this.step;
         this.h[iz * N + ix] = this.rawHeight(x, z);
         this.pf[iz * N + ix] = this._lastPF;
+        pd[iz * N + ix] = Math.min(255, this._lastPD * (255 / PATH_D));
       }
     }
     this.initCliffs();
-    this.buildMesh();
+    this.buildMesh(pd);
     this.buildHeightTexture();
   }
 
@@ -239,8 +255,8 @@ export class Terrain {
     t.needsUpdate = true;
     this.heightTex = t;
     U.heightTex.value = t;
-    // uv = (xz + half) * (N-1)/(N*size) + 0.5/N  (texel centres on grid vertices)
-    U.heightP.value.set(this.half, (N - 1) / (N * this.size), 0.5 / N, 0);
+    // uv = (xz + half) * (N-1)/(N*size) + 0.5/N  (texel centres on grid vertices); w: range of the road map
+    U.heightP.value.set(this.half, (N - 1) / (N * this.size), 0.5 / N, PATH_D);
   }
 
   // Nearest road: distance and the road bed height there. Past 30 m from every road the
@@ -330,6 +346,7 @@ export class Terrain {
     h = lerp(h, 13, 1 - smoothstep(5, 20, dm));
     // roads
     const pi = this.pathInfo(x, z);
+    this._lastPD = pi.d;
     if (pi.d < 20) {
       const roadBed = 1 - smoothstep(3.5, 15, pi.d);
       h = lerp(h, pi.h, roadBed * 0.94);
@@ -418,7 +435,11 @@ export class Terrain {
   }
   snowAt(x, z) { return this.sampleGrid(this.sn, x, z); }
 
-  paint(x, z, h, ny, pf, out, legacy = false) {
+  // `out` is the colour as it would be painted on a vertex (grass tufts, the map). With
+  // `flat`, that receives the colour of the same spot as level ground with no road on it:
+  // the terrain shader starts from that and lays rock (by the slope of the pixel) and roads
+  // (by `PATH_D` distance) over it itself. gf0 / sn0 / dirt0 are the weights to match.
+  paint(x, z, h, ny, pf, out, legacy = false, flat = null) {
     const n = this.noise3;
     const outer = legacy ? 0 : smoothstep(236, 340, Math.hypot(x, z));
     const gN = fbm(n, x * 0.018, z * 0.018, 2) * 0.5 + 0.5;
@@ -438,6 +459,7 @@ export class Terrain {
     }
     out.lerp(P.grassTeal, smoothstep(22, 40, h) * 0.5 * (1 - outer * 0.6));
     const rk = smoothstep(0.82, 0.68, ny);
+    if (flat) flat.copy(out);
     const rockC = P.rock.clone().lerp(P.rockDark, smoothstep(-0.3, 0.5, n(x * 0.05, z * 0.05)))
       .lerp(P.rockWarm, smoothstep(0.2, 0.8, n(x * 0.02 + 9, z * 0.02)) * 0.5)
       .lerp(P.rockCool, smoothstep(0.1, 0.7, n(x * 0.013 - 21, z * 0.013 + 4)) * 0.45);
@@ -446,6 +468,7 @@ export class Terrain {
     out.lerp(P.grassDark, rk * (1 - rk) * 0.5);
     const sd = smoothstep(1.7, 0.5, h);
     out.lerp(h < -0.3 ? P.wetSand : P.sand, sd);
+    if (flat) flat.lerp(h < -0.3 ? P.wetSand : P.sand, sd);
     // paths: trampled, darker grass at the edge, lighter packed dirt in the middle
     const edge = smoothstep(0.05, 0.4, pf) * (1 - smoothstep(0.45, 0.85, pf));
     out.lerp(P.worn, edge * 0.45 * (1 - sd));
@@ -454,23 +477,29 @@ export class Terrain {
     // snow line: 38 m in the vale (unchanged inside r 226); higher outside, most of all out
     // west, where the cliffs are tall but not alpine
     const sl = legacy ? 38 : 38 + outer * 22 + smoothstep(226, 262, Math.hypot(x, z)) * 40 * smoothstep(-100, -260, x);
-    let sn = smoothstep(sl, sl + 10, h + n(x * 0.03, z * 0.03) * 6) * smoothstep(-40, -90, z);
-    sn *= 1 - rk * 0.55;
+    const sn0 = smoothstep(sl, sl + 10, h + n(x * 0.03, z * 0.03) * 6) * smoothstep(-40, -90, z), sn = sn0 * (1 - rk * 0.55);
     // wide snowfields out north get drifts of shade so they don't burn out to white
-    out.lerp(P.snow.clone().lerp(P.snowShade, Math.min(1, rk + outer * (0.6 + 0.3 * smoothstep(-0.3, 0.5, n(x * 0.011 + 3, z * 0.011))))), sn);
+    const drift = outer * (0.6 + 0.3 * smoothstep(-0.3, 0.5, n(x * 0.011 + 3, z * 0.011)));
+    out.lerp(_s.copy(P.snow).lerp(P.snowShade, Math.min(1, rk + drift)), sn);
+    if (flat) flat.lerp(_s.copy(P.snow).lerp(P.snowShade, Math.min(1, drift)), sn0);
     const dr = Math.hypot(x - POI.rift.x, z - POI.rift.z);
     const ash = dr > 80 ? 0 : 1 - smoothstep(40, 66, dr + n(x * 0.05, z * 0.05) * 8);
-    if (ash > 0) out.lerp(P.ash.clone().lerp(P.ashLight, gN), ash);
+    if (ash > 0) { _s.copy(P.ash).lerp(P.ashLight, gN); out.lerp(_s, ash); if (flat) flat.lerp(_s, ash); }
     const dp = Math.hypot(x - POI.bellTower.x, z - POI.bellTower.z);
     const plaza = dp > 20 ? 0 : 1 - smoothstep(10, 14, dp + n(x * 0.1, z * 0.1) * 1.5);
     out.lerp(P.plaza, plaza * 0.9);
+    if (flat) flat.lerp(P.plaza, plaza * 0.9);
     let pad = 0;
     for (const q of PADS) { const dq = Math.hypot(x - q.x, z - q.z); if (dq < q.r + 5) pad = Math.max(pad, 1 - smoothstep(q.r - 2, q.r + 0.5, dq + n(x * 0.12, z * 0.12) * 1.5)); }
-    if (pad > 0) out.lerp(P.plaza.clone().lerp(P.rock, 0.35), pad * 0.85);
-    const gf = (1 - rk) * (1 - sd) * (1 - pf) * (1 - sn) * (1 - ash) * (1 - plaza) * (1 - pad) * (h > 0.4 ? 1 : 0);
+    if (pad > 0) { _s.copy(P.plaza).lerp(P.rock, 0.35); out.lerp(_s, pad * 0.85); if (flat) flat.lerp(_s, pad * 0.85); }
+    const wet = h > 0.4 ? 1 : 0, laid = (1 - plaza) * (1 - pad);
+    const gf = (1 - rk) * (1 - sd) * (1 - pf) * (1 - sn) * (1 - ash) * laid * wet;
     // ground layers for the surface shader: bare earth (roads, ash) and sand, next to gf and sn
-    const hard = (1 - sn) * (1 - plaza) * (1 - pad);
-    return { gf, sn, dirt: Math.max(smoothstep(0.3, 0.8, pf) * (1 - sd), ash * (1 - rk)) * hard, sand: sd * hard, pave: Math.max(plaza, pad) };
+    const hard = (1 - sn) * laid, hard0 = (1 - sn0) * laid;
+    return {
+      gf, sn, dirt: Math.max(smoothstep(0.3, 0.8, pf) * (1 - sd), ash * (1 - rk)) * hard, sand: sd * hard, pave: Math.max(plaza, pad),
+      gf0: (1 - sd) * (1 - sn0) * (1 - ash) * laid * wet, sn0, dirt0: ash * hard0, sand0: sd * hard0,
+    };
   }
 
   // Curvature-based ambient occlusion: concave cells (valleys, cliff feet)
@@ -486,19 +515,20 @@ export class Terrain {
     return occ / wsum;
   }
 
-  buildMesh() {
+  buildMesh(pd) {
     const N = this.N, cnt = N * N, H = this.base, st = this.step;
+    // vertex-style colours, for whoever asks what colour the ground is (colorAt, the map)
     const col = (this.col = new Float32Array(cnt * 3));
-    // ground and rock colours for the cliff mesh, painted on demand (cliffPaint)
-    this.colG = new Float32Array(cnt * 3); this.colR = new Float32Array(cnt * 3); this.gfG = new Float32Array(cnt); this.cpDone = new Uint8Array(cnt);
+    // the ground colour on top of the rock masses, painted on demand (cliffPaint)
+    this.colG = new Float32Array(cnt * 3); this.gfG = new Float32Array(cnt); this.cpDone = new Uint8Array(cnt);
     this.gf = new Float32Array(cnt);
     this.sn = new Float32Array(cnt);
     const nrm = (this.nrm = gridNormals(H, N, st));
     const c = new THREE.Color();
-    const splat = new Uint8Array(cnt * 4), pave = new Uint8Array(cnt);
+    const splat = new Uint8Array(cnt * 4), pave = new Uint8Array(cnt), ground = new Uint8Array(cnt * 4), nt = new Uint8Array(cnt * 4);
     for (let i = 0; i < cnt; i++) {
       const x = -this.half + (i % N) * st, z = -this.half + Math.floor(i / N) * st;
-      const r = this.paint(x, z, H[i], nrm[i * 3 + 1], this.pf[i], c);
+      const r = this.paint(x, z, H[i], nrm[i * 3 + 1], this.pf[i], c, false, _f);
       this.gf[i] = r.gf; this.sn[i] = r.sn;
       if (CWR(this.cw[i]) > 0) {
         // on rock, grass grows by the slope of the facet it stands on, not of the old hillside
@@ -507,23 +537,29 @@ export class Terrain {
         this.gf[i] = r2.gf; this.sn[i] = r2.sn;
       }
       pave[i] = r.pave * 255;
-      splat[i * 4] = r.gf * 255; splat[i * 4 + 1] = r.dirt * 255; splat[i * 4 + 2] = r.sand * 255; splat[i * 4 + 3] = r.sn * 255;
+      splat[i * 4] = r.gf0 * 255; splat[i * 4 + 1] = r.dirt0 * 255; splat[i * 4 + 2] = r.sand0 * 255; splat[i * 4 + 3] = r.sn0 * 255;
       const curv = this.ambientOcclusion(i, i % N, Math.floor(i / N));
       // (rock catches light along its convex edges: the rims of ledges and blocks)
       const ao = 1 - 0.34 * smoothstep(0.0, 0.6, curv) + (0.05 + 0.2 * smoothstep(0.8, 0.6, nrm[i * 3 + 1])) * smoothstep(0.0, -0.5, curv);
-      col[i * 3] = c.r * ao * (ao < 1 ? 0.97 + 0.03 * ao : 1); col[i * 3 + 1] = c.g * ao; col[i * 3 + 2] = c.b * (ao < 1 ? 0.5 + 0.5 * ao + 0.04 : ao);
+      const ar = ao * (ao < 1 ? 0.97 + 0.03 * ao : 1), ab = ao < 1 ? 0.5 + 0.5 * ao + 0.04 : ao;
+      col[i * 3] = c.r * ar; col[i * 3 + 1] = c.g * ao; col[i * 3 + 2] = c.b * ab;
+      ground[i * 4] = toSRGB(_f.r * ar); ground[i * 4 + 1] = toSRGB(_f.g * ao); ground[i * 4 + 2] = toSRGB(_f.b * ab); ground[i * 4 + 3] = 255;
+      // the smooth ground's normal (x, z), 16 bits each as high and low bytes: filtering and
+      // mipmapping both bytes linearly is the same as filtering the 16-bit value
+      const nx = Math.round((nrm[i * 3] * 0.5 + 0.5) * 65535), nz = Math.round((nrm[i * 3 + 2] * 0.5 + 0.5) * 65535);
+      nt[i * 4] = nx >> 8; nt[i * 4 + 1] = nx & 255; nt[i * 4 + 2] = nz >> 8; nt[i * 4 + 3] = nz & 255;
     }
-    // ground-layer weights for the terrain shader (same grid and uv as the heightmap)
-    const sp = new THREE.DataTexture(splat, N, N, THREE.RGBAFormat);
-    sp.minFilter = sp.magFilter = THREE.LinearFilter;
-    sp.wrapS = sp.wrapT = THREE.ClampToEdgeWrapping;
-    sp.needsUpdate = true;
-    U.splatTex.value = sp;
-    // where the bare flat ground is laid stone (the plaza, trial pads) rather than natural rock
-    const pv = new THREE.DataTexture(pave, N, N, THREE.RedFormat);
-    pv.minFilter = pv.magFilter = THREE.LinearFilter;
-    pv.needsUpdate = true;
-    U.paveTex.value = pv;
+    // Maps for the terrain shader, all on the height grid (same uv as the heightmap). The
+    // mesh carries positions only: colour, layers and shading normal are looked up per pixel,
+    // so they are as fine at the far LODs as underfoot.
+    //   ground: colour of level, road-less ground · splat: R grass, G ash, B sand, A snow
+    //   pave: laid stone (the plaza, trial pads) · path: distance to the nearest road
+    U.groundTex.value = gridTex(ground, N, THREE.RGBAFormat, true);
+    U.splatTex.value = gridTex(splat, N, THREE.RGBAFormat);
+    U.paveTex.value = gridTex(pave, N, THREE.RedFormat);
+    U.pathTex.value = gridTex(pd, N, THREE.RedFormat);
+    U.tnormTex.value = gridTex(nt, N, THREE.RGBAFormat);
+    U.terrPal.value = [P.rock, P.rockDark, P.rockWarm, P.rockCool, P.dirt, P.dirtDark, P.dirtLight, P.worn, P.grassDark];
     this.buildChunks();
   }
 
@@ -550,8 +586,8 @@ export class Terrain {
   // LOD 0-1 when first needed and freed again when the camera is far away.
   buildChunks() {
     const N = this.N, NC = (this.NC = this.seg / CH);
-    this.mat = toon(0xffffff, { vertexColors: true, terrain: true, rim: 0.05 });
-    this.cliffMat = toon(0xffffff, { vertexColors: true, terrain: true, cliff: true, rim: 0.05 });
+    this.mat = toon(0xffffff, { terrain: true, rim: 0.05 });
+    this.cliffMat = toon(0xffffff, { terrain: true, cliff: true, rim: 0.05 });
     this.skinK = tier().cliff;
     this.mesh = new THREE.Group();
     this.mesh.name = 'terrain';
@@ -619,14 +655,12 @@ export class Terrain {
     const N = this.N, x = -this.half + (i % N) * this.step, z = -this.half + Math.floor(i / N) * this.step, o = i * 3;
     this.gfG[i] = this.paint(x, z, this.base[i], 1, this.pf[i], _c).gf;
     this.colG[o] = _c.r; this.colG[o + 1] = _c.g; this.colG[o + 2] = _c.b;
-    this.paint(x, z, this.base[i], 0.2, this.pf[i], _c);
-    this.colR[o] = _c.r; this.colR[o + 1] = _c.g; this.colR[o + 2] = _c.b;
   }
 
   // The rock of one chunk: every 2 m cell of its rock blocks, K×K quads each, on the cliff
   // surface. Vertices are shared, so the normals average across creases and edges turn
-  // softly, as worn rock does. `color` is the ground colour and `aRock` the rock colour;
-  // `aEdge` holds x: rim (> 0) or crease (< 0), y: 1 on a top that grows grass, 0 on rock.
+  // softly, as worn rock does. `aEdge` holds x: rim (> 0) or crease (< 0), y: 1 on a top
+  // that grows grass, 0 on rock.
   skinMesh(ch, k) {
     const K = this.skinK[k], N = this.N, st = this.step, B = this.base, W = this.cw, NB = this.NB;
     const b0x = ch.cx * CH / 2, b0z = ch.cz * CH / 2, cells = [];
@@ -635,12 +669,11 @@ export class Terrain {
       for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) cells.push((b0x + bx) * 2 + i, (b0z + bz) * 2 + j);
     }
     const nc = cells.length / 2, LW = this.seg * K + 1, snapR = (st / K) * 0.62;
-    const pos = [], col = [], rock = [], edge = [], idx = new Uint32Array(nc * K * K * 6), ids = new Map(), G = this.colG, R = this.colR;
+    const pos = [], edge = [], idx = new Uint32Array(nc * K * K * 6), ids = new Map();
     const q = new Uint32Array((K + 1) * (K + 1));
     let io = 0;
     for (let c = 0; c < nc; c++) {
       const gx = cells[c * 2], gz = cells[c * 2 + 1], i00 = gz * N + gx, i10 = i00 + 1, i01 = i00 + N, i11 = i01 + 1;
-      this.cliffPaint(i00); this.cliffPaint(i10); this.cliffPaint(i01); this.cliffPaint(i11);
       const h00 = B[i00], h10 = B[i10], h01 = B[i01], h11 = B[i11], w00 = W[i00], w10 = W[i10], w01 = W[i01], w11 = W[i11];
       const n00 = this.nrm[i00 * 3 + 1], n10 = this.nrm[i10 * 3 + 1], n01 = this.nrm[i01 * 3 + 1], n11 = this.nrm[i11 * 3 + 1];
       const x0 = -this.half + gx * st, z0 = -this.half + gz * st;
@@ -667,11 +700,6 @@ export class Terrain {
             const te = tb * (1 - 4 * w * (1 - w) * smoothstep(1.2, 3, Math.abs(this._dh)));
             edge.push(this._edge, te + (this._top - te) * w);
           } else { pos.push(x, hb, z); edge.push(0, tb); }
-          const a = (1 - u) * (1 - t), b = u * (1 - t), cc = (1 - u) * t, d = u * t;
-          for (let n = 0; n < 3; n++) {
-            col.push(G[i00 * 3 + n] * a + G[i10 * 3 + n] * b + G[i01 * 3 + n] * cc + G[i11 * 3 + n] * d);
-            rock.push(R[i00 * 3 + n] * a + R[i10 * 3 + n] * b + R[i01 * 3 + n] * cc + R[i11 * 3 + n] * d);
-          }
         }
         q[j * (K + 1) + i] = v;
       }
@@ -684,8 +712,6 @@ export class Terrain {
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    g.setAttribute('aRock', new THREE.Float32BufferAttribute(rock, 3));
     g.setAttribute('aEdge', new THREE.Float32BufferAttribute(edge, 2));
     g.setIndex(new THREE.BufferAttribute(idx, 1));
     g.computeVertexNormals();
@@ -721,24 +747,21 @@ export class Terrain {
   chunkGeometry(ch, k) {
     const N = this.N, s = 1 << k, n = CH / s, V = n + 1, G = V * V;
     const rim = this.rimOrder(n), cnt = G + rim.length;
-    const pos = new Float32Array(cnt * 3), nor = new Float32Array(cnt * 3), col = new Float32Array(cnt * 3);
+    const pos = new Float32Array(cnt * 3), nor = new Float32Array(cnt * 3);
     const gx0 = ch.cx * CH, gz0 = ch.cz * CH;
     for (let iz = 0; iz < V; iz++) for (let ix = 0; ix < V; ix++) {
       const gx = gx0 + ix * s, gz = gz0 + iz * s, gi = gz * N + gx, o = (iz * V + ix) * 3;
       pos[o] = -this.half + gx * this.step; pos[o + 1] = this.base[gi]; pos[o + 2] = -this.half + gz * this.step;
       nor[o] = this.nrm[gi * 3]; nor[o + 1] = this.nrm[gi * 3 + 1]; nor[o + 2] = this.nrm[gi * 3 + 2];
-      col[o] = this.col[gi * 3]; col[o + 1] = this.col[gi * 3 + 1]; col[o + 2] = this.col[gi * 3 + 2];
     }
     for (let j = 0; j < rim.length; j++) {
       const src = rim[j] * 3, o = (G + j) * 3;
       pos[o] = pos[src]; pos[o + 1] = pos[src + 1] - SKIRT[k]; pos[o + 2] = pos[src + 2];
       nor[o] = nor[src]; nor[o + 1] = nor[src + 1]; nor[o + 2] = nor[src + 2];
-      col[o] = col[src]; col[o + 1] = col[src + 1]; col[o + 2] = col[src + 2];
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     g.setIndex(k < 2 && ch.cliff ? this.chunkIndexFor(ch, k) : this.lodIndex[k]);
     g.boundingBox = ch.box; g.boundingSphere = ch.sphere;
     return g;

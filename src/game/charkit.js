@@ -805,6 +805,81 @@ export function faceMat2(color, o = {}) {
   return m;
 }
 
+// Skin of a modelled character (ref/blender/c2_*.py): the albedo is painted per vertex and the
+// forms are in the mesh, so the shader only lights it. `surf`: 0 skin (wide terminator, warm
+// lifted shade, a little blood colour along it, soft sheen), 4 mouth interior (wet),
+// 5 brows and lashes (matte).
+const SKIN2_LIGHT = `
+#if NUM_SUN_LIGHTS > 0
+if (vSurfF < 0.5) {
+  float _ndl = dot(normal, sunLights[0].direction);
+  float _g = texture2D(gradientMap, vec2(clamp(_ndl * 0.5 + 0.5, 0.0, 1.0), 0.5)).r;
+  float _sh = _dirShadow * _cloudSh;
+  vec3 _base = reflectedLight.directDiffuse / mix(uShadeTint, vec3(1.0), _g * _sh);
+  float _soft = smoothstep(-0.3, 0.62, _ndl) * mix(0.16, 1.0, _sh);
+  vec3 _shade = uShadeTint * vec3(1.5, 1.08, 0.96) + vec3(0.1, 0.03, 0.02);
+  vec3 _sss = vec3(0.3, 0.07, 0.03) * exp(-pow((_ndl - 0.02) / 0.3, 2.0)) * (0.25 + 0.75 * _sh);
+  vec3 _vd = normalize(vViewPosition);
+  vec3 _hv = normalize(sunLights[0].direction + _vd);
+  float _spec = pow(max(dot(normal, _hv), 0.0), 26.0) * 0.07 * _sh * max(_ndl, 0.0);
+  outgoingLight = _base * (mix(_shade, vec3(1.0), _soft) + _sss) + sunLights[0].color * _spec + reflectedLight.indirectDiffuse + totalEmissiveRadiance;
+}
+#endif
+`;
+export function skinMat(o = {}) {
+  const m = bodyMat(0xffffff, { rim: o.rim ?? 0.16, vertexColors: true });
+  extend(m, 'skin2', (sh) => {
+    sh.vertexShader = 'attribute float surf;\nvarying float vSurfF;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurfF = surf;');
+    let fs = 'varying float vSurfF;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\nif (vSurfF > 3.5 && vSurfF < 4.5) { _specK = 5.0; _rough = 0.25; }');
+    const at = fs.indexOf('if (uDissolve > 0.0) outgoingLight +=');
+    if (at > 0) fs = fs.slice(0, at) + SKIN2_LIGHT + fs.slice(at);
+    sh.fragmentShader = fs;
+  });
+  return m;
+}
+
+// Eyeball of a modelled character. uv holds the position on the ball about its forward axis
+// (0.5 = the pole; radius 0.5 = the equator, beyond it the back half), so iris, pupil and
+// catchlights are drawn there and turn with the eye bone.
+const EYE_FRAG = `
+#include <color_fragment>
+{
+  vec2 e = (vEyeUv - 0.5) * 2.0;
+  float r = length(e), ir = uEye.x, aa = fwidth(r) + 0.004;
+  vec3 col = mix(vec3(0.95, 0.935, 0.91), vec3(0.8, 0.62, 0.6), smoothstep(0.62, 1.05, r));          // sclera, pinker towards the corners
+  float ang = atan(e.y, e.x), q = r / ir;
+  vec3 iris = uIrisC * mix(1.25, 0.62, smoothstep(0.25, 1.0, q));
+  iris *= 0.88 + 0.12 * sin(ang * 31.0 + sin(ang * 9.0) * 2.5) * smoothstep(0.3, 0.8, q);              // fibres
+  iris = mix(iris, uIrisC * 2.1 + 0.1, (1.0 - smoothstep(0.2, 0.75, length(e / ir - vec2(0.0, -0.42)))) * 0.55);   // light pooling at the bottom
+  iris = mix(iris, uIrisC * 0.38, smoothstep(0.0, 1.0, e.y / ir) * 0.55);                              // the upper lid's shade
+  iris = mix(iris, uIrisC * 0.14, smoothstep(0.8, 0.98, q));                                           // limbal ring
+  col = mix(col, iris, 1.0 - smoothstep(ir - aa, ir + aa, r));
+  float pr = ir * uEye.y;
+  col = mix(col, vec3(0.012, 0.01, 0.018), 1.0 - smoothstep(pr - aa, pr + aa, r));
+  col *= mix(1.0, 0.72, smoothstep(0.25, 0.9, e.y) * (1.0 - smoothstep(ir * 0.9, ir * 1.1, r) * 0.0));  // lid shadow on the white
+  float h1 = 1.0 - smoothstep(0.17, 0.24, length((e / ir - vec2(-0.34, 0.4)) * vec2(1.0, 1.15)));
+  float h2 = 1.0 - smoothstep(0.06, 0.1, length(e / ir - vec2(0.36, -0.36)));
+  _eyeHi = max(h1, h2 * 0.7) * uEye.z;
+  diffuseColor.rgb = col;
+}
+`;
+export function eyeMat(iris = 0x3a5a7a, o = {}) {
+  const m = bodyMat(0xffffff, { rim: 0 });
+  const u = { uIrisC: { value: new THREE.Color(iris) }, uEye: { value: new THREE.Vector4(o.iris ?? 0.56, o.pupil ?? 0.4, 1, 0) } };
+  m.userData.eye = u;
+  extend(m, 'eye2', (sh) => {
+    Object.assign(sh.uniforms, u);
+    sh.vertexShader = 'varying vec2 vEyeUv;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvEyeUv = uv;');
+    let fs = 'varying vec2 vEyeUv;\nuniform vec3 uIrisC;\nuniform vec4 uEye;\nfloat _eyeHi = 0.0;\n' + sh.fragmentShader.replace('#include <color_fragment>', EYE_FRAG)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n_specK = 7.0; _rough = 0.14;');
+    const at = fs.indexOf('if (uDissolve > 0.0) outgoingLight +=');
+    // eyes never go dead in shade; the painted catchlights sit on top of the lighting
+    if (at > 0) fs = fs.slice(0, at) + 'outgoingLight = max(outgoingLight, diffuseColor.rgb * 0.3) + vec3(_eyeHi) * (0.5 + 0.5 * _dirShadow * _cloudSh);\n' + fs.slice(at);
+    sh.fragmentShader = fs;
+  });
+  return m;
+}
+
 // Clothing and hair: one vertex-coloured material whose response follows the per-vertex
 // `surf` kind (Sculpt.build o.surf): 0 woven cloth, 1 leather, 2 polished metal, 3 hair
 // (strand streaks, a highlight ring around the crown in bind space), 4 matte, 5 gem.

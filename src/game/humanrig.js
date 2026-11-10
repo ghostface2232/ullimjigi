@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { G } from '../core/context.js';
 import { toon, addOutline, glowMat, ghostMat } from '../render/materials.js';
 import { damp, clamp, lerp, rand } from '../core/util.js';
-import { Sculpt, tube, blob, sheet, prof, sstep, mix, TAU, instance, bodyMat, faceMat, crackMat, ghostSkinMat, ik2, setWorldQuat, rotateTowards, Chain, Spring, SkelDef, clothMat, SURF, faceMat2, olMat } from './charkit.js';
+import { Sculpt, tube, blob, sheet, prof, sstep, mix, TAU, instance, bodyMat, faceMat, crackMat, ghostSkinMat, ik2, setWorldQuat, rotateTowards, Chain, Spring, SkelDef, clothMat, SURF, faceMat2, olMat, skinMat, eyeMat } from './charkit.js';
 import * as HB from './humanoid.js';
 import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
 import { model } from '../render/models.js';
@@ -108,6 +108,36 @@ function sculptType(c, cc, L, def, pal, { capeCh, scarfCh, plumeCh, hairCh, extr
   return S.build({ color: colorOf, group: c.group || ((k) => (k === 'skin' ? 'skin' : 'main')), surf: surfOf(c) });
 }
 
+// A second-generation model (ref/blender/c2_*.py) has eyeballs of its own and brings bones the
+// code skeleton lacks (fingers, eyes, hair and cloth chains named c_<kind><n>_<k>).
+function isV2(gltf) {
+  let v2 = false;
+  gltf.scene.traverse((o) => { if (o.isSkinnedMesh && o.material.name === 'CH_eye') v2 = true; });
+  return v2;
+}
+function modelBones(gltf, def, key) {
+  let sk = null;
+  gltf.scene.updateMatrixWorld(true);
+  gltf.scene.traverse((o) => { if (o.isSkinnedMesh && (!sk || o.skeleton.bones.length > sk.bones.length)) sk = o.skeleton; });
+  const chains = {}, p = new V3();
+  const visit = (b) => {
+    if (b.isBone) {
+      b.getWorldPosition(p);
+      if (!def.has(b.name)) {
+        def.add(b.name, b.parent && b.parent.isBone ? b.parent.name : 'hips', p.x, p.y, p.z);
+        const m = /^c_([a-z]+)(\d+)_(\d+)$/.exec(b.name);
+        if (m) (chains[m[1] + m[2]] || (chains[m[1] + m[2]] = { kind: m[1], names: [] })).names.push(b.name);
+      } else if (p.distanceTo(def.pos(b.name)) > 0.004 && b.name !== 'jaw') console.warn(`ch_${key}: bone ${b.name} is ${(p.distanceTo(def.pos(b.name)) * 1000).toFixed(1)} mm off the game skeleton`);
+    }
+    for (const k of b.children) visit(k);
+  };
+  visit(gltf.scene);
+  return Object.values(chains).map((ch) => {
+    const last = def.b[def.i(ch.names[ch.names.length - 1])], a = last.pos, b = def.b[last.parent].pos;
+    return { ...ch, tail: a.clone().multiplyScalar(2).sub(b) };
+  });
+}
+
 // Geometry from an authored glTF: its primitives (materials CH_skin / CH_main) become the draw
 // groups of one geometry in bind space, joints are re-indexed to this skeleton by bone name,
 // and `onrm` carries normals welded across split vertices for the outline hull.
@@ -184,12 +214,29 @@ function mergeModel(meshes, def) {
 // ---------------------------------------------------------------------------
 // Humanoid type (geometry + skeleton), cached per config object
 const TYPES = new Map();
+// dev viewer: parsed glTFs that stand in for the shipped models (charview.html?wip)
+export const MODEL_OVERRIDE = {};
+// proportions of the modelled (second-generation) characters, laid over their CHAR entry
+const V2 = {
+  player: { headR: 0.142, irisR: 0.6 },
+};
 // Hooks for custom types (enemies): c.bones(def, L) -> chain specs added before
 // finalize; c.sculpt(S, L, def, chains) adds parts; c.group(key) -> material group
 // ('skin' | 'main' | custom); c.face === false skips the painted face.
 export function humanType(c) {
   let T = TYPES.get(c);
   if (T) return T;
+  // an authored model (public/models/ch_<key>.glb) replaces the code-built body; without one
+  // the character is sculpted here
+  const key = Object.keys(CHAR).find((k) => CHAR[k] === c);
+  const authored = key ? (MODEL_OVERRIDE[key] || model('ch_' + key)) : null;
+  const v2 = !!authored && isV2(authored);
+  if (v2 && V2[key]) { const cv = { ...c, ...V2[key] }; TYPES.set(cv, null); const Tv = humanType2(cv, key, authored); TYPES.set(c, Tv); return Tv; }
+  return humanType2(c, key, authored);
+}
+function humanType2(c, key, authored) {
+  let T;
+  const v2 = !!authored && isV2(authored);
   const t0 = performance.now();
   const L = HB.layout(c);
   const def = HB.skeleton(c, L);
@@ -197,10 +244,10 @@ export function humanType(c) {
   const cc = { ...c };
   // garment chains
   let capeCh = null, scarfCh = null, plumeCh = null, hairCh = null;
-  if (c.cape) capeCh = HB.capeBones(def, L, c);
-  if (c.scarf) scarfCh = HB.scarfBones(def, L, c);
-  if (c.plume) plumeCh = HB.plumeBones(def, L);
-  if (c.hairStyle === 'long') {
+  if (c.cape && !v2) capeCh = HB.capeBones(def, L, c);
+  if (c.scarf && !v2) scarfCh = HB.scarfBones(def, L, c);
+  if (c.plume && !v2) plumeCh = HB.plumeBones(def, L);
+  if (c.hairStyle === 'long' && !v2) {
     hairCh = [];
     for (const [ci, x] of [[0, 0.05], [1, -0.05]]) {
       const names = []; let parent = 'head';
@@ -210,7 +257,7 @@ export function humanType(c) {
       hairCh.push({ names, tail: p0.clone().add(new V3(0, -len, -0.04)) });
     }
   }
-  if (c.hat === 'hood') {
+  if (c.hat === 'hood' && !v2) {
     // collapsible bones so the hood can be lowered (outline hull included)
     const hp = def.pos('head'), np = def.pos('neck'), cp = def.pos('chest');
     def.add('hoodUp', 'head', hp.x, hp.y, hp.z, [L.HC.x, L.HC.y + L.hr, L.HC.z]);
@@ -221,19 +268,16 @@ export function humanType(c) {
   }
   let extraCh = null;
   if (c.bones) extraCh = c.bones(def, L);
+  if (v2) extraCh = (extraCh || []).concat(modelBones(authored, def, key));
   def.finalize();
   const pal = { ...palette(c), ...(c.colors || {}) };
-  // an authored model (public/models/ch_<key>.glb, built by ref/blender/ch_*.py on this same
-  // skeleton) replaces the code-built body; without one the character is sculpted here
-  const key = Object.keys(CHAR).find((k) => CHAR[k] === c);
-  const authored = key ? model('ch_' + key) : null;
   const built = authored ? fromModel(authored, def) : sculptType(c, cc, L, def, pal, { capeCh, scarfCh, plumeCh, hairCh, extraCh });
   if (capeCh) chains.push(...capeCh.map((ch) => ({ ...ch, kind: 'cape' })));
   if (scarfCh) chains.push(...scarfCh.map((ch) => ({ ...ch, kind: 'scarf' })));
   if (plumeCh) chains.push(...plumeCh.map((ch) => ({ ...ch, kind: 'plume' })));
   if (hairCh) chains.push(...hairCh.map((ch) => ({ ...ch, kind: 'hair' })));
   if (extraCh) chains.push(...extraCh);
-  T = { c, L, def, built, chains, face: c.face === false ? null : HB.faceParams(c, L), pal, ms: 0 };
+  T = { c, L, def, built, chains, face: c.face === false ? null : HB.faceParams(c, L), pal, ms: 0, v2 };
   // rigid props
   if (c.staff) { T.staff = HB.staffGeo(); T.gem = HB.gemGeo(); }
   if (c.cane) T.cane = HB.rigidGeo((S2) => {
@@ -344,7 +388,10 @@ export class HumanRig extends Rig {
     const pal = T.pal;
     const M = (this.M = {});
     const F2 = T.built.face;      // authored, sculpted head
-    if (F2) {
+    if (T.v2) {
+      M.skin = skinMat(); M.eye = eyeMat(c.eyeColor ?? 0x3a5a7a, { iris: c.irisR, pupil: c.pupilR });
+      this.faceU = { v2: true };
+    } else if (F2) {
       const sp = F2.spec, F = T.face || HB.faceParams(c, T.L);
       M.skin = faceMat2(pal.skin);
       const u = M.skin.userData.face;
@@ -374,7 +421,7 @@ export class HumanRig extends Rig {
     if (o.mats) Object.assign(M, o.mats);
     this.mats = Object.values(M).filter((m) => m.isMeshToonMaterial);
     this.glowMats = Object.values(M).filter((m) => !m.isMeshToonMaterial);
-    const I = instance(body, T.def, T.built, M, { outline: o.outline ?? (c.outline ? 0.0048 : 0), outlineTint: !o.mats, main: 'main' });
+    const I = instance(body, T.def, T.built, M, { outline: o.outline ?? (c.outline ? (T.v2 ? 0.0024 : 0.0048) : 0), outlineTint: !o.mats, main: 'main' });
     this.B = I.by; this.mesh = I.mesh; this.skeleton = I.skeleton; this.outline = I.outline;
     this.meshes = I.meshes;
     if (F2) {
@@ -393,6 +440,17 @@ export class HumanRig extends Rig {
     this.rest = {};
     for (const b of I.bones) this.rest[b.name] = b.position.clone();
     const B = this.B;
+    // modelled hands: every finger joint flexes about the knuckle line, towards the palm
+    if (B.f1aL) this.hands = ['L', 'R'].map((n, k) => {
+      const sd = k ? -1 : 1, P = (b) => T.def.pos(b + n);
+      const d = P('f2b').clone().sub(P('f2a')).normalize();
+      const ax = P('f4a').clone().sub(P('f1a')).normalize();
+      if (_v1.crossVectors(ax, d).x * -sd < 0) ax.negate();
+      const tdir = P('thb').clone().sub(P('tha')).normalize();
+      const tax = _v2.crossVectors(tdir, _v3.set(-sd, 0, 0)).normalize().clone();
+      if (_v1.crossVectors(tax, tdir).x * -sd < 0) tax.negate();
+      return { n, ax, d: d.clone().multiplyScalar(-sd), tax };
+    });
     const P = (this.p = {});
     P.hips = B.hips; P.legL = B.thighL; P.legR = B.thighR; P.shinL = B.shinL; P.shinR = B.shinR;
     P.armL = B.armL; P.armR = B.armR; P.foreL = B.foreL; P.foreR = B.foreR; P.handL = B.handL; P.handR = B.handR;
@@ -428,8 +486,10 @@ export class HumanRig extends Rig {
       if (ch.kind === 'cape') { col(B.chest, cp, 0, L.SY - 0.1, 0.03, 0.16 * bwf); col(B.hips, hp, 0, L.H - 0.02, 0, 0.15 * bwf); }
       if (ch.kind === 'scarf') col(B.chest, cp, 0, L.SY - 0.05, 0.06, 0.2 * bwf);
       if (ch.kind === 'hair') { col(B.head, T.def.pos('head'), L.HC.x, L.HC.y, L.HC.z, L.hr * 1.08); col(B.chest, cp, 0, L.SY - 0.1, 0.03, 0.15 * bwf); }
-      if (ch.kind !== 'plume') { cols.push({ obj: B.thighL, off: new V3(0, -0.2, 0), r: 0.1 * bwf }); cols.push({ obj: B.thighR, off: new V3(0, -0.2, 0), r: 0.1 * bwf }); }
-      const opts = ch.opts || { cape: { stiff: 0.06, stiffTip: 0.02, damp: 0.1, grav: 9, drag: 1 }, scarf: { stiff: 0.05, stiffTip: 0.01, damp: 0.06, grav: 7, drag: 1.4 }, plume: { stiff: 0.12, stiffTip: 0.05, damp: 0.12, grav: 2, drag: 0.8 }, hair: { stiff: 0.14, stiffTip: 0.06, damp: 0.12, grav: 6, drag: 0.5 } }[ch.kind];
+      if (ch.kind === 'skirt') for (const th of [B.thighL, B.thighR]) for (const y of [-0.06, -0.17, -0.28]) cols.push({ obj: th, off: new V3(0, y, 0.005), r: 0.094 * bwf * (c.limb ?? 1) });
+      if (ch.kind === 'skirt' && ch.names.length > 2) for (const sh of [B.shinL, B.shinR]) for (const y of [-0.08, -0.22]) cols.push({ obj: sh, off: new V3(0, y, 0), r: 0.075 * bwf });
+      else if (ch.kind !== 'plume') { cols.push({ obj: B.thighL, off: new V3(0, -0.2, 0), r: 0.1 * bwf }); cols.push({ obj: B.thighR, off: new V3(0, -0.2, 0), r: 0.1 * bwf }); }
+      const opts = ch.opts || { cape: { stiff: 0.06, stiffTip: 0.02, damp: 0.1, grav: 9, drag: 1 }, scarf: { stiff: 0.05, stiffTip: 0.01, damp: 0.06, grav: 7, drag: 1.4 }, plume: { stiff: 0.12, stiffTip: 0.05, damp: 0.12, grav: 2, drag: 0.8 }, hair: { stiff: 0.14, stiffTip: 0.06, damp: 0.12, grav: 6, drag: 0.5 }, skirt: { stiff: 0.3, stiffTip: 0.16, damp: 0.25, grav: 5, drag: 0.4 } }[ch.kind];
       const chn = new Chain(bones, tail, { ...opts, colliders: cols });
       chn.kind = ch.kind;
       return chn;
@@ -871,6 +931,18 @@ export class HumanRig extends Rig {
     B.shinL.rotation.set(q.shinLx, 0, 0); B.shinR.rotation.set(q.shinRx, 0, 0);
     B.footL.rotation.set(q.footLx, 0, 0); B.footR.rotation.set(q.footRx, 0, 0);
     B.toeL.rotation.set(q.toeLx, 0, 0); B.toeR.rotation.set(q.toeRx, 0, 0);
+    if (this.hands) for (const h of this.hands) {
+      const curl = q['fing' + h.n], th = q['thumb' + h.n];
+      for (let f = 1; f <= 4; f++) {
+        const k = 0.88 + 0.06 * f;
+        B['f' + f + 'a' + h.n].quaternion.setFromAxisAngle(h.ax, curl * 0.8 * k);
+        B['f' + f + 'b' + h.n].quaternion.setFromAxisAngle(h.ax, curl * 0.95 * k);
+        B['f' + f + 'c' + h.n].quaternion.setFromAxisAngle(h.ax, curl * 0.6 * k);
+      }
+      B['tha' + h.n].quaternion.setFromAxisAngle(h.d, th * 0.45).multiply(_q1.setFromAxisAngle(h.tax, th * 0.25));
+      B['thb' + h.n].quaternion.setFromAxisAngle(h.tax, th * 0.4);
+      B['thc' + h.n].quaternion.setFromAxisAngle(h.tax, th * 0.45);
+    }
     root.updateMatrixWorld(true);
     // --- held pole: orient the fist so the staff stands upright / points at the aim
     if (hold && W.swim < 0.9) {
@@ -906,7 +978,7 @@ export class HumanRig extends Rig {
     // --- face
     if (this.faceU && this.lod < 2) this.updateFace(dt, s, typing);
     // --- player's hat (from player.setHat): lower the hood, fit the hat
-    if (this.B.hoodUp) this.hoodCheck();
+    if (this.B.hoodUp || this.T.v2) this.hoodCheck();
     if (this.postHook) this.postHook(s, this, dt);
   }
 
@@ -1021,6 +1093,7 @@ export class HumanRig extends Rig {
     const hat = ha.children.find((o) => o.name === 'moraHat');
     const B = this.B;
     const up = !hat;
+    if (this.T.v2 && this.B.c_hat) this.B.c_hat.scale.setScalar(hat ? 0.86 : 1);     // the crown hair tucks under the hat
     const k = (x) => (x ? 1 : 1e-4);
     if (B.hoodUp) { B.hoodUp.scale.setScalar(k(up)); B.hoodUpN.scale.setScalar(k(up)); B.hoodDn.scale.setScalar(k(!up)); }
     if (B.hairB) B.hairB.scale.setScalar(up ? 0.9 : 1);
@@ -1059,6 +1132,24 @@ export class HumanRig extends Rig {
       this.talkV = damp(this.talkV, this.talkTo, 22, dt);
     } else this.talkV = damp(this.talkV, 0, 14, dt);
     const open = fx.open * (1 - bl) * (1 - this.w.dead);
+    if (this.T.v2) {
+      // modelled head: shape keys for the expression, eye bones for the gaze
+      const m = this.morph, ix = this.morphIdx, set = (n, v) => { if (ix[n] !== undefined) m[ix[n]] = v; };
+      const mo = clamp(fx.mOpen + this.talkV * (1 - fx.mOpen * 0.6) + this.w.panic * 0.5, 0, 1.2);
+      const ex = this.eyeLook.x, ey = this.eyeLook.y;
+      // closing follows an arc over the eyeball: through the half-closed key to the closed one
+      const cl = clamp(clamp(1 - open, 0, 1) * (1 - fx.happy) + Math.max(0, -ey) * 0.22, 0, 1);
+      set('blinkH', 1 - Math.abs(2 * cl - 1)); set('blink', Math.max(0, 2 * cl - 1));
+      set('wide', clamp((open - 1) * 3.5 + Math.max(0, ey) * 0.3, 0, 1));
+      set('happy', fx.happy); set('lidLow', fx.lower * (1 - fx.happy)); set('lidTilt', fx.tilt);
+      set('mOpen', mo); set('smile', Math.max(0, fx.smile)); set('frown', Math.max(0, -fx.smile));
+      set('round', clamp(fx.round + this.talkV * 0.25 + Math.max(0, 1 - fx.mW) * 1.2, 0, 1)); set('wideM', clamp((fx.mW - 1) * 2.5, 0, 1));
+      set('browUp', Math.max(0, fx.raise)); set('browDown', Math.max(0, -fx.raise));
+      set('browTilt', Math.max(0, fx.btilt)); set('browAngry', Math.max(0, -fx.btilt)); set('browFurrow', fx.furrow);
+      const B = this.B;
+      if (B.eyeL) { B.eyeL.rotation.set(-ey * 0.3, ex * 0.42, 0); B.eyeR.rotation.set(-ey * 0.3, ex * 0.42, 0); }
+      return;
+    }
     if (this.morph) {
       // sculpted head: the expression drives shape keys; only the gaze stays in the shader
       const m = this.morph, ix = this.morphIdx, mo = clamp(fx.mOpen + this.talkV * (1 - fx.mOpen * 0.6) + this.w.panic * 0.5, 0, 1.2);

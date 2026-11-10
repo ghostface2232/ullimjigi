@@ -8,6 +8,14 @@ import { preloadModels } from './src/render/models.js';
 
 await preloadModels();
 
+// ?wip: load work-in-progress models from ref/blender/wip/ instead of public/models/
+if (new URLSearchParams(location.search).has('wip')) {
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  for (const k of Object.keys(HR.CHAR)) {
+    try { HR.MODEL_OVERRIDE[k] = await new GLTFLoader().loadAsync(`./ref/blender/wip/ch_${k}.glb?t=${Date.now()}`); } catch (_) { /* no wip model */ }
+  }
+}
+
 // people always load; a creature or enemy module that fails to load (mid-edit) only drops its own set
 const C = { ...HR };
 for (const load of [() => import('./src/game/creatures.js'), () => import('./src/game/enemybodies.js'), () => import('./src/game/enemycreatures.js')]) {
@@ -119,7 +127,22 @@ function sim(r, n, dt, st, mv = null, yawRate = 0) {
     r.update(dt, typeof st === 'function' ? st(i * dt) : st);
   }
 }
-window.V = { THREE, G, C, rigs, scene, cam, step, render, frame, info, buildMs, sim, setAll(s) { for (const r of rigs) r.state = s; } };
+// orbit the camera about a point (yaw 0 = in front of a character facing +Z)
+function look(x, y, z, dist, yaw = 0, el = 0, fov = 30) {
+  const a = (yaw * Math.PI) / 180, e = (el * Math.PI) / 180;
+  cam.fov = fov; cam.updateProjectionMatrix();
+  cam.position.set(x + Math.sin(a) * Math.cos(e) * dist, y + Math.sin(e) * dist, z + Math.cos(a) * Math.cos(e) * dist);
+  cam.lookAt(x, y, z);
+}
+// post the canvas to the local capture receiver (dev tooling)
+async function shot(name) {
+  render();
+  const blob = await new Promise((r) => renderer.domElement.toBlob(r, 'image/jpeg', 0.93));
+  await fetch('http://127.0.0.1:5197/' + name + '.jpg', { method: 'POST', mode: 'no-cors', body: blob });
+  return name;
+}
+function setSun(x, y, z) { sd.set(x, y, z).normalize(); sun.position.copy(sd); U.sunDir.value.copy(sd); }
+window.V = { THREE, G, C, rigs, scene, cam, step, render, frame, info, buildMs, sim, look, shot, setSun, renderer, setAll(s) { for (const r of rigs) r.state = s; } };
 step(10);
 render();
 renderer.info.autoReset = true;

@@ -634,7 +634,8 @@ export class Terrain {
   }
 
   // Index buffer of one chunk at LOD 0 or 1 with the rock blocks left out (the cliff mesh
-  // draws those): same vertex layout as chunkIndex.
+  // draws those): same vertex layout as chunkIndex. The skirt is left out along them too:
+  // it hangs from the smooth ground, and would stand as a wall where the rock sits lower.
   chunkIndexFor(ch, k) {
     const n = CH >> k, V = n + 1, G = V * V, idx = [], NB = this.NB, sh = 1 - k;
     const b0x = ch.cx * CH / 2, b0z = ch.cz * CH / 2;
@@ -645,6 +646,10 @@ export class Terrain {
     }
     const rim = this.rimOrder(n);
     for (let j = 0; j < rim.length; j++) {
+      // the cell this stretch of the rim belongs to (rimOrder: north, east, south, west)
+      const side = Math.floor(j / n), i = j % n;
+      const ix = side === 0 ? i : side === 1 ? n - 1 : side === 2 ? n - 1 - i : 0, iz = side === 0 ? 0 : side === 1 ? i : side === 2 ? n - 1 : n - 1 - i;
+      if (this.blockSteep[(b0z + (iz >> sh)) * NB + b0x + (ix >> sh)]) continue;
       const a = rim[j], b = rim[(j + 1) % rim.length], sa = G + j, sb = G + ((j + 1) % rim.length);
       idx.push(a, sa, b, b, sa, sb, a, b, sa, b, sb, sa);
     }

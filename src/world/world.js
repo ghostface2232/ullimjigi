@@ -270,7 +270,8 @@ export class World {
     const s2 = B.stall(B.MAT.clothBlue); this.place(s2, -2, 26, this.faceTo(-2, 26, 6, 14)); this.col.addBox(-2, 26, 1.6, 0.8, s2.rotation.y, -10, this.h(-2, 26) + 2.95);
     for (const [x, z] of [[-12, 6], [-4, -6], [-12, -8]]) this.place(B.bench(), x, z, this.faceTo(x, z, -8, -2) + Math.PI);
     // fences at village edge
-    for (const [x, z, r, l] of [[40, 30, 1.4, 12], [38, 4, 1.8, 10], [-38, 30, 1.7, 10], [-36, 2, 1.3, 12], [10, 58, 0.1, 14]]) this.place(B.fence(l), x, z, r);
+    // (the south run stands either side of the tower road, which crosses z = 58 at x = 4)
+    for (const [x, z, r, l] of [[40, 30, 1.4, 12], [38, 4, 1.8, 10], [-38, 30, 1.7, 10], [-36, 2, 1.3, 12], [15, 58.3, 0.1, 12], [-6.5, 57.8, -0.08, 9]]) this.place(B.fence(l), x, z, r);
     // dry-stone walls flanking the north road (the village gate) and at the edges
     for (const [x, z, r, l] of [[-12, -17, 0.25, 7], [4, -18, -0.2, 7], [-40, -1, 1.45, 6], [38, -9, 2.0, 6]]) {
       const w = B.stoneWall(l, rnd); this.place(w, x, z, r);

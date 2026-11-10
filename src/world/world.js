@@ -76,6 +76,7 @@ export class World {
     G.env = new Env(this);
     onProgress(0.45, '숲을 가꾸는 중…');
     this.props = new Props(scene, this.terrain, this.col, G.settings.quality);
+    this.dressCliffs();
     onProgress(0.65, '마을을 짓는 중…');
     this.buildVillage();
     this.buildTowerHill();
@@ -192,6 +193,34 @@ export class World {
   addTarget(o) { this.targets.push(o); return o; }
 
   // ------------------------------------------------------------
+  // Boulders at the feet of the cliffs: authored rocks leaning on the wall where it meets
+  // walkable ground, so the rock does not rise straight out of the grass. All over the map,
+  // from its own random stream and with every draw explicit, so the scatter of the vale
+  // (which shares Props' stream) is not disturbed.
+  dressCliffs() {
+    const T = this.terrain, P = this.props, rnd = mulberry32(90417), N = T.N, st = T.step;
+    const DIR = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+    const pick = (type) => Math.floor(rnd() * P.types[type].variants.length);
+    for (let iz = 6; iz < N - 6; iz += 2) for (let ix = 6; ix < N - 6; ix += 2) {
+      const i = iz * N + ix;
+      if (T.cw[i] > 0 || T.h[i] < 0.8) continue;
+      // the wall: rock within 6 m that stands well above this spot
+      let wx = 0, wz = 0, found = 0;
+      for (const [dx, dz] of DIR) { const j = (iz + dz * 3) * N + ix + dx * 3; if (T.cw[j] > 0.9 && T.h[j] - T.h[i] > 3) { wx += dx; wz += dz; found++; } }
+      if (!found || rnd() > 0.2) continue;
+      const l = Math.hypot(wx, wz) || 1, x0 = -T.half + ix * st + (rnd() - 0.5) * 3, z0 = -T.half + iz * st + (rnd() - 0.5) * 3;
+      // lean it on the wall, unless that would lift it off the ground
+      let x = x0 + (wx / l) * 2.2, z = z0 + (wz / l) * 2.2;
+      if (T.height(x, z) - T.h[i] > 2) { x = x0; z = z0; }
+      if (T.pathInfo(x, z).d < 6 || (Math.hypot(x, z) < 226 && P.excluded(x, z, 3))) continue;
+      if (T.passes.some((q) => q.segs.some((g) => { const t = Math.max(0, Math.min(1, ((x - g.ax) * (g.bx - g.ax) + (z - g.az) * (g.bz - g.az)) / (g.len * g.len || 1))); return Math.hypot(x - g.ax - (g.bx - g.ax) * t, z - g.az - (g.bz - g.az) * t) < q.w * 0.7; }))) continue;
+      const big = rnd() < 0.32, sz = big ? 1.3 + rnd() * 2.0 : 0.6 + rnd() * 0.9;
+      const type = T.snowAt(x, z) > 0.4 ? 'rockSnow' : big ? 'rockBig' : 'rock';
+      P.add(type, x, z, sz, { v: pick(type), ry: rnd() * TAU, col: sz > 1.2 ? 0.8 : 0 });
+      if (rnd() < 0.5) P.add('pebbles', x - (wx / l) * (1 + sz) + (rnd() - 0.5) * 2, z - (wz / l) * (1 + sz) + (rnd() - 0.5) * 2, 0.8 + rnd() * 0.7, { v: pick('pebbles'), ry: rnd() * TAU });
+    }
+  }
+
   buildVillage() {
     const plaza = { x: 6, z: 14 };
     const rnd = mulberry32(88);

@@ -448,7 +448,7 @@ varying vec3 vWPos;
 varying vec3 vWNrm;
 // worked out once per pixel (TERRAIN_FRAG), used again at the lighting stage (TERRAIN_SURF)
 vec3 _wn = vec3(0.0, 1.0, 0.0);
-float _wG = 0.0, _wD = 0.0, _wS = 0.0, _wN = 0.0, _wRock = 0.0, _wPave = 0.0, _wBare = 0.0;
+float _wG = 0.0, _wD = 0.0, _wS = 0.0, _wN = 0.0, _wRock = 0.0, _wPave = 0.0, _wBare = 0.0, _moss = 0.0;
 #ifdef CLIFF_SKIN
 varying vec2 vEdge; // x: open to the sky (1) or shut in, y: 1 on a top that grows grass
 #endif
@@ -509,6 +509,7 @@ const TERRAIN_FRAG = `
       fringe = steep * smoothstep(0.03, 0.12, eg.y) * smoothstep(0.35, 0.65, eg.y / max(length(eg), 1e-3)) * (1.0 - smoothstep(0.55, 1.0, lip / len));
       rockK = 1.0 - max(top, fringe);
       fringe *= 1.0 - top;
+      _moss = 0.16 * smoothstep(0.0, 0.5, vEdge.y) + 0.12 * (1.0 - smoothstep(0.2, 0.8, vEdge.x));
     }
     #else
     {
@@ -596,22 +597,41 @@ const TERRAIN_SURF = `
     GROUND(10.0, p / 2.8, _wPave, X, Z, 1.0)
     GROUND(12.0, p / 5.0, _wBare, X, Z, 1.0)
     if (_wRock > 0.004) {
-      // rock: projected from the sides on a face (the strokes run up it), from above on a top
+      // rock: projected from the sides on a face (bedding runs level), from above on a top
       vec3 bw = abs(wn); bw *= bw; bw *= bw; bw /= bw.x + bw.y + bw.z;
       float wx = _wRock * bw.x, wy = _wRock * bw.y, wz = _wRock * bw.z;
-      // two kinds of bedrock, each over its own country: big jointed blocks, thin beds
-      float beds = smoothstep(0.44, 0.56, texture2D(uNoiseTex, p * 0.0031 + 0.57).g);
-      GROUND(2.0, vWPos.zy / 9.0, wx * (1.0 - beds), Z, Y, 0.0)
-      GROUND(2.0, vWPos.xy / 9.0, wz * (1.0 - beds), X, Y, 0.0)
-      GROUND(13.0, vWPos.zy / 6.5, wx * beds, Z, Y, 0.0)
-      GROUND(13.0, vWPos.xy / 6.5, wz * beds, X, Y, 0.0)
-      GROUND(2.0, p / 9.0, wy * (1.0 - beds), X, Z, 1.0)
-      GROUND(13.0, p / 6.5, wy * beds, X, Z, 1.0)
+      #define ROCK(L, T, W) { float k_ = (W); if (k_ > 0.004) { GROUND(L, vWPos.zy / (T), wx * k_, Z, Y, 0.0) GROUND(L, vWPos.xy / (T), wz * k_, X, Y, 0.0) GROUND(L, p / (T), wy * k_, X, Z, 1.0) } }
+      // Two kinds of bedrock, each over its own country (thin beds lower down, big jointed
+      // blocks higher up), the blocks in two sizes. Far away both are read much larger: at
+      // its true size the relief would shrink to an even grain, and a cliff seen from afar
+      // shows its great ledges, not its small ones.
+      float farK = smoothstep(40.0, 150.0, length(cameraPosition - vWPos));
+      float beds = smoothstep(0.44, 0.56, texture2D(uNoiseTex, p * 0.0031 + 0.57).g + clamp((30.0 - vWPos.y) * 0.004, -0.15, 0.15));
+      float big = smoothstep(0.48, 0.56, texture2D(uNoiseTex, p * 0.0047 + 0.21).r);
+      ROCK(2.0, 9.0, (1.0 - beds) * (1.0 - farK) * (1.0 - big))
+      ROCK(2.0, 16.0, (1.0 - beds) * (1.0 - farK) * big)
+      ROCK(2.0, 33.0, (1.0 - beds) * farK)
+      ROCK(13.0, 6.5, beds * (1.0 - farK))
+      ROCK(13.0, 24.0, beds * farK)
     }
     float iw = 1.0 / max(ws, 1e-5);
     diffuseColor.rgb *= ws > 0.0 ? alb * iw * 2.0 : vec3(1.0);
-    normal = normalize((viewMatrix * vec4(normalize(wn + dW * iw * 1.15), 0.0)).xyz);
+    // (rock: the relief comes and goes over a face, strong in one stretch and worn nearly
+    // smooth in the next, and is read more gently from afar, or a far wall is all one grain)
+    float rf = _wRock * (1.0 - mix(0.15, 0.75, texture2D(uNoiseTex, p * 0.013 + vWPos.y * 0.021 + 0.7).r) * (0.45 + 0.55 * smoothstep(40.0, 150.0, length(cameraPosition - vWPos))));
+    vec3 pn = normalize(wn + dW * iw * 1.15 * (1.0 - _wRock + rf));
+    normal = normalize((viewMatrix * vec4(pn, 0.0)).xyz);
     if (ws > 0.0) { _rough = rgh * iw; _cav = cav * iw; _specK = 1.0; }
+    if (_wRock > 0.05) {
+      // moss: on whatever faces the sky at the scale of the relief (the tops of ledges and
+      // blocks, never the risers), in damp stretches of country, thicker under grass tops
+      // and in shut-in places; none under snow
+      float mf = texture2D(uNoiseTex, p * 0.61 + vWPos.y * 0.37).b;
+      float damp = texture2D(uNoiseTex, p * 0.021 + vWPos.y * 0.013 + 0.4).g + _moss;
+      float moss = smoothstep(0.42, 0.74, pn.y + (mf - 0.5) * 0.4) * smoothstep(0.4, 0.62, damp) * _wRock * (1.0 - smoothstep(0.05, 0.3, _wN));
+      diffuseColor.rgb = mix(diffuseColor.rgb, uPal[8] * vec3(1.0, 1.12, 0.7) * (0.75 + 0.5 * mf), moss * 0.85);
+      _rough = mix(_rough, 0.95, moss);
+    }
     // wildfire: scorched ground (patchy ash) and a hot rim while burning
     vec4 burn = texture2D(uBurnTex, guv);
     if (burn.r + burn.g > 0.002) {

@@ -199,7 +199,8 @@ export class Terrain {
     const bev = Math.min(Math.max(0.5 * Math.abs(p1 - p2) * (0.1 + 0.52 * hsh(s1.id + s2.id, s1.id ^ s2.id, 7)), BEV0), 7);
     this._bd = bd; this._bev = bev; this._nx = (s1.x - s2.x) / sd; this._nz = (s1.z - s2.z) / sd;
     this._e = Math.sign(p1 - p2) * Math.min(Math.abs(p1 - p2) / 3, 1) * Math.max(0, 1 - Math.abs(bd - bev) / 1.2) * (bd < bev ? 0.6 : 1);
-    this._t = bd >= bev - 0.02 ? smoothstep(0.62, 0.38, s1.g) : 0;
+    // (all or nothing: grass in patches on a leaning slab read as a stain; moss does that better)
+    this._t = bd >= bev - 0.02 && s1.g < 0.5 ? 1 : 0;
     // the face is steepest halfway and rolls over into the tops: a worn shoulder, a filled foot
     const u = Math.max(0, 1 - bd / bev);
     return p1 + (p2 - p1) * 0.5 * u * (0.3 + 0.7 * u);
@@ -605,7 +606,7 @@ export class Terrain {
       const box = new THREE.Box3(new THREE.Vector3(x0, lo - SKIRT[3], z0), new THREE.Vector3(x0 + sz, hi, z0 + sz));
       let cliff = false;
       for (let bz = cz * CH / 2; bz < (cz + 1) * CH / 2 && !cliff; bz++) for (let bx = cx * CH / 2; bx < (cx + 1) * CH / 2; bx++) if (this.blockSteep[bz * this.NB + bx]) { cliff = true; break; }
-      const ch = { cx, cz, x0, z0, x1: x0 + sz, z1: z0 + sz, lo, hi, box, sphere: box.getBoundingSphere(new THREE.Sphere()), geos: [null, null, null, null], skins: [null, null], cliff, lod: -1 };
+      const ch = { cx, cz, x0, z0, x1: x0 + sz, z1: z0 + sz, lo, hi, box, sphere: box.getBoundingSphere(new THREE.Sphere()), geos: [null, null, null, null], skins: [null, null, null], cliff, lod: -1 };
       ch.geos[3] = this.chunkGeometry(ch, 3);
       ch.geos[2] = this.chunkGeometry(ch, 2);
       ch.mesh = new THREE.Mesh(ch.geos[3], this.mat);
@@ -654,6 +655,74 @@ export class Terrain {
       idx.push(a, sa, b, b, sa, sb, a, b, sa, b, sb, sa);
     }
     return new THREE.BufferAttribute(new Uint16Array(idx), 1);
+  }
+
+  // Which 16 m cells of a chunk have rock in them: at LOD 2-3 the grid leaves those out
+  // whole and the far cliff mesh draws them.
+  farCells(ch) {
+    if (ch.far) return ch.far;
+    const far = (ch.far = new Uint8Array(256)), NB = this.NB, b0x = ch.cx * CH / 2, b0z = ch.cz * CH / 2;
+    for (let bz = 0; bz < CH / 2; bz++) for (let bx = 0; bx < CH / 2; bx++) if (this.blockSteep[(b0z + bz) * NB + b0x + bx]) far[(bz >> 2) * 16 + (bx >> 2)] = 1;
+    return far;
+  }
+
+  // Index buffer of one chunk at LOD 2 or 3 without the cells the far cliff mesh draws
+  // (and without the skirt along them): same vertex layout as chunkIndex.
+  chunkIndexFar(ch, k) {
+    const n = CH >> k, V = n + 1, G = V * V, idx = [], far = this.farCells(ch), sh = 3 - k;
+    for (let iz = 0; iz < n; iz++) for (let ix = 0; ix < n; ix++) {
+      if (far[(iz >> sh) * 16 + (ix >> sh)]) continue;
+      const a = iz * V + ix, b = a + 1, c = a + V, d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+    const rim = this.rimOrder(n);
+    for (let j = 0; j < rim.length; j++) {
+      const side = Math.floor(j / n), i = j % n;
+      const ix = side === 0 ? i : side === 1 ? n - 1 : side === 2 ? n - 1 - i : 0, iz = side === 0 ? 0 : side === 1 ? i : side === 2 ? n - 1 : n - 1 - i;
+      if (far[(iz >> sh) * 16 + (ix >> sh)]) continue;
+      const a = rim[j], b = rim[(j + 1) % rim.length], sa = G + j, sb = G + ((j + 1) % rim.length);
+      idx.push(a, sa, b, b, sa, sb, a, b, sa, b, sb, sa);
+    }
+    return new THREE.BufferAttribute(new Uint16Array(idx), 1);
+  }
+
+  // The rock of a far chunk (LOD 2-3): the cliff surface on the 4 m lattice, no relief, over
+  // the 16 m cells that have rock in them. A few thousand triangles at most.
+  farSkin(ch) {
+    const N = this.N, st = this.step, nb = CH / 2, b0x = ch.cx * CH / 2, b0z = ch.cz * CH / 2, far = this.farCells(ch);
+    const pos = [], edge = [], idx = [], ids = new Map();
+    const vert = (bx, bz) => {
+      const key = bz * (nb + 1) + bx;
+      let v = ids.get(key);
+      if (v !== undefined) return v;
+      v = pos.length / 3; ids.set(key, v);
+      const gi = (b0z + bz) * 2 * N + (b0x + bx) * 2, x = -this.half + (b0x + bx) * 2 * st, z = -this.half + (b0z + bz) * 2 * st;
+      const w = CWR(this.cw[gi]), hb = this.base[gi], tb = 1 - smoothstep(0.82, 0.68, this.nrm[gi * 3 + 1]);
+      let y = hb, top = tb;
+      if (w > 0) {
+        y = this.cliffAt(x, z, hb, w);
+        const te = tb * (1 - 4 * w * (1 - w) * smoothstep(1.2, 3, Math.abs(this._dh)));
+        top = te + (this._top - te) * w;
+      }
+      pos.push(x, y, z); edge.push(this.skyAt(x, y, z), top);
+      return v;
+    };
+    for (let bz = 0; bz < nb; bz++) for (let bx = 0; bx < nb; bx++) {
+      if (!far[(bz >> 2) * 16 + (bx >> 2)]) continue;
+      const a = vert(bx, bz), b = vert(bx + 1, bz), c = vert(bx, bz + 1), d = vert(bx + 1, bz + 1);
+      if (Math.abs(pos[a * 3 + 1] - pos[d * 3 + 1]) <= Math.abs(pos[b * 3 + 1] - pos[c * 3 + 1])) idx.push(a, c, d, a, d, b);
+      else idx.push(a, c, b, b, c, d);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('aEdge', new THREE.Float32BufferAttribute(edge, 2));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    g.computeBoundingBox(); g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, this.cliffMat);
+    m.castShadow = false; m.receiveShadow = true; m.matrixAutoUpdate = false; m.visible = false;
+    this.mesh.add(m);
+    return m;
   }
 
   cliffPaint(i) {
@@ -851,7 +920,7 @@ export class Terrain {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-    g.setIndex(k < 2 && ch.cliff ? this.chunkIndexFor(ch, k) : this.lodIndex[k]);
+    g.setIndex(!ch.cliff ? this.lodIndex[k] : k < 2 ? this.chunkIndexFor(ch, k) : this.chunkIndexFar(ch, k));
     g.boundingBox = ch.box; g.boundingSphere = ch.sphere;
     return g;
   }
@@ -889,7 +958,10 @@ export class Terrain {
       }
       if (!ch.geos[want]) ch.geos[want] = this.chunkGeometry(ch, want);
       if (want !== ch.lod) { ch.mesh.geometry = ch.geos[want]; ch.lod = want; }
+      // far away the rock keeps its masses, as a few quads (cheap enough to build on the spot)
+      if (ch.cliff && want >= 2 && !ch.skins[2]) ch.skins[2] = this.farSkin(ch);
       const s0 = ch.skins[0], s1 = ch.skins[1];
+      if (ch.skins[2]) ch.skins[2].visible = ch.lod >= 2;
       if (s0) { s0.visible = ch.lod === 0; s0.castShadow = !s1; }
       if (s1) { s1.visible = ch.lod <= 1; s1.layers.set(ch.lod === 0 ? SHADOW_LAYER : 0); }
       for (let k = 0; k < 2; k++) if (ch.lod !== k && d > LOD_KEEP[k]) {

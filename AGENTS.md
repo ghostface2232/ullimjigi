@@ -104,15 +104,18 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 ### 암벽 (가파른 지형)
 - 경사가 약 37° 넘는 땅은 매끈한 높이맵 대신 **암벽 형상**입니다(`Terrain.initCliffs`). 평면에서 19m쯤 되는 덩어리(`site`)마다 옛 비탈을 지나는 기운 평면 하나를 두고(절반은 거의 수평인 단, 절반은 완만한 경사), 이웃 덩어리와는 58°~거의 수직인 제 각도의 면으로 만납니다(`mass`). 6.5m 면 조각(`cliffAt`)이 덩어리의 소유 판정 위치만 조금씩 밀어, 윗면은 그대로 두고 벽의 윤곽만 계단지게 합니다. 여전히 (x, z)마다 높이가 하나라서 **`height()`·충돌·등반·배치가 눈에 보이는 면과 같습니다.**
 - `terrain.base`는 매끈한 원래 땅(먼 LOD와 채색이 씀), `terrain.cw`는 암벽 가중치(완만한 땅·길 0), `terrain.h`는 격자점에서의 최종 높이입니다. 높이가 필요하면 격자를 직접 읽지 말고 `height()`를 쓰세요. 골짜기 안도 가파른 곳은 바뀌므로 "480m 시절과 한 칸도 다르지 않다"는 규칙은 완만한 땅(가중치 0)에만 해당합니다. 소품 산포는 여전히 옛 격자(`legacy()`)로 자리를 고릅니다.
-- 그리기: 암벽이 닿는 4m 블록(`blockSteep`)은 격자 메시에서 빠지고(`chunkIndexFor`), 청크의 LOD 0·1에서 암벽 메시(`skinMesh`: 2m 칸마다 K×K 쿼드, `TIERS.cliff`)가 대신 그립니다. 정점은 능선 위로 옮겨지고(`cliffSnap`) 공유되어 모서리가 부드럽게 넘어갑니다. LOD 2 이상(420m 밖)은 매끈한 `base`를 그립니다.
-- 재질(`toon(..., { terrain: true, cliff: true })`, `CLIFF_SKIN`): 정점 속성 `color`(땅 색)·`aRock`(바위 색)·`aEdge`(x: 모서리 +/골 −, y: 풀이 자라는 윗면 1). 풀/바위는 법선이 아니라 이 값으로 가릅니다(법선으로 가르면 골마다 초록 줄이 생김). `Terrain.grassAt`·`colorAt`도 같은 규칙을 따라 풀잎이 벽면에 서지 않습니다.
+- 그리기: 암벽이 닿는 4m 블록(`blockSteep`)은 격자 메시에서 빠지고(`chunkIndexFor`), 청크의 LOD 0·1에서 암벽 메시(`skinGen`: 2m 칸마다 K×K 쿼드)가 대신 그립니다. 정점은 능선 위로 옮겨지고(`cliffSnap`) 공유됩니다. 그다음 `sculpt`가 벽면을 다듬습니다: 격자는 평면에서만 촘촘해서 벽은 길쭉한 삼각형 몇 장이므로, 가파르고 긴 모서리를 반씩 나눠 높이 방향 정점을 만들고, 벽을 3D 블록(`blockSite`: 폭 3.4m·높이 2m 셀, 면에서 ±0.34m 나오거나 들어감)으로 깨서 블록 면은 평평하고 이음매는 또렷하게 만듭니다. 걸을 수 있는 윗면은 건드리지 않으므로 거기서는 `height()`가 정확하고, 벽에서는 눈에 보이는 면과 최대 `BAMP`만큼 다릅니다. 메시 밀도는 `TIERS.cliff = [LOD0 K, LOD1 K, 벽 모서리 최대 길이(m)]`. LOD 2 이상(420m 밖)은 매끈한 `base`를 그립니다.
+- 암벽 메시는 청크 하나에 수 초가 걸릴 수 있어 `Terrain.update`가 프레임당 몇 ms씩 나눠 만들고(`jobs`), 그동안 청크는 가진 LOD를 보여 줍니다. `update(camera, budget, minLod)`의 `budget`만큼은 그 자리에서 만듭니다(부팅, 스케치). 고운 메시(LOD 0)를 보이는 청크의 그림자는 거친 메시(LOD 1)가 `SHADOW_LAYER`에서 대신 냅니다.
+- 재질(`toon(..., { terrain: true, cliff: true })`, `CLIFF_SKIN`): 정점 속성은 `aEdge`(x: 하늘이 트인 정도 = 벽 아래로 갈수록 어두워지는 음영, y: 풀이 자라는 윗면 1)뿐입니다. 벽인지 윗면인지는 삼각형의 실제 면(화면 미분으로 구한 법선)으로 가르고, 풀은 표시된 윗면에만, 그리고 벽 위쪽 가장자리로 미터 단위 길이의 들쭉날쭉한 술(`fringe`)로 늘어집니다. 정점 값을 벽 전체에 그대로 보간하면 긴 벽 삼각형을 따라 초록 커튼과 세로 줄이 생깁니다. `Terrain.grassAt`·`colorAt`도 같은 규칙을 따라 풀잎이 벽면에 서지 않습니다.
 - 지형만 빨리 보려면 개발 서버에서 `/terrainview.html`(인자 `x`·`y`·`z`·`lx`·`ly`·`lz`·`h`·`fov`·`q`)을 여세요. `__tv.shot(name, [x, y, z], [lx, ly, lz], hour)`가 캔버스를 캡처해 로컬 수신기로 보냅니다.
 
 ### 렌더 파이프라인과 품질 단계
 - 해의 빛은 three.js의 `SunLight`(캐스케이드 2단)입니다. 방향은 `sun.position`(빛 쪽 방향 벡터), 그림자 도달 거리는 `sun.shadow.camera.far`(`tier().shadowDist`)입니다. `DirectionalLight`용 셰이더 청크(`directionalShadowMap` 등)는 쓰이지 않으니, 그림자를 읽는 커스텀 셰이더는 `getSunShadow( sunShadowMap[ 0 ], sunLightShadows[ 0 ], 0 )`를 쓰세요(예: `grass.js`).
 - 장면 타깃의 **알파는 오클루전 마스크**입니다(불투명 표면 1, 풀 0.3). 새 불투명 커스텀 셰이더는 알파 1을 쓰세요.
 - 표면 층은 `toon(..., { tex })`의 종류로 고릅니다(`materials.js`의 `SURF_OF`: 층 번호, 타일 크기, 요철 세기). 새 층은 `surfaces.js`의 `surf()`에 높이·색·거칠기 함수를 더하고 `LAYERS`를 늘리세요. 주기 노이즈(`vn`·`fbm`·`voro`의 `per`)만 써야 타일이 이어집니다.
-- 지형의 층 가중치는 `Terrain.paint`가 돌려주는 값으로 만든 스플랫 맵(`U.splatTex`: 잔디·흙·모래·눈)입니다. 나머지 평지는 깐 돌(`U.paveTex`: 광장·시련 발판)이면 포석, 아니면 풍화된 바위 층이고, 경사면은 암반 층(2)입니다. 지형 색(정점 색)은 그대로 큰 색조를 맡고, 층은 디테일만 곱합니다. 바위 소품(`tex: 'rock'`)은 풍화된 바위 층(12)을 쓰고 지형과 같은 부드러운 명암 램프로 칠해집니다.
+- 지형 메시는 위치만 갖고, 색·층·음영 법선은 모두 픽셀마다 높이 격자(2m) 위의 맵에서 읽습니다(`terrain.js` `buildMesh`, 유니폼은 `materials.js`의 `U`): `groundTex`(길 없는 평지의 땅 색, sRGB) · `splatTex`(R 잔디, G 재, B 모래, A 눈) · `paveTex`(깐 돌) · `pathTex`(가장 가까운 길까지의 거리) · `tnormTex`(매끈한 땅의 법선). 그래서 먼 LOD에서도 길과 색 경계가 뭉개지지 않습니다. 셰이더(`TERRAIN_FRAG`)는 맵을 노이즈로 살짝 민 좌표에서 바이큐빅(`_bic`)으로 읽고, 경사로 바위를, 길까지의 거리로 길 가장자리를 직접 그립니다. 땅 색을 바꾸려면 `Terrain.paint`(`flat` 인자가 맵에 들어가는 색)와 팔레트 `P`를 고치세요. `terrain.col`·`colorAt()`은 풀잎 색과 지도용 CPU 사본입니다. 바위 소품(`tex: 'rock'`)은 풍화된 바위 층(12)을 쓰고 지형과 같은 부드러운 명암 램프로 칠해집니다.
+- 표면 층은 `_layer(L, uv, turn, a, n)`으로 읽으면 타일 반복이 보이지 않습니다(`_tileSeed`가 고른 느린 색인에 따라 어긋나고 돌린 사본 두 장을 높이 기준으로 교차 페이드). 방향이 있는 무늬(벽을 타고 오르는 바위 붓질)는 `turn` 0으로 돌리지 않습니다. 층의 내용에는 타일의 1/9보다 큰 얼룩을 넣지 마세요(반복의 표지가 됩니다). 큰 색 변화는 지형 셰이더가 맡습니다. **바위 층에 블록·줄눈·셀 무늬를 넣지 마세요**: 여러 번 시도했고 매번 벽돌·포장처럼 읽혔습니다. 암벽의 조형은 메시(`Terrain.sculpt`)가 맡고 층은 붓질만 합니다.
+- 층 굽기 셰이더(`surfaces.js`)는 층 함수를 한 번만 부르고 노멀은 float 높이 패스에서 구합니다. 한 셰이더에서 층 함수를 여러 번 부르게 만들면 일부 드라이버가 컴파일 중 GPU 프로세스를 죽입니다.
 - 잎 카드: `Mesher.card()`가 한 점에 모인 네 정점을 만들고, 셰이더(`LEAF_CARDS`)가 시점 쪽으로 펼쳐 잎 뭉치 텍스처(`leafTexture`)를 입힙니다. 가장자리는 `alphaToCoverage`(MSAA)로 처리합니다. `toon(..., { cards: true })` 재질로 그리는 형상에는 `aCard` 속성이 있어야 합니다(`Mesher`가 항상 붙임). 그림자 패스에서는 카드가 펼쳐지지 않으므로 그림자는 속 덩어리(먼 모델)가 냅니다.
 - 물의 평면 반사(`Water.reflect`)는 '최상'에서만, 물이 시야에 있을 때만 그립니다. 반사 패스는 직전 프레임의 그림자 맵을 재사용하고(`shadowMap.autoUpdate = false`), 비스듬한 근평면으로 수면 아래를 잘라 냅니다. `Props.update(camera, mirror)`의 둘째 인자가 반사 시야에 든 소품도 남깁니다.
 - 구름(`render/clouds.js`)은 실제 원근의 볼류메트릭 적운입니다(머리 위는 밑면, 수평선 쪽은 옆면). 모양은 세 단계로 정해집니다. ① `heaps()`가 밑면 위에 선 반타원체 돔들(둑·무리·홑구름·조각)을 20km 타일에 뿌리고, ② 모양 패스(`SHAPE_FS`)가 그 높이장을 노이즈로 밀고 구름 크기에 비례한 만(灣)을 파내 이어지고 갈라지는 윤곽을 만들고, ③ 마칭 셰이더가 3D 빌로 노이즈로 꽃양배추 같은 덩이와 가장자리를 깎습니다. 결과(햇빛 에너지·높이·거리·불투명도)는 위쪽 반구 전체를 담는 돔 맵(스테레오 투영)에 프레임마다 띠 하나씩 그려지고, 하늘 셰이더(`cloudAt`)가 그 뒤의 바람 이동과 카메라 이동만큼 다시 겨눠 읽어 색으로 바꿉니다. 그래서 색(시간대 팔레트)은 즉시 따라가고 비용은 화면 해상도와 무관합니다. 맵 크기·띠 수·스텝 수는 `TIERS.clouds`. 날씨의 덮임은 `clouds.cover`(돔이 자라남)와 `clouds.deck`(흐린 날의 층)으로 전합니다. 하늘만 띄워 조정하려면 개발 서버에서 `/skyview.html?h=13&pitch=30&yaw=200`(인자: `h`·`pitch`·`yaw`·`fov`·`oc`·`q`)을 여세요. 땅의 구름 그림자는 아직 별도 노이즈(`U.cloud`)라 하늘의 구름과 맞물리지 않습니다.
@@ -264,8 +267,14 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 
 ## 테스트 방법
 
-### 화면 캡처 (브라우저 창이 숨겨져 있을 때)
-자동화 브라우저의 스크린숏은 창이 화면에 보일 때만 됩니다. 숨겨져 있으면 캔버스를 직접 내보내세요: 렌더 직후 같은 스크립트에서 `canvas.toBlob(...)`으로 만든 JPEG를 로컬 수신기(`python` 한 줄짜리 HTTP 서버, POST 본문을 파일로 저장)에 `fetch(url, { method: 'POST', mode: 'no-cors', body: blob })`로 보내고 그 파일을 읽습니다. 게임에서는 `__G.paused = true` 뒤 `__G.camera`를 직접 놓고 `__G.renderer.render(0.016)`을 몇 번 부르거나, `__G.game.update(1/60, 1/60)`을 반복해 시뮬레이션을 진행시킵니다.
+### 화면 캡처
+가장 믿을 만한 방법은 자기 프로필의 헤드리스 Chrome을 띄워 DevTools 프로토콜로 모는 것입니다(실제 GPU, 실제 해상도의 스크린숏, HUD 포함):
+```bash
+"/c/Program Files/Google/Chrome/Application/chrome.exe" --headless=new --remote-debugging-port=<자기 포트> --user-data-dir=<자기 임시 폴더> --no-first-run --disable-extensions --mute-audio about:blank
+```
+`http://127.0.0.1:<포트>/json`에서 페이지의 `webSocketDebuggerUrl`을 얻어(Node 24의 내장 `WebSocket`으로 충분) `Page.navigate`, `Runtime.evaluate`(`awaitPromise`), `Page.captureScreenshot`을 보냅니다. 화면 크기는 연결마다 `Emulation.setDeviceMetricsOverride`로 다시 정해야 합니다. **포트와 프로필 폴더는 작업자마다 따로 쓰세요**: 한 인스턴스의 탭을 여럿이 몰면 서로의 페이지를 갈아치웁니다.
+
+자동화 브라우저 창이 숨겨져 있어 스크린숏이 안 될 때는 캔버스를 직접 내보낼 수도 있습니다: 렌더 직후 같은 스크립트에서 `canvas.toBlob(...)`으로 만든 JPEG를 로컬 수신기(POST 본문을 파일로 저장하는 작은 HTTP 서버)에 `fetch(url, { method: 'POST', mode: 'no-cors', body: blob })`로 보내고 그 파일을 읽습니다(`terrainview`의 `__tv.shot`이 이 방식). 숨겨진 창은 해상도가 낮고 흐리게 나오니 품질 판단에는 쓰지 마세요. 게임에서는 `__G.paused = true` 뒤 `__G.renderer.render(0.016)`을 몇 번 부르거나 `__G.game.update(1/60, 1/60)`을 반복해 시뮬레이션을 진행시킵니다.
 
 ### 개발용 프리셋
 주소에 `?dev=<프리셋>`을 붙이면 타이틀을 건너뜁니다.

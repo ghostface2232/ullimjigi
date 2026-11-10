@@ -450,7 +450,7 @@ varying vec3 vWNrm;
 vec3 _wn = vec3(0.0, 1.0, 0.0);
 float _wG = 0.0, _wD = 0.0, _wS = 0.0, _wN = 0.0, _wRock = 0.0, _wPave = 0.0, _wBare = 0.0;
 #ifdef CLIFF_SKIN
-varying vec2 vEdge; // x: rim / crease, y: 1 on a top that grows grass
+varying vec2 vEdge; // x: open to the sky (1) or shut in, y: 1 on a top that grows grass
 #endif
 float _h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float _vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
@@ -490,11 +490,14 @@ const TERRAIN_FRAG = `
       vec3 Tx = dFdx(vWPos), Ty = dFdy(vWPos);
       vec3 gn = normalize(cross(Tx, Ty));
       if (gn.y < 0.0) gn = -gn;
-      _wn = normalize(mix(normalize(vWNrm), gn, 0.72));
+      _wn = normalize(mix(normalize(vWNrm), gn, 0.5));
       float steep = 1.0 - smoothstep(0.62, 0.78, gn.y);
+      // (for the tops: by the smooth normal, unless the face itself is level: a ramp at the
+      // foot of the rock has triangles leaning either way, and would be cut in saw teeth)
+      float steepT = (1.0 - smoothstep(0.62, 0.78, normalize(vWNrm).y)) * (1.0 - smoothstep(0.9, 0.97, gn.y));
       float nq = texture2D(uNoiseTex, p * 0.31).b;
       // grass keeps to the gentle tops marked for it (in patches where the mark is partial)...
-      float top = smoothstep(0.42, 0.58, vEdge.y + (texture2D(uNoiseTex, p * 0.055).b - 0.5) * 0.5 + (nq - 0.5) * 0.12) * (1.0 - steep);
+      float top = smoothstep(0.42, 0.58, vEdge.y + (texture2D(uNoiseTex, p * 0.055).b - 0.5) * 0.5 + (nq - 0.5) * 0.12) * (1.0 - steepT);
       // ...and hangs over the lip of the wall below in a ragged fringe: the mark falls from 1
       // to 0 down the first row of the wall, and its gradient turns that into metres
       float ex = dFdx(vEdge.y), ey = dFdy(vEdge.y);
@@ -528,6 +531,10 @@ const TERRAIN_FRAG = `
     vec3 col = mix(gc, rockC, rockK);
     col = mix(col, uPal[8], rockK * (1.0 - rockK) * 0.5 * sp.r);
     col *= mix(vec3(1.0), vec3(0.6, 0.76, 0.5), fringe);
+    #ifdef CLIFF_SKIN
+      // shut-in rock is darker and cooler: walls deepen below their lips, gullies most of all
+      col *= mix(vec3(0.72, 0.77, 0.88), vec3(1.0), smoothstep(0.0, 0.9, vEdge.x));
+    #endif
     // roads: the edge is drawn here from the distance to the road, so it is as crisp as the
     // pixel, ragged with noise; trampled grass along it, packed earth in the middle
     float pd = texture2D(uPathTex, guv0).r * uHeightP.w;
@@ -591,8 +598,8 @@ const TERRAIN_SURF = `
       // rock: projected from the sides on a face (the strokes run up it), from above on a top
       vec3 bw = abs(wn); bw *= bw; bw *= bw; bw /= bw.x + bw.y + bw.z;
       float wx = _wRock * bw.x, wy = _wRock * bw.y, wz = _wRock * bw.z;
-      GROUND(2.0, vWPos.zy / 7.0, wx, Z, Y, 0.0)
-      GROUND(2.0, vWPos.xy / 7.0, wz, X, Y, 0.0)
+      GROUND(2.0, vWPos.zy / 11.0, wx, Z, Y, 0.0)
+      GROUND(2.0, vWPos.xy / 11.0, wz, X, Y, 0.0)
       GROUND(12.0, p / 5.0, wy, X, Z, 1.0)
     }
     float iw = 1.0 / max(ws, 1e-5);

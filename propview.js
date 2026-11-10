@@ -34,7 +34,8 @@ for (const spec of (q.get('p') || 'dummy').split(',')) {
   let o;
   if (name === 'rock') {
     const geo = P.rockModel(args[0] || 'roundA', +(args[1] || 0));
-    o = new THREE.Mesh(geo, toon(0xffffff, { vertexColors: true, rim: 0.15, tex: 'rock' }));
+    o = new THREE.Mesh(geo, P.rockMaterial());
+    if (args[2]) o.scale.setScalar(+args[2]);
     o.castShadow = o.receiveShadow = true;
     const g = new THREE.Group(); g.add(o); o = g;
   } else {
@@ -42,6 +43,8 @@ for (const spec of (q.get('p') || 'dummy').split(',')) {
     // set-dressing pieces take (parent, x, y, z, ...)
     if (['barrel', 'crate', 'hayBale'].includes(name)) { o = new THREE.Group(); B[name](o, 0, name === 'barrel' ? 0 : 0.35, 0, ...a); }
     else if (name === 'signpost') o = B.signpost([{ ry: 0.2 }, { ry: -2.5 }]);
+    else if (name === 'woodpile') { o = new THREE.Group(); B.woodpile(o, 0, 0); }
+    else if (name === 'planter') { o = new THREE.Group(); B.planter(o, 0, 0, Math.random, { stone: !!a[0] }); }
     else if (name === 'stall') o = B.stall(a[0] ? B.MAT.clothBlue : B.MAT.clothRed);
     else o = B[name](...a);
   }
@@ -78,3 +81,10 @@ function frame() {
 setInterval(frame, 16);
 const tris = () => { let n = 0; for (const o of items) o.traverse((m) => { if (m.isMesh && m.geometry) n += (m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count) / 3; }); return Math.round(n); };
 window.__pv = { R, sky, cam, view, items, G, B, tris, get frames() { return frames; } };
+// headless check: render with the given view and POST the canvas to a local collector
+window.__pv.shot = async (name, v = {}) => {
+  Object.assign(view, v);
+  for (let i = 0; i < 4; i++) frame();
+  const blob = await new Promise((r) => R.renderer.domElement.toBlob(r, 'image/jpeg', 0.93));
+  await fetch(`http://127.0.0.1:5197/${name}.jpg`, { method: 'POST', mode: 'no-cors', body: blob });
+};

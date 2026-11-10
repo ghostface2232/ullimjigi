@@ -22,7 +22,7 @@ import { tier } from '../render/quality.js';
 import { SHADOW_LAYER } from '../render/renderer.js';
 import { mulberry32, fbm, smoothstep, lerp, clamp } from '../core/util.js';
 import { POI } from './layout.js';
-import { authoredParts } from './buildings.js';
+import { authoredParts, authoredTex } from './buildings.js';
 
 const V = new THREE.Vector3(), V2 = new THREE.Vector3(), V3 = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
@@ -797,7 +797,23 @@ function layeredRock(seed, detail, o = {}) {
 // of the named rock, or null when the file is missing. Cloned: the scatter adds `aFade` to it.
 export function rockModel(name, lod) {
   const P = authoredParts('rocks'), part = P && P[name + (lod ? '_f' : '_n')];
-  return part ? part[0].geo.clone() : null;
+  if (!part) return null;
+  const g = part[0].geo.clone();
+  // [x, z, r, top] per mass of the sculpt, in model space: the colliders (Props.add)
+  const m = part[0].extras && part[0].extras.masses;
+  if (m) { g.userData.masses = Array.from(m); for (let i = 1; i < m.length; i += 4) g.userData.masses[i] = -m[i]; }
+  return g;
+}
+// Material of the scattered rocks. The sculpted ones are painted in an atlas (albedo and a
+// normal map with the chiselled edges, public/models/pr_rocktex.glb), moss included; the
+// world-space rock layer of the toon shader adds the grain on top.
+export function rockMaterial(o = {}) {
+  const tex = authoredParts('rocks') && authoredTex('rocktex');
+  if (!tex) return toon(0xffffff, { vertexColors: true, flat: true, rim: 0.15, tex: 'rock', ...o });
+  const m = toon(0xffffff, { vertexColors: true, rim: 0.15, tex: 'rock', noMoss: true, nocache: true, ...o });
+  m.map = tex.map; m.normalMap = tex.normalMap;
+  m.normalScale.set(1, -1);   // glTF UVs without tangents (what GLTFLoader does)
+  return m;
 }
 // the authored rock standing in for each code-built variant (kind + seed)
 const ROCK_MODEL = { round181: 'roundA', round184: 'roundB', layer182: 'layerA', flat183: 'flatA', spire191: 'spireA', layer192: 'layerB', round193: 'cragA', crag194: 'cragB', round201: 'snowRound', spire202: 'snowSpire' };
@@ -828,7 +844,7 @@ export class Props {
     const shrub = toon(0xffffff, { vertexColors: true, sway: 0.05, swayBase: 0, rim: 0.3, tex: 'bark', leafy: true, lodFade: true, cards: true });
     const ground = toon(0xffffff, { vertexColors: true, sway: 0.09, swayBase: 0.05, rim: 0.25, side: THREE.DoubleSide, lodFade: true });
     const solid = toon(0xffffff, { vertexColors: true, rim: 0.3, tex: 'bark', lodFade: true });
-    const rockMat = toon(0xffffff, { vertexColors: true, flat: true, rim: 0.15, tex: 'rock', lodFade: true });
+    const rockMat = rockMaterial({ lodFade: true });
     const small = toon(0xffffff, { vertexColors: true, rim: 0.3, lodFade: true });
     this.mats = { tree, fir, shrub, ground, solid, rockMat, small };
     // variants: [nearGeo, farGeo|null]; near: LOD switch distance; max: draw distance
@@ -896,7 +912,19 @@ export class Props {
     if (o.col) {
       const isRock = type.startsWith('rock');
       const top = it.y + b.top * sy;
-      if (isRock) {
+      const ms = isRock && t.variants[v][0].userData.masses;
+      if (ms && ms.length) {
+        // one flat-topped cylinder per mass of the sculpt, so a stepped crag is climbed step by step
+        const cr = Math.cos(it.r), sr = Math.sin(it.r), k = o.col / 0.8;
+        it.cols = [];
+        for (let i = 0; i < ms.length; i += 4) {
+          if (i && ms[i + 2] * s < 0.3) continue;
+          const c = this.col.addCircle(x + (ms[i] * cr + ms[i + 1] * sr) * s, z + (-ms[i] * sr + ms[i + 1] * cr) * s, ms[i + 2] * s * k, ground - 1, it.y + ms[i + 3] * sy);
+          c.rock = true;
+          it.cols.push(c);
+        }
+        it.col = it.cols[0];
+      } else if (isRock) {
         // climbable, standable lump whose top matches the mesh
         const c = this.col.addCircle(x, z, b.rxz * s * o.col, ground - 1, top);
         c.rock = true;
@@ -917,7 +945,7 @@ export class Props {
       if (types && !types.includes(name)) continue;
       t.items = t.items.filter((it) => {
         if (Math.hypot(it.x - x, it.z - z) >= r) return true;
-        if (it.col) this.col.remove(it.col);
+        for (const c of it.cols || (it.col ? [it.col] : [])) this.col.remove(c);
         return false;
       });
     }

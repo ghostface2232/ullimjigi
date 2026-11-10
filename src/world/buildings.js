@@ -158,7 +158,7 @@ export function consolidate(g, keep = []) {
     const mat = list[0].material;
     const geos = list.map((m) => {
       const gg = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
-      for (const a of Object.keys(gg.attributes)) if (a !== 'position' && a !== 'normal' && !(a === 'color' && mat.vertexColors)) gg.deleteAttribute(a);
+      for (const a of Object.keys(gg.attributes)) if (a !== 'position' && a !== 'normal' && !(a === 'color' && mat.vertexColors) && !(a === 'uv' && mat.map)) gg.deleteAttribute(a);
       if (!gg.attributes.normal) gg.computeVertexNormals();
       gg.applyMatrix4(M.multiplyMatrices(inv, m.matrixWorld));
       return gg;
@@ -175,18 +175,37 @@ export function consolidate(g, keep = []) {
 
 // ------------------------------------------------------------------
 // Authored props: public/models/pr_<name>.glb, modelled in Blender (ref/blender/props/*.py).
-// All colour is in the vertices (albedo with baked occlusion and edge wear); the Blender
-// material name picks the game material, the object name ("PR_<name>__<group>") the part.
-const AMAT = {
-  paint: MAT.paint,
-  cloth: MAT.paintDS,
-  stone: toon(0xffffff, { vertexColors: true, rim: 0.25, tex: 'rock' }),
-  metal: toon(0xffffff, { vertexColors: true, rim: 0.9, emissive: 0x1c1204 }),
-  iron: toon(0xffffff, { vertexColors: true, rim: 0.5 }),
-  glass: windowMat,
-};
+// The vertices carry the colour (tone, baked occlusion, edge wear); the shared material atlas
+// (pr_proptex.glb, ref/blender/props_atlas.py) multiplies the material into it (grain, weave,
+// hammer marks: a detail map around ATLAS_NEUTRAL, plus a normal map). The Blender material
+// name picks the game material, the object name ("PR_<name>__<group>") the part.
+const ATLAS_NEUTRAL = 0.75;
+let AMAT = null;
+// built on first use: the atlas is only there once the models have been preloaded
+function amat() {
+  if (AMAT) return AMAT;
+  const t = authoredTex('proptex');
+  const mk = (o) => {
+    if (!t) return toon(0xffffff, { vertexColors: true, ...o });
+    const m = toon(0xffffff, { vertexColors: true, nocache: true, ...o });
+    m.map = t.map; m.normalMap = t.normalMap;
+    m.normalScale.set(1, -1);   // glTF UVs without tangents (what GLTFLoader does)
+    m.color.setScalar(1 / ATLAS_NEUTRAL);
+    return m;
+  };
+  AMAT = {
+    paint: mk({ rim: 0.2 }),
+    cloth: mk({ rim: 0.15, side: THREE.DoubleSide }),
+    stone: mk({ rim: 0.25, tex: 'rock' }),
+    metal: mk({ rim: 0.9, emissive: 0x1c1204 }),
+    iron: mk({ rim: 0.5 }),
+    glass: windowMat,
+  };
+  return AMAT;
+}
 const partCache = new Map();
-// { group: [{ geo, mat }] } with geometry in the game's layout (position, normal, RGBA colour), or null
+// { group: [{ geo, mat, key, extras }] } with geometry in the game's layout (position, normal, RGBA colour,
+// uv when the model has one), or null. extras: the Blender object's custom properties.
 export function authoredParts(name) {
   if (partCache.has(name)) return partCache.get(name);
   const src = model('pr_' + name);
@@ -209,9 +228,10 @@ export function authoredParts(name) {
         col[i * 4 + 3] = c && c.itemSize > 3 ? c.getW(i) : 0;
       }
       g.setAttribute('color', new THREE.BufferAttribute(col, 4));
+      if (m.geometry.attributes.uv) g.setAttribute('uv', m.geometry.attributes.uv.clone());
       g.applyMatrix4(m.matrixWorld);
       g.computeBoundingSphere(); g.computeBoundingBox();
-      (out[grp] ||= []).push({ geo: g, mat: AMAT[m.material.name.replace(/^PR_/, '')] || MAT.paint, key: m.material.name.replace(/^PR_/, '') });
+      (out[grp] ||= []).push({ geo: g, mat: amat()[m.material.name.replace(/^PR_/, '')] || MAT.paint, key: m.material.name.replace(/^PR_/, ''), extras: n.userData });
     });
   }
   partCache.set(name, out);
@@ -231,6 +251,40 @@ function authored(name, grp, parent, o = {}) {
   return meshes;
 }
 const has = (name) => !!authoredParts(name);
+// place the meshes of one authored group: t = { ry, rx, rz, sx, sy, sz }
+function put(meshes, x, y, z, t = {}) {
+  for (const m of meshes) {
+    m.position.set(x, y, z);
+    m.rotation.set(t.rx ?? 0, t.ry ?? 0, t.rz ?? 0);
+    m.scale.set(t.sx ?? 1, t.sy ?? 1, t.sz ?? 1);
+  }
+  return meshes;
+}
+// copy of an authored geometry with its vertex colours multiplied by `color` (cached)
+const tintCache = new Map();
+function tintedPart(geo, color) {
+  const k = geo.uuid + '|' + color;
+  if (tintCache.has(k)) return tintCache.get(k);
+  const g = geo.clone(), c = g.attributes.color, t = hc(color);
+  for (let i = 0; i < c.count; i++) c.setXYZ(i, c.getX(i) * t.r, c.getY(i) * t.g, c.getZ(i) * t.b);
+  tintCache.set(k, g);
+  return g;
+}
+// Textures of an authored atlas (public/models/pr_<name>.glb holds one material with a base
+// colour and a normal texture): { map, normalMap } or null when the file is missing.
+const texCache = new Map();
+export function authoredTex(name) {
+  if (texCache.has(name)) return texCache.get(name);
+  const src = model('pr_' + name);
+  let out = null;
+  if (src) src.scene.traverse((m) => {
+    if (!m.isMesh || !m.material.map) return;
+    out = { map: m.material.map, normalMap: m.material.normalMap };
+    for (const t of [out.map, out.normalMap]) if (t) t.anisotropy = 8;
+  });
+  texCache.set(name, out);
+  return out;
+}
 
 // Paving stone (vertex-coloured, stone surface), rotated about y
 export function pstone(p, w, h, d, color, x, y, z, ry = 0) { return pbox(w, h, d, color, x, y, z, p, { mat: MAT.paintStone, ry, cast: false }); }
@@ -619,6 +673,18 @@ function sack(p, x, y, z, rnd, col = 0xcbb08a) {
 export function woodpile(p, x, z, len = 2.2, ry = 0, rnd = Math.random) {
   const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = ry; p.add(g);
   const r = 0.12, rows = 4;
+  if (has('woodpile')) {
+    for (let row = 0; row < rows; row++) {
+      const n = Math.floor(len / (r * 2.05)) - row;
+      for (let i = 0; i < n; i++) {
+        const k = (i * 3 + row * 5) % 7;   // which log, and how it lies
+        put(authored('woodpile', 'log' + (k % 4), g), -len / 2 + r + row * r + i * r * 2.05, r + row * r * 1.75, ((k % 3) - 1) * 0.03, { rz: k * 0.9, ry: k % 2 ? Math.PI : 0 });
+      }
+    }
+    for (const sx of [-1, 1]) put(authored('woodpile', 'post', g), sx * (len / 2 + 0.05), 0.52, -0.35);
+    put(authored('woodpile', 'roof', g), 0, 1.1, 0, { rx: -0.25, sx: len + 0.5 });
+    return g;
+  }
   for (let row = 0; row < rows; row++) {
     const n = Math.floor(len / (r * 2.05)) - row;
     for (let i = 0; i < n; i++) {
@@ -636,6 +702,23 @@ export function woodpile(p, x, z, len = 2.2, ry = 0, rnd = Math.random) {
 export function planter(p, x, z, rnd = Math.random, o = {}) {
   const g = new THREE.Group(); g.position.set(x, 0, z); p.add(g);
   const L = o.len ?? 0.9, Wd = o.wid ?? 0.55;
+  if (has('planter')) {
+    // the models are a 0.9 x 0.55 timber trough and a 1.0 x 0.6 stone one, stretched to size
+    if (o.stone) put(authored('planter', 'stone', g), 0, 0, 0, { sx: L / 1.0, sz: Wd / 0.6 });
+    else put(authored('planter', 'wood', g), 0, 0, 0, { sx: L / 0.9, sz: Wd / 0.55 });
+    put(authored('planter', 'soil', g, { cast: false }), 0, 0.42, 0, { sx: L - 0.12, sz: Wd - 0.12 });
+    const fi = Math.floor(rnd() * FLOWER_COLS.length);
+    const n = Math.round(L * 7);
+    for (let i = 0; i < n; i++) {   // the same draws as the code-built plants
+      const lx = (rnd() - 0.5) * (L - 0.2), lz = (rnd() - 0.5) * (Wd - 0.2), sc = (0.13 + rnd() * 0.05) / 0.15;
+      put(authored('planter', 'leaf' + (i % 3), g), lx, 0.44, lz, { ry: i * 2.4, sx: sc, sy: sc, sz: sc });
+      if (rnd() < 0.7) {
+        const white = !(rnd() < 0.8), dx = (rnd() - 0.5) * 0.08, dy = rnd() * 0.08;
+        put(authored('planter', 'flower' + (white ? 2 : fi), g), lx + dx, 0.5 + dy, lz, { ry: i * 1.7, rx: (i % 3 - 1) * 0.25, sx: 1.5, sy: 1.5, sz: 1.5 });
+      }
+    }
+    return g;
+  }
   if (o.stone) box(L, 0.45, Wd, MAT.stoneDark, 0, 0.22, 0, g);
   else pbox(L, 0.45, Wd, 0x7a5236, 0, 0.22, 0, g, { mat: MAT.paintWood });
   pbox(L - 0.1, 0.06, Wd - 0.1, 0x4a3424, 0, 0.44, 0, g);
@@ -700,6 +783,22 @@ export function bunting(points, rnd = Math.random, o = {}) {
 // Washing line between two T-posts with a few hanging cloths
 export function washingLine(len = 4.5, rnd = Math.random) {
   const g = new THREE.Group();
+  if (has('washline')) {
+    for (const sx of [-1, 1]) put(authored('washline', 'post', g), sx * len / 2, 0, 0, { ry: sx > 0 ? Math.PI : 0 });
+    for (const sz of [-0.25, 0.25]) put(authored('washline', 'line', g, { cast: false }), 0, 2.1, sz, { sx: len });
+    const cols = [0xf2ece0, 0x8ab0d8, 0xd87a6a, 0xe8d08a, 0xa8c890], P = authoredParts('washline');
+    let x = -len / 2 + 0.4, k = 0;
+    while (x < len / 2 - 0.5) {   // the same draws as the code-built cloths
+      const cw = 0.4 + rnd() * 0.5, ch = 0.5 + rnd() * 0.45, sz = rnd() < 0.5 ? -0.25 : 0.25;
+      const col = cols[Math.floor(rnd() * cols.length)], ry = (rnd() - 0.5) * 0.2;
+      for (const { geo, mat, key } of P['cloth' + (k++ % 3)]) {
+        const m = mesh(key === 'cloth' ? tintedPart(geo, col) : geo, mat, x + cw / 2, 2.09, sz, g, { ry });
+        m.scale.set(cw, ch, 1);
+      }
+      x += cw + 0.15 + rnd() * 0.3;
+    }
+    return g;
+  }
   for (const sx of [-1, 1]) {
     cyl(0.06, 0.07, 2.2, 6, MAT.timber, sx * len / 2, 1.1, 0, g);
     box(0.1, 0.08, 0.7, MAT.timber, sx * len / 2, 2.12, 0, g);
@@ -759,6 +858,28 @@ export function hayBale(p, x, y, z, s = 1, ry = 0) {
 // Garden plot: raised soil bed with vegetable rows and a wicker edge
 export function gardenPlot(w = 3, d = 2, rnd = Math.random) {
   const g = new THREE.Group();
+  if (has('gardenplot')) {
+    // wattle all round (1 m lengths, stretched to fit), soil, ridges with a crop each
+    for (const [l, x, z, ry] of [[w, 0, d / 2, 0], [w, 0, -d / 2, Math.PI], [d, w / 2, 0, Math.PI / 2], [d, -w / 2, 0, -Math.PI / 2]]) {
+      const n = Math.max(1, Math.round(l)), c = Math.cos(ry), sn = Math.sin(ry);
+      for (let k = 0; k < n; k++) { const t = (k + 0.5) / n - 0.5; put(authored('gardenplot', 'wattle', g), x + c * t * l, 0, z - sn * t * l, { ry, sx: l / n }); }
+    }
+    put(authored('gardenplot', 'bed', g, { cast: false }), 0, -0.04, 0, { sx: w - 0.06, sz: d - 0.06 });
+    const rows = Math.max(2, Math.floor(d / 0.5));
+    for (let r = 0; r < rows; r++) {
+      const z = -d / 2 + 0.3 + r * (d - 0.6) / Math.max(1, rows - 1);
+      put(authored('gardenplot', 'row', g, { cast: false }), 0, 0.27, z, { sx: w - 0.3 });
+      const kind = r % 3, n = Math.floor((w - 0.4) / 0.32);
+      for (let i = 0; i < n; i++) {   // the same draws as the code-built crops
+        const x = -w / 2 + 0.35 + i * 0.32 + (rnd() - 0.5) * 0.05;
+        if (kind === 0) put(authored('gardenplot', 'cabbage', g), x, 0.33, z, { ry: i * 2.1 + r });
+        else if (kind === 1) put(authored('gardenplot', 'carrot', g), x, 0.35, z, { ry: i * 1.3 + r });
+        else { const s = rnd() < 0.5 ? 1.1 : 0.9; put(authored('gardenplot', 'tomato', g), x, 0.33, z, { ry: i * 2.7 + r, sx: s, sy: s, sz: s }); }
+      }
+    }
+    for (const sx of [-1, 1]) put(authored('gardenplot', 'stake', g), sx * (w / 2 - 0.1), 0.05, d / 2 - 0.05, { ry: sx });
+    return g;
+  }
   box(w, 0.28, d, MAT.timber, 0, 0.1, 0, g);
   pbox(w - 0.12, 0.08, d - 0.12, 0x5a4030, 0, 0.26, 0, g);
   const rows = Math.max(2, Math.floor(d / 0.5));
@@ -782,6 +903,26 @@ export function gardenPlot(w = 3, d = 2, rnd = Math.random) {
 export function stoneWall(len = 4, rnd = Math.random, o = {}) {
   const g = new THREE.Group();
   const h = o.h ?? 0.9, rows = Math.round(h / 0.3);
+  if (has('stonewall')) {
+    // chiselled stones (nominal 0.6 x 0.3 x 0.55) stretched to each place; the same draws as below
+    let k = 0;
+    for (let r = 0; r < rows; r++) {
+      let x = -len / 2 + (r % 2 ? 0.25 : 0);
+      while (x < len / 2 - 0.1) {
+        const sw = Math.min(len / 2 - x, 0.45 + rnd() * 0.4), ci = Math.floor(rnd() * 4);
+        const hh = 0.28 + rnd() * 0.05, dz = (rnd() - 0.5) * 0.06, ry = (rnd() - 0.5) * 0.08;
+        put(authored('stonewall', 'stone' + ((ci + (k++ % 2) * 4) % 6), g), x + sw / 2, 0.15 + r * 0.29, dz,
+          { ry: ry + (k % 3 === 0 ? Math.PI : 0), sx: (sw - 0.02) / 0.6, sy: hh / 0.3, sz: (0.55 - r * 0.05) / 0.55 });
+        x += sw;
+      }
+    }
+    for (let x = -len / 2 + 0.3; x < len / 2; x += 0.6) {
+      put(authored('stonewall', 'cap' + (k++ % 3), g), x, rows * 0.29 + 0.08, 0, { rz: (rnd() - 0.5) * 0.1, ry: k % 2 ? Math.PI : 0 });
+      if (rnd() < 0.4) put(authored('stonewall', 'moss', g, { cast: false }), x + (rnd() - 0.5) * 0.3, rows * 0.29 + 0.17, (rnd() - 0.5) * 0.2);
+    }
+    g.userData.top = rows * 0.29 + 0.16;
+    return g;
+  }
   for (let r = 0; r < rows; r++) {
     let x = -len / 2 + (r % 2 ? 0.25 : 0);
     while (x < len / 2 - 0.1) {
@@ -1211,6 +1352,20 @@ export function brazier() {
 // Wind wheel: stone footing, braced mast, cloth-sailed rotor with a bronze hub
 export function windWheel() {
   const g = new THREE.Group();
+  if (authored('windwheel', 'body', g)) {
+    const rotor = new THREE.Group(); rotor.position.set(0, 3.3, 0.35); g.add(rotor);
+    authored('windwheel', 'hub', rotor);
+    ['armRed', 'armCream', 'armBlue', 'armCream'].forEach((tag, i) => {
+      const arm = new THREE.Group(); arm.rotation.z = (i / 4) * Math.PI * 2; rotor.add(arm);
+      authored('windwheel', tag, arm);
+    });
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), glowMat(0x6effc0, 2, { nocache: true, opacity: 0 }));
+    rotor.add(glow);
+    consolidate(g, [rotor]);
+    for (const arm of rotor.children) if (arm.isGroup) consolidate(arm);
+    g.userData = { rotor, glow };
+    return g;
+  }
   box(0.9, 0.35, 0.9, MAT.stoneDark, 0, 0.15, 0, g);
   box(0.6, 0.3, 0.6, MAT.stone, 0, 0.45, 0, g);
   cyl(0.11, 0.15, 3.3, 8, MAT.timber, 0, 1.9, 0, g);
@@ -1481,6 +1636,21 @@ export function cairn(rnd = Math.random, h = 1.4) {
 export function dock(len = 9, width = 2.2, rnd = Math.random) {
   const g = new THREE.Group();
   const n = Math.round(len / 0.3);
+  if (has('dock')) {
+    for (let i = 0; i < n; i++) {   // the same draws as the code-built boards: width, tone, offset, turn
+      const wv = width + (rnd() - 0.5) * 0.12, ci = Math.floor(rnd() * 3), dx = (rnd() - 0.5) * 0.05, ry = (rnd() - 0.5) * 0.03;
+      put(authored('dock', 'plank' + ci, g), dx, 0, 0.15 + i * 0.3, { ry: ry + (i % 2 ? Math.PI : 0), sx: wv / 2.2 });
+    }
+    for (const sx of [-1, 1]) put(authored('dock', 'beam', g), sx * (width / 2 - 0.1), -0.1, len / 2, { sz: len });
+    for (let k = 0; k <= Math.floor(len / 2.2); k++) {
+      const z = Math.min(len - 0.15, 0.2 + k * 2.2);
+      for (const sx of [-1, 1]) put(authored('dock', 'pile', g), sx * (width / 2 - 0.05), -1.35, z, { ry: k + sx });
+    }
+    for (const sx of [-1, 1]) put(authored('dock', 'moor', g), sx * (width / 2 - 0.05), 0.4, len - 0.15, { ry: sx * 1.3 });
+    const boat = new THREE.Group(); boat.position.set(width / 2 + 0.9, -0.28, len * 0.62); boat.rotation.y = 0.08; g.add(boat);
+    authored('dock', 'boat', boat);
+    return g;
+  }
   for (let i = 0; i < n; i++) {
     const z = 0.15 + i * 0.3;
     pbox(width + (rnd() - 0.5) * 0.12, 0.08, 0.27, [0x9c7250, 0x8a6446, 0xa87c58][Math.floor(rnd() * 3)], (rnd() - 0.5) * 0.05, 0.0, z, g, { mat: MAT.paintWood, ry: (rnd() - 0.5) * 0.03 });

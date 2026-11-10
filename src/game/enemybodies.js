@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { damp, clamp, lerp, rand } from '../core/util.js';
 import { tube, blob, sheet, sstep, mix, TAU, bodyMat, vnoise3, rotateTowards, ik2, setWorldQuat, Spring } from './charkit.js';
 import { CHAR, HumanRig, humanType, makeGhost } from './humanrig.js';
-import { glowBasic, glowTwin, Field, shard, shade, sheen, rigidType, spike, tatter, prism, megalith, builtFromModel, dress } from './creatures.js';
+import { glowBasic, glowTwin, Field, shard, shade, sheen, rigidType, spike, tatter, prism, megalith, builtFromModel, dress, rigids } from './creatures.js';
 import { model } from '../render/models.js';
 
 const V3 = THREE.Vector3;
@@ -228,7 +228,7 @@ export function makeAshling(variant = 'normal') {
   const glow = glowBasic(frost ? 0x8fe3ff : 0xc9a0ff, 2.6);
   const M = { main: skinMat(), glow };
   if (frost) M.ice = iceMat();
-  const rig = new HumanRig(T, { mats: M, castPose: false, outline: 0.007, rim: 0.7, style: { armHang: 0.14, lift: 1.2 }, pose: (q, s, R, dt) => { twitch(q, s, R); clawPose(q, s, R, dt); } });
+  const rig = new HumanRig(T, { mats: M, castPose: false, outline: 0.0045, rim: 0.7, style: { armHang: 0.14, lift: 1.2 }, pose: (q, s, R, dt) => { twitch(q, s, R); clawPose(q, s, R, dt); } });
   dress(rig, { variant: frost ? 'frost' : null, mat: { main: { spec: 0.5 }, ice: { spec: 1.6 } } });
   rig.eyeMat = glow;
   rig.height = 1.5;
@@ -243,7 +243,7 @@ export function makeAshling(variant = 'normal') {
 function bruteCfg(frost) {
   const stoneC = frost ? 0x7e92ae : 0x847c90;
   return {
-    key: frost ? 'bruteFrost' : 'brute', scale: 2.0, legLen: 0.52, torsoLen: 1.22, headR: 0.105, neckLen: 0.15, bodyW: 1.6, shoulderW: 1.7, armLen: 1.22, hunch: 0.3, stride: 1.2, frost,
+    key: frost ? 'bruteFrost' : 'brute', model: { file: 'brute', skip: frost ? [] : ['ice'] }, scale: 2.0, legLen: 0.52, torsoLen: 1.22, headR: 0.105, neckLen: 0.15, bodyW: 1.6, shoulderW: 1.7, armLen: 1.22, hunch: 0.3, stride: 1.2, frost,
     colors: { stone: stoneC, stoneL: frost ? 0x9db0c8 : 0xa39bab, stoneD: frost ? 0x5f7390 : 0x676074, glow: 0xffffff, glowD: 0xa0a0a0, ice: 0xcdeeff, moss: frost ? 0xe6f2fa : 0x55633f },
     build(S, L, j) {
       const hy = L.HC.y, A = new Field(S);
@@ -353,15 +353,18 @@ export function makeBrute(variant = 'normal') {
   const frost = variant === 'frost';
   const T = enemyType(BRUTE[frost ? 'frost' : 'normal']);
   const glow = glowBasic(frost ? 0x8fe3ff : 0xc080ff, 2.6);
-  const M = { glow };
+  const M = { main: skinMat(0.5), glow };
   if (frost) M.ice = iceMat();
-  const rig = new HumanRig(T, { mats: M, castPose: false, outline: 0.012, rim: 0.55, style: { armHang: 0.25, lift: 0.7, sway: 1.6 }, pose: (q, s, R) => { q.armLx -= 0.15; q.armRx -= 0.15; q.foreLx -= 0.25; q.foreRx -= 0.25; slamPose(q, s, R); } });
-  dress(rig);
-  const rock = bodyMat(frost ? 0xb9d2e6 : 0x8d8378, { vertexColors: true, rim: 0.5, emissive: frost ? 0x14304a : 0x000000 });
-  rig.mats.push(rock);
+  const rig = new HumanRig(T, { mats: M, castPose: false, outline: 0.006, rim: 0.55, style: { armHang: 0.25, lift: 0.7, sway: 1.6 }, pose: (q, s, R) => { q.armLx -= 0.15; q.armRx -= 0.15; q.foreLx -= 0.25; q.foreRx -= 0.25; slamPose(q, s, R); } });
+  dress(rig, { variant: frost ? 'frost' : null, mat: { main: { spec: 0.45 }, ice: { spec: 1.6 } } });
   const B = rig.B, L = rig.L;
   const P = (b, x, y, z) => local(rig, b, v(x, y, z));
   // armor stones: [back menhir, back L, back R (kept), shoulder cairn L, R, chest tablet (kept), bracer L, R]
+  const loose = rigids(rig, M);
+  if (loose.armor0) { rig.armor = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => loose['armor' + i]); rig.glowMat = glow; rig.eyeMat = glow; rig.height = 2.9; return rig; }
+  // code-built stones (no authored model)
+  const rock = bodyMat(frost ? 0xb9d2e6 : 0x8d8378, { vertexColors: true, rim: 0.5, emissive: frost ? 0x14304a : 0x000000 });
+  rig.mats.push(rock);
   const armor = [];
   const add = (bone, kind, x, y, z, s, r) => { const m = rigid(B[bone], stoneGeo(kind), rock, P(bone, x, y, z), s, r); armor.push(m); return m; };
   add('chest', 'menhir', 0.02, L.SY - 0.02, -0.2, 1.15, [-0.5, 0.1, 0.06]);
@@ -646,11 +649,13 @@ export function makeKnight(spectral = false) {
   const T = enemyType(KNIGHT[spectral ? 'spectral' : 'normal']);
   const glow = glowBasic(spectral ? 0x9ad0ff : 0xb080ff, 2.5);
   const metal = metalMat();
-  const rig = new HumanRig(T, { mats: { metal, glow }, castPose: false, hold: null, outline: 0.011, rim: 0.6, style: { armHang: 0.1 }, pose: knightPose, post: knightPost });
-  dress(rig);
-  const sword = new THREE.Group();
-  const blade = metalMat(); rig.mats.push(blade);
-  const sm = new THREE.Mesh(getSwordGeo(), blade); sm.castShadow = true; sword.add(sm);
+  const main = skinMat(0.6);
+  const rig = new HumanRig(T, { mats: { main, metal, glow }, castPose: false, hold: null, outline: 0.005, rim: 0.6, style: { armHang: 0.1 }, pose: knightPose, post: knightPost });
+  dress(rig, { mat: { main: { spec: 0.75 } } });
+  const sword = new THREE.Group(), held = T.built.rigid || {};
+  getSwordGeo();
+  if (held.sword) for (const k of ['sword', 'hilt']) { const m = new THREE.Mesh(held[k].geo, main); m.castShadow = true; sword.add(m); }
+  else { const blade = metalMat(); rig.mats.push(blade); const sm = new THREE.Mesh(swordGeo, blade); sm.castShadow = true; sword.add(sm); }
   const edge = new THREE.Mesh(swordEdgeGeo, new THREE.MeshBasicMaterial({ color: new THREE.Color(spectral ? 0x9ad0ff : 0xffd84a).multiplyScalar(2.5) }));
   edge.position.set(0, 0, 0.76); sword.add(edge);
   sword.position.set(0, -rig.L.hand * 0.36, 0.004);
@@ -803,25 +808,28 @@ function shieldPost(s, R) {
 export function makeShieldBearer() {
   const T = enemyType(SHIELD_CFG);
   const glow = glowBasic(0xc9a0ff, 2.6);
-  const gear = metalMat(0.8);
-  const rig = new HumanRig(T, { mats: { metal: metalMat(0.8), glow }, castPose: false, hold: null, outline: 0.011, rim: 0.6, pose: shieldPose, post: shieldPost });
-  dress(rig);
+  const main = skinMat(0.6), held = T.built.rigid || {};
+  const gear = held.shield ? main : metalMat(0.8);
+  const rig = new HumanRig(T, { mats: { main, metal: metalMat(0.8), glow }, castPose: false, hold: null, outline: 0.005, rim: 0.6, pose: shieldPose, post: shieldPost });
+  dress(rig, { mat: { main: { spec: 1.0 } } });
   const B = rig.B;
-  rig.mats.push(gear);
+  if (!held.shield) rig.mats.push(gear);
   // shield pivot in body space (follows the chest)
   const anchor = new THREE.Group();
   anchor.position.copy(T.def.pos('chest')).negate();
   B.chest.add(anchor);
   const pivot = new THREE.Group(); anchor.add(pivot);
-  const shield = new THREE.Mesh(getShieldGeo(), gear); shield.castShadow = true; pivot.add(shield);
-  const g2 = glowTwin(glow);
-  const rune = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.011, 6, 32), g2); rune.position.set(0, 0.02, 0.03); pivot.add(rune);
-  for (let i = 0; i < 2; i++) { const bar = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.22, 0.01), g2); bar.position.set(i ? 0.15 : -0.15, -0.34, 0.03); bar.rotation.z = i ? 0.4 : -0.4; pivot.add(bar); }
+  const shield = new THREE.Mesh(held.shield ? held.shield.geo : getShieldGeo(), gear); shield.castShadow = true; pivot.add(shield);
+  if (!held.shield) {   // the authored shield carries its ward rune in the glow mask
+    const g2 = glowTwin(glow);
+    const rune = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.011, 6, 32), g2); rune.position.set(0, 0.02, 0.03); pivot.add(rune);
+    for (let i = 0; i < 2; i++) { const bar = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.22, 0.01), g2); bar.position.set(i ? 0.15 : -0.15, -0.34, 0.03); bar.rotation.z = i ? 0.4 : -0.4; pivot.add(bar); }
+  }
   const grip = new THREE.Object3D(); grip.position.set(0, 0.05, -0.1); pivot.add(grip);
   rig._grip = grip;
   rig._handOff = T.def.pos('handL').clone().sub(T.def.pos('foreL'));
   // mace
-  const mace = new THREE.Mesh(getMaceGeo(), gear); mace.castShadow = true;
+  const mace = new THREE.Mesh(held.mace ? held.mace.geo : getMaceGeo(), gear); mace.castShadow = true;
   mace.position.set(0, -rig.L.hand * 0.36, 0.004); B.handR.add(mace);
   rig.shield = pivot; rig.shieldPivot = pivot;
   rig.glowMats = [glow]; rig.glowMat = glow;
@@ -982,13 +990,14 @@ function archerPost(s, R, dt) {
 export function makeArcher() {
   const T = enemyType(ARCHER_CFG);
   const glow = glowBasic(0x9aeaff, 2.6);
-  const rig = new HumanRig(T, { mats: { glow }, castPose: false, hold: null, outline: 0.011, rim: 0.6, pose: archerPose, post: archerPost });
-  dress(rig);
+  const main = skinMat(0.6), held = T.built.rigid || {};
+  const rig = new HumanRig(T, { mats: { main, glow }, castPose: false, hold: null, outline: 0.0045, rim: 0.6, pose: archerPose, post: archerPost });
+  dress(rig, { mat: { main: { spec: 0.6 } } });
   const B = rig.B;
-  const gear = bodyMat(0xffffff, { vertexColors: true, rim: 0.6 });
-  rig.mats.push(gear);
+  const gear = held.bow ? main : bodyMat(0xffffff, { vertexColors: true, rim: 0.6 });
+  if (!held.bow) rig.mats.push(gear);
   const bow = new THREE.Group();
-  const bm = new THREE.Mesh(getBowGeo(), gear); bm.castShadow = true; bow.add(bm);
+  const bm = new THREE.Mesh(held.bow ? held.bow.geo : getBowGeo(), gear); bm.castShadow = true; bow.add(bm);
   const g2 = glowTwin(glow);
   const tipG = new THREE.ConeGeometry(0.028, 0.1, 4);
   for (const sy of [-1, 1]) { const t = new THREE.Mesh(tipG, g2); t.position.set(0, sy * (BOW_TIP_Y + 0.04), BOW_TIP_Z + 0.012); t.rotation.x = sy > 0 ? -0.5 : Math.PI + 0.5; bow.add(t); }

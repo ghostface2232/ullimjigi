@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { damp, clamp, rand } from '../core/util.js';
 import { SkelDef, tube, blob, sheet, sstep, mix, TAU, bodyMat, vnoise3, Spring } from './charkit.js';
+import { model } from '../render/models.js';
 import { CreatureRig, creatureType, bakeType, rigidType, glowBasic, rot, Field, shard, spike, tatter, prism, sheen, jelly, extendMat, megalith as megalithBlock } from './creatures.js';
 
 const V3 = THREE.Vector3;
@@ -125,7 +126,7 @@ class WailerRig extends CreatureRig {
       cloth: bodyMat(0xffffff, { vertexColors: true, rim: 0.5 }),
       glow,
     };
-    super(wailerType(), M, { main: 'mask', outline: 0.01 });
+    super(wailerType(), M, { main: 'mask', outline: 0.005, dress: { mat: { mask: { spec: 0.6 }, cloth: { spec: 0.25 } } } });
     this.t = rand() * 5;
     this.height = 1.2;
     this.eyeMat = glow;
@@ -170,12 +171,14 @@ export function makeWailer() { return new WailerRig(); }
 // along the ground. Inside it: a crystal core in a slow swirl of sediment,
 // bubbles, two scowling lights. Variants: ash (crust plates), fire (flame
 // crown), frost (ice crown), water (ring of droplets).
+// wear: the material groups of the shared model (mn_ooze.glb) that this kind keeps
 const OOZE = {
-  ash: { body: 0x7a66a8, glow: 0xd8b0ff, emi: 0x1c1030, deco: 0x2a2233, sed: 0x1d1826 },
-  fire: { body: 0xe8643a, glow: 0xffc040, emi: 0x6a1a04, deco: 0xffffff, sed: 0x4a1408 },
-  frost: { body: 0x8fd2f4, glow: 0xe0fbff, emi: 0x1a5a80, deco: 0xd8f4ff, sed: 0x2c5a7c },
-  water: { body: 0x3f8cf0, glow: 0xa8e4ff, emi: 0x08285e, deco: 0xffffff, sed: 0x12356e },
+  ash: { body: 0x9a86c8, glow: 0xd8b0ff, emi: 0x1c1030, deco: 0x2a2233, sed: 0x1d1826, wear: ['ash'] },
+  fire: { body: 0xf07a48, glow: 0xffc040, emi: 0x6a1a04, deco: 0xffffff, sed: 0x4a1408, wear: ['ember', 'flame'] },
+  frost: { body: 0xa4dcf8, glow: 0xe0fbff, emi: 0x1a5a80, deco: 0xd8f4ff, sed: 0x2c5a7c, wear: ['ice'] },
+  water: { body: 0x58a0f4, glow: 0xa8e4ff, emi: 0x08285e, deco: 0xffffff, sed: 0x12356e, wear: ['drop'] },
 };
+const OOZE_WEAR = ['ash', 'ember', 'flame', 'ice', 'drop'];
 function oozeType(variant) {
   return creatureType('ooze_' + variant, () => {
     const d = new SkelDef();
@@ -221,7 +224,7 @@ function oozeType(variant) {
         blob(S, 'deco', ['top', ['body', 1.2]], { c, r: [0.1 - (k % 3) * 0.018, 0.02, 0.085], ws: 10, hs: 5, fn: (dd, p) => { p.multiplyScalar(0.8 + 0.45 * vnoise3(dd.x * 2 + k, dd.y * 2, dd.z * 2)); if (c.n.y < 0.995) p.applyAxisAngle(_w.set(c.n.z, 0, -c.n.x).normalize(), Math.acos(c.n.y)); } });
       }
       return { ao: 0, fn: (key, p, n, c) => { if (key === 'skin') c.multiplyScalar(0.62 + 0.6 * sstep(0, 0.9, p.y)); }, skip: (k) => k !== 'skin' };
-    }, color, group);
+    }, color, group, { file: 'ooze', skip: OOZE_WEAR.filter((g) => !C.wear.includes(g)) });
     return { def: d, built, chains: [] };
   });
 }
@@ -235,7 +238,8 @@ class OozeRig extends CreatureRig {
       glow,
     };
     if (variant === 'frost') M.ice = sheen(bodyMat(0xffffff, { vertexColors: true, rim: 1.3, emissive: 0x1c4466 }), { color: 0xdff6ff, size: 0.1, k: 0.9, fres: 0.5 });
-    super(oozeType(variant), M, { main: 'skin', outline: 0 });
+    M.ash = M.ember = M.in; M.flame = M.drop = glow;
+    super(oozeType(variant), M, { main: 'skin', outline: 0, dress: { mat: { skin: { spec: 1.6, ao: 0.25 }, in: { spec: 0.9 }, ice: { spec: 1.6 } } } });
     this.root.scale.setScalar(size);
     M.skin.depthWrite = true;
     this.meshes.forEach((m) => { if (m.material === M.skin) m.renderOrder = 1; });
@@ -369,10 +373,10 @@ class MothRig extends CreatureRig {
     const glow = glowBasic(0xc9a0ff, 2.6);
     const M = {
       body: bodyMat(0xffffff, { vertexColors: true, rim: 0.9 }),
-      wing: wingMat(glow.color),
+      wing: model('mn_moth') ? bodyMat(0xffffff, { vertexColors: true, rim: 0.9 }) : wingMat(glow.color),   // the authored wings are painted
       glow,
     };
-    super(mothType(), M, { main: 'body', outline: 0.006 });
+    super(mothType(), M, { main: 'body', outline: 0.004 });
     this.t = rand() * 5;
     this.height = 0.4;
     this.p = { head: this.B.head, torso: this.B.body, hips: this.B.body };
@@ -519,12 +523,13 @@ class RootHandRig extends CreatureRig {
     const T = rootHandType();
     const glow = glowBasic(0xc9a0ff, 2.6);
     const M = { main: bodyMat(0xffffff, { vertexColors: true, rim: 0.5 }), glow };
-    super(T, M, { main: 'main', outline: 0.012, bsPad: 1 });
-    const dirt = bodyMat(0xffffff, { vertexColors: true, rim: 0.2 });
-    this.mats.push(dirt);
+    super(T, M, { main: 'main', outline: 0.006, bsPad: 1 });
+    const held = T.built.rigid || {};
+    const dirt = held.mound ? M.main : bodyMat(0xffffff, { vertexColors: true, rim: 0.2 });
+    if (!held.mound) this.mats.push(dirt);
     const mound = (this.mound = new THREE.Group()); this.root.add(mound);
-    const mm = new THREE.Mesh(T.mound, dirt); mm.castShadow = true; mm.receiveShadow = true; mound.add(mm);
-    const tips = (this.tips = new THREE.Mesh(T.tips, dirt)); tips.castShadow = true; mound.add(tips);
+    const mm = new THREE.Mesh(held.mound ? held.mound.geo : T.mound, dirt); mm.castShadow = true; mm.receiveShadow = true; mound.add(mm);
+    const tips = (this.tips = new THREE.Mesh(held.tips ? held.tips.geo : T.tips, dirt)); tips.castShadow = true; mound.add(tips);
     this.fingers = T.fingers.map((F) => ({ bones: F.names.map((n) => this.B[n]), axis: F.axis }));
     this.t = rand() * 5; this.height = 2.2; this.emerge = 0; this.grip = 0.3; this.droop = 0;
     this.p = { head: this.B.palm, torso: this.B.arm1, hips: this.B.arm0, foreR: this.B.palm };
@@ -652,7 +657,7 @@ class WatcherRig extends CreatureRig {
     const glow = glowBasic(0xc9a0ff, 2.6);
     const eyeM = glowBasic(0xffc070, 2.2);
     const M = { main: bodyMat(0xffffff, { vertexColors: true, rim: 0.6 }), metal: sheen(bodyMat(0xffffff, { vertexColors: true, rim: 0.9 }), { color: 0xfff0d0, size: 0.09, soft: 0.03, k: 0.45, fres: 0.25 }), glow, eye: eyeM };
-    super(T, M, { main: 'main', outline: 0.02, bsPad: 1 });
+    super(T, M, { main: 'main', outline: 0.008, bsPad: 1, dress: { mat: { main: { spec: 0.8 } } } });
     this.glowMats = [glow];
     this.eyeMat = eyeM;
     const B = this.B;

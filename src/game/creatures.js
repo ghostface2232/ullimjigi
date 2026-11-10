@@ -31,22 +31,28 @@ export function creatureType(key, build) {
 export function builtFromModel(key, def, o = {}) {
   const g = model('mn_' + (o.file || key)), meshes = [], loose = [];
   if (g) g.scene.traverse((m) => { if (m.isMesh) (m.userData.bone !== undefined ? loose : meshes).push(m); });
-  if (!meshes.length) return null;
-  const Q = g.scene.userData.quant || { scale: 1, offset: [0, 0, 0] }, skip = o.skip || [];
+  if (!meshes.length || !g.scene.userData.quant) return null;
+  const Q = g.scene.userData.quant, skip = o.skip || [];
   const groupOf = (m) => m.material.name.split('_').pop();
   const read = (m, org) => {
     const a = m.geometry.attributes, n = a.position.count, ix = m.geometry.index;
-    const legacy = !g.scene.userData.quant;
     const d = { n, C: null, P: new Float32Array(n * 3), N: new Float32Array(n * 3), UV: new Float32Array(n * 2), TG: new Float32Array(n * 4), OL: new Float32Array(n), I: ix.array, SI: null, SW: null };
     const jm = m.skeleton ? m.skeleton.bones.map((b) => def.map[b.name] ?? 0) : null;
     if (jm) { d.SI = new Uint16Array(n * 4); d.SW = new Float32Array(n * 4); }
     for (let k = 0; k < n; k++) {
       d.P[k * 3] = a.position.getX(k) * Q.scale + Q.offset[0] - org.x; d.P[k * 3 + 1] = a.position.getY(k) * Q.scale + Q.offset[1] - org.y; d.P[k * 3 + 2] = a.position.getZ(k) * Q.scale + Q.offset[2] - org.z;
-      _v1.set(a.normal.getX(k), a.normal.getY(k), a.normal.getZ(k)).normalize().toArray(d.N, k * 3);
+      _v1.set(a.normal.getX(k), a.normal.getY(k), a.normal.getZ(k));
+      if (_v1.lengthSq() < 0.25) _v1.set(0, 1, 0);
+      _v1.normalize().toArray(d.N, k * 3);
       d.UV[k * 2] = a.uv.getX(k); d.UV[k * 2 + 1] = a.uv.getY(k);
-      if (a.tangent) { _v1.set(a.tangent.getX(k), a.tangent.getY(k), a.tangent.getZ(k)).normalize().toArray(d.TG, k * 4); d.TG[k * 4 + 3] = a.tangent.getW(k) < 0 ? -1 : 1; }
-      d.OL[k] = a.color && a.color.itemSize > 3 ? a.color.getW(k) : 1;
-      if (legacy && a.color) { if (!d.C) d.C = new Float32Array(n * 3).fill(1); d.C[k * 3] = a.color.getX(k); d.C[k * 3 + 1] = a.color.getY(k); d.C[k * 3 + 2] = a.color.getZ(k); }
+      if (a.tangent) {
+        // a degenerate UV triangle has no tangent: any vector across the normal will do (a zero one turns into NaN pixels)
+        _v2.set(a.tangent.getX(k), a.tangent.getY(k), a.tangent.getZ(k));
+        if (_v2.lengthSq() < 0.25) _v2.set(Math.abs(_v1.y) < 0.9 ? 0 : 1, Math.abs(_v1.y) < 0.9 ? 1 : 0, 0).cross(_v1);
+        _v2.normalize().toArray(d.TG, k * 4); d.TG[k * 4 + 3] = a.tangent.getW(k) < 0 ? -1 : 1;
+      }
+      d.OL[k] = a.color ? a.color.getW(k) : 1;
+      if (a.color) { if (!d.C) d.C = new Float32Array(n * 3).fill(1); d.C[k * 3] = a.color.getX(k); d.C[k * 3 + 1] = a.color.getY(k); d.C[k * 3 + 2] = a.color.getZ(k); }
       if (jm) { let ws = 0; for (let c = 0; c < 4; c++) { d.SI[k * 4 + c] = jm[a.skinIndex.getComponent(k, c)]; ws += d.SW[k * 4 + c] = a.skinWeight.getComponent(k, c); } for (let c = 0; c < 4; c++) d.SW[k * 4 + c] /= ws || 1; }
     }
     return d;
@@ -60,7 +66,7 @@ export function builtFromModel(key, def, o = {}) {
     geo.setAttribute('position', new THREE.BufferAttribute(cat('P', Float32Array, 3), 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(cat('N', Float32Array, 3), 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(cat('UV', Float32Array, 2), 2));
-    if (g.scene.userData.quant) geo.setAttribute('tangent', new THREE.BufferAttribute(cat('TG', Float32Array, 4), 4));
+    geo.setAttribute('tangent', new THREE.BufferAttribute(cat('TG', Float32Array, 4), 4));
     const C = new Float32Array(nv * 3).fill(1); { let o2 = 0; for (const d of parts) { if (d.C) C.set(d.C, o2); o2 += d.n * 3; } }
     geo.setAttribute('color', new THREE.BufferAttribute(C, 3));
     geo.setAttribute('olw', new THREE.BufferAttribute(cat('OL', Float32Array, 1), 1));
@@ -71,13 +77,13 @@ export function builtFromModel(key, def, o = {}) {
   };
   const used = meshes.filter((m) => !skip.includes(groupOf(m))), m0 = meshes[0].material, zero = new V3();
   const geo = toGeo(used.map((m) => read(m, zero)), true);
-  const tex = { map: m0.map, normalMap: m0.normalMap, orm: m0.roughnessMap, key: o.file || key, legacy: !g.scene.userData.quant };
+  const tex = { map: m0.map, normalMap: m0.normalMap, orm: m0.roughnessMap, key: o.file || key };
   const rigid = {};
   for (const m of loose) {
     const grp = m.userData.group || groupOf(m);
     if (skip.includes(grp)) continue;
     const gg = toGeo([read(m, m.position)], false); gg.clearGroups();
-    rigid[m.name] = { geo: gg, bone: m.userData.bone, pos: m.position.clone().sub(def.pos(m.userData.bone)), group: grp };
+    rigid[m.userData.id || m.name] = { geo: gg, bone: m.userData.bone, pos: m.position.clone().sub(def.pos(m.userData.bone)), group: grp };
   }
   return { geo, mats: used.map(groupOf), tris: geo.index.count / 3, stats: {}, tex, rigid };
 }
@@ -98,7 +104,7 @@ export function surfaced(m, tex, o = {}) {
   m.map = tex.map; m.normalMap = tex.normalMap;
   m.normalScale.set(o.bump ?? 1, o.bump ?? 1);
   for (const t of [tex.map, tex.normalMap, tex.orm]) if (t) t.anisotropy = 4;
-  const u = { uOrm: { value: tex.orm }, uSurfP: { value: new THREE.Vector4(o.spec ?? 0.6, o.metal ?? 3, o.ao ?? 0.7, o.glowK ?? 1) }, uGlowC: { value: o.glow || new THREE.Color(0, 0, 0) } };
+  const u = { uOrm: { value: tex.orm }, uSurfP: { value: new THREE.Vector4(o.spec ?? 0.6, o.metal ?? 3, o.ao ?? 0.4, o.glowK ?? 1) }, uGlowC: { value: o.glow || new THREE.Color(0, 0, 0) } };
   m.userData.surf = u;
   return extendMat(m, 'surfaced', u, (sh) => {
     sh.fragmentShader = 'uniform sampler2D uOrm;\nuniform vec4 uSurfP;\nuniform vec3 uGlowC;\n' + sh.fragmentShader
@@ -111,7 +117,7 @@ export function surfaced(m, tex, o = {}) {
       .replace('#include <opaque_fragment>', `{
   vec3 _sv = normalize( vViewPosition );
   float _fr = pow( 1.0 - clamp( dot( normal, _sv ), 0.0, 1.0 ), 5.0 ), _gl = 1.0 - _rough;
-  outgoingLight += uSkyRefl * ( ( 0.04 + 0.96 * _fr ) * _gl * _gl * _cav * _specK * ( 0.5 + 2.5 * _mo.b ) );
+  outgoingLight += uSkyRefl * ( ( 0.04 + 0.96 * _fr ) * _gl * _gl * _cav * _specK * ( 0.4 + 1.1 * _mo.b ) );
   outgoingLight = mix( outgoingLight, uGlowC * uSurfP.w, _mGlow );
 }
 #include <opaque_fragment>`);
@@ -122,7 +128,6 @@ export function surfaced(m, tex, o = {}) {
 export function dress(rig, o = {}) {
   const tx = rig.T.built.tex;
   if (!tx) return rig;
-  if (tx.legacy) { for (const m of rig.mats) { m.map = tx.map || null; m.normalMap = tx.normalMap || null; if (tx.map) m.color.multiplyScalar(1 / 0.8); } return rig; }
   const tex = o.variant ? { ...tx, map: altMap(tx.key, o.variant) } : tx;
   const glow = o.glow || (rig.glowMats && rig.glowMats[0] && rig.glowMats[0].color);
   for (const k in rig.M) { const m = rig.M[k]; if (m && m.isMeshToonMaterial && !m.userData.surf) surfaced(m, tex, { glow, ...(o.mat && o.mat[k]) }); }
@@ -141,10 +146,11 @@ export function rigids(rig, mats) {
 // Sculpt helper: build a skeleton + parts, then bake per-group geometry.
 // parts(S, def) adds sculpt parts; color: key -> hex; group: key -> group name.
 // parts may return shade() options ({ fields, fn, ao, aoR }) to paint the baked vertex colors.
-export function bakeType(def, parts, color, group) {
+// mo: builtFromModel() options (a model shared between types, groups to leave out).
+export function bakeType(def, parts, color, group, mo) {
   def.finalize();
   const key = curKey; curKey = null;
-  const authored = key && builtFromModel(key, def);
+  const authored = key && builtFromModel(key, def, mo);
   if (authored) return authored;
   const S = new Sculpt(def);
   const post = parts(S, def);
@@ -555,8 +561,8 @@ export class CreatureRig extends Rig {
     this.M = M;
     const I = instance(body, T.def, T.built, M, { outline: o.outline ?? 0, main: o.main, shadow: o.shadow, bsPad: o.bsPad });
     this.B = I.by; this.mesh = I.mesh; this.meshes = I.meshes; this.skeleton = I.skeleton; this.outline = I.outline;
-    this.mats = Object.values(M).filter((m) => m && m.isMeshToonMaterial);
-    this.glowMats = Object.values(M).filter((m) => m && m.isMeshBasicMaterial);
+    this.mats = [...new Set(Object.values(M))].filter((m) => m && m.isMeshToonMaterial);
+    this.glowMats = [...new Set(Object.values(M))].filter((m) => m && m.isMeshBasicMaterial);
     this.rest = {};
     for (const b of I.bones) this.rest[b.name] = b.position.clone();
     this.chains = (T.chains || []).map((ch) => {
@@ -749,7 +755,7 @@ class FoxRig extends CreatureRig {
       dark: bodyMat(0x1a2a3a, { rim: 0.4 }),
       glow: new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 2.2, 2.2), vertexColors: true }),
     };
-    super(T, M, { main: 'fur' });
+    super(T, M, { main: 'fur', dress: { mat: { fur: { spec: 0.4, ao: 0.3 } } } });
     const B = this.B;
     this.p = { head: B.head, torso: B.chest, hips: B.hips };
     const aura = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 12), fresnelMat(0x000000, 0x7ae8ff, { intensity: 0.28, power: 3 }));
@@ -935,10 +941,10 @@ class CatRig extends CreatureRig {
   constructor() {
     const T = catType();
     const M = {
-      fur: tabby(bodyMat(0xffffff, { vertexColors: true, rim: 0.5 }), 0xb47a62, { freq: 38, width: 0.34 }),
+      fur: model('mn_cat') ? bodyMat(0xffffff, { vertexColors: true, rim: 0.5 }) : tabby(bodyMat(0xffffff, { vertexColors: true, rim: 0.5 }), 0xb47a62, { freq: 38, width: 0.34 }),   // the authored coat has its stripes painted
       main: bodyMat(0xffffff, { vertexColors: true, rim: 0.4 }),
     };
-    super(T, M, { main: 'fur', outline: 0.006 });
+    super(T, M, { main: 'fur', outline: 0.004, dress: { mat: { fur: { spec: 0.35 }, main: { spec: 1.4 } } } });
     const B = this.B;
     this.p = { head: B.head, torso: B.chest, hips: B.hips };
     this.t = rand() * 10;

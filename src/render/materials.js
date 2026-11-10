@@ -24,10 +24,20 @@ export const U = {
   burnTex: { value: (() => { const t = new THREE.DataTexture(new Uint8Array(4), 1, 1); t.needsUpdate = true; return t; })() },
   // Rain wetness of exposed surfaces, 0..1 (set by Weather)
   wet: { value: 0 },
+  relief: { value: 0 }, // depth (m) of the parallax relief on cliffs; 0 = off (quality tier)
   // See-through foliage: leaves on the line from the camera (a) to the player (b) within radius r thin out (dithered)
   seeA: { value: new THREE.Vector3() },
   seeB: { value: new THREE.Vector3() },
   seeR: { value: 0 },
+  // Leaf-clump atlas for foliage cards (created lazily by leafTexture())
+  leaf: { value: null },
+  // Surface detail arrays (surfaces.js, baked by the Renderer) and the terrain's ground-layer
+  // weights on the heightmap grid: R grass, G earth, B sand, A snow (the rest is rock / paving)
+  surfA: { value: null },
+  surfN: { value: null },
+  splatTex: { value: null },
+  // sky colour mirrored by glossy and wet surfaces (set by Sky)
+  skyRefl: { value: new THREE.Color(0.5, 0.6, 0.75) },
 };
 
 // ---------------------------------------------------------------------------
@@ -78,6 +88,58 @@ export function noiseTexture() {
   return U.noise.value;
 }
 noiseTexture();
+
+// ---------------------------------------------------------------------------
+// Leaf-clump atlas (2x2 variants) for foliage cards: alpha = leaf shapes, rgb = a tint
+// multiplier (leaves underneath are darker, each has a lit and a shaded half and a midrib).
+// Colour and coverage are drawn on separate canvases so the tint does not go dark where
+// the alpha fades (canvas pixels are premultiplied).
+function makeLeafTexture(S = 512) {
+  const C = S / 2;
+  const mk = () => { const cv = document.createElement('canvas'); cv.width = cv.height = S; return cv.getContext('2d'); };
+  const gc = mk(), ga = mk();
+  gc.fillStyle = 'rgb(170,170,170)'; gc.fillRect(0, 0, S, S);
+  ga.fillStyle = '#000'; ga.fillRect(0, 0, S, S);
+  let s = 90210;
+  const rnd = () => { s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const grey = (v) => { const k = Math.round(Math.min(255, Math.max(0, v))); return 'rgb(' + k + ',' + k + ',' + k + ')'; };
+  for (let v = 0; v < 4; v++) {
+    const cx = (v % 2) * C + C / 2, cy = Math.floor(v / 2) * C + C / 2;
+    const n = 18 + v * 3;
+    for (let i = 0; i < n; i++) {
+      const under = i < n * 0.45;
+      const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * 0.26 * C;
+      const L = (0.17 + rnd() * 0.06) * C * (under ? 1.08 : 1), W = L * (0.42 + rnd() * 0.14);
+      const rot = a + (rnd() - 0.5) * 1.6;
+      const tone = under ? 132 + rnd() * 28 : 206 + rnd() * 48;
+      for (const g of [gc, ga]) {
+        g.save();
+        g.translate(cx + Math.cos(a) * d, cy + Math.sin(a) * d); g.rotate(rot); g.translate(-L * 0.35, 0);
+        g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(L * 0.42, -W, L, 0); g.quadraticCurveTo(L * 0.42, W, 0, 0); g.closePath();
+        if (g === ga) { g.fillStyle = '#fff'; g.fill(); } else {
+          const gr = g.createLinearGradient(0, -W * 0.5, 0, W * 0.5);
+          gr.addColorStop(0, grey(tone * 1.04)); gr.addColorStop(0.5, grey(tone)); gr.addColorStop(0.52, grey(tone * 0.88)); gr.addColorStop(1, grey(tone * 0.82));
+          g.fillStyle = gr; g.fill();
+          g.strokeStyle = grey(tone * 0.7); g.lineWidth = S / 512; g.stroke();
+        }
+        g.restore();
+      }
+    }
+  }
+  const dc = gc.getImageData(0, 0, S, S).data, da = ga.getImageData(0, 0, S, S).data;
+  const data = new Uint8Array(S * S * 4);
+  for (let i = 0; i < S * S * 4; i += 4) { data[i] = dc[i]; data[i + 1] = dc[i + 1]; data[i + 2] = dc[i + 2]; data[i + 3] = da[i]; }
+  const t = new THREE.DataTexture(data, S, S, THREE.RGBAFormat);
+  t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true; t.anisotropy = 4;
+  t.colorSpace = THREE.NoColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+export function leafTexture() {
+  if (!U.leaf.value) U.leaf.value = makeLeafTexture();
+  return U.leaf.value;
+}
 
 // ---------------------------------------------------------------------------
 // Aerial perspective fog (global ShaderChunk override).
@@ -212,6 +274,18 @@ float seeFade(vec3 p){
 const DISSOLVE_CLIP = `
   #include <clipping_planes_fragment>
   if (uDissolve > 0.0 && _dnoise() < uDissolve * 1.08) discard;
+  #ifdef LEAF_CARDS
+  if (vCard.z >= 0.0) {
+    // one of the four clumps in the atlas; edges go to MSAA coverage (alphaToCoverage)
+    float _v = floor(vCard.z * 3.999);
+    vec4 _lf = texture2D(uLeafTex, (clamp(vCard.xy, 0.01, 0.99) + vec2(mod(_v, 2.0), floor(_v * 0.5))) * 0.5, -0.75);
+    float _a = clamp((_lf.a - 0.42) / max(fwidth(_lf.a), 0.02) + 0.5, 0.0, 1.0);
+    if (_a < 0.03) discard;
+    diffuseColor.a = _a;
+    diffuseColor.rgb *= _lf.rgb * 1.22;
+    _isCard = 1.0;
+  }
+  #endif
 `;
 const DISSOLVE_VERT = `
   #include <project_vertex>
@@ -222,6 +296,22 @@ const DISSOLVE_VERT = `
     #endif
     vDWP = (modelMatrix * _dwp).xyz;
   }
+  #ifdef LEAF_CARDS
+    // foliage card: its four vertices sit at one point and spread out facing the viewer,
+    // each card turned by its seed and rustling a little in the wind
+    vCard = vec3(0.0, 0.0, -1.0);
+    if (aCard.z > 0.0) {
+      float _cs = length(modelMatrix[0].xyz);
+      #ifdef USE_INSTANCING
+        _cs *= (length(instanceMatrix[0].xyz) + length(instanceMatrix[1].xyz)) * 0.5;
+      #endif
+      float _cr = aCard.w * 6.2831853 + sin(uTime * (1.1 + aCard.w * 1.7) + aCard.w * 47.0) * 0.13 * uWind;
+      float _cc = cos(_cr), _sn = sin(_cr);
+      mvPosition.xy += vec2(aCard.x * _cc - aCard.y * _sn, aCard.x * _sn + aCard.y * _cc) * aCard.z * _cs;
+      gl_Position = projectionMatrix * mvPosition;
+      vCard = vec3(aCard.xy * 0.5 + 0.5, aCard.w);
+    }
+  #endif
 `;
 
 const RIM_FRAG = `
@@ -231,6 +321,11 @@ const RIM_FRAG = `
     float _r = 1.0 - clamp(dot(normal, _vd), 0.0, 1.0);
     float _lit = clamp(dot(reflectedLight.directDiffuse, vec3(0.6)), 0.0, 1.0);
     outgoingLight += uRimColor * smoothstep(0.5, 1.0, _r) * uRim * (0.35 + 0.65 * _lit);
+    #ifdef SURF_SPEC
+      // the sky in smooth and wet surfaces, strongest at grazing angles
+      float _gl = 1.0 - _rough;
+      outgoingLight += uSkyRefl * ((0.04 + 0.96 * _r * _r * _r * _r * _r) * _gl * _gl * _cav * _specK);
+    #endif
   }
   #include <opaque_fragment>`;
 
@@ -247,9 +342,10 @@ const WIND_VERT = `
   transformed.z += cos(uTime * 1.1 + _ip.z * 0.2) * uWind * _h * uSway * 0.6;
 `;
 
-// Key-light response. The directional light's shadow-map term and the cloud
+// Key-light response (the sky's SunLight). Its shadow-map term and the cloud
 // shadow are folded into the band instead of scaling the light, so cast and
-// form shadows share the same cool shade color.
+// form shadows share the same cool shade color. Surfaces with a detail layer
+// (surfaces.js) shade their relief with a softer ramp, a GGX highlight and a cavity term.
 const TOON_LIGHT_PARS = `
 varying vec3 vViewPosition;
 struct ToonMaterial { vec3 diffuseColor; };
@@ -261,6 +357,10 @@ float _dirShadow = 1.0;
 float _isDir = 0.0;
 float _cloudSh = 1.0;
 float _ndlOff = 0.0;
+// detail-layer response: roughness, highlight strength (0 = none), cavity (1 = open)
+float _rough = 0.9;
+float _specK = 0.0;
+float _cav = 1.0;
 // Foliage mask from the vertex colour alpha (RGBA vertex colours only):
 // 1 = leaves, 0 = wood/stone. -1 = not provided (fall back to hue tests).
 float _leafM = -1.0;
@@ -274,17 +374,26 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
   float ndl = dot( geometryNormal, directLight.direction );
   if ( _isDir > 0.5 ) {
     #if defined( TOON_SOFT )
-      float g = smoothstep( -0.12, 0.5, ndl + _ndlOff );
+      float g = smoothstep( -0.16, 0.56, ndl + _ndlOff );
     #elif defined( TOON_FOLIAGE )
       float g = smoothstep( -0.28, 0.3, ndl + _ndlOff );
+    #elif defined( SURF_LAYER )
+      float g = smoothstep( -0.14, 0.42, ndl );
     #elif defined( USE_GRADIENTMAP )
       float g = texture2D( gradientMap, vec2( clamp( ndl * 0.5 + 0.5, 0.0, 1.0 ), 0.5 ) ).r;
     #else
       float g = smoothstep( -0.12, 0.08, ndl );
     #endif
     float lit = g * _dirShadow * _cloudSh;
-    vec3 irr = directLight.color * mix( uShadeTint, vec3( 1.0 ), lit );
+    vec3 irr = directLight.color * mix( uShadeTint, vec3( 1.0 ), lit ) * mix( 1.0, _cav, 0.55 );
     reflectedLight.directDiffuse += irr * BRDF_Lambert( material.diffuseColor );
+    if ( _specK > 0.0 ) {
+      vec3 hv = normalize( directLight.direction + geometryViewDir );
+      float nh = max( dot( geometryNormal, hv ), 0.0 ), a = _rough * _rough, a2 = a * a;
+      float dd = nh * nh * ( a2 - 1.0 ) + 1.0;
+      float fr = 0.04 + 0.96 * pow( 1.0 - max( dot( hv, geometryViewDir ), 0.0 ), 5.0 );
+      reflectedLight.directDiffuse += directLight.color * ( min( a2 / ( 3.14159 * dd * dd ), 40.0 ) * fr * 0.25 * _specK * lit * max( ndl, 0.0 ) * _cav );
+    }
     #ifdef TOON_FOLIAGE
       float tr = pow( clamp( dot( -geometryViewDir, directLight.direction ), 0.0, 1.0 ), 3.0 );
       float leaf = _leafM >= 0.0 ? _leafM : smoothstep( 0.0, 0.06, material.diffuseColor.g - material.diffuseColor.r );
@@ -296,15 +405,15 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
   }
 }
 void RE_IndirectDiffuse_Toon( const in vec3 irradiance, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in ToonMaterial material, inout ReflectedLight reflectedLight ) {
-  reflectedLight.indirectDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );
+  reflectedLight.indirectDiffuse += irradiance * BRDF_Lambert( material.diffuseColor ) * _cav;
 }
 #define RE_Direct RE_Direct_Toon
 #define RE_IndirectDiffuse RE_IndirectDiffuse_Toon
 `;
 function toonLightsBegin() {
   return THREE.ShaderChunk.lights_fragment_begin
-    .replace('getDirectionalLightInfo( directionalLight, directLight );', 'getDirectionalLightInfo( directionalLight, directLight ); _isDir = 1.0;')
-    .replace(/directLight\.color \*= \( directLight\.visible && receiveShadow \) \? getShadow\( directionalShadowMap/g, '_dirShadow = ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap');
+    .replace('getSunLightInfo( sunLight, directLight );', 'getSunLightInfo( sunLight, directLight ); _isDir = 1.0;')
+    .replace('directLight.color *= ( directLight.visible && receiveShadow ) ? getSunShadow( sunShadowMap', '_dirShadow = ( directLight.visible && receiveShadow ) ? getSunShadow( sunShadowMap');
 }
 const LIGHTS_PRE = `
   _cloudSh = cloudShadowAt( vDWP );
@@ -316,11 +425,14 @@ const LIGHTS_PRE = `
   #endif
 `;
 
-// Terrain: painterly brush noise, rock strata on steep slopes.
+// Terrain: macro brush variation on the vertex-painted palette, then the ground layers
+// (turf, earth, rock, sand, snow, paving) blended by the splat map and by their heights.
 const TERRAIN_VERT_PARS = `varying vec3 vWPos;\nvarying vec3 vWNrm;\n`;
 const TERRAIN_FRAG_PARS = `
 uniform sampler2D uBurnTex;
+uniform sampler2D uSplatTex;
 uniform float uWet;
+uniform float uRelief;
 varying vec3 vWPos;
 varying vec3 vWNrm;
 float _h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -330,71 +442,128 @@ float _vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
 const TERRAIN_FRAG = `
   #include <color_fragment>
   {
-    vec3 wn = normalize(vWNrm);
-    float slope = 1.0 - wn.y;
     // painterly brush strokes: anisotropic noise, rotated per region
     vec2 p = vWPos.xz;
     float ang = texture2D(uNoiseTex, p * 0.0021).a * 6.2832;
     mat2 R = mat2(cos(ang), -sin(ang), sin(ang), cos(ang));
     vec2 pr = R * p;
     float stroke = texture2D(uNoiseTex, pr * vec2(0.05, 0.16)).b;
-    float n1 = _vn(p * 0.45);
-    float n2 = _vn(p * 1.9 + 7.0);
     float macro = texture2D(uNoiseTex, p * 0.0037 + 0.31).g;
-    float k = 0.9 + 0.1 * n1 + 0.05 * n2 + 0.12 * (stroke - 0.5) + 0.12 * (macro - 0.5);
+    float k = 0.94 + 0.1 * (stroke - 0.5) + 0.14 * (macro - 0.5);
     // macro hue drift: warm/olive vs. cool/teal patches (mostly on greens)
     float green = smoothstep(0.02, 0.12, diffuseColor.g - max(diffuseColor.r, diffuseColor.b));
     vec3 hue = mix(vec3(1.06, 1.02, 0.86), vec3(0.9, 1.0, 1.08), macro);
     diffuseColor.rgb *= mix(vec3(1.0), hue, green * 0.8) * k;
-    // rock strata on cliffs
-    float rock = smoothstep(0.2, 0.38, slope);
-    if (rock > 0.0) {
-      float wob = texture2D(uNoiseTex, p * 0.012).r * 5.0 + _vn(p * 0.3) * 1.2;
-      float y = (vWPos.y + wob) * 0.3;
-      float fw = fwidth(y);
-      float detail = 1.0 - smoothstep(0.08, 0.35, fw);   // fade bands before they alias
-      float band = fract(y);
-      float bands = smoothstep(0.0, 0.1, band) * smoothstep(1.0, 0.6, band);
-      float layer = _h21(vec2(floor(y), 3.1));
-      vec3 strata = mix(vec3(0.88, 0.86, 0.9), vec3(1.06, 1.0, 0.92), layer) * mix(0.84, 1.02, bands);
-      float chip = _vn(vec2(p.x + p.y, vWPos.y * 2.0) * 1.1);
-      strata *= 0.95 + 0.1 * chip;
-      diffuseColor.rgb *= mix(vec3(1.0), strata, rock * detail);
+  }
+`;
+// at the lighting stage (the normal exists by then): ground layers, wildfire, rain
+const TERRAIN_SURF = `
+  {
+    vec3 wn = normalize(vWNrm);
+    vec2 p = vWPos.xz;
+    float slope = 1.0 - wn.y;
+    vec2 guv = (p + uHeightP.x) * uHeightP.y + uHeightP.z;
+    vec4 sp = texture2D(uSplatTex, guv);
+    float rest = clamp(1.0 - sp.r - sp.g - sp.b - sp.a, 0.0, 1.0);
+    float wRock = rest * smoothstep(0.05, 0.24, slope), wPave = rest - wRock;
+    vec3 alb = vec3(0.0), dW = vec3(0.0);
+    float rgh = 0.0, cav = 0.0, ws = 0.0;
+    vec4 a_, n_; float w_;
+    // a layer wins where its own relief stands higher (grass between pebbles, not a blur)
+    #define GROUND(L, UV, W0, TX, BX) if (W0 > 0.004) { a_ = texture(uSurfA, vec3(UV, L)); n_ = texture(uSurfN, vec3(UV, L)); w_ = W0 * (0.3 + a_.a); w_ *= w_; w_ *= w_; alb += a_.rgb * w_; dW += (TX * (n_.r * 2.0 - 1.0) + BX * (n_.g * 2.0 - 1.0)) * w_; rgh += n_.b * w_; cav += n_.a * w_; ws += w_; }
+    const vec3 X = vec3(1.0, 0.0, 0.0), Y = vec3(0.0, 1.0, 0.0), Z = vec3(0.0, 0.0, 1.0);
+    GROUND(0.0, p / 4.0, sp.r, X, Z)
+    GROUND(1.0, p / 3.0, sp.g, X, Z)
+    GROUND(3.0, p / 3.0, sp.b, X, Z)
+    GROUND(4.0, p / 4.0, sp.a, X, Z)
+    GROUND(10.0, p / 2.8, wPave, X, Z)
+    // cliffs: project from the sides so the planes stand upright
+    vec2 czy = vWPos.zy, cxy = vWPos.xy;
+    vec2 gzx = dFdx(vWPos.zy), gzy = dFdy(vWPos.zy), gxx = dFdx(vWPos.xy), gxy = dFdy(vWPos.xy);
+    float deep = 0.0;
+    if (wRock > 0.004) {
+      float bx = abs(wn.x), bz = abs(wn.z), bs = max(bx + bz, 1e-3);
+      float wx = wRock * bx / bs, wz = wRock * bz / bs;
+      if (uRelief > 0.0) {
+        // relief: the big facets are really set back and forward, so they slide against each
+        // other as the view moves and the hollows fall into shade
+        vec3 Vw = cameraPosition - vWPos;
+        float vd = length(Vw); Vw /= vd;
+        float D = uRelief * (1.0 - smoothstep(120.0, 260.0, vd)) * smoothstep(0.05, 0.4, wRock);
+        if (D > 0.03) {
+          if (bx > 0.25 * bs) {
+            vec2 g = gzx * (1024.0 / 31.0), g2 = gzy * (1024.0 / 31.0);
+            vec3 sh = reliefShift(czy, -Vw.zy / max(abs(Vw.x), 0.3), D, max(0.5 * log2(max(dot(g, g), dot(g2, g2))), 0.0));
+            czy += sh.xy; deep += sh.z * bx / bs;
+          }
+          if (bz > 0.25 * bs) {
+            vec2 g = gxx * (1024.0 / 31.0), g2 = gxy * (1024.0 / 31.0);
+            vec3 sh = reliefShift(cxy, -Vw.xy / max(abs(Vw.z), 0.3), D, max(0.5 * log2(max(dot(g, g), dot(g2, g2))), 0.0));
+            cxy += sh.xy; deep += sh.z * bz / bs;
+          }
+          deep *= D / uRelief;
+        }
+      }
+      // (explicit gradients: the slid coordinates jump at the facets' edges)
+      #define ROCK(UV, GX, GY, W0, TX, BX) if (W0 > 0.004) { a_ = textureGrad(uSurfA, vec3(UV, 2.0), GX, GY); n_ = textureGrad(uSurfN, vec3(UV, 2.0), GX, GY); w_ = W0 * (0.3 + a_.a); w_ *= w_; w_ *= w_; alb += a_.rgb * w_; dW += (TX * (n_.r * 2.0 - 1.0) + BX * (n_.g * 2.0 - 1.0)) * w_; rgh += n_.b * w_; cav += n_.a * w_; ws += w_; }
+      ROCK(czy / 7.0, gzx / 7.0, gzy / 7.0, wx, Z, Y)
+      ROCK(cxy / 7.0, gxx / 7.0, gxy / 7.0, wz, X, Y)
+    }
+    if (ws > 0.0) {
+      float iw = 1.0 / ws;
+      diffuseColor.rgb *= alb * iw * 2.0;
+      vec3 dN = dW * iw * 1.15;
+      if (wRock > 0.02) {
+        // the same blocks read again several times larger: the broad planes and tones of a
+        // cliff, which the 2 m height grid cannot carve
+        float bx = abs(wn.x), bz = abs(wn.z), bs = max(bx + bz, 1e-3);
+        vec4 ma = textureGrad(uSurfA, vec3(czy / 31.0, 2.0), gzx / 31.0, gzy / 31.0) * (bx / bs) + textureGrad(uSurfA, vec3(cxy / 31.0, 2.0), gxx / 31.0, gxy / 31.0) * (bz / bs);
+        vec4 mx = textureGrad(uSurfN, vec3(czy / 31.0, 2.0), gzx / 31.0, gzy / 31.0), mz = textureGrad(uSurfN, vec3(cxy / 31.0, 2.0), gxx / 31.0, gxy / 31.0);
+        diffuseColor.rgb *= mix(vec3(1.0), 0.55 + ma.rgb * 0.9, wRock) * (1.0 - 0.3 * deep);
+        dN += ((Z * (mx.r * 2.0 - 1.0) + Y * (mx.g * 2.0 - 1.0)) * (bx / bs) + (X * (mz.r * 2.0 - 1.0) + Y * (mz.g * 2.0 - 1.0)) * (bz / bs)) * wRock * 1.0;
+      }
+      normal = normalize((viewMatrix * vec4(normalize(wn + dN), 0.0)).xyz);
+      _rough = rgh * iw; _cav = cav * iw * (1.0 - 0.45 * deep); _specK = 1.0;
     }
     // wildfire: scorched ground (patchy ash) and a hot rim while burning
-    vec2 buv = (vWPos.xz + uHeightP.x) * uHeightP.y + uHeightP.z;
-    vec4 burn = texture2D(uBurnTex, buv);
+    vec4 burn = texture2D(uBurnTex, guv);
     if (burn.r + burn.g > 0.002) {
       float ashN = _vn(p * 1.3);
       vec3 ash = mix(vec3(0.16, 0.14, 0.13), vec3(0.34, 0.3, 0.27), ashN);
-      diffuseColor.rgb = mix(diffuseColor.rgb, ash, burn.r * (0.75 + 0.25 * ashN) * (1.0 - rock * 0.6));
+      diffuseColor.rgb = mix(diffuseColor.rgb, ash, burn.r * (0.75 + 0.25 * ashN) * (1.0 - wRock * 0.6));
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.08, 0.04), burn.g * 0.6);
     }
-    // rain: darker, more saturated soil and rock
-    diffuseColor.rgb *= 1.0 - uWet * (0.22 + 0.12 * rock);
+    // rain: darker, more saturated ground with a wet sheen
+    diffuseColor.rgb *= 1.0 - uWet * (0.22 + 0.12 * wRock);
+    _rough = mix(_rough, 0.22, uWet * 0.75);
   }
-`;
+  #include <lights_toon_fragment>`;
 
-// World-space procedural surface detail, chosen per material with opts.tex.
-// Subtle on purpose: breaks up flat toon fills without fighting the style.
-// Also: ground-contact AO + grime from the terrain heightmap.
+// World-space surface detail, chosen per material with opts.tex: a baked layer from
+// surfaces.js (albedo, relief, roughness) mapped on the dominant plane, plus ground-contact
+// grime and moss. Also: ground-contact AO from the terrain heightmap.
 const SURFACE_PARS = `
 uniform sampler2D uHeightTex;
 uniform vec4 uHeightP;
-vec2 _hash2(vec2 p){ p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3))); return fract(sin(p) * 43758.5453); }
-vec3 _voro(vec2 x){
-  vec2 n = floor(x), f = fract(x);
-  float f1 = 8.0, f2 = 8.0, id = 0.0;
-  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
-    vec2 g = vec2(float(i), float(j));
-    vec2 o = _hash2(n + g) * 0.76 + 0.12;
-    vec2 r = g + o - f; float d = dot(r, r);
-    if (d < f1) { f2 = f1; f1 = d; id = _hash2(n + g + 17.0).x; } else if (d < f2) f2 = d;
-  }
-  return vec3(sqrt(f1), sqrt(f2), id);
-}
+uniform sampler2DArray uSurfA;
+uniform sampler2DArray uSurfN;
 float groundAbove(vec3 p){
   return p.y - texture2D(uHeightTex, (p.xz + uHeightP.x) * uHeightP.y + uHeightP.z).r;
+}
+// Parallax relief for a cliff's side projection: walk the view ray down through the height of
+// the big rock facets (layer 2 read at 31 m). Returns how far the visible point slides on that
+// plane (xy, metres) and how deep the ray ended (z: 0 on a crest .. 1 in the deepest hollow).
+vec3 reliefShift(vec2 pl, vec2 dir, float D, float lod){
+  float t = 0.0, dt = D / 14.0, h = 0.0, tp = 0.0, hp = 0.0;
+  for (int i = 0; i < 14; i++) {
+    h = (1.0 - clamp((textureLod(uSurfA, vec3((pl + dir * t) / 31.0, 2.0), lod).a - 0.3) / 0.55, 0.0, 1.0)) * D;
+    if (t >= h) break;
+    tp = t; hp = h; t += dt;
+  }
+  // where the ray crossed the surface, between the last two samples
+  float a = hp - tp, b = t - h;
+  t = tp + (t - tp) * clamp(a / max(a + b, 1e-4), 0.0, 1.0);
+  return vec3(dir * t, t / D);
 }
 `;
 const SURFACE_FRAG = `
@@ -405,46 +574,76 @@ const SURFACE_FRAG = `
     bool _top = _an.y > max(_an.x, _an.z);
     // dominant-plane coords: (across, along) with 'along' vertical on walls
     vec2 _uv = _top ? _p.xz : vec2(_an.x > _an.z ? _p.z : _p.x, _p.y);
+    vec3 _tx = (_top || _an.z >= _an.x) ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
+    vec3 _bx = _top ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
     float _above = groundAbove(_p);
     float _leafN = 0.5;
     #ifdef USE_COLOR_ALPHA
       _leafM = clamp(vColor.a, 0.0, 1.0);
     #endif
+    #ifdef LEAF_CARDS
+      // only card edges go to coverage: the vertex colour's alpha is the leaf mask (0 on
+      // wood), which would otherwise make trunks vanish under alphaToCoverage
+      if (_isCard < 0.5) diffuseColor.a = 1.0;
+    #endif
+    #ifdef SURF_LAYER
+    {
+      vec4 sa, sn; vec3 dW;
+      float mixK = 1.0;
+      #if defined( TEX_ROOF )
+        // courses follow the eaves: across = along the ridge, up = world height
+        vec3 rd = normalize(cross(_wn, vec3(0.0, 1.0, 0.0)) + vec3(1e-4, 0.0, 0.0));
+        vec2 suv = vec2(dot(_p, rd) / 1.8, _p.y / 1.6);
+        sa = texture(uSurfA, vec3(suv, SURF_LAYER)); sn = texture(uSurfN, vec3(suv, SURF_LAYER));
+        dW = rd * (sn.r * 2.0 - 1.0) + normalize(vec3(0.0, 1.0, 0.0) - _wn * _wn.y + 1e-4) * (sn.g * 2.0 - 1.0);
+      #elif defined( TEX_ROCK ) || defined( TEX_BARK )
+        // rounded shapes: blend the three (rock) or two side (bark) projections
+        vec3 bw = _an * _an;
+        #ifdef TEX_BARK
+          bw.y = 0.0;
+          mixK = _leafM >= 0.0 ? 1.0 - _leafM : smoothstep(0.0, 0.035, diffuseColor.r - diffuseColor.g);
+        #endif
+        bw /= max(bw.x + bw.y + bw.z, 1e-4);
+        vec4 ax = texture(uSurfA, vec3(_p.zy / SURF_TILE, SURF_LAYER)), nx = texture(uSurfN, vec3(_p.zy / SURF_TILE, SURF_LAYER));
+        vec4 az = texture(uSurfA, vec3(_p.xy / SURF_TILE, SURF_LAYER)), nz = texture(uSurfN, vec3(_p.xy / SURF_TILE, SURF_LAYER));
+        sa = ax * bw.x + az * bw.z; sn = nx * bw.x + nz * bw.z;
+        dW = (vec3(0.0, 0.0, 1.0) * (nx.r * 2.0 - 1.0) + vec3(0.0, 1.0, 0.0) * (nx.g * 2.0 - 1.0)) * bw.x
+           + (vec3(1.0, 0.0, 0.0) * (nz.r * 2.0 - 1.0) + vec3(0.0, 1.0, 0.0) * (nz.g * 2.0 - 1.0)) * bw.z;
+        #ifdef TEX_ROCK
+          vec4 ay = texture(uSurfA, vec3(_p.xz / SURF_TILE, SURF_LAYER)), ny = texture(uSurfN, vec3(_p.xz / SURF_TILE, SURF_LAYER));
+          sa += ay * bw.y; sn += ny * bw.y;
+          dW += (vec3(1.0, 0.0, 0.0) * (ny.r * 2.0 - 1.0) + vec3(0.0, 0.0, 1.0) * (ny.g * 2.0 - 1.0)) * bw.y;
+        #endif
+      #else
+        #if defined( TEX_WOOD ) || defined( TEX_PLANKS )
+          // boards run along the longer world axis of a floor, up a wall
+          vec2 suv = (_top ? _p.zx : _uv) / SURF_TILE;
+          if (_top) { _tx = vec3(0.0, 0.0, 1.0); _bx = vec3(1.0, 0.0, 0.0); }
+        #else
+          vec2 suv = _uv / SURF_TILE;
+        #endif
+        sa = texture(uSurfA, vec3(suv, SURF_LAYER)); sn = texture(uSurfN, vec3(suv, SURF_LAYER));
+        dW = _tx * (sn.r * 2.0 - 1.0) + _bx * (sn.g * 2.0 - 1.0);
+      #endif
+      diffuseColor.rgb *= mix(vec3(1.0), sa.rgb * 2.0, mixK);
+      _wn = normalize(_wn + dW * (SURF_BUMP * mixK));
+      normal = normalize((viewMatrix * vec4(_wn, 0.0)).xyz);
+      _rough = mix(0.9, sn.b, mixK); _cav = mix(1.0, sn.a, mixK); _specK = mixK;
+    }
+    #endif
     #if defined( TEX_PLASTER )
     {
+      // damp, dirty foot of a wall
       float mott = texture2D(uNoiseTex, _uv * 0.11).g;
-      float brush = texture2D(uNoiseTex, _uv * vec2(0.45, 0.12) + 0.3).b;
-      diffuseColor.rgb *= 0.93 + 0.12 * mott + 0.06 * (brush - 0.5);
       float gr = 1.0 - smoothstep(0.05, 0.75 + mott * 0.5, _above);
       diffuseColor.rgb *= mix(vec3(1.0), vec3(0.8, 0.74, 0.66), gr * 0.55);
     }
     #elif defined( TEX_WOOD ) || defined( TEX_PLANKS )
     {
-      vec2 g = _top ? _p.zx : _uv;
-      float fw = fwidth(g.x) * 30.0;
-      float grain = texture2D(uNoiseTex, vec2(g.x * 1.1, g.y * 0.05)).b;
-      float st = sin(grain * 60.0 + g.x * 9.0) * 0.5 + 0.5;
-      float detail = 1.0 - smoothstep(0.4, 1.2, fw);
-      diffuseColor.rgb *= 0.92 + (0.12 * st - 0.05) * detail + 0.08 * (texture2D(uNoiseTex, g * 0.15).a - 0.5);
-      #ifdef TEX_PLANKS
-        float pk = fract(g.x / 0.24);
-        float seam = smoothstep(0.0, 0.05, pk) * smoothstep(1.0, 0.95, pk);
-        float pid = fract(sin(floor(g.x / 0.24) * 12.9898) * 43758.5453);
-        diffuseColor.rgb *= mix(1.0, (0.62 + 0.38 * seam) * (0.92 + 0.14 * pid), detail);
-      #endif
       diffuseColor.rgb *= 1.0 - 0.25 * (1.0 - smoothstep(0.0, 0.6, _above));
     }
     #elif defined( TEX_STONE )
     {
-      vec2 suv = _top ? _uv * 1.5 : _uv * vec2(1.35, 2.3);
-      vec3 v = _voro(suv);
-      float fw = fwidth(suv.x) + fwidth(suv.y);
-      float detail = 1.0 - smoothstep(0.25, 0.8, fw);
-      float mortar = smoothstep(0.035, 0.11, v.y - v.x);
-      float tone = 0.86 + 0.22 * v.z;
-      vec3 hue = mix(vec3(1.03, 1.0, 0.95), vec3(0.95, 0.98, 1.04), fract(v.z * 7.3));
-      float bump = 0.94 + 0.08 * smoothstep(0.0, 0.4, v.x);
-      diffuseColor.rgb *= mix(vec3(0.95), hue * tone * mix(0.6, 1.0, mortar) * bump, detail);
       #ifndef NO_MOSS
       float moss = smoothstep(0.55, 0.85, texture2D(uNoiseTex, _p.xz * 0.05 + _p.y * 0.02).g) * (0.4 + 0.6 * (1.0 - smoothstep(0.0, 1.6, _above)));
       diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.62, 0.8, 0.45), moss * 0.55 * (_top ? 1.0 : 0.6));
@@ -452,42 +651,19 @@ const SURFACE_FRAG = `
     }
     #elif defined( TEX_ROOF )
     {
-      vec3 rd = normalize(cross(_wn, vec3(0.0, 1.0, 0.0)) + vec3(1e-4, 0.0, 0.0));
-      float along = dot(_p, rd);
-      float rc = _p.y / 0.2;
-      float row = floor(rc), fr = fract(rc);
-      float cc = along / 0.36 + row * 0.5;
-      float fc = fract(cc);
-      float fw = fwidth(rc) + fwidth(cc);
-      float detail = 1.0 - smoothstep(0.35, 0.9, fw);
-      float tid = fract(sin(dot(vec2(row, floor(cc)), vec2(12.9898, 78.233))) * 43758.5453);
-      float lip = mix(1.06, 0.7, smoothstep(0.62, 1.0, fr));
-      float gap = 1.0 - 0.22 * (1.0 - smoothstep(0.0, 0.07, min(fc, 1.0 - fc)));
-      diffuseColor.rgb *= mix(vec3(1.0), vec3(lip * gap * (0.9 + 0.18 * tid)), detail);
       float moss = smoothstep(0.58, 0.85, texture2D(uNoiseTex, _p.xz * 0.08).g);
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.34, 0.38, 0.2) * dot(diffuseColor.rgb, vec3(0.5)) * 1.6, moss * 0.35);
     }
     #elif defined( TEX_ROCK )
     {
-      vec3 w = _an / (_an.x + _an.y + _an.z);
-      float cr = texture2D(uNoiseTex, _p.zy * 0.3).b * w.x + texture2D(uNoiseTex, _p.xz * 0.3).b * w.y + texture2D(uNoiseTex, _p.xy * 0.3).b * w.z;
-      float fw = fwidth(cr) * 8.0;
-      float crack = (1.0 - smoothstep(0.0, 0.02 + fw, abs(cr - 0.5))) * (1.0 - smoothstep(0.5, 1.5, fw));
-      float grain = texture2D(uNoiseTex, _uv * 1.2).a;
-      diffuseColor.rgb *= (0.9 + 0.16 * grain) * (1.0 - 0.3 * crack);
       #ifndef NO_MOSS
       float moss = smoothstep(0.45, 0.8, _wn.y + (texture2D(uNoiseTex, _p.xz * 0.15).g - 0.5) * 0.6);
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.33, 0.1), moss * 0.5);
+      _rough = mix(_rough, 0.95, moss);
       #endif
     }
     #elif defined( TEX_BARK )
     {
-      float brown = _leafM >= 0.0 ? 1.0 - _leafM : smoothstep(0.0, 0.035, diffuseColor.r - diffuseColor.g);
-      if (brown > 0.0) {
-        float a = (_an.x > _an.z ? _p.z : _p.x) * 2.2;
-        float f = texture2D(uNoiseTex, vec2(a, _p.y * 0.12)).b;
-        diffuseColor.rgb *= mix(1.0, mix(0.7, 1.08, smoothstep(0.3, 0.62, f)), brown);
-      }
       float green = _leafM >= 0.0 ? _leafM : smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
       #ifdef LEAFY_EDGE
         _leafN = _dn(_p * 3.3);
@@ -503,19 +679,21 @@ const SURFACE_FRAG = `
       // (smoothed) foliage normal turns away from the viewer
       float green = _leafM >= 0.0 ? _leafM : smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
       if (green > 0.5) {
-        float e = 1.0 - abs(dot(normal, normalize(vViewPosition)));
-        #ifdef TEX_BARK
-          float lf = _leafN * 0.55 + _dn(_p * 9.0) * 0.45;
-        #else
-          float lf = _dn(_p * 3.3) * 0.55 + _dn(_p * 9.0) * 0.45;
-        #endif
-        if (lf < (e - 0.4) * 1.6) discard;
+        if (_isCard < 0.5) {
+          float e = 1.0 - abs(dot(normal, normalize(vViewPosition)));
+          #ifdef TEX_BARK
+            float lf = _leafN * 0.55 + _dn(_p * 9.0) * 0.45;
+          #else
+            float lf = _dn(_p * 3.3) * 0.55 + _dn(_p * 9.0) * 0.45;
+          #endif
+          if (lf < (e - 0.4) * 1.6) discard;
+          diffuseColor.rgb *= 1.0 - 0.18 * smoothstep(0.55, 0.3, lf) * smoothstep(0.2, 0.6, e);
+        }
         float _sf = seeFade(_p);
         if (_sf > 0.0) {
           float _ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
           if (_ign < _sf * 0.88) discard;
         }
-        diffuseColor.rgb *= 1.0 - 0.18 * smoothstep(0.55, 0.3, lf) * smoothstep(0.2, 0.6, e);
       }
     }
     #endif
@@ -528,13 +706,17 @@ const SURFACE_FRAG = `
   }
   #include <lights_toon_fragment>`;
 
+// opts.tex -> [layer in the surface arrays, tile size (m), relief strength]
+const SURF_OF = { plaster: [6, 2.6, 0.7], wood: [11, 1.0, 0.8], planks: [7, 1.5, 0.9], stone: [5, 2.2, 1.0], roof: [8, 1.6, 1.0], rock: [12, 3.2, 1.0], bark: [9, 1.1, 1.0] };
+
 const cache = new Map();
 
 /**
  * Create (or reuse) a toon material.
  * opts: { emissive, emissiveIntensity, rim, vertexColors, flat, side, transparent, opacity, sway, swayBase, terrain, key,
  *         foliage (bool), leafy (ragged crown edges), tex ('plaster'|'wood'|'planks'|'stone'|'roof'|'rock'|'bark'), noAO (bool),
- *         noMoss (bool: no moss on 'stone'/'rock' surfaces), lodFade (bool: per-instance `aFade` dither, props only) }
+ *         noMoss (bool: no moss on 'stone'/'rock' surfaces), lodFade (bool: per-instance `aFade` dither, props only),
+ *         cards (bool: the geometry carries `aCard` foliage cards, see props.js Mesher.card) }
  * RGBA vertex colours: alpha is a foliage mask (1 = leaves) for translucency, bark detail and leafy edges.
  */
 export function toon(color = 0xffffff, opts = {}) {
@@ -568,6 +750,8 @@ export function patch(m, opts = {}) {
   m.userData.dissolveColor = dissolveColor;
   const isTerrain = !!opts.terrain;
   const lodFade = !!opts.lodFade;
+  const cards = !!opts.cards;
+  if (cards) { m.alphaToCoverage = true; leafTexture(); }
   const hasSway = (opts.sway ?? 0) > 0;
   const foliage = opts.foliage ?? hasSway;
   const texKind = opts.tex || '';
@@ -587,7 +771,9 @@ export function patch(m, opts = {}) {
     sh.uniforms.uHeightTex = U.heightTex;
     sh.uniforms.uHeightP = U.heightP;
     sh.uniforms.uSeeA = U.seeA; sh.uniforms.uSeeB = U.seeB; sh.uniforms.uSeeR = U.seeR;
-    if (isTerrain) { sh.uniforms.uBurnTex = U.burnTex; sh.uniforms.uWet = U.wet; }
+    if (isTerrain) { sh.uniforms.uBurnTex = U.burnTex; sh.uniforms.uWet = U.wet; sh.uniforms.uSplatTex = U.splatTex; sh.uniforms.uRelief = U.relief; }
+    sh.uniforms.uSurfA = U.surfA; sh.uniforms.uSurfN = U.surfN; sh.uniforms.uSkyRefl = U.skyRefl;
+    if (cards) sh.uniforms.uLeafTex = U.leaf;
     let fs = sh.fragmentShader;
     const isToon = fs.includes('#include <lights_toon_pars_fragment>');
     let defs = '';
@@ -597,17 +783,21 @@ export function patch(m, opts = {}) {
       if (opts.leafy) defs += '#define LEAFY_EDGE\n';
       if (!isTerrain && !opts.noAO) defs += '#define TOON_GROUND_AO\n';
       if (texKind) defs += `#define TEX_${texKind.toUpperCase()}\n`;
+      const sf = SURF_OF[texKind];
+      if (sf) defs += `#define SURF_LAYER ${sf[0].toFixed(1)}\n#define SURF_TILE ${sf[1].toFixed(2)}\n#define SURF_BUMP ${sf[2].toFixed(2)}\n`;
+      if (sf || isTerrain) defs += '#define SURF_SPEC\n';
       if (opts.noMoss) defs += '#define NO_MOSS\n';
       fs = fs.replace('#include <lights_toon_pars_fragment>', TOON_LIGHT_PARS + SURFACE_PARS)
         .replace('#include <lights_fragment_begin>', LIGHTS_PRE + toonLightsBegin());
-      if (!isTerrain) fs = fs.replace('#include <lights_toon_fragment>', SURFACE_FRAG);
+      fs = fs.replace('#include <lights_toon_fragment>', isTerrain ? TERRAIN_SURF : SURFACE_FRAG);
     } else {
       fs = 'uniform sampler2D uNoiseTex;\n' + fs;
     }
     fs = fs.replace('#include <opaque_fragment>', RIM_FRAG).replace('#include <clipping_planes_fragment>', DISSOLVE_CLIP);
     if (isToon && opts.leafy) fs = SEE_PARS + fs;
-    sh.fragmentShader = defs + 'uniform float uRim;\nuniform vec3 uRimColor;\n' + DISSOLVE_PARS + fs;
-    sh.vertexShader = 'uniform float uTime;\nuniform float uWind;\nuniform float uSway;\nuniform float uSwayBase;\nvarying vec3 vDWP;\n' + sh.vertexShader.replace('#include <project_vertex>', DISSOLVE_VERT);
+    const cdef = cards ? '#define LEAF_CARDS\n' : '';
+    sh.fragmentShader = defs + cdef + 'uniform float uRim;\nuniform vec3 uRimColor;\nuniform vec3 uSkyRefl;\nfloat _isCard = 0.0;\n#ifdef LEAF_CARDS\nvarying vec3 vCard;\nuniform sampler2D uLeafTex;\n#endif\n' + DISSOLVE_PARS + fs;
+    sh.vertexShader = cdef + '#ifdef LEAF_CARDS\nattribute vec4 aCard;\nvarying vec3 vCard;\n#endif\nuniform float uTime;\nuniform float uWind;\nuniform float uSway;\nuniform float uSwayBase;\nvarying vec3 vDWP;\n' + sh.vertexShader.replace('#include <project_vertex>', DISSOLVE_VERT);
     if (lodFade) {
       // per-instance cross-fade between a near and a far model: > 0 dithers this instance out
       // by that fraction, < 0 keeps only that fraction; the two use the same pattern so they
@@ -625,7 +815,7 @@ export function patch(m, opts = {}) {
       sh.fragmentShader = TERRAIN_FRAG_PARS + sh.fragmentShader.replace('#include <color_fragment>', TERRAIN_FRAG);
     }
   };
-  m.customProgramCacheKey = () => `toon3|${hasSway}|${isTerrain}|${foliage}|${texKind}|${!!opts.noAO}|${!!opts.leafy}|${!!opts.noMoss}|${lodFade}`;
+  m.customProgramCacheKey = () => `toon5|${hasSway}|${isTerrain}|${foliage}|${texKind}|${!!opts.noAO}|${!!opts.leafy}|${!!opts.noMoss}|${lodFade}|${cards}`;
   return m;
 }
 

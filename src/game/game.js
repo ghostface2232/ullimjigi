@@ -5,6 +5,8 @@ import { Input } from '../core/input.js';
 import { AudioEngine } from '../core/audio.js';
 import { Music } from '../core/music.js';
 import { Renderer } from '../render/renderer.js';
+import { suggestTier } from '../render/quality.js';
+import { preloadModels } from '../render/models.js';
 import { VFX } from '../render/vfx.js';
 import { World, LANTERNS } from '../world/world.js';
 import { POI, regionAt } from '../world/layout.js';
@@ -70,7 +72,7 @@ export class Game {
   }
 
   loadSettings() {
-    try { Object.assign(G.settings, JSON.parse(localStorage.getItem(SET_KEY) || '{}')); } catch (_) {}
+    try { const s = JSON.parse(localStorage.getItem(SET_KEY) || '{}'); this.pickTier = !s.quality; Object.assign(G.settings, s); } catch (_) {}
   }
   saveSettings() { try { localStorage.setItem(SET_KEY, JSON.stringify(G.settings)); } catch (_) {} }
 
@@ -89,9 +91,13 @@ export class Game {
     this.progress(0.02, '골짜기의 노래를 조율하는 중…');
     await nextFrame();
     G.renderer = new Renderer(canvas);
+    G.renderer.dynamic = !TIMER; // a timer-driven loop says nothing about the display's frame rate
+    // first run: start on the tier the graphics card suggests
+    if (this.pickTier) { G.settings.quality = suggestTier(G.renderer.renderer.getContext()); G.renderer.applyQuality(); }
     G.scene = G.renderer.scene; G.camera = G.renderer.camera;
     G.vfx = new VFX(G.scene);
     await nextFrame();
+    await preloadModels(); // authored GLB models, needed by the world and the characters
     G.world = new World(G.scene, (p, t) => this.progress(p, t));
     G.atlas = new Atlas(G.world.terrain);
     this.progress(0.75, '사람들을 깨우는 중…');
@@ -231,7 +237,7 @@ export class Game {
         if (out) out.textContent = (FMT[k] || String)(+el.value);
         G.settings[k] = el.type === 'checkbox' ? el.checked : el.type === 'range' ? +el.value : el.value;
         G.audio.applyVolumes();
-        if (k === 'quality') { G.renderer.applyQuality(); G.world.grass.setQuality(el.value); }
+        if (k === 'quality') { G.renderer.applyQuality(); G.world.sky.applyQuality(); G.world.grass.setQuality(el.value); }
         if (k === 'ui') G.hud.applyScale();
         this.saveSettings();
       });

@@ -4,9 +4,10 @@ import * as THREE from 'three';
 import { G } from '../core/context.js';
 import { toon, addOutline, glowMat, ghostMat } from '../render/materials.js';
 import { damp, clamp, lerp, rand } from '../core/util.js';
-import { Sculpt, tube, blob, sheet, prof, sstep, mix, TAU, instance, bodyMat, faceMat, crackMat, ghostSkinMat, ik2, setWorldQuat, rotateTowards, Chain, Spring, SkelDef } from './charkit.js';
+import { Sculpt, tube, blob, sheet, prof, sstep, mix, TAU, instance, bodyMat, faceMat, crackMat, ghostSkinMat, ik2, setWorldQuat, rotateTowards, Chain, Spring, SkelDef, clothMat, SURF } from './charkit.js';
 import * as HB from './humanoid.js';
 import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
+import { model } from '../render/models.js';
 
 const V3 = THREE.Vector3;
 const _v1 = new V3(), _v2 = new V3(), _v3 = new V3(), _v4 = new V3(), _v5 = new V3();
@@ -17,33 +18,149 @@ const wrapA = (a) => { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += T
 const ease = (t) => t * t * (3 - 2 * t);
 
 // ---------------------------------------------------------------------------
-// Preset characters. Legacy fields (top, pants, robe, cape, hat, ...) are kept.
+// Preset characters. Proportions: adults stand about 6.7 heads tall (ADULT), children
+// keep a head of the same real size on a short body. Garment keys are read by humanType.
+const ADULT = { headR: 0.128, legLen: 0.88, torsoK: 0.86, limb: 0.9, neckW: 0.95 };
 export const CHAR = {
-  player: { skin: 0xf3d2b2, top: 0xeee2c4, pants: 0x3e4a5e, boots: 0x6a4a30, hair: 0x5a3a26, hairStyle: 'fringe', hat: 'hood', hatColor: 0x2f5a8a, cape: 0x2f5a8a, lining: 0x1e2c48, capeLen: 0.62, scarf: 0xc8463c, staff: {}, belt: 0x7a5a38, sleeve: 0xeee2c4, gloves: 0x6a4a30, outline: true, brows: true, eyeColor: 0x3e6a8a, tunic: 0xeee2c4, tunicLen: 0.3, mantle: true, pouch: true, bootH: 0.55 },
-  mora: { scale: 0.86, skin: 0xefcdb4, top: 0x6a4a8a, robe: 0x5a3a7a, robeLen: 0.72, robeFlare: 1.3, pants: 0x3a2a4a, hair: 0xe8e4e0, hairStyle: 'bun', hat: 'witch', hatColor: 0x4a3070, hatBand: 0xd8a860, hunch: 0.28, glasses: true, cane: true, sleeve: 0x6a4a8a, sleeveFlare: true, blush: true, outline: true, cape: 0x8a6a5a, capeLen: 0.5, age: 1, eyeColor: 0x5a4a3a, shawl: 0x8a6a5a, fem: 1, browColor: 0xc8c4c0, bootH: 0 },
-  bau: { scale: 1.08, bodyW: 1.35, belly: true, skin: 0xe6b894, top: 0x8a6a4a, vest: 0x5a4030, pants: 0x4a3a2a, hairStyle: 'bald', hair: 0xf0f0f0, beard: 0xf0f0f0, mustache: true, spear: true, brows: true, outline: true, age: 0.8, bushyBrows: true, nose: 1.4, eyeColor: 0x4a3a2a, bareArms: true, sleeveShort: 'top', limb: 1.15, bootH: 0.35 },
-  dodam: { scale: 0.68, skin: 0xf6d6b8, top: 0x6aa0d8, pants: 0x7a5a3a, hair: 0x3a2a1a, hairStyle: 'spiky', hat: 'cap', hatColor: 0xe07a3a, blush: true, outline: true, stride: 2.6, headR: 0.19, kid: 1, freckles: 0.8, eyeColor: 0x3a2a1a, legLen: 0.72, torsoLen: 0.9, bootH: 0.3, pantsLoose: 0.012 },
-  isol: { scale: 1.02, skin: 0xf0d0b4, top: 0x3f7a5a, sleeve: 0x3f7a5a, pants: 0x3a3a44, hair: 0x2a2030, hairStyle: 'bob', glasses: true, book: true, satchel: true, scarf: 0xd8c070, outline: true, eyeColor: 0x2a3a4a, bodyW: 0.9, legLen: 0.82, limb: 0.92, tunic: 0x3f7a5a, tunicLen: 0.38, belt: 0x4a3a2a },
-  danbi: { scale: 0.96, bodyW: 1.25, belly: true, skin: 0xf0c8a4, top: 0xd87a5a, robe: 0xc06a4a, robeLen: 0.7, apron: 0xf4ecd8, hair: 0x6a3a24, hat: 'scarf', hatColor: 0xe8c050, hatBand: 0xd8a840, blush: true, outline: true, fem: 1, faceRound: 1, eyeColor: 0x4a2a1a, sleeve: 0xd87a5a, age: 0.3 },
-  villagerA: { scale: 1.0, skin: 0xe8c0a0, top: 0x9a7a4a, pants: 0x4a4a3a, hair: 0x2a2a2a, hairStyle: 'short', outline: true, belt: 0x5a4028, eyeColor: 0x2a2018 },
-  villagerB: { scale: 0.95, skin: 0xf2d0b0, top: 0x7a9a6a, robe: 0x5a7a5a, pants: 0x3a3a2a, hair: 0x8a5a2a, hairStyle: 'long', outline: true, fem: 1, eyeColor: 0x3a5a3a, belt: 0x6a5030 },
-  villagerC: { scale: 0.9, skin: 0xe0b890, top: 0xa05a4a, pants: 0x4a3a3a, hair: 0xd0d0d0, hairStyle: 'short', beard: 0xd0d0d0, hunch: 0.2, cane: true, outline: true, age: 1, eyeColor: 0x3a3028, beardLen: 1.2, belt: 0x4a3024 },
-  seha: { scale: 0.98, skin: 0xf2d4b8, top: 0xdde8f4, robe: 0x9ac0e0, robeLen: 0.78, hair: 0x5a3a26, hairStyle: 'long', scarf: 0xc8463c, outline: false, fem: 1, eyeColor: 0x3e6a8a, hairLen: 0.5 },
-  kael: { scale: 1.18, bodyW: 1.2, skin: 0xe0c0a0, top: 0x7a7a88, pants: 0x4a4a54, hat: 'helmet', hatColor: 0x9a9aa8, plume: 0x3a6ad0, cape: 0x2a4a9a, lining: 0x1a2a5a, capeLen: 0.95, outline: false, armor: true, metal: 0x9a9aa8, gloves: 0x5a5a66, boots: 0x5a5a66, eyeColor: 0x3a4a6a, hairStyle: 'none', noEars: true },
+  // young echo-keeper: cream tunic, hooded blue mantle and cape, the family's red scarf
+  player: { ...ADULT, headR: 0.132, legLen: 0.86, torsoLen: 0.97, skin: 0xf3d2b2, top: 0xeee2c4, pants: 0x3e4a5e, boots: 0x6a4a30, hair: 0x5a3a26, hairStyle: 'fringe', hat: 'hood', hatColor: 0x2f5a8a, cape: 0x2f5a8a, lining: 0x1e2c48, capeLen: 0.62, scarf: 0xc8463c, staff: {}, belt: 0x7a5a38, sleeve: 0xeee2c4, gloves: 0x6a4a30, outline: true, brows: true, eyeColor: 0x3e6a8a, tunic: 0xeee2c4, tunicLen: 0.3, tunicVent: 0.32, tunicTrim: 0x2f5a8a, mantle: true, pouch: true, charm: true, bootH: 0.55, bootStrap: true, noCuff: true, fem: 0.25, blush: true },
+  // grandmother witch: flared purple robe, fringed shawl with a brooch, crumpled hat
+  mora: { scale: 0.86, headR: 0.14, legLen: 0.8, torsoK: 0.9, limb: 0.9, skin: 0xefcdb4, top: 0x6a4a8a, robe: 0x5a3a7a, robeLen: 0.72, robeFlare: 1.3, robeTrim: 0xd8a860, pants: 0x3a2a4a, hair: 0xe8e4e0, hairStyle: 'bun', hat: 'witch', hatColor: 0x4a3070, hatBand: 0xd8a860, hunch: 0.28, glasses: true, cane: true, sleeve: 0x6a4a8a, sleeveFlare: true, blush: true, outline: true, age: 1, eyeColor: 0x5a4a3a, shawl: 0x8a6a5a, mantleLen: 1.25, gem: 0xe07a3a, sash: 0xd8a860, collar: 'frill', collarColor: 0xf0e8dc, fem: 1, browColor: 0xc8c4c0, bootH: 0, laces: false },
+  // bell-keeper and village head: leather vest, wrapped forearms, a bell at his belt
+  bau: { scale: 1.08, bodyW: 1.35, belly: true, headR: 0.136, legLen: 0.84, limb: 1.05, skin: 0xe6b894, top: 0x8a6a4a, vest: 0x5a4030, vestLeather: true, vestTrim: 'cord', pants: 0x4a3a2a, hairStyle: 'bald', hair: 0xf0f0f0, beard: 0xf0f0f0, mustache: true, spear: true, brows: true, outline: true, age: 0.8, bushyBrows: true, nose: 1.35, jaw: 1, eyeColor: 0x4a3a2a, bareArms: true, sleeveShort: 'top', armWrap: true, belt: 0x4a3020, beltW: 0.027, charm: true, kneePatch: 'patch', bootH: 0.35 },
+  // village child: peaked cap, braces, shorts and scuffed shoes
+  dodam: { scale: 0.68, skin: 0xf6d6b8, top: 0x6aa0d8, pants: 0x7a5a3a, hair: 0x3a2a1a, hairStyle: 'spiky', hat: 'cap', hatColor: 0xe07a3a, hatBand: 0xb85a2a, blush: true, outline: true, stride: 2.6, headR: 0.19, kid: 1, freckles: 0.8, eyeColor: 0x3a2a1a, legLen: 0.72, torsoLen: 0.9, bootH: 0, pantsLoose: 0.012, bareArms: true, sleeveShort: 'top', sleeveHem: 'collar', shorts: 0.72, socks: 0.42, suspenders: 0x8a3a30, collar: 'fold', collarColor: 0xf4f0e4, boots: 0x7a4a30 },
+  // wandering scholar: long buttoned coat, satchel with a scroll, round glasses
+  isol: { ...ADULT, scale: 1.02, skin: 0xf0d0b4, top: 0x3f7a5a, sleeve: 0x3f7a5a, pants: 0x3a3a44, hair: 0x2a2030, hairStyle: 'bob', glasses: true, book: true, satchel: true, scarf: 0xd8c070, outline: true, eyeColor: 0x2a3a4a, bodyW: 0.9, legLen: 0.86, tunic: 0x3f7a5a, tunicLen: 0.46, tunicOpen: 0.2, tunicTrim: 0xd8c070, buttons: 4, belt: 0x4a3a2a, cuff: 'fold', cuffColor: 0xe8dcc0, fem: 0.5, bootH: 0.6 },
+  // baker: kerchief, puff-sleeved dress, big apron tied in a bow
+  danbi: { scale: 0.96, bodyW: 1.25, belly: true, headR: 0.138, legLen: 0.82, limb: 1.0, skin: 0xf0c8a4, top: 0xd87a5a, robe: 0xc06a4a, robeLen: 0.7, robeTrim: 0xf4ecd8, apron: 0xf4ecd8, apronTie: 'collar', hair: 0x6a3a24, hat: 'scarf', hatColor: 0xe8c050, hatBand: 0xd8a840, blush: true, outline: true, fem: 1, faceRound: 1, eyeColor: 0x4a2a1a, sleeve: 0xd87a5a, sleevePuff: 0.35, cuff: 'fold', cuffColor: 0xf4ecd8, collar: 'frill', collarColor: 0xf4ecd8, age: 0.3, bootH: 0.2, laces: false },
+  villagerA: { ...ADULT, scale: 1.0, skin: 0xe8c0a0, top: 0x9a7a4a, pants: 0x4a4a3a, hair: 0x2a2a2a, hairStyle: 'short', outline: true, belt: 0x5a4028, eyeColor: 0x2a2018, jaw: 0.6, neckerchief: 0xb04a3a, cuff: 'fold', kneePatch: 'patch', suspenders: 0x5a4028, bootH: 0.4 },
+  villagerB: { ...ADULT, scale: 0.95, skin: 0xf2d0b0, top: 0x7a9a6a, robe: 0x5a7a5a, robeLen: 0.72, robeTrim: 0xe8dcc0, pants: 0x3a3a2a, hair: 0x8a5a2a, hairStyle: 'long', outline: true, fem: 1, eyeColor: 0x3a5a3a, sash: 0xe8dcc0, collar: 'fold', collarColor: 0xf0e8d8, sleevePuff: 0.25, cuff: 'frill', cuffColor: 0xf0e8d8, blush: true, bootH: 0.2, laces: false },
+  villagerC: { scale: 0.9, headR: 0.138, legLen: 0.82, torsoK: 0.9, limb: 0.9, skin: 0xe0b890, top: 0xa05a4a, pants: 0x4a3a3a, hair: 0xd0d0d0, hairStyle: 'short', beard: 0xd0d0d0, hunch: 0.2, cane: true, outline: true, age: 1, eyeColor: 0x3a3028, beardLen: 1.2, belt: 0x4a3024, vest: 0x6a5a48, collar: 'stand', bootH: 0.3, jaw: 0.5 },
+  seha: { ...ADULT, scale: 0.98, skin: 0xf2d4b8, top: 0xdde8f4, robe: 0x9ac0e0, robeLen: 0.78, robeTrim: 0xf4f4f8, hair: 0x5a3a26, hairStyle: 'long', scarf: 0xc8463c, outline: false, fem: 1, eyeColor: 0x3e6a8a, hairLen: 0.5, sash: 0xf4f4f8, cuff: 'frill', sleevePuff: 0.2, bootH: 0.2, laces: false },
+  kael: { scale: 1.18, bodyW: 1.2, headR: 0.132, legLen: 0.86, skin: 0xe0c0a0, top: 0x7a7a88, pants: 0x4a4a54, hat: 'helmet', hatColor: 0x9a9aa8, plume: 0x3a6ad0, cape: 0x2a4a9a, lining: 0x1a2a5a, capeLen: 0.95, outline: false, armor: true, metal: 0x9a9aa8, gloves: 0x5a5a66, boots: 0x5a5a66, eyeColor: 0x3a4a6a, hairStyle: 'none', noEars: true, noCuff: true, laces: false },
 };
 
 // colors for material keys
 function palette(c) {
   const dk = (x, k) => new THREE.Color(x).multiplyScalar(k).getHex();
+  const top = c.top ?? 0xe8dcc0, sleeve = c.sleeve ?? top, boots = c.boots ?? 0x5a3e2a, hair = c.hair ?? 0x5a3a24, glove = c.gloves ?? 0x6a4a30;
   return {
-    skin: c.skin ?? 0xf2cfae, top: c.top ?? 0xe8dcc0, sleeve: c.sleeve ?? c.top ?? 0xe8dcc0, pants: c.pants ?? 0x5a4a3a, boots: c.boots ?? 0x5a3e2a,
-    sole: dk(c.boots ?? 0x5a3e2a, 0.45), hair: c.hair ?? 0x5a3a24, pin: 0xc89a48, hat: c.hatColor ?? 0x5a3a8a, hatBand: c.hatBand ?? 0xd8b060,
-    scarf: c.scarf ?? 0xc8463c, cape: c.cape ?? 0x2f4a7a, lining: c.lining ?? dk(c.cape ?? 0x2f4a7a, 0.55), belt: c.belt ?? 0x6a4a2a, buckle: 0xc8a050,
-    glove: c.gloves ?? 0x6a4a30, beard: c.beard ?? c.hair ?? 0xe0e0e0, frame: 0x3a3028, metal: c.metal ?? c.hatColor ?? 0x9a9aa8, trim: 0xb89a58, visor: 0x101014,
-    plume: c.plume ?? 0x3a6ad0, satchel: 0x8a6a44, strap: 0x5a4028, apron: c.apron ?? 0xf4ecd8, vest: c.vest ?? 0x5a4030, robe: c.robe ?? c.top ?? 0x7a6a8a,
-    tunic: c.tunic ?? c.top ?? 0xe8dcc0, dark: 0x201a24, shawl: c.shawl ?? 0x8a6a5a, pouch: 0x6a4a30,
-    sleeveIn: dk(c.sleeve ?? c.top ?? 0xe8dcc0, 0.5),
+    skin: c.skin ?? 0xf2cfae, top, sleeve, pants: c.pants ?? 0x5a4a3a, boots,
+    sole: dk(boots, 0.45), bootCuff: dk(boots, 1.28), lace: 0xe6dcc4, hair, hairIn: dk(hair, 0.6), pin: 0xc89a48, hat: c.hatColor ?? 0x5a3a8a, hatBand: c.hatBand ?? 0xd8b060,
+    scarf: c.scarf ?? 0xc8463c, cape: c.cape ?? 0x2f4a7a, lining: c.lining ?? dk(c.cape ?? 0x2f4a7a, 0.55), belt: c.belt ?? 0x6a4a2a, buckle: 0xd0a850,
+    glove, gloveCuff: dk(glove, 0.78), beard: c.beard ?? hair, frame: 0x3a3028, metal: c.metal ?? c.hatColor ?? 0x9a9aa8, trim: c.trim ?? 0xd8b060, gold: 0xe0b450, visor: 0x101014,
+    plume: c.plume ?? 0x3a6ad0, satchel: 0x8a6a44, strap: 0x5a4028, apron: c.apron ?? 0xf4ecd8, vest: c.vest ?? 0x5a4030, robe: c.robe ?? top,
+    tunic: c.tunic ?? top, dark: 0x201a24, shawl: c.shawl ?? 0x8a6a5a, pouch: 0x6a4a30, sleeveIn: dk(sleeve, 0.5),
+    cuff: c.cuffColor ?? dk(sleeve, 0.72), collar: c.collarColor ?? dk(top, 1.18), placket: dk(c.tunic ?? top, 0.82), button: c.button ?? 0xe8d8a8, gem: c.gem ?? 0x48c0d0,
+    bracer: 0x6a4a30, wrap: 0xe6dcc8, sock: 0xf0ece0, cord: 0x3a2a20, paper: 0xf0e6cc, patch: dk(c.pants ?? 0x5a4a3a, 1.45), sash: c.sash ?? 0xd8b060,
+    neckerchief: c.neckerchief ?? 0xb04a3a, suspenders: c.suspenders ?? 0x5a4028, tunicTrim: c.tunicTrim ?? 0xd8b060, robeTrim: c.robeTrim ?? 0xd8b060,
   };
+}
+// surface response per material key (charkit clothMat); unlisted keys are woven cloth
+const LEATHER = ['boots', 'bootCuff', 'belt', 'glove', 'gloveCuff', 'satchel', 'strap', 'pouch', 'bracer'];
+const METAL = ['buckle', 'gold', 'trim', 'pin', 'frame', 'metal'];
+const MATTE = ['sole', 'lace', 'cord', 'paper', 'button', 'visor', 'dark'];
+function surfOf(c) {
+  const m = {};
+  for (const k of LEATHER) m[k] = SURF.leather;
+  for (const k of METAL) m[k] = SURF.metal;
+  for (const k of MATTE) m[k] = SURF.matte;
+  for (const k of ['hair', 'hairIn', 'beard']) m[k] = SURF.hair;
+  m.gem = SURF.gem;
+  if (c.vestLeather) m.vest = SURF.leather;
+  return (k) => m[k] ?? SURF.cloth;
+}
+
+// Code-built geometry for a type (every enemy on the humanoid base, and any person without a model)
+function sculptType(c, cc, L, def, pal, { capeCh, scarfCh, plumeCh, hairCh, extraCh }) {
+  const S = new Sculpt(def);
+  if (c.body !== false) HB.body(S, L, cc, {});
+  if (c.head !== false) HB.head(S, L, cc);
+  if (c.hairStyle !== 'none') HB.hair(S, L, cc);
+  if (hairCh) HB.hairBack(S, L, cc, hairCh.map((h) => h.names));
+  if (c.beard) HB.beard(S, L, cc);
+  if (c.mustache) HB.mustache(S, L, cc);
+  if (c.bushyBrows) HB.bushyBrows(S, L, cc);
+  if (c.glasses) HB.glasses(S, L, cc);
+  if (c.armor) HB.armor(S, L, cc);
+  if (c.collar) HB.collar(S, L, cc, 'collar', c.collar);
+  if (c.buttons) HB.placket(S, L, cc, 'placket', c.buttons);
+  if (c.suspenders) HB.suspenders(S, L, cc, 'suspenders');
+  if (c.vest) HB.vest(S, L, cc, 'vest');
+  if (c.tunic) HB.skirt(S, L, cc, 'tunic', { bottom: L.H - (c.tunicLen ?? 0.3), flare: 0.5, folds: 8, uTop: 0.4, hipBias: 0.7, vent: c.tunicVent, open: c.tunicOpen, trim: c.tunicTrim ? 'tunicTrim' : null, trim2: c.tunicTrim ? 'trim' : null });
+  let robeZ = null;
+  if (c.robe) robeZ = HB.skirt(S, L, cc, 'robe', { bottom: Math.max(0.05, L.H - (c.robeLen ?? 0.7)), flare: (c.robeFlare ?? 1) * 0.9, folds: 11, uTop: 0.36, nv: 9, hipBias: 0.45, trim: c.robeTrim ? 'robeTrim' : null, trim2: c.robeTrim ? 'robeTrim' : null });
+  if (c.apron) HB.apron(S, L, cc, 'apron', robeZ);
+  if (c.belt || c.tunic) HB.belt(S, L, cc, 'belt', c.tunic ? 0.41 : 0.39);
+  if (c.sash) HB.sash(S, L, cc, 'sash', 0.4);
+  if (c.satchel) HB.satchel(S, L, cc);
+  if (c.shawl) HB.mantle(S, L, cc, 'shawl', 'shawl');
+  else if (c.mantle) HB.mantle(S, L, cc, 'cape', 'lining');
+  if (capeCh && !c.shawl) HB.cape(S, L, cc, capeCh, 'cape', 'lining');
+  if (scarfCh) HB.scarf(S, L, cc, scarfCh);
+  else if (c.neckerchief) HB.neckerchief(S, L, cc, 'neckerchief');
+  if (c.hat === 'hood') { HB.hood(S, L, cc, 'hood', 'hoodIn', [['hoodUp', 1], ['hoodUpN', 1.5]]); HB.hoodDown(S, L, cc, 'hoodDn', 'hoodDnIn', ['hoodDn']); }
+  else if (c.hat && c.hat !== 'hood') HB.hat(S, L, cc, c.hat);
+  if (plumeCh) HB.plume(S, L, plumeCh[0]);
+  if (c.sculpt) c.sculpt(S, L, def, extraCh);
+  const colorOf = (k) => pal[k] ?? (k === 'hood' || k === 'hoodDn' ? pal.cape : k === 'hoodIn' || k === 'hoodDnIn' ? pal.lining : 0xff00ff);
+  return S.build({ color: colorOf, group: c.group || ((k) => (k === 'skin' ? 'skin' : 'main')), surf: surfOf(c) });
+}
+
+// Geometry from an authored glTF: its primitives (materials CH_skin / CH_main) become the draw
+// groups of one geometry in bind space, joints are re-indexed to this skeleton by bone name,
+// and `onrm` carries normals welded across split vertices for the outline hull.
+function fromModel(gltf, def) {
+  const meshes = [];
+  gltf.scene.traverse((o) => { if (o.isSkinnedMesh) meshes.push(o); });
+  let nv = 0, ni = 0;
+  for (const m of meshes) { nv += m.geometry.attributes.position.count; ni += m.geometry.index.count; }
+  const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3), C = new Float32Array(nv * 3), ON = new Float32Array(nv * 3);
+  const SI = new Uint16Array(nv * 4), SW = new Float32Array(nv * 4), OL = new Float32Array(nv), SF = new Float32Array(nv);
+  const I = new Uint32Array(ni);
+  const geo = new THREE.BufferGeometry(), mats = [];
+  let vo = 0, io = 0;
+  for (const m of meshes) {
+    const a = m.geometry.attributes, n = a.position.count;
+    const map = m.skeleton.bones.map((b) => def.map[b.name] ?? 0);
+    const ol = a._olw, sf = a._surf, col = a.color;
+    for (let k = 0; k < n; k++) {
+      const v = vo + k;
+      P[v * 3] = a.position.getX(k); P[v * 3 + 1] = a.position.getY(k); P[v * 3 + 2] = a.position.getZ(k);
+      N[v * 3] = a.normal.getX(k); N[v * 3 + 1] = a.normal.getY(k); N[v * 3 + 2] = a.normal.getZ(k);
+      C[v * 3] = col ? col.getX(k) : 1; C[v * 3 + 1] = col ? col.getY(k) : 1; C[v * 3 + 2] = col ? col.getZ(k) : 1;
+      for (let j = 0; j < 4; j++) { SI[v * 4 + j] = map[a.skinIndex.getComponent(k, j)]; SW[v * 4 + j] = a.skinWeight.getComponent(k, j); }
+      OL[v] = ol ? ol.getX(k) : 1; SF[v] = sf ? sf.getX(k) : 0;
+    }
+    const idx = m.geometry.index;
+    for (let k = 0; k < idx.count; k++) I[io + k] = idx.getX(k) + vo;
+    geo.addGroup(io, idx.count, mats.length);
+    mats.push(m.material.name.replace(/^CH_/, ''));
+    vo += n; io += idx.count;
+  }
+  const acc = new Map();
+  const keyOf = (v) => Math.round(P[v * 3] * 2e4) + '|' + Math.round(P[v * 3 + 1] * 2e4) + '|' + Math.round(P[v * 3 + 2] * 2e4);
+  for (let v = 0; v < nv; v++) {
+    const k = keyOf(v); let s = acc.get(k);
+    if (!s) acc.set(k, (s = [0, 0, 0]));
+    s[0] += N[v * 3]; s[1] += N[v * 3 + 1]; s[2] += N[v * 3 + 2];
+  }
+  for (let v = 0; v < nv; v++) {
+    const s = acc.get(keyOf(v)), l = Math.hypot(s[0], s[1], s[2]) || 1;
+    ON[v * 3] = s[0] / l; ON[v * 3 + 1] = s[1] / l; ON[v * 3 + 2] = s[2] / l;
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+  geo.setAttribute('onrm', new THREE.BufferAttribute(ON, 3));
+  geo.setAttribute('skinIndex', new THREE.BufferAttribute(SI, 4));
+  geo.setAttribute('skinWeight', new THREE.BufferAttribute(SW, 4));
+  geo.setAttribute('color', new THREE.BufferAttribute(C, 3));
+  geo.setAttribute('olw', new THREE.BufferAttribute(OL, 1));
+  geo.setAttribute('surf', new THREE.BufferAttribute(SF, 1));
+  geo.setIndex(new THREE.BufferAttribute(I, 1));
+  geo.computeBoundingSphere();
+  return { geo, mats, tris: ni / 3, stats: {} };
 }
 
 // ---------------------------------------------------------------------------
@@ -81,47 +198,18 @@ export function humanType(c) {
     def.add('hoodUp', 'head', hp.x, hp.y, hp.z, [L.HC.x, L.HC.y + L.hr, L.HC.z]);
     def.add('hoodUpN', 'neck', np.x, np.y, np.z, [hp.x, hp.y, hp.z]);
     def.add('hoodDn', 'chest', cp.x, L.NY - 0.05, cp.z - 0.05, [0, L.NY + 0.05, -0.08]);
+    // back and crown locks, drawn in under the raised hood
+    def.add('hairB', 'head', L.HC.x, L.HC.y, L.HC.z, [L.HC.x, L.HC.y + L.hr, L.HC.z]);
   }
   let extraCh = null;
   if (c.bones) extraCh = c.bones(def, L);
   def.finalize();
-  const S = new Sculpt(def);
-  if (c.body !== false) HB.body(S, L, cc, {});
-  if (c.head !== false) HB.head(S, L, cc);
-  if (c.hairStyle !== 'none') HB.hair(S, L, cc);
-  if (hairCh) HB.hairBack(S, L, cc, hairCh.map((h) => h.names));
-  if (c.beard) HB.beard(S, L, cc);
-  if (c.mustache) HB.mustache(S, L, cc);
-  if (c.bushyBrows) HB.bushyBrows(S, L, cc);
-  if (c.glasses) HB.glasses(S, L, cc);
-  if (c.armor) HB.armor(S, L, cc);
-  if (c.vest) HB.vest(S, L, cc, 'vest');
-  if (c.tunic) HB.skirt(S, L, cc, 'tunic', { bottom: L.H - (c.tunicLen ?? 0.3), flare: 0.5, folds: 8, uTop: 0.4, hipBias: 0.7 });
-  let robeZ = null;
-  if (c.robe) robeZ = HB.skirt(S, L, cc, 'robe', { bottom: Math.max(0.05, L.H - (c.robeLen ?? 0.7)), flare: (c.robeFlare ?? 1) * 0.9, folds: 11, uTop: 0.36, nv: 7, hipBias: 0.45 });
-  if (c.apron) HB.apron(S, L, cc, 'apron', robeZ);
-  if (c.belt || c.tunic) HB.belt(S, L, cc, 'belt', c.tunic ? 0.41 : 0.39);
-  if (c.satchel) HB.satchel(S, L, cc);
-  if (c.shawl) HB.mantle(S, L, cc, 'shawl', 'shawl');
-  else if (c.mantle) HB.mantle(S, L, cc, 'cape', 'lining');
-  if (capeCh && !c.shawl) HB.cape(S, L, cc, capeCh, 'cape', 'lining');
-  if (scarfCh) HB.scarf(S, L, cc, scarfCh);
-  if (c.hat === 'hood') { HB.hood(S, L, cc, 'hood', 'hoodIn', [['hoodUp', 1], ['hoodUpN', 1.5]]); HB.hoodDown(S, L, cc, 'hoodDn', 'hoodDnIn', ['hoodDn']); }
-  else if (c.hat && c.hat !== 'hood') HB.hat(S, L, cc, c.hat);
-  if (plumeCh) HB.plume(S, L, plumeCh[0]);
-  if (c.sleeveFlare) {
-    for (const sd of [1, -1]) {
-      const n = sd > 0 ? 'L' : 'R';
-      const el = def.pos('fore' + n), wr = def.pos('hand' + n);
-      const sp = [el.clone().lerp(wr, 0.2), el.clone().lerp(wr, 0.7), wr.clone().lerp(el, -0.25)];
-      tube(S, 'sleeve', ['fore' + n, ['hand' + n, 1.5]], { pts: sp, seg: 14, steps: 6, r: (u) => [mix(0.05, 0.085, u * u), mix(0.05, 0.08, u * u)], shape: (u, a) => 1 + 0.08 * Math.sin(a * 5) * u, flat0: false });
-      tube(S, 'sleeveIn', ['fore' + n, ['hand' + n, 1.5]], { pts: sp, seg: 14, steps: 6, r: (u) => [mix(0.05, 0.085, u * u) - 0.006, mix(0.05, 0.08, u * u) - 0.006], shape: (u, a) => 1 + 0.08 * Math.sin(a * 5) * u, inward: true, ol: 0 });
-    }
-  }
-  if (c.sculpt) c.sculpt(S, L, def, extraCh);
   const pal = { ...palette(c), ...(c.colors || {}) };
-  const colorOf = (k) => pal[k] ?? (k === 'hood' || k === 'hoodDn' ? pal.cape : k === 'hoodIn' || k === 'hoodDnIn' ? pal.lining : 0xff00ff);
-  const built = S.build({ color: colorOf, group: c.group || ((k) => (k === 'skin' ? 'skin' : 'main')) });
+  // an authored model (public/models/ch_<key>.glb, built by ref/blender/ch_*.py on this same
+  // skeleton) replaces the code-built body; without one the character is sculpted here
+  const key = Object.keys(CHAR).find((k) => CHAR[k] === c);
+  const authored = key ? model('ch_' + key) : null;
+  const built = authored ? fromModel(authored, def) : sculptType(c, cc, L, def, pal, { capeCh, scarfCh, plumeCh, hairCh, extraCh });
   if (capeCh) chains.push(...capeCh.map((ch) => ({ ...ch, kind: 'cape' })));
   if (scarfCh) chains.push(...scarfCh.map((ch) => ({ ...ch, kind: 'scarf' })));
   if (plumeCh) chains.push(...plumeCh.map((ch) => ({ ...ch, kind: 'plume' })));
@@ -247,13 +335,15 @@ export class HumanRig extends Rig {
       u.uMouthP.value.set(F.mouthY, F.lipDark, 1, 1); u.uMouth.value.z = F.mouthW;
       u.uCheek.value.set(F.blush, F.wrinkles, F.freckles, F.lashT);
       u.uLook.value.z = F.irisR; u.uLook.value.w = F.pupil;
+      u.uFaceX.value.set(F.fringeY, F.noseY, F.lip, F.lowLash);
       this.faceU = u;
     } else this.faceU = null;
-    M.main = bodyMat(0xffffff, { vertexColors: true, rim: o.rim ?? 0.34 });
+    M.main = clothMat({ rim: o.rim ?? 0.34 });
+    M.main.userData.cloth.uHairC.value.set(T.L.HC.x, T.L.HC.y, T.L.HC.z, T.L.hr);
     if (o.mats) Object.assign(M, o.mats);
     this.mats = Object.values(M).filter((m) => m.isMeshToonMaterial);
     this.glowMats = Object.values(M).filter((m) => !m.isMeshToonMaterial);
-    const I = instance(body, T.def, T.built, M, { outline: o.outline ?? (c.outline ? 0.011 : 0), main: 'main' });
+    const I = instance(body, T.def, T.built, M, { outline: o.outline ?? (c.outline ? 0.0048 : 0), outlineTint: !o.mats, main: 'main' });
     this.B = I.by; this.mesh = I.mesh; this.skeleton = I.skeleton; this.outline = I.outline;
     this.meshes = I.meshes;
     // rest data
@@ -338,7 +428,7 @@ export class HumanRig extends Rig {
     const P = this.p;
     const g = new THREE.Group(); g.name = 'staff';
     const m = new THREE.Mesh(T.staff, toon(0xffffff, { vertexColors: true, rim: 0.45 })); m.castShadow = true; g.add(m);
-    if (this.c.outline) addOutline(m, 0.006);
+    if (this.c.outline) addOutline(m, 0.004, 0x2a1c18);
     const top = HB.STAFF.len - HB.STAFF.below;
     // faceted, double-terminated crystal (long axis = local Y, laid onto the staff);
     // material.color is the tint *and* glow colour (player.js retints it per element)
@@ -359,7 +449,7 @@ export class HumanRig extends Rig {
   addHeld(geo, bone, extra) {
     const g = new THREE.Group();
     const m = new THREE.Mesh(geo, toon(0xffffff, { vertexColors: true, rim: 0.5 })); m.castShadow = true; g.add(m);
-    if (this.c.outline) addOutline(m, 0.006);
+    if (this.c.outline) addOutline(m, 0.004, 0x2a1c18);
     g.position.set(0, -this.L.hand * 0.36, 0.004);
     if (extra) extra(g);
     this.B[bone].add(g);
@@ -890,7 +980,9 @@ export class HumanRig extends Rig {
     const up = !hat;
     const k = (x) => (x ? 1 : 1e-4);
     if (B.hoodUp) { B.hoodUp.scale.setScalar(k(up)); B.hoodUpN.scale.setScalar(k(up)); B.hoodDn.scale.setScalar(k(!up)); }
-    if (hat) { hat.scale.setScalar(1.12); hat.position.set(0, 0.018, -0.008); }
+    if (B.hairB) B.hairB.scale.setScalar(up ? 0.9 : 1);
+    // the hat mesh (player.js) is modelled for a 0.165 m head
+    if (hat) { const hs = this.L.hr / 0.158; hat.scale.setScalar(1.12 * hs); hat.position.set(0, 0.03 * hs, -0.008 * hs); }
   }
 
   updateFace(dt, s, typing) {

@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { U, noiseTexture } from '../render/materials.js';
 import { mulberry32, smoothstep } from '../core/util.js';
+import { tier } from '../render/quality.js';
 
 const VS = /* glsl */ `
 attribute vec3 iOffset;
@@ -105,8 +106,8 @@ varying vec2 vBlade;
 #include <fog_pars_fragment>
 void main(){
   float sh = 1.0;
-  #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
-    sh = getShadow( directionalShadowMap[ 0 ], directionalLightShadows[ 0 ].shadowMapSize, directionalLightShadows[ 0 ].shadowIntensity, directionalLightShadows[ 0 ].shadowBias, directionalLightShadows[ 0 ].shadowRadius, vDirectionalShadowCoord[ 0 ] );
+  #if defined( USE_SHADOWMAP ) && NUM_SUN_LIGHT_SHADOWS > 0
+    sh = getSunShadow( sunShadowMap[ 0 ], sunLightShadows[ 0 ], 0 );
   #endif
   float lit = sh * vCloud;
   #ifdef FLOWER
@@ -115,7 +116,7 @@ void main(){
     float up = 1.0;
   #else
     float bv = 0.84 + 0.3 * vBlade.x;
-    vec3 root = vColor * vec3(0.42, 0.48, 0.5);
+    vec3 root = vColor * vec3(0.64, 0.72, 0.68);
     vec3 tip = vColor * vec3(1.1, 1.08, 0.86) + vec3(0.02, 0.02, 0.0);
     vec3 base = mix(root, tip, smoothstep(0.0, 1.0, vH)) * bv;
     float up = 0.55 + 0.45 * vH;
@@ -124,7 +125,9 @@ void main(){
   vec3 col = base * (uAmb * (0.75 + 0.25 * vH) + sunL);
   // wind sheen: blades bent by a passing wave catch the light
   col += base * uSun * vWave * vH * vH * 0.45 * (0.3 + 0.7 * lit);
-  gl_FragColor = vec4(col, 1.0);
+  // alpha of the scene target = how much screen-space occlusion a pixel takes (Renderer):
+  // blades shading each other would only read as dirt
+  gl_FragColor = vec4(col, 0.3);
   #include <fog_fragment>
 }`;
 
@@ -216,8 +219,9 @@ export class Grass {
   }
 
   setQuality(q) {
-    this.radius = q === 'high' ? 64 : q === 'medium' ? 50 : 34;
-    this.density = q === 'high' ? 2.6 : q === 'medium' ? 2.0 : 1.2;
+    const T = tier();
+    this.radius = T.grassR;
+    this.density = T.grassD;
     this.flowerRadius = q === 'low' ? 20 : 30;
     this.uni.uFade.value = this.radius;
     for (const c of this.chunks.values()) this.disposeChunk(c);

@@ -90,7 +90,7 @@ function segDist(p, a, b) {
 export class Sculpt {
   constructor(skel) { this.skel = skel; this.buckets = new Map(); this.order = []; this.stats = {}; }
   bucket(mat) {
-    if (!this.buckets.has(mat)) { this.buckets.set(mat, { p: [], n: [], i: [], si: [], sw: [], ol: [] }); this.order.push(mat); }
+    if (!this.buckets.has(mat)) { this.buckets.set(mat, { p: [], n: [], i: [], si: [], sw: [], ol: [], c: [] }); this.order.push(mat); }
     return this.buckets.get(mat);
   }
   // weights: array of bone names (auto, inverse-distance to bone segments),
@@ -117,7 +117,13 @@ export class Sculpt {
     this.stats[mat] = (this.stats[mat] || 0) + part.i.length / 3;
     const base = B.p.length / 3;
     const nrm = computeNormals(part.p, part.i);
+    if (part.nfn) for (let k = 0; k < nrm.length; k += 3) {
+      _pv.set(part.p[k], part.p[k + 1], part.p[k + 2]); _o1.set(nrm[k], nrm[k + 1], nrm[k + 2]);
+      part.nfn(_pv, _o1); _o1.normalize();
+      nrm[k] = _o1.x; nrm[k + 1] = _o1.y; nrm[k + 2] = _o1.z;
+    }
     for (let k = 0; k < part.p.length; k++) { B.p.push(part.p[k]); B.n.push(nrm[k]); }
+    for (let k = 0; k < part.p.length / 3; k++) B.c.push(part.c[k] ?? 1);
     const ol = part.ol ?? 1;
     for (let k = 0; k < part.p.length / 3; k++) B.ol.push(ol);
     for (const x of part.i) B.i.push(x + base);
@@ -128,7 +134,8 @@ export class Sculpt {
     }
     void smooth;
   }
-  // o.color(key) -> hex vertex color; o.group(key) -> material group name.
+  // o.color(key) -> hex vertex color; o.group(key) -> material group name;
+  // o.surf(key) -> surface kind for clothMat (attribute `surf`).
   // Parts sharing a group are drawn with one material (vertex colored).
   build(o = {}) {
     const g = new THREE.BufferGeometry();
@@ -138,7 +145,7 @@ export class Sculpt {
     for (const m of this.order) { const gn = groupOf(m); if (!gmap.has(gn)) { gmap.set(gn, []); groups.push(gn); } gmap.get(gn).push(m); }
     let nv = 0, ni = 0;
     for (const m of this.order) { const B = this.buckets.get(m); nv += B.p.length / 3; ni += B.i.length; }
-    const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3), SI = new Uint16Array(nv * 4), SW = new Float32Array(nv * 4), C = new Float32Array(nv * 3), OL = new Float32Array(nv);
+    const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3), SI = new Uint16Array(nv * 4), SW = new Float32Array(nv * 4), C = new Float32Array(nv * 3), OL = new Float32Array(nv), SF = new Float32Array(nv);
     const I = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
     let vo = 0, io = 0;
     const col = new THREE.Color();
@@ -148,7 +155,8 @@ export class Sculpt {
         const B = this.buckets.get(m);
         P.set(B.p, vo * 3); N.set(B.n, vo * 3); SI.set(B.si, vo * 4); SW.set(B.sw, vo * 4); OL.set(B.ol, vo);
         col.set(o.color ? o.color(m) : 0xffffff);
-        for (let k = 0; k < B.p.length / 3; k++) { C[(vo + k) * 3] = col.r; C[(vo + k) * 3 + 1] = col.g; C[(vo + k) * 3 + 2] = col.b; }
+        const sf = o.surf ? o.surf(m) : 0;
+        for (let k = 0; k < B.p.length / 3; k++) { const sh = B.c[k]; C[(vo + k) * 3] = col.r * sh; C[(vo + k) * 3 + 1] = col.g * sh; C[(vo + k) * 3 + 2] = col.b * sh; SF[vo + k] = sf; }
         for (let k = 0; k < B.i.length; k++) I[io + k] = B.i[k] + vo;
         vo += B.p.length / 3; io += B.i.length;
       }
@@ -160,6 +168,7 @@ export class Sculpt {
     g.setAttribute('skinWeight', new THREE.BufferAttribute(SW, 4));
     g.setAttribute('color', new THREE.BufferAttribute(C, 3));
     g.setAttribute('olw', new THREE.BufferAttribute(OL, 1));
+    g.setAttribute('surf', new THREE.BufferAttribute(SF, 1));
     g.setIndex(new THREE.BufferAttribute(I, 1));
     g.computeBoundingSphere();
     return { geo: g, mats: groups, tris: ni / 3, stats: this.stats };
@@ -184,11 +193,12 @@ export function computeNormals(p, idx) {
 
 // Part helper: positions + weights + indices
 export class Part {
-  constructor(wfn) { this.p = []; this.i = []; this.w = []; this.wfn = wfn; }
+  constructor(wfn) { this.p = []; this.i = []; this.w = []; this.c = []; this.sh = 1; this.wfn = wfn; }
   v(x, y, z, w) {
     const k = this.p.length / 3;
     this.p.push(x, y, z);
     this.w.push(w || this.wfn(_pv.set(x, y, z)));
+    this.c.push(this.sh);
     return k;
   }
   quad(a, b, c, d) { this.i.push(a, b, c, a, c, d); }
@@ -220,7 +230,8 @@ const _pv = new V3(), _o1 = new V3(), _o2 = new V3(), _o3 = new V3();
 // Tube lofted along a smooth curve through `pts`.
 // o: { pts, closed, seg, steps, r(u) -> number | [rx, rz], shape(u, a) -> mult,
 //      off(u) -> [side, front], ref: V3 (front reference), cap0, cap1 (round caps; number = cap length factor),
-//      flat0/flat1 (flat caps), a0/a1 (open angular range for partial tubes), twist(u) }
+//      flat0/flat1 (flat caps), a0/a1 (open angular range for partial tubes), twist(u),
+//      shade(u, a) -> vertex colour multiplier, nfn(p, n) edits the smooth normal in place }
 export function tube(S, mat, w, o) {
   const part = new Part(S.weigher(w));
   const curve = o.curve || new THREE.CatmullRomCurve3(o.pts, !!o.closed, 'centripetal', 0.5);
@@ -249,6 +260,7 @@ export function tube(S, mat, w, o) {
     for (let j = 0; j < seg; j++) {
       const a = (o.a0 !== undefined ? o.a0 + (o.a1 - o.a0) * (j / (seg - 1)) : (j / seg) * TAU) + tw;
       const m = o.shape ? o.shape(u, a) : 1;
+      if (o.shade) part.sh = o.shade(u, a);
       const x = Math.cos(a) * rx * m + (of ? of[0] : 0), z = Math.sin(a) * rz * m + (of ? of[1] : 0);
       out.push(part.v(C.x + Sd.x * x + F.x * z + T.x * shift, C.y + Sd.y * x + F.y * z + T.y * shift, C.z + Sd.z * x + F.z * z + T.z * shift));
     }
@@ -283,7 +295,7 @@ export function tube(S, mat, w, o) {
     return tmpC;
   });
   if (o.inward) part.flip();
-  part.ol = o.ol;
+  part.ol = o.ol; part.nfn = o.nfn;
   S.addPart(mat, part);
   return part;
 }
@@ -294,6 +306,7 @@ function fan(part, ringIdx, pole, rev) {
 
 // Sculpted blob: lat-long sphere around c with radii r, fn(d, p) mutates p
 // (d = unit direction on the sphere, p = ellipsoid point). skip(d) removes faces.
+// lonWarp (0..0.8) packs the meridians towards +Z; shade(d, p), nfn(p, n) as in tube.
 export function blob(S, mat, w, o) {
   const part = new Part(S.weigher(w));
   const ws = o.ws ?? 16, hs = o.hs ?? 12;
@@ -301,20 +314,23 @@ export function blob(S, mat, w, o) {
   const c = o.c;
   const d = new V3(), p = new V3();
   const idx = [];
+  const lw = o.lonWarp ?? 0;
+  const lon = (t) => t * TAU - lw * Math.sin(t * TAU);
   for (let i = 0; i <= hs; i++) {
     const th = (i / hs) * Math.PI;
     const row = [];
     const cnt = i === 0 || i === hs ? 1 : ws;
     for (let j = 0; j < cnt; j++) {
-      const ph = (j / ws) * TAU;
+      const ph = lon(j / ws);
       d.set(Math.sin(th) * Math.sin(ph), Math.cos(th), Math.sin(th) * Math.cos(ph));
       p.set(d.x * rx, d.y * ry, d.z * rz);
       if (o.fn) o.fn(d, p);
+      if (o.shade) part.sh = o.shade(d, p);
       row.push(part.v(c.x + p.x, c.y + p.y, c.z + p.z));
     }
     idx.push(row);
   }
-  const keep = (i, j) => { if (!o.skip) return true; const th = ((i + 0.5) / hs) * Math.PI, ph = ((j + 0.5) / ws) * TAU; d.set(Math.sin(th) * Math.sin(ph), Math.cos(th), Math.sin(th) * Math.cos(ph)); return !o.skip(d); };
+  const keep = (i, j) => { if (!o.skip) return true; const th = ((i + 0.5) / hs) * Math.PI, ph = lon((j + 0.5) / ws); d.set(Math.sin(th) * Math.sin(ph), Math.cos(th), Math.sin(th) * Math.cos(ph)); return !o.skip(d); };
   for (let i = 0; i < hs; i++) {
     for (let j = 0; j < ws; j++) {
       if (!keep(i, j)) continue;
@@ -326,7 +342,7 @@ export function blob(S, mat, w, o) {
   }
   part.orient(o.inside || (() => c));
   if (o.inward) part.flip();
-  part.ol = o.ol;
+  part.ol = o.ol; part.nfn = o.nfn;
   S.addPart(mat, part);
   return { part, idx };
 }
@@ -352,12 +368,13 @@ export function zAt(part, x, y) {
 // Thick cloth sheet: outer surface fn(u, v, out), inner surface offset by
 // `thick` along -normal (normal oriented away from inside(p)). Closes the
 // hem (v = 1), sides (u = 0/1, unless wrap) and optionally the top edge.
+// shade(u, v) -> vertex colour multiplier (innerShade scales it on the lining).
 export function sheet(S, mat, w, o) {
   const nu = o.nu ?? 12, nv = o.nv ?? 8, wrap = !!o.wrap;
   const thick = o.thick ?? 0.012;
   const wf = S.weigher(w);
   const cu = wrap ? nu : nu + 1;
-  const pos = [], nrm = [];
+  const pos = [], nrm = [], shd = [];
   const P = new V3(), A = new V3(), B = new V3(), Nn = new V3();
   const eps = 1e-3;
   for (let j = 0; j <= nv; j++) for (let i = 0; i < cu; i++) {
@@ -369,7 +386,7 @@ export function sheet(S, mat, w, o) {
     Nn.crossVectors(tu, A).normalize();
     const ins = o.inside ? o.inside(P) : new V3(0, P.y, 0);
     if (Nn.dot(_o1.subVectors(P, ins)) < 0) Nn.negate();
-    pos.push(P.clone()); nrm.push(Nn.clone());
+    pos.push(P.clone()); nrm.push(Nn.clone()); shd.push(o.shade ? o.shade(u, v) : 1);
   }
   const id = (i, j) => j * cu + (wrap ? i % nu : i);
   const mk = (sign) => {
@@ -377,6 +394,7 @@ export function sheet(S, mat, w, o) {
     const vi = [];
     for (let k = 0; k < pos.length; k++) {
       const q = pos[k].clone().addScaledVector(nrm[k], sign > 0 ? 0 : -thick);
+      part.sh = sign > 0 ? shd[k] : shd[k] * (o.innerShade ?? 1);
       vi.push(part.v(q.x, q.y, q.z, wf(pos[k])));
     }
     for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) {
@@ -396,6 +414,7 @@ export function sheet(S, mat, w, o) {
     const a = [], b = [];
     for (const k of list) {
       const q0 = pos[k], q1 = pos[k].clone().addScaledVector(nrm[k], -thick);
+      part.sh = shd[k];
       a.push(part.v(q0.x, q0.y, q0.z, wf(q0))); b.push(part.v(q1.x, q1.y, q1.z, wf(q0)));
     }
     for (let k = 0; k < a.length - 1; k++) part.quad(a[k], a[k + 1], b[k + 1], b[k]);
@@ -461,22 +480,38 @@ uniform vec4 uMouth;   // open, smile (+) / frown (-), width, round (o-shape)
 uniform vec4 uMouthP;  // y, lip darkness, teeth, jaw drop scale
 uniform vec4 uCheek;   // blush, wrinkles, freckles, lash thickness
 uniform vec3 uBlushC;
+uniform vec4 uFaceX;   // fringe shadow line y (9 = none), nose tip y, lip tint, lower lashes
 float fLine(float d, float w, float aa) { return 1.0 - smoothstep(w - aa, w + aa, abs(d)); }
 `;
 const FACE_FRAG = `
 #include <color_fragment>
 {
   vec3 q3 = (vObj - uFaceC.xyz) / uFaceC.w;
+  // the jaw's shadow on the throat (a fixed cel shape, as in drawn animation)
+  if (q3.y < -0.8 && q3.y > -2.4 && abs(q3.x) < 0.7 && q3.z < 0.5) {
+    float ns = smoothstep(-1.27 - 0.16 * cos(q3.x * 4.0), -1.22 - 0.16 * cos(q3.x * 4.0), q3.y);
+    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.86, 0.68, 0.68), ns);
+  }
   if (q3.z > 0.05 && q3.y > -1.25 && q3.y < 1.0 && abs(q3.x) < 1.05) {
     vec2 f = q3.xy;
     float aa = max(fwidth(f.x), fwidth(f.y)) * 1.1 + 0.002;
     vec3 col = diffuseColor.rgb;
     float front = smoothstep(0.05, 0.3, q3.z);
+    // ---- fringe shadow on the forehead, nose shadow
+    {
+      float hy = uFaceX.x - 0.05 * cos(f.x * 7.0) - 0.035 * cos(f.x * 19.0 + 1.0);
+      col *= mix(vec3(1.0), vec3(0.88, 0.72, 0.72), smoothstep(hy - aa, hy + aa, f.y) * front);
+      vec2 np = (f - vec2(0.05, uFaceX.y - 0.045)) * vec2(1.0, 1.7);
+      col *= mix(vec3(1.0), vec3(0.84, 0.62, 0.6), (1.0 - smoothstep(0.035 - aa, 0.035 + aa, length(np))) * 0.8);
+    }
     // ---- blush, wrinkles, freckles
     {
       vec2 bc = vec2(abs(f.x) - 0.52, f.y + 0.3);
       float bl = exp(-dot(bc, bc) / 0.022) * uCheek.x;
       col = mix(col, uBlushC, bl * 0.45);
+      // a few hatch strokes across the blush
+      float hat = fLine(fract((bc.x * 0.6 + bc.y) * 14.0) - 0.5, 0.11, aa * 14.0) * step(abs(bc.x), 0.13) * step(abs(bc.y - bc.x * 0.2), 0.045);
+      col = mix(col, uBlushC * 0.9, hat * uCheek.x * 0.35);
       if (uCheek.z > 0.0) {
         vec2 fp = f * 26.0; vec2 cell = floor(fp); vec2 fr = fract(fp) - 0.5;
         float h = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
@@ -505,19 +540,24 @@ const FACE_FRAG = `
     if (inEye > 0.0 && open > 0.08) {
       vec3 sclera = vec3(0.96, 0.95, 0.93);
       // lid shadow on the sclera
-      sclera *= 1.0 - 0.25 * smoothstep(b * 0.55, 0.0, yTop - p.y);
-      vec2 ic = vec2(uLook.x * a * 0.42, uLook.y * b * 0.35 - b * 0.05);
+      sclera *= mix(vec3(1.0), vec3(0.62, 0.66, 0.78), smoothstep(b * 0.6, 0.0, yTop - p.y));
+      vec2 ic = vec2(uLook.x * a * 0.36, uLook.y * b * 0.3 - b * 0.03);
       float ir = b * uLook.z;
-      float di = length((p - ic) * vec2(1.0, 0.92));
-      vec3 iris = mix(uIris * 0.55, uIris * 1.15, smoothstep(-ir, ir, p.y - ic.y));
-      iris = mix(iris, uIris * 0.4, smoothstep(ir * 0.75, ir, di));
+      vec2 dq = (p - ic) * vec2(1.08, 0.94);
+      float di = length(dq);
+      // iris painted like an animation cel: deep under the lid, a glowing crescent below,
+      // fine fibres, a dark limbal ring
+      float up = smoothstep(-ir, ir, p.y - ic.y);
+      vec3 iris = mix(uIris * 1.5 + vec3(0.07), uIris * 0.4, smoothstep(0.12, 0.82, up));
+      iris *= 0.93 + 0.07 * sin(atan(dq.y, dq.x) * 22.0);
+      iris = mix(iris, uIris * 0.2, smoothstep(ir * 0.78, ir * 0.98, di));
       float pr = ir * uLook.w;
       vec3 e = mix(sclera, iris, 1.0 - smoothstep(ir - aa, ir + aa, di));
-      e = mix(e, vec3(0.03, 0.02, 0.04), 1.0 - smoothstep(pr - aa, pr + aa, di));
-      // highlights (same side on both eyes)
-      float h1 = 1.0 - smoothstep(ir * 0.26 - aa, ir * 0.26 + aa, length(p - ic - vec2(ir * 0.38, ir * 0.36)));
-      float h2 = 1.0 - smoothstep(ir * 0.12 - aa, ir * 0.12 + aa, length(p - ic - vec2(-ir * 0.3, -ir * 0.42)));
-      e = mix(e, vec3(1.0), max(h1, h2 * 0.8));
+      e = mix(e, vec3(0.03, 0.02, 0.05), 1.0 - smoothstep(pr - aa, pr + aa * 2.0, di));
+      // catchlights (same side on both eyes): a large one high up, a small one opposite
+      float h1 = 1.0 - smoothstep(ir * 0.3 - aa, ir * 0.3 + aa, length((p - ic - vec2(ir * 0.36, ir * 0.42)) * vec2(1.0, 1.25)));
+      float h2 = 1.0 - smoothstep(ir * 0.13 - aa, ir * 0.13 + aa, length(p - ic - vec2(-ir * 0.34, -ir * 0.4)));
+      e = mix(e, vec3(1.0), max(h1, h2 * 0.85));
       col = mix(col, e, inEye * front);
     }
     // lash line along the upper lid, thicker at the outer corner, with a flick
@@ -531,6 +571,10 @@ const FACE_FRAG = `
     float closedLine = fLine(p.y - arcY, lt * 0.55, aa) * step(abs(xo), a * 1.02) * max(cl, happy);
     // lower lid line (thin, soft)
     float low = fLine(p.y - yBot, b * 0.05, aa) * step(abs(xo), a * 0.85) * smoothstep(0.1, 0.4, open) * 0.45;
+    // lower lashes at the outer third; the fold of the upper lid
+    low = max(low, fLine(p.y - yBot + b * 0.03, b * 0.075, aa) * step(a * 0.35, xo) * step(xo, a * 0.98) * smoothstep(0.3, 0.6, open) * uFaceX.w);
+    float fold = fLine(p.y - yTop - b * (0.3 + 0.1 * bowl), b * 0.028, aa) * step(abs(xo - a * 0.1), a * 0.72) * smoothstep(0.5, 0.8, open) * (1.0 - happy);
+    col = mix(col, col * vec3(0.72, 0.5, 0.48), fold * 0.7 * front);
     col = mix(col, uLash, max(max(lash * smoothstep(0.08, 0.2, open) * (1.0 - happy), closedLine), low) * front);
     // ---- brows
     {
@@ -561,6 +605,9 @@ const FACE_FRAG = `
       float bw = sqrt(max(0.0, 1.0 - xm * xm));
       float cy = uMouth.y * 0.09 * xm * xm - uMouth.y * 0.02;
       float o = uMouth.x;
+      // lip tint and the soft shadow under the lower lip
+      col = mix(col, uBlushC * 0.92, exp(-(xm * xm) * 1.6 - pow((m.y - cy + 0.012) / 0.05, 2.0)) * uFaceX.z * 0.7 * front);
+      col *= mix(vec3(1.0), vec3(0.86, 0.68, 0.66), fLine(m.y - cy + 0.085, 0.014, aa) * step(abs(xm), 0.42) * 0.55 * front);
       float H = 0.2 * (0.55 + uMouth.w * 0.6);
       float yU = cy + o * H * 0.35 * mix(bw, sqrt(bw), uMouth.w) + 0.002;
       float yL = cy - o * H * mix(bw, sqrt(bw), uMouth.w) * (0.8 + 0.2 * uMouthP.w);
@@ -598,12 +645,76 @@ export function faceMat(color, o = {}) {
     uMouthP: { value: new THREE.Vector4(-0.5, 0, 1, 1) },
     uCheek: { value: new THREE.Vector4(0, 0, 0, 0.16) },
     uBlushC: { value: new THREE.Color(0xf09088) },
+    uFaceX: { value: new THREE.Vector4(9, -0.36, 0, 0) },
   };
   m.userData.face = u;
   extend(m, 'face', (sh) => {
     Object.assign(sh.uniforms, u);
     OBJ_VERT(sh);
     sh.fragmentShader = FACE_PARS + sh.fragmentShader.replace('#include <color_fragment>', FACE_FRAG);
+  });
+  return m;
+}
+
+// Clothing and hair: one vertex-coloured material whose response follows the per-vertex
+// `surf` kind (Sculpt.build o.surf): 0 woven cloth, 1 leather, 2 polished metal, 3 hair
+// (strand streaks, a highlight ring around the crown in bind space), 4 matte, 5 gem.
+export const SURF = { cloth: 0, leather: 1, metal: 2, hair: 3, matte: 4, gem: 5 };
+const CLOTH_PARS = `
+varying vec3 vObj;
+varying float vSurf;
+uniform vec4 uHairC;   // head centre (bind space), radius
+`;
+const CLOTH_FRAG = `
+#include <emissivemap_fragment>
+{
+  float _nv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+  float _px = length(fwidth(vObj));
+  if (vSurf < 0.5) {
+    // warp and weft, faded out before the threads alias; soft dye mottling; a nap that
+    // catches light at grazing angles
+    vec3 q = vObj * 1500.0;
+    diffuseColor.rgb *= 1.0 + 0.085 * sin(q.y) * sin(q.x + q.z) * (1.0 - smoothstep(0.0009, 0.0026, _px));
+    diffuseColor.rgb *= 0.95 + 0.1 * _dn(vObj * 11.0);
+    diffuseColor.rgb *= 1.0 + 0.16 * pow(1.0 - _nv, 3.0);
+  } else if (vSurf < 1.5) {
+    float g = _dn(vObj * 210.0) * (1.0 - smoothstep(0.002, 0.006, _px));
+    diffuseColor.rgb *= (0.93 + 0.14 * g) * (0.9 + 0.2 * _dn(vObj * 17.0));
+    _specK = 2.6; _rough = 0.4;
+  } else if (vSurf < 2.5) {
+    // the sky above and the ground below, mirrored in a few hard bands
+    float e = reflect(-normalize(vViewPosition), normal).y;
+    diffuseColor.rgb *= 0.62 + 0.42 * smoothstep(-0.25, -0.1, e) + 0.3 * smoothstep(0.42, 0.5, e);
+    _specK = 7.0; _rough = 0.26;
+  } else if (vSurf < 3.5) {
+    vec3 hd = vObj - uHairC.xyz;
+    float hl = length(hd) / uHairC.w;
+    hd = normalize(hd);
+    float lon = atan(hd.x, hd.z);
+    float st = _dn(vec3(lon * 13.0, hd.y * 1.2, hl * 0.7));
+    float fine = _dn(vec3(lon * 46.0, hd.y * 2.0, hl * 1.4));
+    diffuseColor.rgb *= 0.9 + 0.12 * st + 0.08 * fine;
+    // highlight ring, toothed along the strands, on the side that faces the viewer
+    float ring = abs(hd.y - 0.5 - (st - 0.5) * 0.3 - (fine - 0.5) * 0.12);
+    float band = (1.0 - smoothstep(0.035, 0.075, ring)) * smoothstep(1.55, 1.2, hl) * smoothstep(0.25, 0.6, _nv);
+    diffuseColor.rgb += (diffuseColor.rgb * 0.7 + 0.16) * band * 0.75;
+    _specK = 1.2; _rough = 0.5;
+  } else if (vSurf > 4.5) {
+    float e = reflect(-normalize(vViewPosition), normal).y;
+    diffuseColor.rgb *= 0.75 + 0.6 * smoothstep(0.1, 0.3, e);
+    totalEmissiveRadiance += diffuseColor.rgb * 0.3;
+    _specK = 9.0; _rough = 0.18;
+  }
+}
+`;
+export function clothMat(o = {}) {
+  const m = bodyMat(0xffffff, { vertexColors: true, rim: o.rim ?? 0.34 });
+  const u = { uHairC: { value: new THREE.Vector4(0, 1.6, 0, 0.13) } };
+  m.userData.cloth = u;
+  extend(m, 'cloth', (sh) => {
+    Object.assign(sh.uniforms, u);
+    sh.vertexShader = 'attribute float surf;\nvarying float vSurf;\nvarying vec3 vObj;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvObj = position; vSurf = surf;');
+    sh.fragmentShader = CLOTH_PARS + sh.fragmentShader.replace('#include <emissivemap_fragment>', CLOTH_FRAG);
   });
   return m;
 }
@@ -682,16 +793,22 @@ export function stripeMat(color, stripe, o = {}) {
 
 // Outline hull material with a per-vertex width (attribute olw; 0 = no outline)
 const olCache = new Map();
-export function olMat(color = 0x1a1410, width = 0.012) {
-  const key = color + '|' + width;
+// tint: the line takes a darkened version of the surface's own vertex colour
+// smooth: the hull grows along `onrm` (normals welded across split vertices), so it stays closed
+export function olMat(color = 0x1a1410, width = 0.012, tint = false, smooth = false) {
+  const key = color + '|' + width + '|' + tint + '|' + smooth;
   if (olCache.has(key)) return olCache.get(key);
-  const m = new THREE.MeshBasicMaterial({ color, side: THREE.BackSide });
+  const m = new THREE.MeshBasicMaterial({ color: tint ? 0x6c5258 : color, side: THREE.BackSide, vertexColors: tint });
   const w = { value: width };
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uOutline = w;
-    sh.vertexShader = 'uniform float uOutline;\nattribute float olw;\n' + sh.vertexShader.replace('#include <begin_vertex>', 'vec3 transformed = position + normalize(normal) * uOutline * olw;');
+    sh.vertexShader = 'uniform float uOutline;\nattribute float olw;\n' + (smooth ? 'attribute vec3 onrm;\n' : '') + sh.vertexShader
+      .replace('#include <begin_vertex>', `vec3 transformed = position + normalize(${smooth ? 'onrm' : 'normal'}) * uOutline * olw;`)
+      // pushed back along the view ray: the line survives across real depth gaps (silhouettes,
+      // an arm in front of the chest) but not where two parts of one surface meet
+      .replace('#include <project_vertex>', '#include <project_vertex>\nmvPosition.xyz += normalize(mvPosition.xyz) * (0.022 * olw);\ngl_Position = projectionMatrix * mvPosition;');
   };
-  m.customProgramCacheKey = () => 'olw';
+  m.customProgramCacheKey = () => 'olw2' + smooth;
   olCache.set(key, m);
   return m;
 }
@@ -780,7 +897,7 @@ export function instance(parent, def, built, mats, o = {}) {
   if (o.outline) {
     // one hull for the whole body (full geometry), bound to the same skeleton
     const full = built.fullOl || (built.fullOl = built.geo);
-    const ol = new THREE.SkinnedMesh(full, full.attributes.olw ? olMat(o.outlineColor ?? 0x1a1410, o.outline) : outlineMat(o.outlineColor ?? 0x1a1410, o.outline));
+    const ol = new THREE.SkinnedMesh(full, full.attributes.olw ? olMat(o.outlineColor ?? 0x1a1410, o.outline, !!o.outlineTint, !!full.attributes.onrm) : outlineMat(o.outlineColor ?? 0x1a1410, o.outline));
     ol.bind(skeleton, mesh.bindMatrix);
     ol.castShadow = false; ol.receiveShadow = false;
     ol.userData.isOutline = true;

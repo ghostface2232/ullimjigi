@@ -18,8 +18,11 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { toon } from '../render/materials.js';
+import { tier } from '../render/quality.js';
+import { SHADOW_LAYER } from '../render/renderer.js';
 import { mulberry32, fbm, smoothstep, lerp, clamp } from '../core/util.js';
 import { POI } from './layout.js';
+import { authoredParts } from './buildings.js';
 
 const V = new THREE.Vector3(), V2 = new THREE.Vector3(), V3 = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
@@ -32,11 +35,22 @@ const hash3 = (x, y, z) => { const s = Math.sin(x * 127.1 + y * 311.7 + z * 74.7
 // ---------------------------------------------------------------------------
 // Indexed geometry accumulator: position, normal, RGBA colour.
 class Mesher {
-  constructor() { this.p = []; this.n = []; this.c = []; this.i = []; }
+  constructor() { this.p = []; this.n = []; this.c = []; this.k = []; this.i = []; this.ci = []; }
   get count() { return this.p.length / 3; }
   vert(p, n, c, a = 0) {
     this.p.push(p.x, p.y, p.z); this.n.push(n.x, n.y, n.z); this.c.push(c.r, c.g, c.b, a);
+    this.k.push(0, 0, 0, 0);
     return this.count - 1;
+  }
+  // Foliage card: four vertices at one point that the shader spreads out facing the viewer
+  // (materials.js LEAF_CARDS). size: half-width (m); seed 0..1 picks the leaf clump and its turn.
+  card(p, n, c, size, seed) {
+    const b = this.count;
+    for (let q = 0; q < 4; q++) {
+      this.p.push(p.x, p.y, p.z); this.n.push(n.x, n.y, n.z); this.c.push(c.r, c.g, c.b, 1);
+      this.k.push(q === 0 || q === 3 ? -1 : 1, q < 2 ? -1 : 1, size, seed);
+    }
+    this.ci.push(b, b + 1, b + 2, b, b + 2, b + 3);
   }
   tri(a, b, c) { this.i.push(a, b, c); }
   quad(a, b, c, d) { this.i.push(a, b, c, a, c, d); }
@@ -45,7 +59,9 @@ class Mesher {
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute(this.n, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 4));
-    g.setIndex(this.i);
+    g.setAttribute('aCard', new THREE.Float32BufferAttribute(this.k, 4));
+    // solid parts first: they fill the depth buffer before the alpha-edged cards are shaded
+    g.setIndex(this.i.concat(this.ci));
     g.computeBoundingSphere(); g.computeBoundingBox();
     return g;
   }
@@ -62,24 +78,47 @@ const ICO = [0, 1, 2].map((d) => {
 // Leaf puff: a soft jittered sphere whose normals lean towards the whole
 // crown's shape (soft painterly volume) instead of the puff's own centre.
 // crown = { c, rx, ry } ellipsoid; colorFn(out, p, own, crownDir) -> alpha.
+// o.cards = { n, size }: the sphere shrinks to a dark core and n leaf cards (half-width
+// size x r) cover it, which is what gives a crown its leafy outline and depth.
 function puff(M, c, r, detail, seed, o) {
   const jr = mulberry32(seed);
   const { pos, idx } = ICO[detail];
   const flat = o.flat ?? 0.88, jit = o.jit ?? 0.3, bend = o.bend ?? 0.58;
-  const cr = o.crown;
+  const cr = o.crown, K = o.cards;
   const base = M.count, col = new THREE.Color();
   const sx = o.sx ?? 1, sz = o.sz ?? 1;
+  const rc = K ? r * 0.7 : r;
+  const cd = new THREE.Vector3(), n = new THREE.Vector3();
+  const shade = (p, own, bnd) => {
+    cd.set((p.x - cr.c.x) / cr.rx, (p.y - cr.c.y) / cr.ry, (p.z - cr.c.z) / cr.rx).normalize();
+    n.copy(own).multiplyScalar(1 - bnd).addScaledVector(cd, bnd).addScaledVector(UP, 0.12).normalize();
+    return o.color(col, p, own, cd);
+  };
   for (let k = 0; k < pos.length; k += 3) {
     const d = V.set(pos[k], pos[k + 1], pos[k + 2]);
     const kk = 1 + (jr() - 0.5) * jit * (detail ? 1 : 0.7);
-    const p = V2.set(c.x + d.x * r * kk * sx, c.y + d.y * r * kk * flat, c.z + d.z * r * kk * sz);
+    const p = V2.set(c.x + d.x * rc * kk * sx, c.y + d.y * rc * kk * flat, c.z + d.z * rc * kk * sz);
     const own = V3.set(d.x / sx, d.y / flat, d.z / sz).normalize();
-    const cd = new THREE.Vector3((p.x - cr.c.x) / cr.rx, (p.y - cr.c.y) / cr.ry, (p.z - cr.c.z) / cr.rx).normalize();
-    const n = new THREE.Vector3().copy(own).multiplyScalar(1 - bend).addScaledVector(cd, bend).addScaledVector(UP, 0.12).normalize();
-    const a = o.color(col, p, own, cd);
+    const a = shade(p, own, bend);
+    if (K) col.multiplyScalar(0.5);
     M.vert(p, n, col, a);
   }
   for (let k = 0; k < idx.length; k++) M.i.push(base + idx[k]);
+  if (!K) return;
+  const kr = mulberry32((seed ^ 0x5bd1e995) >>> 0);
+  for (let i = 0; i < K.n; i++) {
+    // even spread over the sphere (Fibonacci spiral), thinning out underneath
+    const y = 1 - ((i + 0.5) / K.n) * 1.72;
+    const rad = Math.sqrt(Math.max(0, 1 - y * y)), th = i * 2.3999632 + kr() * 0.9;
+    const d = V.set(Math.cos(th) * rad, y, Math.sin(th) * rad);
+    // two shells: every third card sits deeper, so gaps in the outer layer show leaves, not the core
+    const kk = (i % 3 === 2 ? 0.74 : 0.92) + kr() * 0.2;
+    const p = V2.set(c.x + d.x * r * kk * sx, c.y + d.y * r * kk * flat, c.z + d.z * r * kk * sz);
+    const own = V3.set(d.x / sx, d.y / flat, d.z / sz).normalize();
+    shade(p, own, Math.min(0.9, bend + 0.14));
+    col.multiplyScalar((i % 3 === 2 ? 0.78 : 0.95) + kr() * 0.14);
+    M.card(p, n, col, r * K.size * (0.8 + kr() * 0.45) * Math.max(0.55, Math.min(1, (sx + sz) * 0.5 + 0.2)), kr());
+  }
 }
 
 // Tube along a polyline with per-point radius. Parallel-transport frames,
@@ -183,6 +222,9 @@ function leafColor(o) {
   };
 }
 
+// Leaf cards per puff: many small ones on the near model, a few large ones on the far model.
+const leafCards = (detail) => (detail ? { n: 46, size: 0.44 } : { n: 14, size: 0.7 });
+
 // Sub-crown: a cluster of puffs around an anchor, mostly on its upper/outer side.
 function subCrown(M, rnd, anchor, R, count, detail, crown, colorer, o = {}) {
   const hue = (rnd() - 0.5) * (o.hueJit ?? 0.05), lum = 0.92 + rnd() * 0.14;
@@ -198,7 +240,7 @@ function subCrown(M, rnd, anchor, R, count, detail, crown, colorer, o = {}) {
     const r = R * (center ? 0.72 : 0.42 + rnd() * 0.22) * (o.rs ?? 1);
     const seed = Math.floor(rnd() * 1e9);
     if (o.skip && o.skip(i, r)) continue;
-    puff(M, pc, r, detail, seed, { crown, color: colorFn, flat: o.flat ?? 0.86, bend: o.bend ?? 0.58, jit: o.jit ?? 0.34 });
+    puff(M, pc, r, detail, seed, { crown, color: colorFn, flat: o.flat ?? 0.86, bend: o.bend ?? 0.58, jit: o.jit ?? 0.34, cards: o.cards === undefined ? leafCards(detail) : o.cards });
   }
 }
 
@@ -364,7 +406,7 @@ function willow(seed, lod, opts = {}) {
     const seedS = Math.floor(rnd() * 1e9);
     if (lod && i % 2) continue;
     const sc = { c: new THREE.Vector3(top.x, cy + 1.5, top.z), rx: R, ry: L + 1.5 };
-    puff(M, c, L * 0.5, lod ? 0 : 1, seedS, { crown: sc, color: strandCol(sc, 0, 1), flat: 1, sx: 0.32, sz: 0.32, jit: 0.25, bend: 0.4 });
+    puff(M, c, L * 0.5, lod ? 0 : 1, seedS, { crown: sc, color: strandCol(sc, 0, 1), flat: 1, sx: 0.32, sz: 0.32, jit: 0.25, bend: 0.4, cards: lod ? { n: 5, size: 0.42 } : { n: 16, size: 0.3 } });
   }
   return M.geometry();
 }
@@ -751,7 +793,18 @@ function layeredRock(seed, detail, o = {}) {
   }
   return mergeGeometries(parts);
 }
+// Sculpted rock from public/models/pr_rocks.glb (ref/blender/props/rocks.py): near or far model
+// of the named rock, or null when the file is missing. Cloned: the scatter adds `aFade` to it.
+export function rockModel(name, lod) {
+  const P = authoredParts('rocks'), part = P && P[name + (lod ? '_f' : '_n')];
+  return part ? part[0].geo.clone() : null;
+}
+// the authored rock standing in for each code-built variant (kind + seed)
+const ROCK_MODEL = { round181: 'roundA', round184: 'roundB', layer182: 'layerA', flat183: 'flatA', spire191: 'spireA', layer192: 'layerB', round193: 'cragA', crag194: 'cragB', round201: 'snowRound', spire202: 'snowSpire' };
 function rockVariant(kind, seed, lod, o = {}) {
+  const authored = ROCK_MODEL[kind + seed] && rockModel(ROCK_MODEL[kind + seed], lod);
+  if (authored) return authored;
+  if (kind === 'crag') kind = 'round';
   const d = lod ? 0 : 1;
   if (kind === 'layer') return layeredRock(seed, d, o);
   if (kind === 'spire') return rockShape(seed, d, { scale: [0.7, 1.7, 0.65], cuts: 6, jit: 0.22, bands: 7, ...o });
@@ -763,16 +816,16 @@ function rockVariant(kind, seed, lod, o = {}) {
 // Instanced scatter with per-instance LOD + culling
 const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpS = new THREE.Vector3(), tmpP = new THREE.Vector3(), tmpC = new THREE.Color();
 const frustum = new THREE.Frustum(), projM = new THREE.Matrix4(), sph = new THREE.Sphere();
-export const SHADOW_LAYER = 5;
+export { SHADOW_LAYER };
 
 export class Props {
   constructor(scene, terrain, colliders, quality = 'high') {
     this.scene = scene; this.T = terrain; this.col = colliders;
     this.quality = quality;
     // lodFade: near and far models cross-fade with a dither across the LOD band (update())
-    const tree = toon(0xffffff, { vertexColors: true, sway: 0.028, swayBase: 2.4, rim: 0.35, tex: 'bark', leafy: true, lodFade: true });
+    const tree = toon(0xffffff, { vertexColors: true, sway: 0.028, swayBase: 2.4, rim: 0.35, tex: 'bark', leafy: true, lodFade: true, cards: true });
     const fir = toon(0xffffff, { vertexColors: true, sway: 0.02, swayBase: 1.6, rim: 0.3, tex: 'bark', leafy: true, lodFade: true });
-    const shrub = toon(0xffffff, { vertexColors: true, sway: 0.05, swayBase: 0, rim: 0.3, tex: 'bark', leafy: true, lodFade: true });
+    const shrub = toon(0xffffff, { vertexColors: true, sway: 0.05, swayBase: 0, rim: 0.3, tex: 'bark', leafy: true, lodFade: true, cards: true });
     const ground = toon(0xffffff, { vertexColors: true, sway: 0.09, swayBase: 0.05, rim: 0.25, side: THREE.DoubleSide, lodFade: true });
     const solid = toon(0xffffff, { vertexColors: true, rim: 0.3, tex: 'bark', lodFade: true });
     const rockMat = toon(0xffffff, { vertexColors: true, flat: true, rim: 0.15, tex: 'rock', lodFade: true });
@@ -780,6 +833,8 @@ export class Props {
     this.mats = { tree, fir, shrub, ground, solid, rockMat, small };
     // variants: [nearGeo, farGeo|null]; near: LOD switch distance; max: draw distance
     const pair = (fn) => [fn(false), fn(true)];
+    // the sculpted rocks stand on the ground line with a skirt below it; the code-built ones were half buried
+    const rockSunk = authoredParts('rocks') ? 0.15 : 0.4;
     const T = (variants, mat, o = {}) => ({ variants, mat, items: [], shadow: o.shadow ?? true, near: o.near ?? 42, max: o.max ?? 1e9, tint: o.tint ?? 0.06, sunk: o.sunk ?? 0.15, keep: o.keep ?? 52 });
     const oak = (s, o) => pair((l) => broadleaf(s, l, o));
     this.types = {
@@ -799,10 +854,10 @@ export class Props {
       mushroom: T([[mushrooms(141), null]], small, { shadow: false, max: 55, tint: 0.05, sunk: 0.02, keep: 0 }),
       log: T([[fallenLog(151), null], [fallenLog(152), null]], solid, { shadow: true, max: 140, near: 1e9, keep: 30 }),
       stump: T([[stump(161), null], [stump(162), null]], solid, { shadow: true, max: 120, near: 1e9, keep: 30 }),
-      pebbles: T([[pebbles(171), null], [pebbles(172), null]], rockMat, { shadow: false, max: 75, tint: 0.12, sunk: 0.02, keep: 0 }),
-      rock: T([pair((l) => rockVariant('round', 181, l)), pair((l) => rockVariant('round', 184, l)), pair((l) => rockVariant('layer', 182, l)), pair((l) => rockVariant('flat', 183, l, { moss: 0.5 }))], rockMat, { tint: 0.1, near: 70, sunk: 0.4 }),
-      rockBig: T([pair((l) => rockVariant('spire', 191, l)), pair((l) => rockVariant('layer', 192, l)), pair((l) => rockVariant('round', 193, l, { cuts: 7 }))], rockMat, { tint: 0.1, near: 110, sunk: 0.45 }),
-      rockSnow: T([pair((l) => rockVariant('round', 201, l, { snow: 0.85, moss: 0, tone: 0x8e929a })), pair((l) => rockVariant('spire', 202, l, { snow: 0.8, moss: 0, tone: 0x8a8e98 }))], rockMat, { tint: 0.08, near: 80, sunk: 0.4 }),
+      pebbles: T([[rockModel('pebblesA', 0) || pebbles(171), null], [rockModel('pebblesB', 0) || pebbles(172), null]], rockMat, { shadow: false, max: 75, tint: 0.12, sunk: 0.02, keep: 0 }),
+      rock: T([pair((l) => rockVariant('round', 181, l)), pair((l) => rockVariant('round', 184, l)), pair((l) => rockVariant('layer', 182, l)), pair((l) => rockVariant('flat', 183, l, { moss: 0.5 }))], rockMat, { tint: 0.1, near: 70, sunk: rockSunk }),
+      rockBig: T([pair((l) => rockVariant('spire', 191, l)), pair((l) => rockVariant('layer', 192, l)), pair((l) => rockVariant('round', 193, l, { cuts: 7 })), pair((l) => rockVariant('crag', 194, l, { cuts: 7 }))], rockMat, { tint: 0.1, near: 110, sunk: rockSunk }),
+      rockSnow: T([pair((l) => rockVariant('round', 201, l, { snow: 0.85, moss: 0, tone: 0x8e929a })), pair((l) => rockVariant('spire', 202, l, { snow: 0.8, moss: 0, tone: 0x8a8e98 }))], rockMat, { tint: 0.08, near: 80, sunk: rockSunk }),
     };
     for (const t of Object.values(this.types)) {
       t.bounds = t.variants.map(([g]) => { g.computeBoundingBox(); g.computeBoundingSphere(); return { top: g.boundingBox.max.y, r: g.boundingSphere.radius, cy: g.boundingSphere.center.y, rxz: Math.max(-g.boundingBox.min.x, g.boundingBox.max.x, -g.boundingBox.min.z, g.boundingBox.max.z) }; });
@@ -1011,8 +1066,8 @@ export class Props {
           cols[i * 3] = tmpC.r; cols[i * 3 + 1] = tmpC.g; cols[i * 3 + 2] = tmpC.b;
           sphs[i * 4] = it.x; sphs[i * 4 + 1] = it.y + b.cy * it.sy; sphs[i * 4 + 2] = it.z; sphs[i * 4 + 3] = b.r * Math.max(it.s, it.sy) + 1;
         });
-        // Shadows come from a proxy on SHADOW_LAYER (seen only by the sun's
-        // shadow camera) using the cheap far model, so near detail isn't drawn twice.
+        // Shadows come from a proxy on SHADOW_LAYER (drawn only in the shadow pass, see
+        // Renderer) using the cheap far model, so near detail isn't drawn twice.
         const mk = (geo, kind) => {
           // every props geometry carries the fade attribute (zeros where it never fades), so the
           // shader never reads an unbound attribute slot
@@ -1037,13 +1092,10 @@ export class Props {
     this.dirty = false;
   }
 
-  // Re-sort instances into near/far meshes for the current camera.
-  update(camera) {
+  // Re-sort instances into near/far meshes for the current camera. mirror: a second frustum
+  // (the water's reflected view) whose contents are kept as well.
+  update(camera, mirror = null) {
     if (this.dirty) this.buildMeshes();
-    if (!this.sunLayer) {
-      const sun = this.scene.children.find((o) => o.isDirectionalLight && o.castShadow);
-      if (sun) { sun.shadow.camera.layers.enable(SHADOW_LAYER); this.sunLayer = true; }
-    }
     const L = this.last;
     camera.getWorldDirection(V);
     const moved = camera.position.distanceToSquared(L.p) > 1.2 * 1.2 || V.dot(L.d) < 0.9975;
@@ -1053,6 +1105,8 @@ export class Props {
     projM.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     frustum.setFromProjectionMatrix(projM);
     const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+    // shadow proxies: everything the sun's cascades can reach (casters behind the camera included)
+    const shR = tier().shadowDist * 1.1 + 12, sh2 = shR * shR;
     for (const b of this.batches) {
       const { t, mats, cols, sphs, n } = b;
       const nA = b.near.instanceMatrix.array, nC = b.near.instanceColor.array;
@@ -1067,10 +1121,10 @@ export class Props {
         const dx = sphs[i * 4] - cx, dy = sphs[i * 4 + 1] - cy, dz = sphs[i * 4 + 2] - cz;
         const d2 = dx * dx + dy * dy + dz * dz;
         if (d2 > max2) continue;
-        if (sA && d2 < keep2) { for (let k = 0; k < 16; k++) sA[ns * 16 + k] = mats[i * 16 + k]; ns++; }
+        if (sA && d2 < sh2) { for (let k = 0; k < 16; k++) sA[ns * 16 + k] = mats[i * 16 + k]; ns++; }
         if (d2 > keep2) {
           sph.center.set(sphs[i * 4], sphs[i * 4 + 1], sphs[i * 4 + 2]); sph.radius = sphs[i * 4 + 3];
-          if (!frustum.intersectsSphere(sph)) continue;
+          if (!frustum.intersectsSphere(sph) && !(mirror && mirror.intersectsSphere(sph))) continue;
         }
         const fade = d2 <= b02 ? 0 : d2 >= b12 ? 1 : (Math.sqrt(d2) - b0) / (b1 - b0);
         if (fade < 1) {
@@ -1110,7 +1164,7 @@ export function makeTree(kind = 'oak', seed = 1, opts = {}) {
   else if (kind === 'willow') geo = willow(seed, false, opts);
   else if (kind === 'birch') geo = birch(seed, false);
   else geo = broadleaf(seed, false, opts);
-  const m = new THREE.Mesh(geo, toon(0xffffff, { vertexColors: true, sway: opts.sway ?? 0.018, swayBase: opts.swayBase ?? 3, rim: 0.35, tex: 'bark', leafy: true }));
+  const m = new THREE.Mesh(geo, toon(0xffffff, { vertexColors: true, sway: opts.sway ?? 0.018, swayBase: opts.swayBase ?? 3, rim: 0.35, tex: 'bark', leafy: true, cards: true }));
   m.castShadow = true; m.receiveShadow = true;
   return m;
 }

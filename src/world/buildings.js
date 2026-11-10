@@ -11,6 +11,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { toon, fresnelMat, glowMat, U } from '../render/materials.js';
 import { mulberry32 } from '../core/util.js';
 import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
+import { model } from '../render/models.js';
 
 export const MAT = {
   stone: toon(0xb8ad9a, { flat: true, rim: 0.2, tex: 'stone' }),
@@ -171,6 +172,65 @@ export function consolidate(g, keep = []) {
   }
   return g;
 }
+
+// ------------------------------------------------------------------
+// Authored props: public/models/pr_<name>.glb, modelled in Blender (ref/blender/props/*.py).
+// All colour is in the vertices (albedo with baked occlusion and edge wear); the Blender
+// material name picks the game material, the object name ("PR_<name>__<group>") the part.
+const AMAT = {
+  paint: MAT.paint,
+  cloth: MAT.paintDS,
+  stone: toon(0xffffff, { vertexColors: true, rim: 0.25, tex: 'rock' }),
+  metal: toon(0xffffff, { vertexColors: true, rim: 0.9, emissive: 0x1c1204 }),
+  iron: toon(0xffffff, { vertexColors: true, rim: 0.5 }),
+  glass: windowMat,
+};
+const partCache = new Map();
+// { group: [{ geo, mat }] } with geometry in the game's layout (position, normal, RGBA colour), or null
+export function authoredParts(name) {
+  if (partCache.has(name)) return partCache.get(name);
+  const src = model('pr_' + name);
+  let out = null;
+  if (src) {
+    out = {};
+    src.scene.updateMatrixWorld(true);
+    src.scene.traverse((m) => {
+      if (!m.isMesh) return;
+      // a part with several materials arrives as a group of meshes under the part's node
+      const n = m.parent && m.parent.name.includes('__') ? m.parent : m;
+      const grp = n.name.split('__')[1] || 'body';
+      const g = new THREE.BufferGeometry();
+      g.setIndex(m.geometry.index);
+      g.setAttribute('position', m.geometry.attributes.position.clone());
+      g.setAttribute('normal', m.geometry.attributes.normal.clone());
+      const c = m.geometry.attributes.color, cnt = g.attributes.position.count, col = new Float32Array(cnt * 4);
+      for (let i = 0; i < cnt; i++) {
+        col[i * 4] = c ? c.getX(i) : 1; col[i * 4 + 1] = c ? c.getY(i) : 1; col[i * 4 + 2] = c ? c.getZ(i) : 1;
+        col[i * 4 + 3] = c && c.itemSize > 3 ? c.getW(i) : 0;
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(col, 4));
+      g.applyMatrix4(m.matrixWorld);
+      g.computeBoundingSphere(); g.computeBoundingBox();
+      (out[grp] ||= []).push({ geo: g, mat: AMAT[m.material.name.replace(/^PR_/, '')] || MAT.paint, key: m.material.name.replace(/^PR_/, '') });
+    });
+  }
+  partCache.set(name, out);
+  return out;
+}
+// Add one group of an authored model to `parent`; null when the model is not there.
+// o: { mats: { key: material } to override, cast }
+function authored(name, grp, parent, o = {}) {
+  const P = authoredParts(name);
+  if (!P || !P[grp]) return null;
+  const meshes = P[grp].map(({ geo, mat, key }) => {
+    const m = new THREE.Mesh(geo, (o.mats && o.mats[key]) || mat);
+    m.castShadow = o.cast ?? true; m.receiveShadow = true;
+    if (parent) parent.add(m);
+    return m;
+  });
+  return meshes;
+}
+const has = (name) => !!authoredParts(name);
 
 // Paving stone (vertex-coloured, stone surface), rotated about y
 export function pstone(p, w, h, d, color, x, y, z, ry = 0) { return pbox(w, h, d, color, x, y, z, p, { mat: MAT.paintStone, ry, cast: false }); }
@@ -1082,6 +1142,13 @@ export function lanternStone() {
 // Brazier: iron bowl with a rolled rim and studs on three curved legs over a stone slab
 export function brazier() {
   const g = new THREE.Group();
+  if (authored('brazier', 'body', g)) {
+    // the coal heap is one mesh: world.js swaps a lit / cold material on it
+    const coal = new THREE.Mesh(authoredParts('brazier').coal[0].geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(0.15, 0.1, 0.1) }));
+    g.add(coal);
+    g.userData = { coal, fireY: 1.6 };
+    return g;
+  }
   cyl(0.72, 0.8, 0.2, 8, MAT.stoneDark, 0, 0.08, 0, g);
   const bowlMat = toon(0x4a4a50, { rim: 0.5, side: THREE.DoubleSide });
   for (let i = 0; i < 3; i++) {
@@ -1375,6 +1442,11 @@ export function grave() {
 export function dummy() {
   const g = new THREE.Group();
   const pivot = new THREE.Group(); g.add(pivot);
+  if (authored('dummy', 'pivot', pivot)) {
+    authored('dummy', 'base', g);   // the wedge stones stay put when the scarecrow wobbles
+    g.userData = { pivot };
+    return g;
+  }
   cyl(0.08, 0.1, 2.2, 6, MAT.timber, 0, 1.1, 0, pivot);
   cyl(0.06, 0.06, 1.6, 6, MAT.timber, 0, 1.6, 0, pivot, { rz: Math.PI / 2 });
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.35, 10, 8), MAT.straw); head.position.y = 2.3; head.castShadow = true; pivot.add(head);
@@ -1391,6 +1463,34 @@ export function dummy() {
 export function targetCrystal(color = 0xb894ff) {
   const g = new THREE.Group();
   const mat = crystalMaterial({ color, intensity: 1.15, seed: 3 });
+  if (has('tcrystal')) {
+    // a slim crystal held by gold caps, inside an engraved ring that carries three shards
+    const c = new THREE.Group(); g.add(c);
+    const gem = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 11, radius: 0.36, tip: 0.62, tip2: 0.5 }), mat);
+    gem.scale.setScalar(0.62); c.add(gem);
+    authored('tcrystal', 'cap', c, { cast: false });
+    // world.js spins the ring about its local z, so the ring group lies on its side and the
+    // (upright) model is turned back inside it
+    const ring = new THREE.Group(); ring.rotation.x = Math.PI / 2; g.add(ring);
+    const band = new THREE.Group(); band.rotation.x = -Math.PI / 2; ring.add(band);
+    authored('tcrystal', 'ring', band, { cast: false });
+    const line = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.007, 4, 64), glowMat(color, 0.9));
+    line.position.z = -0.022; ring.add(line);
+    const qInv = new THREE.Quaternion().setFromEuler(ring.rotation).invert();
+    const qW = new THREE.Quaternion(), eW = new THREE.Euler();
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2;
+      const s = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 90 + i, radius: 0.36 }), mat);
+      s.scale.setScalar(0.12);
+      s.position.set(Math.cos(a) * 0.9, Math.sin(a) * 0.9, -0.13);
+      qW.setFromEuler(eW.set(0, -a, 0.12 * (i % 2 ? 1 : -1), 'YXZ'));
+      s.quaternion.copy(qInv).multiply(qW);
+      ring.add(s);
+    }
+    g.add(crystalGlowSprite(color, 3.2, { intensity: 0.3 }));
+    g.userData = { c, ring };
+    return g;
+  }
   const c = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 11, radius: 0.48 }), mat);
   c.scale.setScalar(0.62); g.add(c);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.022, 6, 48), glowMat(color, 0.9));
@@ -1416,6 +1516,7 @@ export function targetCrystal(color = 0xb894ff) {
 // Training yard furniture: straw target on an easel, weapon rack
 export function strawTarget() {
   const g = new THREE.Group();
+  if (authored('strawtarget', 'body', g)) return g;
   for (const sx of [-1, 1]) stick(new THREE.Vector3(sx * 0.55, 0, 0.3), new THREE.Vector3(sx * 0.2, 2.0, -0.05), 0.05, MAT.timber, g);
   stick(new THREE.Vector3(0, 0, -0.7), new THREE.Vector3(0, 1.8, -0.1), 0.05, MAT.timber, g);
   const tg = new THREE.Group(); tg.position.set(0, 1.35, 0.06); tg.rotation.x = -0.12; g.add(tg);
@@ -1425,6 +1526,10 @@ export function strawTarget() {
 }
 export function weaponRack(rnd = Math.random) {
   const g = new THREE.Group();
+  if (authored('weaponrack', 'body', g)) {
+    for (let i = 0; i < 5; i++) rnd();   // the caller's random sequence stays as it was
+    return g;
+  }
   for (const sx of [-1, 1]) box(0.12, 1.4, 0.12, MAT.timber, sx * 0.9, 0.7, 0, g);
   box(2.0, 0.1, 0.14, MAT.timber, 0, 1.25, 0, g);
   box(2.0, 0.1, 0.3, MAT.timber, 0, 0.12, 0.05, g);

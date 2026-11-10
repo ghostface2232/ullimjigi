@@ -21,6 +21,11 @@
 // MODULES: charkit.js (sculpt/skin/IK/verlet toolkit), humanoid.js + humanrig.js (people),
 //   creatures.js (fox, cat, CreatureRig), enemybodies.js / enemycreatures.js (enemies).
 //   Geometry is built once per type and shared; bones, materials and springs are per instance.
+//   People: `skin` (painted face, charkit faceMat) + `main` (everything else, vertex coloured,
+//   charkit clothMat: the per-vertex `surf` kind picks cloth weave / leather / metal / hair
+//   highlight ring / gem). Outlines are a tinted hull pushed back along the view ray, so lines
+//   appear across depth gaps only. Garments and proportions come from the CHAR entry
+//   (humanrig.js: collar, cuff, tunicTrim, sash, suspenders, bootH, shorts, ...).
 //   Secondary motion and foot IK run only near the camera (rig.lod).
 //
 // EXPRESSIONS & GESTURES (humanoids; safe no-ops on other rigs)

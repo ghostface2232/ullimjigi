@@ -769,7 +769,7 @@ export class World {
     this.sky.update(dt, playerPos, 1, camPos);
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);
-    this.props.update(G.camera);
+    this.props.update(G.camera, this.water.reflecting ? this.water.frustum : null);
     this.terrain.update(G.camera);
     const n = this.sky.night;
     B.windowMat.color.setRGB(1.6, 1.1, 0.5).multiplyScalar(0.25 + n * 1.3);

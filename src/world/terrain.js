@@ -24,7 +24,7 @@ const P = {
   grassLight: hex(0x9fc85a), grassMid: hex(0x6fa843), grassDark: hex(0x4a8238), grassTeal: hex(0x4e9468),
   grassWarm: hex(0xb3c052), grassCool: hex(0x5f9e5a),
   dry: hex(0xbfb466), dirt: hex(0xb89468), dirtDark: hex(0x86694b), dirtLight: hex(0xcdb088), worn: hex(0x7d8a4a),
-  rock: hex(0x928a7e), rockDark: hex(0x6b655e), rockWarm: hex(0xa8957c), rockCool: hex(0x7f8590),
+  rock: hex(0xa9adb6), rockDark: hex(0x7f8490), rockWarm: hex(0xb7ac9c), rockCool: hex(0x96a3b8),
   sand: hex(0xe0cf9c), wetSand: hex(0xa8986e),
   snow: hex(0xc9d4e2), snowShade: hex(0x9fb0c6),
   ash: hex(0x564d60), ashLight: hex(0x7a6f86),
@@ -84,6 +84,52 @@ export class Terrain {
     }
     this.buildMesh();
     this.buildHeightTexture();
+  }
+
+  // Steep ground becomes blocky rock: the slope is cut into columns (cells in plan) and each
+  // column into tiers of its own height, so a hillside that was one smooth ramp turns into
+  // near-vertical faces with flat ledges between them, the columns standing proud of or
+  // behind their neighbours. Gentle ground and roads are untouched, and the result is still
+  // one height per (x, z), so collision, climbing and everything placed by height follow it.
+  terrace() {
+    const N = this.N, H = this.h, st = this.step, cnt = N * N;
+    const nrm = gridNormals(H, N, st);
+    let w = new Float32Array(cnt);
+    for (let i = 0; i < cnt; i++) w[i] = smoothstep(0.76, 0.56, nrm[i * 3 + 1]) * (1 - smoothstep(0.1, 0.5, this.pf[i])) * smoothstep(0.6, 2.5, H[i]);
+    // spread the weight a little so a face is cut as a whole, not in speckles
+    for (let pass = 0; pass < 2; pass++) {
+      const b = new Float32Array(cnt);
+      for (let iz = 1; iz < N - 1; iz++) for (let ix = 1; ix < N - 1; ix++) {
+        const i = iz * N + ix;
+        b[i] = (w[i] * 2 + w[i - 1] + w[i + 1] + w[i - N] + w[i + N]) / 6;
+      }
+      w = b;
+    }
+    const hash = (a, b, k) => { let h = Math.imul(a, 374761393) ^ Math.imul(b, 668265263) ^ Math.imul(k, 2246822519); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+    // one column's tiers: mostly riser, a slightly sloping tread
+    const tier = (h, s, ph) => {
+      const t = (h + ph) / s, k = Math.floor(t), f = t - k;
+      return (k + 0.1 * f + 0.9 * smoothstep(0.36, 0.64, f)) * s - ph;
+    };
+    for (let iz = 0; iz < N; iz++) for (let ix = 0; ix < N; ix++) {
+      const i = iz * N + ix;
+      if (w[i] < 0.004) continue;
+      const x = -this.half + ix * st, z = -this.half + iz * st, h = H[i];
+      // columns are wider and tiers taller out in the big ranges
+      const big = smoothstep(236, 340, Math.hypot(x, z));
+      const C = 9 + 9 * big;
+      const gx = Math.floor(x / C), gz = Math.floor(z / C);
+      let d1 = 1e9, d2 = 1e9, a1 = 0, b1 = 0, a2 = 0, b2 = 0;
+      for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
+        const cx = gx + k, cz = gz + j;
+        const d = Math.hypot((cx + hash(cx, cz, 1)) * C - x, (cz + hash(cx, cz, 2)) * C - z);
+        if (d < d1) { d2 = d1; a2 = a1; b2 = b1; d1 = d; a1 = cx; b1 = cz; } else if (d < d2) { d2 = d; a2 = cx; b2 = cz; }
+      }
+      const col = (cx, cz) => { const s = (6 + 8 * hash(cx, cz, 3)) * (1 + 0.9 * big); return tier(h, s, hash(cx, cz, 4) * s); };
+      // neighbouring columns meet in a steep face rather than a tear
+      const t = lerp(col(a1, b1), col(a2, b2), 0.5 * (1 - smoothstep(0, 2.6, d2 - d1)));
+      H[i] = lerp(h, t, w[i]);
+    }
   }
 
   inWorld(x, z) { return Math.abs(x) < this.half && Math.abs(z) < this.half; }
@@ -302,7 +348,9 @@ export class Terrain {
     for (const q of PADS) { const dq = Math.hypot(x - q.x, z - q.z); if (dq < q.r + 5) pad = Math.max(pad, 1 - smoothstep(q.r - 2, q.r + 0.5, dq + n(x * 0.12, z * 0.12) * 1.5)); }
     if (pad > 0) out.lerp(P.plaza.clone().lerp(P.rock, 0.35), pad * 0.85);
     const gf = (1 - rk) * (1 - sd) * (1 - pf) * (1 - sn) * (1 - ash) * (1 - plaza) * (1 - pad) * (h > 0.4 ? 1 : 0);
-    return { gf, sn };
+    // ground layers for the surface shader: bare earth (roads, ash) and sand, next to gf and sn
+    const hard = (1 - sn) * (1 - plaza) * (1 - pad);
+    return { gf, sn, dirt: Math.max(smoothstep(0.3, 0.8, pf) * (1 - sd), ash * (1 - rk)) * hard, sand: sd * hard };
   }
 
   // Curvature-based ambient occlusion: concave cells (valleys, cliff feet)
@@ -325,14 +373,23 @@ export class Terrain {
     this.sn = new Float32Array(cnt);
     const nrm = (this.nrm = gridNormals(H, N, st));
     const c = new THREE.Color();
+    const splat = new Uint8Array(cnt * 4);
     for (let i = 0; i < cnt; i++) {
       const x = -this.half + (i % N) * st, z = -this.half + Math.floor(i / N) * st;
       const r = this.paint(x, z, H[i], nrm[i * 3 + 1], this.pf[i], c);
       this.gf[i] = r.gf; this.sn[i] = r.sn;
+      splat[i * 4] = r.gf * 255; splat[i * 4 + 1] = r.dirt * 255; splat[i * 4 + 2] = r.sand * 255; splat[i * 4 + 3] = r.sn * 255;
       const curv = this.ambientOcclusion(i, i % N, Math.floor(i / N));
-      const ao = 1 - 0.34 * smoothstep(0.0, 0.6, curv) + 0.05 * smoothstep(0.0, -0.5, curv);
+      // (rock catches light along its convex edges: the rims of ledges and blocks)
+      const ao = 1 - 0.34 * smoothstep(0.0, 0.6, curv) + (0.05 + 0.2 * smoothstep(0.8, 0.6, nrm[i * 3 + 1])) * smoothstep(0.0, -0.5, curv);
       col[i * 3] = c.r * ao * (ao < 1 ? 0.97 + 0.03 * ao : 1); col[i * 3 + 1] = c.g * ao; col[i * 3 + 2] = c.b * (ao < 1 ? 0.5 + 0.5 * ao + 0.04 : ao);
     }
+    // ground-layer weights for the terrain shader (same grid and uv as the heightmap)
+    const sp = new THREE.DataTexture(splat, N, N, THREE.RGBAFormat);
+    sp.minFilter = sp.magFilter = THREE.LinearFilter;
+    sp.wrapS = sp.wrapT = THREE.ClampToEdgeWrapping;
+    sp.needsUpdate = true;
+    U.splatTex.value = sp;
     this.buildChunks();
   }
 

@@ -2,7 +2,16 @@
 import * as THREE from 'three';
 import { G } from './src/core/context.js';
 import { U, toon } from './src/render/materials.js';
-import * as C from './src/game/characters.js';
+import * as HR from './src/game/humanrig.js';
+import { preloadModels } from './src/render/models.js';
+
+await preloadModels();
+
+// people always load; a creature or enemy module that fails to load (mid-edit) only drops its own set
+const C = { ...HR };
+for (const load of [() => import('./src/game/creatures.js'), () => import('./src/game/enemybodies.js'), () => import('./src/game/enemycreatures.js')]) {
+  try { Object.assign(C, await load()); } catch (e) { console.warn('charview: module failed to load', e); }
+}
 
 const q = new URLSearchParams(location.search);
 const W = +(q.get('w') || 960), H = +(q.get('h') || 540);
@@ -42,6 +51,12 @@ function make(key) {
   if (key === 'spectral') return C.makeKnight(true);
   return EN[key]();
 }
+function can(key) {
+  if (CHAR_OK(key) || key.startsWith('ghost')) return true;
+  if (key === 'fox') return !!C.makeFox;
+  if (key === 'cat') return !!C.makeCat;
+  return !!C.makeKnight && !!C.makeWailer;
+}
 function CHAR_OK(k) { return !!C.CHAR[k]; }
 
 const rigs = [];
@@ -54,11 +69,12 @@ const views = q.get('views');
 let x = 0;
 const t0 = performance.now();
 for (const k of keys) {
+  if (!can(k)) continue;
   const n = views ? views.split(',').length : 1;
   for (let i = 0; i < n; i++) {
     const r = make(k);
     const box = new THREE.Box3().setFromObject(r.root);
-    const w = Math.max(0.6, box.max.x - box.min.x) * 1.05 + 0.25;
+    const w = (Math.max(0.6, box.max.x - box.min.x) * 1.05 + 0.25) * +(q.get('sp') || 1);   // sp < 1 packs the views (head close-ups)
     r.key = k; r.state = {};
     r.root.rotation.y = views ? (+views.split(',')[i] * Math.PI) / 180 : +(q.get('yaw') || 0) * Math.PI / 180;
     r.root.position.set(x + w / 2, k === 'fox' || k === 'wailer' ? 1.3 : k === 'moth' ? 0.6 : 0, 0);

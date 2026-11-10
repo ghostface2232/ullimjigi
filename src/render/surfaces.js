@@ -16,27 +16,29 @@ export const SURF = {
 };
 const LAYERS = 14;
 // Cliff rock is not drawn here: it is scanned rock (public/textures, see the README there),
-// copied into these layers once its files have loaded. layer -> file stem
-const SCANS = [[2, 'cliff_blocks'], [13, 'cliff_beds']];
+// copied into these layers once its files have loaded. layer, file stem, relief gain (the
+// thin beds are a shallow scan next to the blocks)
+const SCANS = [[2, 'cliff_blocks', 1], [13, 'cliff_beds', 1.8]];
 // _n: normal xy + occlusion, _h: height. Only the relief is taken: colour stays the terrain's.
 const SCAN_FS = /* glsl */ `
 precision highp float;
 uniform sampler2D uN, uHt;
 uniform int uOut;
+uniform float uGain;
 varying vec2 vUv;
 void main(){
   vec4 n = texture2D(uN, vUv);
-  float h = texture2D(uHt, vUv).r;
-  if (uOut == 0) { gl_FragColor = vec4(vec3(0.5 * (0.72 + 0.32 * n.b) * (0.92 + 0.16 * h)), h); return; }
-  gl_FragColor = vec4(n.rg, 0.86, 0.3 + 0.7 * n.b * n.b);
+  float h = texture2D(uHt, vUv).r, ao = pow(n.b, uGain);
+  if (uOut == 0) { gl_FragColor = vec4(vec3(0.5 * (0.72 + 0.32 * ao) * (0.92 + 0.16 * h)), h); return; }
+  gl_FragColor = vec4(clamp((n.rg - 0.5) * uGain + 0.5, 0.0, 1.0), 0.86, 0.3 + 0.7 * ao * ao);
 }`;
 function loadScans(renderer, A, N) {
   const loader = new THREE.TextureLoader();
   const get = (f) => loader.loadAsync('./textures/' + f + '.webp').then((t) => { t.colorSpace = THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; return t; });
-  for (const [layer, stem] of SCANS) {
+  for (const [layer, stem, gain] of SCANS) {
     Promise.all([get(stem + '_n'), get(stem + '_h')]).then(([n, h]) => {
       const mat = new THREE.ShaderMaterial({
-        uniforms: { uN: { value: n }, uHt: { value: h }, uOut: { value: 0 } },
+        uniforms: { uN: { value: n }, uHt: { value: h }, uOut: { value: 0 }, uGain: { value: gain } },
         vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
         fragmentShader: SCAN_FS, depthTest: false, depthWrite: false, toneMapped: false,
       });

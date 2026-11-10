@@ -448,7 +448,7 @@ varying vec3 vWPos;
 varying vec3 vWNrm;
 // worked out once per pixel (TERRAIN_FRAG), used again at the lighting stage (TERRAIN_SURF)
 vec3 _wn = vec3(0.0, 1.0, 0.0);
-float _wG = 0.0, _wD = 0.0, _wS = 0.0, _wN = 0.0, _wRock = 0.0, _wPave = 0.0, _wBare = 0.0, _moss = 0.0;
+float _wG = 0.0, _wD = 0.0, _wS = 0.0, _wN = 0.0, _wRock = 0.0, _wPave = 0.0, _wBare = 0.0, _moss = 0.0, _beds = 0.0, _yb = 0.0;
 #ifdef CLIFF_SKIN
 varying vec2 vEdge; // x: open to the sky (1) or shut in, y: 1 on a top that grows grass
 #endif
@@ -526,6 +526,17 @@ const TERRAIN_FRAG = `
     vec3 rockC = mix(uPal[0], uPal[1], smoothstep(0.3, 0.8, texture2D(uNoiseTex, q3 * 0.0125).r));
     rockC = mix(rockC, uPal[2], smoothstep(0.45, 0.8, texture2D(uNoiseTex, p * 0.005 + 0.37).g) * 0.5);
     rockC = mix(rockC, uPal[3], smoothstep(0.45, 0.8, texture2D(uNoiseTex, p * 0.0033 + 0.71).r) * 0.45);
+    // Bedded country (lower down, by region): the beds dip a little and roll slowly, so no
+    // bedding plane is a level line across the map (_yb: height measured along the beds).
+    // Up a cliff the rock comes in units: thin beds, then a massive band, then beds again.
+    // Each bed has its own tone, some warmer, the odd one dark.
+    _yb = vWPos.y + (texture2D(uNoiseTex, p * 0.006 + 0.9).r - 0.5) * 5.0 + dot(p, vec2(0.05, -0.035));
+    float unit = texture2D(uNoiseTex, vec2(0.37 + p.x * 0.0006 + p.y * 0.0004, _yb * 0.012)).g;
+    _beds = smoothstep(0.44, 0.56, texture2D(uNoiseTex, p * 0.0031 + 0.57).g + clamp((30.0 - vWPos.y) * 0.004, -0.15, 0.15)) * smoothstep(0.36, 0.46, unit);
+    float bed = texture2D(uNoiseTex, vec2(0.11 + p.x * 0.0005 - p.y * 0.0003, _yb * 0.055)).b;
+    float bedT = (floor(bed * 5.0) + smoothstep(0.35, 0.65, fract(bed * 5.0))) / 5.0;
+    rockC *= 1.0 + _beds * (bedT - 0.5) * 0.3;
+    rockC = mix(rockC, rockC * vec3(1.1, 1.0, 0.86), _beds * smoothstep(0.55, 0.75, unit) * 0.6);
     float up = smoothstep(-0.2, 0.7, _wn.y);
     rockC *= (0.98 + 0.16 * up) * mix(vec3(0.99, 0.99, 1.01), vec3(1.06, 1.01, 0.93), up);
     // (snow, ash and wet sand lie on rock too)
@@ -606,13 +617,17 @@ const TERRAIN_SURF = `
       // its true size the relief would shrink to an even grain, and a cliff seen from afar
       // shows its great ledges, not its small ones.
       float farK = smoothstep(40.0, 150.0, length(cameraPosition - vWPos));
-      float beds = smoothstep(0.44, 0.56, texture2D(uNoiseTex, p * 0.0031 + 0.57).g + clamp((30.0 - vWPos.y) * 0.004, -0.15, 0.15));
+      // (beds are laid along the dipping, rolling bedding, and come thick and thin)
+      #define BEDS(L, T, W) { float k_ = (W); if (k_ > 0.004) { GROUND(L, vec2(vWPos.z, _yb) / (T), wx * k_, Z, Y, 0.0) GROUND(L, vec2(vWPos.x, _yb) / (T), wz * k_, X, Y, 0.0) GROUND(L, p / (T), wy * k_, X, Z, 1.0) } }
+      float beds = _beds;
       float big = smoothstep(0.48, 0.56, texture2D(uNoiseTex, p * 0.0047 + 0.21).r);
+      float thick = smoothstep(0.5, 0.6, texture2D(uNoiseTex, vec2(0.63 + p.x * 0.0005, _yb * 0.021)).r);
       ROCK(2.0, 9.0, (1.0 - beds) * (1.0 - farK) * (1.0 - big))
       ROCK(2.0, 16.0, (1.0 - beds) * (1.0 - farK) * big)
       ROCK(2.0, 33.0, (1.0 - beds) * farK)
-      ROCK(13.0, 6.5, beds * (1.0 - farK))
-      ROCK(13.0, 24.0, beds * farK)
+      BEDS(13.0, 6.5, beds * (1.0 - farK) * (1.0 - thick))
+      BEDS(13.0, 12.0, beds * (1.0 - farK) * thick)
+      BEDS(13.0, 26.0, beds * farK)
     }
     float iw = 1.0 / max(ws, 1e-5);
     diffuseColor.rgb *= ws > 0.0 ? alb * iw * 2.0 : vec3(1.0);

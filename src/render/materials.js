@@ -35,6 +35,7 @@ export const U = {
   surfA: { value: null },
   surfN: { value: null },
   splatTex: { value: null },
+  paveTex: { value: null },
   // sky colour mirrored by glossy and wet surfaces (set by Sky)
   skyRefl: { value: new THREE.Color(0.5, 0.6, 0.75) },
 };
@@ -430,6 +431,7 @@ const TERRAIN_VERT_PARS = `varying vec3 vWPos;\nvarying vec3 vWNrm;\n`;
 const TERRAIN_FRAG_PARS = `
 uniform sampler2D uBurnTex;
 uniform sampler2D uSplatTex;
+uniform sampler2D uPaveTex;
 uniform float uWet;
 varying vec3 vWPos;
 varying vec3 vWNrm;
@@ -438,7 +440,7 @@ vec3 _fn = vec3(0.0, 1.0, 0.0);
 float _rockK = 0.0;
 #ifdef CLIFF_SKIN
 varying vec3 vRock;
-varying float vEdge;
+varying vec2 vEdge; // x: rim / crease, y: grass top
 #endif
 float _h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float _vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
@@ -449,16 +451,16 @@ const TERRAIN_FRAG = `
   #ifdef CLIFF_SKIN
   {
     _fn = normalize(vWNrm);
-    // steep faces are rock; tops keep the ground's colour and grass
-    _rockK = 1.0 - smoothstep(0.7, 0.82, _fn.y);
+    // the tops of the gentler masses keep the ground's colour and grass; the rest is rock
+    _rockK = 1.0 - smoothstep(0.4, 0.6, vEdge.y);
     vec3 rk = vRock;
     // faces turned to the sky are paler and warmer than the ones that lean out
     float up = smoothstep(-0.2, 0.7, _fn.y);
     rk *= (0.88 + 0.2 * up) * mix(vec3(0.95, 0.98, 1.05), vec3(1.05, 1.0, 0.94), up);
     // light gathers on the worn rims of the masses and drains from the creases between them
-    rk *= 1.0 + pow(max(vEdge, 0.0), 0.7) * 0.5 - max(-vEdge, 0.0) * 0.45;
-    // moss creeps down from the grass onto the shoulders of the rock
-    rk = mix(rk, diffuseColor.rgb * vec3(0.72, 0.8, 0.62), smoothstep(0.42, 0.7, _fn.y) * 0.55);
+    rk *= 1.0 + pow(max(vEdge.x, 0.0), 0.7) * 0.5 - max(-vEdge.x, 0.0) * 0.45;
+    // moss creeps over the lip from the grass above
+    rk = mix(rk, diffuseColor.rgb * vec3(0.72, 0.8, 0.62), smoothstep(0.02, 0.4, vEdge.y) * 0.6);
     diffuseColor.rgb = mix(diffuseColor.rgb, rk, _rockK);
   }
   #endif
@@ -493,6 +495,9 @@ const TERRAIN_SURF = `
       float slope = 1.0 - wn.y;
       float rest = clamp(1.0 - sp.r - sp.g - sp.b - sp.a, 0.0, 1.0);
       float wRock = rest * smoothstep(0.05, 0.24, slope), wPave = rest - wRock;
+      // level bare ground is flagstones only where it was laid; elsewhere weathered stone
+      float wBare = wPave * (1.0 - texture2D(uPaveTex, guv).r);
+      wPave -= wBare;
     #endif
     vec3 alb = vec3(0.0), dW = vec3(0.0);
     float rgh = 0.0, cav = 0.0, ws = 0.0;
@@ -505,6 +510,9 @@ const TERRAIN_SURF = `
     GROUND(3.0, p / 3.0, sp.b, X, Z)
     GROUND(4.0, p / 4.0, sp.a, X, Z)
     GROUND(10.0, p / 2.8, wPave, X, Z)
+    #ifndef CLIFF_SKIN
+    GROUND(12.0, p / 5.0, wBare, X, Z)
+    #endif
     if (wRock > 0.004) {
       // rock: project from the sides so the brush strokes run up the face
       float bx = abs(wn.x), bz = abs(wn.z), bs = max(bx + bz, 1e-3);
@@ -519,7 +527,7 @@ const TERRAIN_SURF = `
       _rough = rgh * iw; _cav = cav * iw; _specK = 1.0;
     }
     #ifdef CLIFF_SKIN
-      _cav *= 1.0 - 0.4 * max(-vEdge, 0.0) * _rockK;
+      _cav *= 1.0 - 0.4 * max(-vEdge.x, 0.0) * _rockK;
     #endif
     // wildfire: scorched ground (patchy ash) and a hot rim while burning
     vec4 burn = texture2D(uBurnTex, guv);
@@ -752,14 +760,15 @@ export function patch(m, opts = {}) {
     sh.uniforms.uHeightTex = U.heightTex;
     sh.uniforms.uHeightP = U.heightP;
     sh.uniforms.uSeeA = U.seeA; sh.uniforms.uSeeB = U.seeB; sh.uniforms.uSeeR = U.seeR;
-    if (isTerrain) { sh.uniforms.uBurnTex = U.burnTex; sh.uniforms.uWet = U.wet; sh.uniforms.uSplatTex = U.splatTex; }
+    if (isTerrain) { sh.uniforms.uBurnTex = U.burnTex; sh.uniforms.uWet = U.wet; sh.uniforms.uSplatTex = U.splatTex; sh.uniforms.uPaveTex = U.paveTex; }
     sh.uniforms.uSurfA = U.surfA; sh.uniforms.uSurfN = U.surfN; sh.uniforms.uSkyRefl = U.skyRefl;
     if (cards) sh.uniforms.uLeafTex = U.leaf;
     let fs = sh.fragmentShader;
     const isToon = fs.includes('#include <lights_toon_pars_fragment>');
     let defs = '';
     if (isToon) {
-      if (isTerrain) defs += '#define TOON_SOFT\n';
+      // rock props are lit like the cliffs they stand against (the terrain's soft ramp)
+      if (isTerrain || texKind === 'rock') defs += '#define TOON_SOFT\n';
       else if (foliage) defs += '#define TOON_FOLIAGE\n';
       if (opts.leafy) defs += '#define LEAFY_EDGE\n';
       if (!isTerrain && !opts.noAO) defs += '#define TOON_GROUND_AO\n';
@@ -794,7 +803,7 @@ export function patch(m, opts = {}) {
     if (isTerrain) {
       // (the define has to come before the declarations that test it)
       const cl = isCliff ? '#define CLIFF_SKIN\n' : '';
-      sh.vertexShader = cl + TERRAIN_VERT_PARS + (isCliff ? 'attribute vec3 aRock;\nattribute float aEdge;\nvarying vec3 vRock;\nvarying float vEdge;\n' : '')
+      sh.vertexShader = cl + TERRAIN_VERT_PARS + (isCliff ? 'attribute vec3 aRock;\nattribute vec2 aEdge;\nvarying vec3 vRock;\nvarying vec2 vEdge;\n' : '')
         + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWNrm = normal;' + (isCliff ? '\nvRock = aRock; vEdge = aEdge;' : ''));
       sh.fragmentShader = cl + TERRAIN_FRAG_PARS + sh.fragmentShader.replace('#include <color_fragment>', TERRAIN_FRAG);
     }

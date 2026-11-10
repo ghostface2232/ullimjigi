@@ -22,61 +22,121 @@ export function creatureType(key, build) {
   if (!T) { const t0 = performance.now(); curKey = key; T = build(); curKey = null; T.ms = performance.now() - t0; TYPES.set(key, T); }
   return T;
 }
-// Authored model of a type: public/models/mn_<key>.glb, baked in Blender from the sculpts in
-// these files (ref/blender/README.md), in the shape Sculpt.build() returns. Its skin is
-// rebound to `def` by bone name; `tex` holds the baked paint (occlusion) and normal maps.
-// Without the file the type is sculpted in code as before.
-export function builtFromModel(key, def) {
-  const g = model('mn_' + key), meshes = [];
-  if (g) g.scene.traverse((o) => { if (o.isMesh) meshes.push(o); });
+// Authored model of a type: public/models/mn_<key>.glb, modelled, sculpted and baked in Blender
+// on this skeleton (ref/blender/README.md), in the shape Sculpt.build() returns. Its skin is
+// rebound to `def` by bone name. `tex`: albedo (alpha = 1 - glow mask), tangent-space normal
+// map and ORM (occlusion, roughness, metal). `rigid[name]`: unskinned pieces (weapons, loose
+// stones) as { geo, bone, pos (offset from that bone), group }. o.skip: material groups to
+// leave out (variant-only parts); o.file: model shared with another type.
+export function builtFromModel(key, def, o = {}) {
+  const g = model('mn_' + (o.file || key)), meshes = [], loose = [];
+  if (g) g.scene.traverse((m) => { if (m.isMesh) (m.userData.bone !== undefined ? loose : meshes).push(m); });
   if (!meshes.length) return null;
-  let nv = 0, ni = 0;
-  for (const m of meshes) { nv += m.geometry.attributes.position.count; ni += m.geometry.index.count; }
-  const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3), UV = new Float32Array(nv * 2), TG = new Float32Array(nv * 4), C = new Float32Array(nv * 3).fill(1);
-  const SI = new Uint16Array(nv * 4), SW = new Float32Array(nv * 4), OL = new Float32Array(nv), I = new Uint32Array(ni);
-  const geo = new THREE.BufferGeometry(), mats = [], tex = {};
-  let vo = 0, io = 0, tangents = true;
-  for (const m of meshes) {
-    const a = m.geometry.attributes, n = a.position.count, name = m.material.name.split('_').pop();
-    const jm = m.skeleton ? m.skeleton.bones.map((b) => def.map[b.name] ?? 0) : [0];
-    if (!a.tangent) tangents = false;
+  const Q = g.scene.userData.quant || { scale: 1, offset: [0, 0, 0] }, skip = o.skip || [];
+  const groupOf = (m) => m.material.name.split('_').pop();
+  const read = (m, org) => {
+    const a = m.geometry.attributes, n = a.position.count, ix = m.geometry.index;
+    const legacy = !g.scene.userData.quant;
+    const d = { n, C: null, P: new Float32Array(n * 3), N: new Float32Array(n * 3), UV: new Float32Array(n * 2), TG: new Float32Array(n * 4), OL: new Float32Array(n), I: ix.array, SI: null, SW: null };
+    const jm = m.skeleton ? m.skeleton.bones.map((b) => def.map[b.name] ?? 0) : null;
+    if (jm) { d.SI = new Uint16Array(n * 4); d.SW = new Float32Array(n * 4); }
     for (let k = 0; k < n; k++) {
-      const q = vo + k;
-      P[q * 3] = a.position.getX(k); P[q * 3 + 1] = a.position.getY(k); P[q * 3 + 2] = a.position.getZ(k);
-      N[q * 3] = a.normal.getX(k); N[q * 3 + 1] = a.normal.getY(k); N[q * 3 + 2] = a.normal.getZ(k);
-      if (a.uv) { UV[q * 2] = a.uv.getX(k); UV[q * 2 + 1] = a.uv.getY(k); }
-      if (a.tangent) { TG[q * 4] = a.tangent.getX(k); TG[q * 4 + 1] = a.tangent.getY(k); TG[q * 4 + 2] = a.tangent.getZ(k); TG[q * 4 + 3] = a.tangent.getW(k); }
-      if (a.color) { C[q * 3] = a.color.getX(k); C[q * 3 + 1] = a.color.getY(k); C[q * 3 + 2] = a.color.getZ(k); }
-      OL[q] = a.color && a.color.itemSize > 3 ? a.color.getW(k) : name.startsWith('glow') ? 0 : 1;
-      let ws = 0;
-      if (a.skinIndex) for (let c = 0; c < 4; c++) { SI[q * 4 + c] = jm[a.skinIndex.getComponent(k, c)]; ws += SW[q * 4 + c] = a.skinWeight.getComponent(k, c); }
-      if (ws > 0) for (let c = 0; c < 4; c++) SW[q * 4 + c] /= ws; else SW[q * 4] = 1;
+      d.P[k * 3] = a.position.getX(k) * Q.scale + Q.offset[0] - org.x; d.P[k * 3 + 1] = a.position.getY(k) * Q.scale + Q.offset[1] - org.y; d.P[k * 3 + 2] = a.position.getZ(k) * Q.scale + Q.offset[2] - org.z;
+      _v1.set(a.normal.getX(k), a.normal.getY(k), a.normal.getZ(k)).normalize().toArray(d.N, k * 3);
+      d.UV[k * 2] = a.uv.getX(k); d.UV[k * 2 + 1] = a.uv.getY(k);
+      if (a.tangent) { _v1.set(a.tangent.getX(k), a.tangent.getY(k), a.tangent.getZ(k)).normalize().toArray(d.TG, k * 4); d.TG[k * 4 + 3] = a.tangent.getW(k) < 0 ? -1 : 1; }
+      d.OL[k] = a.color && a.color.itemSize > 3 ? a.color.getW(k) : 1;
+      if (legacy && a.color) { if (!d.C) d.C = new Float32Array(n * 3).fill(1); d.C[k * 3] = a.color.getX(k); d.C[k * 3 + 1] = a.color.getY(k); d.C[k * 3 + 2] = a.color.getZ(k); }
+      if (jm) { let ws = 0; for (let c = 0; c < 4; c++) { d.SI[k * 4 + c] = jm[a.skinIndex.getComponent(k, c)]; ws += d.SW[k * 4 + c] = a.skinWeight.getComponent(k, c); } for (let c = 0; c < 4; c++) d.SW[k * 4 + c] /= ws || 1; }
     }
-    const ix = m.geometry.index;
-    for (let k = 0; k < ix.count; k++) I[io + k] = ix.getX(k) + vo;
-    geo.addGroup(io, ix.count, mats.length); mats.push(name);
-    if (m.material.map) tex.map = m.material.map;
-    if (m.material.normalMap) tex.normalMap = m.material.normalMap;
-    vo += n; io += ix.count;
+    return d;
+  };
+  const toGeo = (parts, skinned) => {
+    let nv = 0, ni = 0;
+    for (const d of parts) { nv += d.n; ni += d.I.length; }
+    const geo = new THREE.BufferGeometry(), I = new Uint32Array(ni), cat = (k, C, sz) => { const A = new C(nv * sz); let o2 = 0; for (const d of parts) { A.set(d[k], o2); o2 += d.n * sz; } return A; };
+    let vo = 0, io = 0;
+    parts.forEach((d, i) => { for (let k = 0; k < d.I.length; k++) I[io + k] = d.I[k] + vo; geo.addGroup(io, d.I.length, i); vo += d.n; io += d.I.length; });
+    geo.setAttribute('position', new THREE.BufferAttribute(cat('P', Float32Array, 3), 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(cat('N', Float32Array, 3), 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(cat('UV', Float32Array, 2), 2));
+    if (g.scene.userData.quant) geo.setAttribute('tangent', new THREE.BufferAttribute(cat('TG', Float32Array, 4), 4));
+    const C = new Float32Array(nv * 3).fill(1); { let o2 = 0; for (const d of parts) { if (d.C) C.set(d.C, o2); o2 += d.n * 3; } }
+    geo.setAttribute('color', new THREE.BufferAttribute(C, 3));
+    geo.setAttribute('olw', new THREE.BufferAttribute(cat('OL', Float32Array, 1), 1));
+    if (skinned) { geo.setAttribute('skinIndex', new THREE.BufferAttribute(cat('SI', Uint16Array, 4), 4)); geo.setAttribute('skinWeight', new THREE.BufferAttribute(cat('SW', Float32Array, 4), 4)); }
+    geo.setIndex(new THREE.BufferAttribute(I, 1));
+    geo.computeBoundingSphere();
+    return geo;
+  };
+  const used = meshes.filter((m) => !skip.includes(groupOf(m))), m0 = meshes[0].material, zero = new V3();
+  const geo = toGeo(used.map((m) => read(m, zero)), true);
+  const tex = { map: m0.map, normalMap: m0.normalMap, orm: m0.roughnessMap, key: o.file || key, legacy: !g.scene.userData.quant };
+  const rigid = {};
+  for (const m of loose) {
+    const grp = m.userData.group || groupOf(m);
+    if (skip.includes(grp)) continue;
+    const gg = toGeo([read(m, m.position)], false); gg.clearGroups();
+    rigid[m.name] = { geo: gg, bone: m.userData.bone, pos: m.position.clone().sub(def.pos(m.userData.bone)), group: grp };
   }
-  geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
-  geo.setAttribute('normal', new THREE.BufferAttribute(N, 3));
-  geo.setAttribute('uv', new THREE.BufferAttribute(UV, 2));
-  if (tangents) geo.setAttribute('tangent', new THREE.BufferAttribute(TG, 4));
-  geo.setAttribute('skinIndex', new THREE.BufferAttribute(SI, 4));
-  geo.setAttribute('skinWeight', new THREE.BufferAttribute(SW, 4));
-  geo.setAttribute('color', new THREE.BufferAttribute(C, 3));
-  geo.setAttribute('olw', new THREE.BufferAttribute(OL, 1));
-  geo.setIndex(new THREE.BufferAttribute(I, 1));
-  geo.computeBoundingSphere();
-  return { geo, mats, tris: ni / 3, stats: {}, tex };
+  return { geo, mats: used.map(groupOf), tris: geo.index.count / 3, stats: {}, tex, rigid };
 }
-// give a rig's toon materials the baked maps of its authored model (if it has one)
-const PAINT_NEUTRAL = 0.8;   // value of an open, flat surface in the paint map (mn_bake.py)
-export function dress(rig) {
+// Variant albedo of an authored model (public/models/mn_<key>_<variant>.webp): same mesh,
+// normal map and ORM, repainted colours. Fetched once, when the variant is first dressed.
+const ALT = new Map();
+function altMap(key, variant) {
+  const id = key + '_' + variant;
+  if (!ALT.has(id)) { const t = new THREE.TextureLoader().load(`./models/mn_${id}.webp`); t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; ALT.set(id, t); }
+  return ALT.get(id);
+}
+// Surface response of an authored model on a toon material: the baked maps drive the detail
+// layer hooks of the toon shader (_rough / _specK / _cav), the light ramp becomes a soft
+// half-lambert so the sculpt reads, smooth and metallic texels mirror the sky, and the
+// albedo's alpha is a glow mask lit with `glow` (a Color shared with the tier-coloured glow
+// material). o: { spec (highlight strength), metal (extra on metallic texels), ao, glowK, bump }
+export function surfaced(m, tex, o = {}) {
+  m.map = tex.map; m.normalMap = tex.normalMap;
+  m.normalScale.set(o.bump ?? 1, o.bump ?? 1);
+  for (const t of [tex.map, tex.normalMap, tex.orm]) if (t) t.anisotropy = 4;
+  const u = { uOrm: { value: tex.orm }, uSurfP: { value: new THREE.Vector4(o.spec ?? 0.6, o.metal ?? 3, o.ao ?? 0.7, o.glowK ?? 1) }, uGlowC: { value: o.glow || new THREE.Color(0, 0, 0) } };
+  m.userData.surf = u;
+  return extendMat(m, 'surfaced', u, (sh) => {
+    sh.fragmentShader = 'uniform sampler2D uOrm;\nuniform vec4 uSurfP;\nuniform vec3 uGlowC;\n' + sh.fragmentShader
+      .replace('float g = texture2D( gradientMap, vec2( clamp( ndl * 0.5 + 0.5, 0.0, 1.0 ), 0.5 ) ).r;', 'float g = smoothstep( -0.3, 0.7, ndl );')
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+  vec4 _mo = texture2D( uOrm, vMapUv );
+  float _mGlow = 1.0 - texture2D( map, vMapUv ).a;
+  _rough = clamp( _mo.g, 0.06, 1.0 ); _cav = mix( 1.0, _mo.r, uSurfP.z ); _specK = uSurfP.x * ( 1.0 + _mo.b * uSurfP.y );
+  diffuseColor.rgb *= 1.0 - 0.5 * _mo.b;`)
+      .replace('#include <opaque_fragment>', `{
+  vec3 _sv = normalize( vViewPosition );
+  float _fr = pow( 1.0 - clamp( dot( normal, _sv ), 0.0, 1.0 ), 5.0 ), _gl = 1.0 - _rough;
+  outgoingLight += uSkyRefl * ( ( 0.04 + 0.96 * _fr ) * _gl * _gl * _cav * _specK * ( 0.5 + 2.5 * _mo.b ) );
+  outgoingLight = mix( outgoingLight, uGlowC * uSurfP.w, _mGlow );
+}
+#include <opaque_fragment>`);
+  });
+}
+// give a rig's toon materials the baked maps of its authored model (if it has one).
+// o: { variant (albedo of that name), glow (Color for the glow mask), mat: { group: surfaced() options } }
+export function dress(rig, o = {}) {
   const tx = rig.T.built.tex;
-  if (tx) for (const m of rig.mats) { m.map = tx.map || null; m.normalMap = tx.normalMap || null; if (tx.map) m.color.multiplyScalar(1 / PAINT_NEUTRAL); }
+  if (!tx) return rig;
+  if (tx.legacy) { for (const m of rig.mats) { m.map = tx.map || null; m.normalMap = tx.normalMap || null; if (tx.map) m.color.multiplyScalar(1 / 0.8); } return rig; }
+  const tex = o.variant ? { ...tx, map: altMap(tx.key, o.variant) } : tx;
+  const glow = o.glow || (rig.glowMats && rig.glowMats[0] && rig.glowMats[0].color);
+  for (const k in rig.M) { const m = rig.M[k]; if (m && m.isMeshToonMaterial && !m.userData.surf) surfaced(m, tex, { glow, ...(o.mat && o.mat[k]) }); }
   return rig;
+}
+// meshes of the model's unskinned pieces, parented to their bones: rigids(rig, { group: material })
+export function rigids(rig, mats) {
+  const out = {}, R = rig.T.built.rigid || {};
+  for (const name in R) {
+    const r = R[name], m = new THREE.Mesh(r.geo, mats[r.group] || mats.main);
+    m.position.copy(r.pos); m.castShadow = true; m.name = name;
+    rig.B[r.bone].add(m); out[name] = m;
+  }
+  return out;
 }
 // Sculpt helper: build a skeleton + parts, then bake per-group geometry.
 // parts(S, def) adds sculpt parts; color: key -> hex; group: key -> group name.
@@ -507,7 +567,7 @@ export class CreatureRig extends Rig {
       chn.kind = ch.kind;
       return chn;
     });
-    dress(this);
+    dress(this, o.dress);
     this.vel = new V3(); this.velL = new V3(); this.acc = new V3(); this.prevPos = null; this.prevYaw = 0; this.yawRate = 0;
     this.hurtSp = new Spring(180, 12);
     this.hurtW = 0;

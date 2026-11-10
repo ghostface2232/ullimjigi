@@ -35,12 +35,12 @@ function enemyType(c) {
   if (!c.sculpt) {
     Object.assign(c, { body: false, head: false, face: false, hairStyle: 'none', outline: true });
     c.group = c.group || GLOW;
-    c.sculpt = (S, L, def) => { if (model('mn_' + c.key)) return; c._S = S; c._post = c.build(S, L, (n) => def.pos(n), def); };
+    c.sculpt = (S, L, def) => { if (model('mn_' + (c.model?.file || c.key))) return; c._S = S; c._post = c.build(S, L, (n) => def.pos(n), def); };
   }
   const T = humanType(c);
   if (!T.shaded) {
     T.shaded = true;
-    const authored = builtFromModel(c.key, T.def);   // baked in Blender from c.build (ref/blender)
+    const authored = builtFromModel(c.key, T.def, c.model);   // authored in Blender (ref/blender/mn2)
     if (authored) T.built = authored; else if (c._post) shade(c._S, T.built.geo, c.group, c._post);
     c._S = c._post = null;
   }
@@ -56,7 +56,7 @@ const stoneNoise = (f, a) => (x, y, z) => (vnoise3(x * f + 3.1, y * f, z * f - 1
 function ashlingCfg(frost) {
   const ash = frost ? 0x6f86a6 : 0x6c627c, soot = frost ? 0x2c3d58 : 0x2b2536;
   return {
-    key: frost ? 'ashlingFrost' : 'ashling', scale: 1.0, legLen: 0.62, torsoLen: 0.95, headR: 0.125, armLen: 1.45, bodyW: 0.82, shoulderW: 1.08, neckLen: 0.7, hunch: 0.5, stride: 2.2, frost,
+    key: frost ? 'ashlingFrost' : 'ashling', model: { file: 'ashling', skip: frost ? [] : ['ice'] }, scale: 1.0, legLen: 0.62, torsoLen: 0.95, headR: 0.125, armLen: 1.45, bodyW: 0.82, shoulderW: 1.08, neckLen: 0.7, hunch: 0.5, stride: 2.2, frost,
     colors: { ash, soot, bone: 0xd8cfbb, horn: frost ? 0x8fb4d0 : 0x2a2230, cloth: frost ? 0x35485f : 0x2b2434, clothIn: 0x17131d, glow: 0xffffff, glowD: 0x8a8a8a, ice: 0xcdeeff },
     build(S, L, j) {
       const HC = L.HC, hr = L.hr;
@@ -219,15 +219,17 @@ function twitch(q, s, R) {
 
 // frozen parts: pale, glossy, faintly lit from within
 const iceMat = () => sheen(bodyMat(0xffffff, { vertexColors: true, rim: 1.3, emissive: 0x1c4466 }), { color: 0xdff6ff, size: 0.1, k: 0.9, fres: 0.5 });
+// body material of an authored model: its colour comes from the baked albedo
+const skinMat = (rim = 0.45) => bodyMat(0xffffff, { vertexColors: true, rim });
 
 export function makeAshling(variant = 'normal') {
   const frost = variant === 'frost';
   const T = enemyType(ASH[frost ? 'frost' : 'normal']);
   const glow = glowBasic(frost ? 0x8fe3ff : 0xc9a0ff, 2.6);
-  const M = { glow };
+  const M = { main: skinMat(), glow };
   if (frost) M.ice = iceMat();
-  const rig = new HumanRig(T, { mats: M, castPose: false, outline: 0.011, rim: 0.7, style: { armHang: 0.14, lift: 1.2 }, pose: (q, s, R, dt) => { twitch(q, s, R); clawPose(q, s, R, dt); } });
-  dress(rig);
+  const rig = new HumanRig(T, { mats: M, castPose: false, outline: 0.007, rim: 0.7, style: { armHang: 0.14, lift: 1.2 }, pose: (q, s, R, dt) => { twitch(q, s, R); clawPose(q, s, R, dt); } });
+  dress(rig, { variant: frost ? 'frost' : null, mat: { main: { spec: 0.5 }, ice: { spec: 1.6 } } });
   rig.eyeMat = glow;
   rig.height = 1.5;
   return rig;

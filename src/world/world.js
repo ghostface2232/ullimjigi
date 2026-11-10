@@ -127,9 +127,11 @@ export class World {
     for (const b of buckets.values()) {
       if (b.list.length < 2) continue;
       const geos = [];
+      // textured materials (authored props) keep their texture coordinates through the merge
+      const uv = !!(b.mat.map || b.mat.normalMap || b.mat.emissiveMap);
       for (const m of b.list) {
         let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
-        for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && !(k === 'color' && b.mat.vertexColors)) g.deleteAttribute(k);
+        for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && !(k === 'color' && b.mat.vertexColors) && !(k === 'uv' && uv)) g.deleteAttribute(k);
         if (!g.attributes.normal) g.computeVertexNormals();
         if (b.mat.vertexColors && !g.attributes.color) {
           const cc = new Float32Array(g.attributes.position.count * 4).fill(1);

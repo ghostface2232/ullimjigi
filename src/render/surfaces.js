@@ -79,19 +79,26 @@ Surf surf(vec2 uv){
     s.r = mix(0.9, 0.62, peb); s.nk = 1.3;
   } else if (uLayer == 2) {
     // cliff rock, painted rather than patterned: the form is real geometry (terrain.js), so
-    // this only lays broad tonal patches, brush strokes running up the face and a few faint
-    // scratches over it. Almost no relief: the facets must stay clean planes.
-    float tone = fbm(uv, vec2(2.0, 3.0), 4);
-    float stroke = fbm(vec2(uv.x + 0.13 * sin(uv.y * TAU), uv.y) , vec2(11.0, 2.0), 4);
-    float dab = fbm(uv + 0.37, vec2(6.0, 5.0), 3);
+    // this lays flat dabs of tone with crisp edges, the way rock is blocked in with a brush:
+    // two sizes of dab running up the face, a few thin cracks, pale chips. Almost no relief.
+    vec2 w = vec2(fbm(uv, vec2(3.0), 3), fbm(uv + 0.37, vec2(3.0), 3)) - 0.5;
+    vec2 q = uv + w * 0.05;
+    float big = fbm(q, vec2(3.0, 2.0), 4), mid = fbm(q + 0.21, vec2(9.0, 4.0), 4), small = fbm(q + 0.63, vec2(26.0, 11.0), 3);
+    // posterised: each band of the noise is one flat tone
+    float b1 = floor(big * 5.0), f1 = fract(big * 5.0);
+    float t1 = (b1 + smoothstep(0.46, 0.54, f1)) / 5.0;
+    float b2 = floor(mid * 4.0), f2 = fract(mid * 4.0);
+    float t2 = (b2 + smoothstep(0.44, 0.56, f2)) / 4.0;
+    float t3 = smoothstep(0.52, 0.58, small);
     float cr = abs(vn(vec2(uv.x * 4.0 + uv.y * 4.0, uv.y * 2.0), vec2(4.0, 2.0)) - 0.5);
-    float scratch = (1.0 - smoothstep(0.0, 0.02, cr)) * smoothstep(0.5, 0.7, fbm(uv + 0.4, vec2(3.0), 2));
-    float grain = fbm(uv, vec2(40.0), 3);
-    s.h = 0.5 + 0.05 * (stroke - 0.5) + 0.03 * (grain - 0.5) - 0.06 * scratch;
-    s.c = vec3(1.0 + 0.16 * (tone - 0.5) + 0.1 * (stroke - 0.5) + 0.07 * (dab - 0.5));
-    s.c *= mix(vec3(1.03, 1.0, 0.95), vec3(0.95, 0.99, 1.06), smoothstep(0.3, 0.7, tone));
-    s.c *= 1.0 - 0.16 * scratch;
-    s.r = 0.84; s.nk = 1.6;
+    float crack = (1.0 - smoothstep(0.0, 0.012, cr)) * smoothstep(0.5, 0.68, fbm(uv + 0.4, vec2(3.0), 2));
+    float chip = smoothstep(0.78, 0.8, fbm(q + 0.9, vec2(14.0), 3));
+    s.h = 0.5 + 0.06 * (t2 - 0.5) + 0.03 * t3 - 0.08 * crack + 0.05 * chip;
+    s.c = vec3(0.9 + 0.2 * t1 + 0.1 * (t2 - 0.5) + 0.04 * (t3 - 0.5));
+    s.c *= mix(vec3(1.03, 1.0, 0.95), vec3(0.95, 0.99, 1.06), smoothstep(0.35, 0.65, big));
+    s.c *= 1.0 - 0.22 * crack;
+    s.c += 0.07 * chip;
+    s.r = 0.84; s.nk = 2.2;
   } else if (uLayer == 3) {
     // sand: wind ripples that wander, grains
     float w = fbm(uv, vec2(4.0), 3);

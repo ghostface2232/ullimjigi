@@ -18,6 +18,8 @@ const SKIRT = [3, 6, 12, 24];     // skirt depth per LOD: hides cracks between n
 const CL0 = 19, CL1 = 6.5, BEV0 = 0.7, BEV1 = 0.45;
 const hsh = (a, b, k) => { let h = Math.imul(a, 374761393) ^ Math.imul(b, 668265263) ^ Math.imul(k, 2246822519); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
 const _c = new THREE.Color();
+// the cliff weight as it is applied: a narrow band, so rock meets meadow at a clear foot
+const CWR = (w) => smoothstep(0.3, 0.7, w);
 // shared noise fields handed to the region height / paint functions (regions/README.md)
 const F = { b: 0, d: 0, rg: 0, dry: 0, n: null, n2: null, n3: null };
 const segT = (x, z, s) => {
@@ -120,8 +122,8 @@ export class Terrain {
     for (let i = 0; i < cnt; i++) w[i] = smoothstep(0.08, 0.5, w[i]);
     this.cw = w;
     this.sites = new Map();
-    this._edge = 0;
-    for (let i = 0; i < cnt; i++) if (w[i] > 0) H[i] = this.cliffAt(-this.half + (i % N) * st, -this.half + Math.floor(i / N) * st, this.base[i], w[i]);
+    this._edge = 0; this._top = 1;
+    for (let i = 0; i < cnt; i++) if (CWR(w[i]) > 0) H[i] = this.cliffAt(-this.half + (i % N) * st, -this.half + Math.floor(i / N) * st, this.base[i], CWR(w[i]));
     // 4 m blocks touched by rock are drawn by the cliff mesh instead of the grid
     const NB = (this.NB = this.seg / 2), bs = (this.blockSteep = new Uint8Array(NB * NB));
     for (let bz = 0; bz < NB; bz++) for (let bx = 0; bx < NB; bx++) {
@@ -143,19 +145,22 @@ export class Terrain {
       // angle; each also turns a little off the fall line, so no two tops are parallel
       const r = hsh(cx, cz, 5), g = hsh(cx, cz, 3) < 0.5 ? 0.03 + 0.17 * r : 0.3 + 0.5 * r;
       const a = (hsh(cx, cz, 6) - 0.5) * 0.9, ca = Math.cos(a), sa = Math.sin(a), k = sl > 1e-4 ? g / sl : 0;
-      s = { x, z, id: key, h: this.gridHeight(B, x, z) + (hsh(cx, cz, 4) - 0.5) * (1.5 + 2 * Math.min(sl, 1.6)), gx: (gx * ca - gz * sa) * k, gz: (gx * sa + gz * ca) * k };
+      s = { x, z, id: key, g, h: this.gridHeight(B, x, z) + (hsh(cx, cz, 4) - 0.5) * (1.5 + 2 * Math.min(sl, 1.6)), gx: (gx * ca - gz * sa) * k, gz: (gx * sa + gz * ca) * k };
       this.sites.set(key, s);
     }
     return s;
   }
 
   // The masses alone, at (x, z): the nearer one's plane, chamfered into its neighbour's.
-  // Leaves in `_e` how strongly the point sits on a rim (> 0) or in a crease (< 0).
-  mass(x, z) {
-    const gx = Math.floor(x / CL0), gz = Math.floor(z / CL0);
+  // Which masses are nearest is judged from (x + ox, z + oz): that shift, different in every
+  // facet cell, steps the outline of a mass in plan without breaking its top into stairs.
+  // Leaves in `_e` how strongly the point sits on a rim (> 0) or in a crease (< 0), and in
+  // `_t` whether it is on a top gentle enough for grass (1) or on rock (0).
+  mass(x, z, ox, oz) {
+    const qx = x + ox, qz = z + oz, gx = Math.floor(qx / CL0), gz = Math.floor(qz / CL0);
     let d1 = 1e18, d2 = 1e18, s1 = null, s2 = null;
     for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
-      const s = this.site(gx + k, gz + j), dx = s.x - x, dz = s.z - z, d = dx * dx + dz * dz;
+      const s = this.site(gx + k, gz + j), dx = s.x - qx, dz = s.z - qz, d = dx * dx + dz * dz;
       if (d < d1) { d2 = d1; s2 = s1; d1 = d; s1 = s; } else if (d < d2) { d2 = d; s2 = s; }
     }
     const p1 = s1.h + s1.gx * (x - s1.x) + s1.gz * (z - s1.z), p2 = s2.h + s2.gx * (x - s2.x) + s2.gz * (z - s2.z);
@@ -166,6 +171,8 @@ export class Terrain {
     const bev = Math.min(Math.max(0.5 * Math.abs(p1 - p2) * (0.1 + 0.52 * hsh(s1.id + s2.id, s1.id ^ s2.id, 7)), BEV0), 7);
     this._bd = bd; this._bev = bev; this._nx = (s1.x - s2.x) / sd; this._nz = (s1.z - s2.z) / sd;
     this._e = Math.sign(p1 - p2) * Math.min(Math.abs(p1 - p2) / 3, 1) * Math.max(0, 1 - Math.abs(bd - bev) / 1.2) * (bd < bev ? 0.6 : 1);
+    // (not on the crease itself: its row of vertices is the top of the rock face below)
+    this._t = bd >= bev + 0.3 ? smoothstep(0.62, 0.38, s1.g) : 0;
     return p1 + (p2 - p1) * 0.5 * Math.max(0, 1 - bd / bev);
   }
 
@@ -184,7 +191,7 @@ export class Terrain {
     }
     this._sx = x; this._sz = z;
     const fd = Math.hypot(bx - ax, bz - az) + 1e-6, bf = (d2 - d1) / (2 * fd);
-    this.mass(x + (hsh(ac, aj, 13) - 0.5) * 2.4, z + (hsh(ac, aj, 14) - 0.5) * 2.4);
+    this.mass(x, z, (hsh(ac, aj, 13) - 0.5) * 2.4, (hsh(ac, aj, 14) - 0.5) * 2.4);
     // the nearer crease wins
     const em = this._bd - this._bev, ef = bf - BEV1;
     if (Math.abs(em) < r && Math.abs(em) <= Math.abs(ef)) { this._sx = x - em * this._nx; this._sz = z - em * this._nz; }
@@ -204,14 +211,18 @@ export class Terrain {
       if (d < d1) { d2 = d1; bx = ax; bz = az; bc = ac; bj = aj; d1 = d; ax = sx; az = sz; ac = cx; aj = cz; }
       else if (d < d2) { d2 = d; bx = sx; bz = sz; bc = cx; bj = cz; }
     }
-    let t = this.mass(x + (hsh(ac, aj, 13) - 0.5) * 2.4, z + (hsh(ac, aj, 14) - 0.5) * 2.4), e = this._e;
+    let t = this.mass(x, z, (hsh(ac, aj, 13) - 0.5) * 2.4, (hsh(ac, aj, 14) - 0.5) * 2.4), e = this._e, top = this._t;
     const bf = (d2 - d1) / (2 * Math.hypot(bx - ax, bz - az) + 1e-6);
     if (bf < 0.9) {
-      const t2 = this.mass(x + (hsh(bc, bj, 13) - 0.5) * 2.4, z + (hsh(bc, bj, 14) - 0.5) * 2.4);
-      e += 0.6 * Math.sign(t - t2) * Math.min(Math.abs(t - t2) / 1.5, 1) * (1 - bf / 0.9);
+      const t2 = this.mass(x, z, (hsh(bc, bj, 13) - 0.5) * 2.4, (hsh(bc, bj, 14) - 0.5) * 2.4);
+      const dt = Math.abs(t - t2);
+      e += 0.6 * Math.sign(t - t2) * Math.min(dt / 1.5, 1) * (1 - bf / 0.9);
       if (bf < BEV1) t += (t2 - t) * 0.5 * (1 - bf / BEV1);
+      // the step between two facet cells is a rock face too, crease rows included
+      if (bf < BEV1 + 0.3 && dt > 0.6) top = 0;
     }
     this._edge = Math.max(-1, Math.min(1, e)) * w;
+    this._top = top; this._dh = t - hb;
     return hb + (t - hb) * w;
   }
 
@@ -340,7 +351,7 @@ export class Terrain {
 
   height(x, z, g = this) {
     if (g !== this || !this.base) return this.gridHeight(g.h, x, z, g);
-    const hb = this.gridHeight(this.base, x, z), w = this.sampleGrid(this.cw, x, z);
+    const hb = this.gridHeight(this.base, x, z), w = CWR(this.sampleGrid(this.cw, x, z));
     return w > 0 ? this.cliffAt(x, z, hb, w) : hb;
   }
 
@@ -369,12 +380,32 @@ export class Terrain {
     const a = arr[iz * N + ix], b = arr[iz * N + ix + 1], c = arr[(iz + 1) * N + ix], d = arr[(iz + 1) * N + ix + 1];
     return lerp(lerp(a, b, u), lerp(c, d, u), v);
   }
-  grassAt(x, z) { return this.sampleGrid(this.gf, x, z); }
+  grassAt(x, z) {
+    const g = this.sampleGrid(this.gf, x, z), w = CWR(this.sampleGrid(this.cw, x, z));
+    if (w <= 0) return g;
+    // on rock: only the gentle tops grow grass, right up to their edge and no further
+    this.cliffAt(x, z, this.gridHeight(this.base, x, z), w);
+    const ramp = 4 * w * (1 - w) * smoothstep(1.2, 3, Math.abs(this._dh));
+    return lerp(g * (1 - ramp), this._top > 0.5 ? this.cliffGrid(this.gfG, 1, x, z) : 0, w);
+  }
+  // bilinear read of one of the on-demand cliff grids (colG, colR: 3 values; gfG: 1)
+  cliffGrid(arr, n, x, z, out) {
+    const N = this.N, fx = clamp((x + this.half) / this.step, 0, this.seg - 0.0001), fz = clamp((z + this.half) / this.step, 0, this.seg - 0.0001);
+    const ix = Math.floor(fx), iz = Math.floor(fz), u = fx - ix, v = fz - iz, i = iz * N + ix;
+    this.cliffPaint(i); this.cliffPaint(i + 1); this.cliffPaint(i + N); this.cliffPaint(i + N + 1);
+    const a = (1 - u) * (1 - v), b = u * (1 - v), c = (1 - u) * v, d = u * v;
+    if (n === 1) return arr[i] * a + arr[i + 1] * b + arr[i + N] * c + arr[i + N + 1] * d;
+    return out.setRGB(arr[i * 3] * a + arr[(i + 1) * 3] * b + arr[(i + N) * 3] * c + arr[(i + N + 1) * 3] * d,
+      arr[i * 3 + 1] * a + arr[(i + 1) * 3 + 1] * b + arr[(i + N) * 3 + 1] * c + arr[(i + N + 1) * 3 + 1] * d,
+      arr[i * 3 + 2] * a + arr[(i + 1) * 3 + 2] * b + arr[(i + N) * 3 + 2] * c + arr[(i + N + 1) * 3 + 2] * d);
+  }
   pathAt(x, z) { return this.sampleGrid(this.pf, x, z); }
   colorAt(x, z, out = new THREE.Color()) {
     const N = this.N;
     const ix = clamp(Math.round((x + this.half) / this.step), 0, this.seg), iz = clamp(Math.round((z + this.half) / this.step), 0, this.seg);
     const i = (iz * N + ix) * 3;
+    // on rock the grid's colour is the old hillside's; tufts want the ground colour of the top
+    if (this.cw[iz * N + ix] > 0.5) return this.cliffGrid(this.colG, 3, x, z, out);
     return out.setRGB(this.col[i], this.col[i + 1], this.col[i + 2]);
   }
   surfaceAt(x, z) {
@@ -439,7 +470,7 @@ export class Terrain {
     const gf = (1 - rk) * (1 - sd) * (1 - pf) * (1 - sn) * (1 - ash) * (1 - plaza) * (1 - pad) * (h > 0.4 ? 1 : 0);
     // ground layers for the surface shader: bare earth (roads, ash) and sand, next to gf and sn
     const hard = (1 - sn) * (1 - plaza) * (1 - pad);
-    return { gf, sn, dirt: Math.max(smoothstep(0.3, 0.8, pf) * (1 - sd), ash * (1 - rk)) * hard, sand: sd * hard };
+    return { gf, sn, dirt: Math.max(smoothstep(0.3, 0.8, pf) * (1 - sd), ash * (1 - rk)) * hard, sand: sd * hard, pave: Math.max(plaza, pad) };
   }
 
   // Curvature-based ambient occlusion: concave cells (valleys, cliff feet)
@@ -459,22 +490,23 @@ export class Terrain {
     const N = this.N, cnt = N * N, H = this.base, st = this.step;
     const col = (this.col = new Float32Array(cnt * 3));
     // ground and rock colours for the cliff mesh, painted on demand (cliffPaint)
-    this.colG = new Float32Array(cnt * 3); this.colR = new Float32Array(cnt * 3); this.cpDone = new Uint8Array(cnt);
+    this.colG = new Float32Array(cnt * 3); this.colR = new Float32Array(cnt * 3); this.gfG = new Float32Array(cnt); this.cpDone = new Uint8Array(cnt);
     this.gf = new Float32Array(cnt);
     this.sn = new Float32Array(cnt);
     const nrm = (this.nrm = gridNormals(H, N, st));
     const c = new THREE.Color();
-    const splat = new Uint8Array(cnt * 4);
+    const splat = new Uint8Array(cnt * 4), pave = new Uint8Array(cnt);
     for (let i = 0; i < cnt; i++) {
       const x = -this.half + (i % N) * st, z = -this.half + Math.floor(i / N) * st;
       const r = this.paint(x, z, H[i], nrm[i * 3 + 1], this.pf[i], c);
       this.gf[i] = r.gf; this.sn[i] = r.sn;
-      if (this.cw[i] > 0) {
+      if (CWR(this.cw[i]) > 0) {
         // on rock, grass grows by the slope of the facet it stands on, not of the old hillside
         const e = 0.6, hl = this.height(x - e, z), hr = this.height(x + e, z), hd = this.height(x, z - e), hu = this.height(x, z + e);
         const r2 = this.paint(x, z, this.h[i], (2 * e) / Math.hypot(hl - hr, 2 * e, hd - hu), this.pf[i], _c);
         this.gf[i] = r2.gf; this.sn[i] = r2.sn;
       }
+      pave[i] = r.pave * 255;
       splat[i * 4] = r.gf * 255; splat[i * 4 + 1] = r.dirt * 255; splat[i * 4 + 2] = r.sand * 255; splat[i * 4 + 3] = r.sn * 255;
       const curv = this.ambientOcclusion(i, i % N, Math.floor(i / N));
       // (rock catches light along its convex edges: the rims of ledges and blocks)
@@ -487,6 +519,11 @@ export class Terrain {
     sp.wrapS = sp.wrapT = THREE.ClampToEdgeWrapping;
     sp.needsUpdate = true;
     U.splatTex.value = sp;
+    // where the bare flat ground is laid stone (the plaza, trial pads) rather than natural rock
+    const pv = new THREE.DataTexture(pave, N, N, THREE.RedFormat);
+    pv.minFilter = pv.magFilter = THREE.LinearFilter;
+    pv.needsUpdate = true;
+    U.paveTex.value = pv;
     this.buildChunks();
   }
 
@@ -580,7 +617,7 @@ export class Terrain {
     if (this.cpDone[i]) return;
     this.cpDone[i] = 1;
     const N = this.N, x = -this.half + (i % N) * this.step, z = -this.half + Math.floor(i / N) * this.step, o = i * 3;
-    this.paint(x, z, this.base[i], 1, this.pf[i], _c);
+    this.gfG[i] = this.paint(x, z, this.base[i], 1, this.pf[i], _c).gf;
     this.colG[o] = _c.r; this.colG[o + 1] = _c.g; this.colG[o + 2] = _c.b;
     this.paint(x, z, this.base[i], 0.2, this.pf[i], _c);
     this.colR[o] = _c.r; this.colR[o + 1] = _c.g; this.colR[o + 2] = _c.b;
@@ -588,8 +625,8 @@ export class Terrain {
 
   // The rock of one chunk: every 2 m cell of its rock blocks, K×K quads each, on the cliff
   // surface. Vertices are shared, so the normals average across creases and edges turn
-  // softly, as worn rock does. `color` is the ground colour and `aRock` the rock colour (the
-  // shader picks by slope); `aEdge` marks rims and creases.
+  // softly, as worn rock does. `color` is the ground colour and `aRock` the rock colour;
+  // `aEdge` holds x: rim (> 0) or crease (< 0), y: 1 on a top that grows grass, 0 on rock.
   skinMesh(ch, k) {
     const K = this.skinK[k], N = this.N, st = this.step, B = this.base, W = this.cw, NB = this.NB;
     const b0x = ch.cx * CH / 2, b0z = ch.cz * CH / 2, cells = [];
@@ -605,6 +642,7 @@ export class Terrain {
       const gx = cells[c * 2], gz = cells[c * 2 + 1], i00 = gz * N + gx, i10 = i00 + 1, i01 = i00 + N, i11 = i01 + 1;
       this.cliffPaint(i00); this.cliffPaint(i10); this.cliffPaint(i01); this.cliffPaint(i11);
       const h00 = B[i00], h10 = B[i10], h01 = B[i01], h11 = B[i11], w00 = W[i00], w10 = W[i10], w01 = W[i01], w11 = W[i11];
+      const n00 = this.nrm[i00 * 3 + 1], n10 = this.nrm[i10 * 3 + 1], n01 = this.nrm[i01 * 3 + 1], n11 = this.nrm[i11 * 3 + 1];
       const x0 = -this.half + gx * st, z0 = -this.half + gz * st;
       for (let j = 0; j <= K; j++) for (let i = 0; i <= K; i++) {
         const key = (gz * K + j) * LW + gx * K + i;
@@ -614,16 +652,21 @@ export class Terrain {
           const u = i / K, t = j / K, x = x0 + u * st, z = z0 + t * st;
           // the smooth ground inside the cell, split like the grid's two triangles
           const hb = u + t <= 1 ? h00 + (h10 - h00) * u + (h01 - h00) * t : h11 + (h01 - h11) * (1 - u) + (h10 - h11) * (1 - t);
-          const w = lerp(lerp(w00, w10, u), lerp(w01, w11, u), t);
+          const w = CWR(lerp(lerp(w00, w10, u), lerp(w01, w11, u), t));
+          // where the rock form fades out, ground or rock goes by the old hillside's slope,
+          // as the grid mesh next to it is painted
+          const tb = 1 - smoothstep(0.82, 0.68, lerp(lerp(n00, n10, u), lerp(n01, n11, u), t));
           if (w > 0) {
             // creases get a row of vertices (only well inside the rock: its outline must meet
             // the grid mesh exactly)
             let sx = x, sz = z;
             if (w > 0.999) { this.cliffSnap(x, z, snapR); sx = this._sx; sz = this._sz; }
             const moved = sx !== x || sz !== z;
-            pos.push(sx, moved ? this.cliffAt(sx, sz, this.gridHeight(B, sx, sz), this.sampleGrid(W, sx, sz)) : this.cliffAt(x, z, hb, w), sz);
-            edge.push(this._edge);
-          } else { pos.push(x, hb, z); edge.push(0); }
+            pos.push(sx, moved ? this.cliffAt(sx, sz, this.gridHeight(B, sx, sz), CWR(this.sampleGrid(W, sx, sz))) : this.cliffAt(x, z, hb, w), sz);
+            // a ramp between the old ground and a mass far above or below it is a rock face
+            const te = tb * (1 - 4 * w * (1 - w) * smoothstep(1.2, 3, Math.abs(this._dh)));
+            edge.push(this._edge, te + (this._top - te) * w);
+          } else { pos.push(x, hb, z); edge.push(0, tb); }
           const a = (1 - u) * (1 - t), b = u * (1 - t), cc = (1 - u) * t, d = u * t;
           for (let n = 0; n < 3; n++) {
             col.push(G[i00 * 3 + n] * a + G[i10 * 3 + n] * b + G[i01 * 3 + n] * cc + G[i11 * 3 + n] * d);
@@ -643,7 +686,7 @@ export class Terrain {
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     g.setAttribute('aRock', new THREE.Float32BufferAttribute(rock, 3));
-    g.setAttribute('aEdge', new THREE.Float32BufferAttribute(edge, 1));
+    g.setAttribute('aEdge', new THREE.Float32BufferAttribute(edge, 2));
     g.setIndex(new THREE.BufferAttribute(idx, 1));
     g.computeVertexNormals();
     g.computeBoundingBox(); g.computeBoundingSphere();

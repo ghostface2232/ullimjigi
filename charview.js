@@ -1,5 +1,6 @@
 // Local character viewer (dev only, not part of the game build).
 import * as THREE from 'three';
+import { SunLight } from 'three/addons/lights/SunLight.js';
 import { G } from './src/core/context.js';
 import { U, toon } from './src/render/materials.js';
 import * as HR from './src/game/humanrig.js';
@@ -25,12 +26,11 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9cc4e0);
 const cam = new THREE.PerspectiveCamera(30, W / H, 0.05, 200);
 G.scene = scene; G.camera = cam;
-const sun = new THREE.DirectionalLight(0xffffff, 2.5);
+const sun = new SunLight(0xffffff, 2.5);   // the game's key light, so the toon and skin shading match
 const sd = new THREE.Vector3(0.45, 0.8, 0.55).normalize();
-sun.position.copy(sd).multiplyScalar(30); sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 80 });
-scene.add(sun, sun.target);
+sun.position.copy(sd); sun.castShadow = true;
+sun.shadow.bias = -0.00022; sun.shadow.normalBias = 0.05; sun.shadow.radius = 3.2; sun.shadow.camera.far = 40;
+scene.add(sun);
 U.sunDir.value.copy(sd);
 scene.add(new THREE.HemisphereLight(0xbfd8ff, 0x7a8a5a, 1.2));
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), toon(0x7fa860, { noAO: true }));

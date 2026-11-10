@@ -397,7 +397,6 @@ export class Renderer {
   applyQuality() {
     const T = tier(), r = this.renderer;
     r.shadowMap.enabled = T.shadowMap > 0;
-    U.relief.value = T.ao ? 2.6 : 0; // parallax relief on cliffs: the tiers with depth effects
     const fx = T.ao || T.shafts, depth = fx || T.dof;
     this.fxOn = fx;
     const def = (m, d) => { if (JSON.stringify(m.defines) !== JSON.stringify(d)) { m.defines = d; m.needsUpdate = true; } };

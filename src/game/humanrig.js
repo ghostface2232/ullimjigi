@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { G } from '../core/context.js';
 import { toon, addOutline, glowMat, ghostMat } from '../render/materials.js';
 import { damp, clamp, lerp, rand } from '../core/util.js';
-import { Sculpt, tube, blob, sheet, prof, sstep, mix, TAU, instance, bodyMat, faceMat, crackMat, ghostSkinMat, ik2, setWorldQuat, rotateTowards, Chain, Spring, SkelDef, clothMat, SURF } from './charkit.js';
+import { Sculpt, tube, blob, sheet, prof, sstep, mix, TAU, instance, bodyMat, faceMat, crackMat, ghostSkinMat, ik2, setWorldQuat, rotateTowards, Chain, Spring, SkelDef, clothMat, SURF, faceMat2, olMat } from './charkit.js';
 import * as HB from './humanoid.js';
 import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
 import { model } from '../render/models.js';
@@ -114,24 +114,40 @@ function sculptType(c, cc, L, def, pal, { capeCh, scarfCh, plumeCh, hairCh, extr
 function fromModel(gltf, def) {
   const meshes = [];
   gltf.scene.traverse((o) => { if (o.isSkinnedMesh) meshes.push(o); });
+  // the head (shape keys) stays a geometry of its own: morph textures cover every vertex of a geometry
+  const face = meshes.filter((m) => m.geometry.morphAttributes.position);
+  const built = mergeModel(meshes.filter((m) => !m.geometry.morphAttributes.position), def);
+  if (face.length) {
+    const f = mergeModel(face, def);
+    const src = face[0], dict = src.morphTargetDictionary;
+    built.face = { geo: f.geo, morphs: Object.keys(dict).sort((a, b) => dict[a] - dict[b]), spec: JSON.parse((src.parent.userData && src.parent.userData.face) || src.userData.face || '{}') };
+    built.tris += f.tris;
+  }
+  return built;
+}
+function mergeModel(meshes, def) {
   let nv = 0, ni = 0;
   for (const m of meshes) { nv += m.geometry.attributes.position.count; ni += m.geometry.index.count; }
-  const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3), C = new Float32Array(nv * 3), ON = new Float32Array(nv * 3);
+  const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3), C = new Float32Array(nv * 3), ON = new Float32Array(nv * 3), UV = new Float32Array(nv * 2);
   const SI = new Uint16Array(nv * 4), SW = new Float32Array(nv * 4), OL = new Float32Array(nv), SF = new Float32Array(nv);
   const I = new Uint32Array(ni);
   const geo = new THREE.BufferGeometry(), mats = [];
+  const nm = meshes[0] && meshes[0].geometry.morphAttributes.position ? meshes[0].geometry.morphAttributes.position.length : 0;
+  const MP = []; for (let k = 0; k < nm; k++) MP.push(new Float32Array(nv * 3));
   let vo = 0, io = 0;
   for (const m of meshes) {
     const a = m.geometry.attributes, n = a.position.count;
     const map = m.skeleton.bones.map((b) => def.map[b.name] ?? 0);
-    const ol = a._olw, sf = a._surf, col = a.color;
+    const ol = a._olw, sf = a._surf, col = a.color, uv = a.uv, mp = m.geometry.morphAttributes.position;
     for (let k = 0; k < n; k++) {
       const v = vo + k;
       P[v * 3] = a.position.getX(k); P[v * 3 + 1] = a.position.getY(k); P[v * 3 + 2] = a.position.getZ(k);
       N[v * 3] = a.normal.getX(k); N[v * 3 + 1] = a.normal.getY(k); N[v * 3 + 2] = a.normal.getZ(k);
       C[v * 3] = col ? col.getX(k) : 1; C[v * 3 + 1] = col ? col.getY(k) : 1; C[v * 3 + 2] = col ? col.getZ(k) : 1;
+      if (uv) { UV[v * 2] = uv.getX(k); UV[v * 2 + 1] = uv.getY(k); }
       for (let j = 0; j < 4; j++) { SI[v * 4 + j] = map[a.skinIndex.getComponent(k, j)]; SW[v * 4 + j] = a.skinWeight.getComponent(k, j); }
       OL[v] = ol ? ol.getX(k) : 1; SF[v] = sf ? sf.getX(k) : 0;
+      if (mp) for (let q = 0; q < nm; q++) { MP[q][v * 3] = mp[q].getX(k); MP[q][v * 3 + 1] = mp[q].getY(k); MP[q][v * 3 + 2] = mp[q].getZ(k); }
     }
     const idx = m.geometry.index;
     for (let k = 0; k < idx.count; k++) I[io + k] = idx.getX(k) + vo;
@@ -153,12 +169,14 @@ function fromModel(gltf, def) {
   geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
   geo.setAttribute('normal', new THREE.BufferAttribute(N, 3));
   geo.setAttribute('onrm', new THREE.BufferAttribute(ON, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(UV, 2));
   geo.setAttribute('skinIndex', new THREE.BufferAttribute(SI, 4));
   geo.setAttribute('skinWeight', new THREE.BufferAttribute(SW, 4));
   geo.setAttribute('color', new THREE.BufferAttribute(C, 3));
   geo.setAttribute('olw', new THREE.BufferAttribute(OL, 1));
   geo.setAttribute('surf', new THREE.BufferAttribute(SF, 1));
   geo.setIndex(new THREE.BufferAttribute(I, 1));
+  if (nm) { geo.morphAttributes.position = MP.map((x) => new THREE.BufferAttribute(x, 3)); geo.morphTargetsRelative = true; }
   geo.computeBoundingSphere();
   return { geo, mats, tris: ni / 3, stats: {} };
 }
@@ -325,7 +343,20 @@ export class HumanRig extends Rig {
     // Types may add groups (e.g. enemies: 'skin' = ash-crack body, 'glow' = tier glow).
     const pal = T.pal;
     const M = (this.M = {});
-    if (T.face) {
+    const F2 = T.built.face;      // authored, sculpted head
+    if (F2) {
+      const sp = F2.spec, F = T.face || HB.faceParams(c, T.L);
+      M.skin = faceMat2(pal.skin);
+      const u = M.skin.userData.face;
+      u.uFaceC.value.set(T.L.HC.x, T.L.HC.y, T.L.HC.z, T.L.hr);
+      u.uEyeA.value.set(sp.ex, sp.ey, sp.a, sp.tilt); u.uEyeB.value.set(sp.bU, sp.bL, sp.re, sp.zc);
+      u.uIris.value.set(F.iris); u.uLash.value.set(F.lash);
+      u.uMouthP.value.set(sp.my, sp.mw, sp.lipU, sp.lipL);
+      u.uCheek.value.set(F.blush, F.wrinkles, F.freckles, 0.2 + 0.1 * (c.fem ?? 0));
+      u.uLook.value.z = 0.52 + 0.04 * (c.kid ?? 0); u.uLook.value.w = 0.42;
+      u.uFaceX.value.set(F.fringeY, sp.noseY, F.lip, F.lowLash);
+      this.faceU = u;
+    } else if (T.face) {
       M.skin = faceMat(pal.skin);
       const F = T.face, u = M.skin.userData.face;
       u.uFaceC.value.set(F.center.x, F.center.y, F.center.z, F.R);
@@ -346,6 +377,18 @@ export class HumanRig extends Rig {
     const I = instance(body, T.def, T.built, M, { outline: o.outline ?? (c.outline ? 0.0048 : 0), outlineTint: !o.mats, main: 'main' });
     this.B = I.by; this.mesh = I.mesh; this.skeleton = I.skeleton; this.outline = I.outline;
     this.meshes = I.meshes;
+    if (F2) {
+      // the head: its own skinned mesh (and outline hull) on the same skeleton, driven by shape keys
+      const fm = new THREE.SkinnedMesh(F2.geo, M.skin);
+      fm.name = 'face'; body.add(fm); fm.bind(I.skeleton, I.mesh.bindMatrix); fm.castShadow = true; fm.boundingSphere = I.mesh.boundingSphere;
+      this.meshes.push(fm);
+      this.morph = fm.morphTargetInfluences; this.morphIdx = Object.fromEntries(F2.morphs.map((n, i) => [n, i]));
+      if (I.outline) {
+        const ol = new THREE.SkinnedMesh(F2.geo, I.outline.material);
+        ol.bind(I.skeleton, I.mesh.bindMatrix); ol.castShadow = false; ol.userData.isOutline = true; ol.boundingSphere = I.mesh.boundingSphere; ol.morphTargetInfluences = this.morph;
+        body.add(ol);
+      }
+    }
     // rest data
     this.rest = {};
     for (const b of I.bones) this.rest[b.name] = b.position.clone();
@@ -1016,6 +1059,16 @@ export class HumanRig extends Rig {
       this.talkV = damp(this.talkV, this.talkTo, 22, dt);
     } else this.talkV = damp(this.talkV, 0, 14, dt);
     const open = fx.open * (1 - bl) * (1 - this.w.dead);
+    if (this.morph) {
+      // sculpted head: the expression drives shape keys; only the gaze stays in the shader
+      const m = this.morph, ix = this.morphIdx, mo = clamp(fx.mOpen + this.talkV * (1 - fx.mOpen * 0.6) + this.w.panic * 0.5, 0, 1.2);
+      m[ix.happy] = fx.happy; m[ix.blink] = clamp(1 - open, 0, 1) * (1 - fx.happy); m[ix.wide] = clamp((open - 1) * 3, 0, 1);
+      m[ix.lidTilt] = fx.tilt; m[ix.lidLow] = fx.lower * (1 - fx.happy);
+      m[ix.mOpen] = mo; m[ix.smile] = fx.smile; m[ix.round] = fx.round + this.talkV * 0.2 - (fx.mW - 1) * 1.5;
+      m[ix.browUp] = fx.raise; m[ix.browTilt] = fx.btilt; m[ix.browFurrow] = fx.furrow;
+      u.uLook.value.x = this.eyeLook.x; u.uLook.value.y = this.eyeLook.y;
+      return;
+    }
     u.uEyeS.value.set(open, fx.tilt, fx.lower, fx.happy);
     u.uLook.value.x = this.eyeLook.x; u.uLook.value.y = this.eyeLook.y;
     u.uBrow.value.x = fx.raise; u.uBrow.value.y = fx.btilt; u.uBrow.value.z = fx.furrow;

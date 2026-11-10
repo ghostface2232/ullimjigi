@@ -24,7 +24,6 @@ export const U = {
   burnTex: { value: (() => { const t = new THREE.DataTexture(new Uint8Array(4), 1, 1); t.needsUpdate = true; return t; })() },
   // Rain wetness of exposed surfaces, 0..1 (set by Weather)
   wet: { value: 0 },
-  relief: { value: 0 }, // depth (m) of the parallax relief on cliffs; 0 = off (quality tier)
   // See-through foliage: leaves on the line from the camera (a) to the player (b) within radius r thin out (dithered)
   seeA: { value: new THREE.Vector3() },
   seeB: { value: new THREE.Vector3() },
@@ -432,15 +431,37 @@ const TERRAIN_FRAG_PARS = `
 uniform sampler2D uBurnTex;
 uniform sampler2D uSplatTex;
 uniform float uWet;
-uniform float uRelief;
 varying vec3 vWPos;
 varying vec3 vWNrm;
+// cliff mesh (terrain.js skinMesh): rock or ground is decided by the slope of the surface
+vec3 _fn = vec3(0.0, 1.0, 0.0);
+float _rockK = 0.0;
+#ifdef CLIFF_SKIN
+varying vec3 vRock;
+varying float vEdge;
+#endif
 float _h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float _vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
   return mix(mix(_h21(i), _h21(i+vec2(1,0)), f.x), mix(_h21(i+vec2(0,1)), _h21(i+vec2(1,1)), f.x), f.y); }
 `;
 const TERRAIN_FRAG = `
   #include <color_fragment>
+  #ifdef CLIFF_SKIN
+  {
+    _fn = normalize(vWNrm);
+    // steep faces are rock; tops keep the ground's colour and grass
+    _rockK = 1.0 - smoothstep(0.7, 0.82, _fn.y);
+    vec3 rk = vRock;
+    // faces turned to the sky are paler and warmer than the ones that lean out
+    float up = smoothstep(-0.2, 0.7, _fn.y);
+    rk *= (0.88 + 0.2 * up) * mix(vec3(0.95, 0.98, 1.05), vec3(1.05, 1.0, 0.94), up);
+    // light gathers on the worn rims of the masses and drains from the creases between them
+    rk *= 1.0 + pow(max(vEdge, 0.0), 0.7) * 0.5 - max(-vEdge, 0.0) * 0.45;
+    // moss creeps down from the grass onto the shoulders of the rock
+    rk = mix(rk, diffuseColor.rgb * vec3(0.72, 0.8, 0.62), smoothstep(0.42, 0.7, _fn.y) * 0.55);
+    diffuseColor.rgb = mix(diffuseColor.rgb, rk, _rockK);
+  }
+  #endif
   {
     // painterly brush strokes: anisotropic noise, rotated per region
     vec2 p = vWPos.xz;
@@ -461,11 +482,18 @@ const TERRAIN_SURF = `
   {
     vec3 wn = normalize(vWNrm);
     vec2 p = vWPos.xz;
-    float slope = 1.0 - wn.y;
     vec2 guv = (p + uHeightP.x) * uHeightP.y + uHeightP.z;
     vec4 sp = texture2D(uSplatTex, guv);
-    float rest = clamp(1.0 - sp.r - sp.g - sp.b - sp.a, 0.0, 1.0);
-    float wRock = rest * smoothstep(0.05, 0.24, slope), wPave = rest - wRock;
+    #ifdef CLIFF_SKIN
+      wn = _fn;
+      // rock on the steep facets; grass (or snow, high up) on the tops
+      sp = vec4((1.0 - _rockK) * (1.0 - sp.a), 0.0, 0.0, (1.0 - _rockK) * sp.a);
+      float wRock = _rockK, wPave = 0.0;
+    #else
+      float slope = 1.0 - wn.y;
+      float rest = clamp(1.0 - sp.r - sp.g - sp.b - sp.a, 0.0, 1.0);
+      float wRock = rest * smoothstep(0.05, 0.24, slope), wPave = rest - wRock;
+    #endif
     vec3 alb = vec3(0.0), dW = vec3(0.0);
     float rgh = 0.0, cav = 0.0, ws = 0.0;
     vec4 a_, n_; float w_;
@@ -477,54 +505,22 @@ const TERRAIN_SURF = `
     GROUND(3.0, p / 3.0, sp.b, X, Z)
     GROUND(4.0, p / 4.0, sp.a, X, Z)
     GROUND(10.0, p / 2.8, wPave, X, Z)
-    // cliffs: project from the sides so the planes stand upright
-    vec2 czy = vWPos.zy, cxy = vWPos.xy;
-    vec2 gzx = dFdx(vWPos.zy), gzy = dFdy(vWPos.zy), gxx = dFdx(vWPos.xy), gxy = dFdy(vWPos.xy);
-    float deep = 0.0;
     if (wRock > 0.004) {
+      // rock: project from the sides so the brush strokes run up the face
       float bx = abs(wn.x), bz = abs(wn.z), bs = max(bx + bz, 1e-3);
       float wx = wRock * bx / bs, wz = wRock * bz / bs;
-      if (uRelief > 0.0) {
-        // relief: the big facets are really set back and forward, so they slide against each
-        // other as the view moves and the hollows fall into shade
-        vec3 Vw = cameraPosition - vWPos;
-        float vd = length(Vw); Vw /= vd;
-        float D = uRelief * (1.0 - smoothstep(120.0, 260.0, vd)) * smoothstep(0.05, 0.4, wRock);
-        if (D > 0.03) {
-          if (bx > 0.25 * bs) {
-            vec2 g = gzx * (1024.0 / 31.0), g2 = gzy * (1024.0 / 31.0);
-            vec3 sh = reliefShift(czy, -Vw.zy / max(abs(Vw.x), 0.3), D, max(0.5 * log2(max(dot(g, g), dot(g2, g2))), 0.0));
-            czy += sh.xy; deep += sh.z * bx / bs;
-          }
-          if (bz > 0.25 * bs) {
-            vec2 g = gxx * (1024.0 / 31.0), g2 = gxy * (1024.0 / 31.0);
-            vec3 sh = reliefShift(cxy, -Vw.xy / max(abs(Vw.z), 0.3), D, max(0.5 * log2(max(dot(g, g), dot(g2, g2))), 0.0));
-            cxy += sh.xy; deep += sh.z * bz / bs;
-          }
-          deep *= D / uRelief;
-        }
-      }
-      // (explicit gradients: the slid coordinates jump at the facets' edges)
-      #define ROCK(UV, GX, GY, W0, TX, BX) if (W0 > 0.004) { a_ = textureGrad(uSurfA, vec3(UV, 2.0), GX, GY); n_ = textureGrad(uSurfN, vec3(UV, 2.0), GX, GY); w_ = W0 * (0.3 + a_.a); w_ *= w_; w_ *= w_; alb += a_.rgb * w_; dW += (TX * (n_.r * 2.0 - 1.0) + BX * (n_.g * 2.0 - 1.0)) * w_; rgh += n_.b * w_; cav += n_.a * w_; ws += w_; }
-      ROCK(czy / 7.0, gzx / 7.0, gzy / 7.0, wx, Z, Y)
-      ROCK(cxy / 7.0, gxx / 7.0, gxy / 7.0, wz, X, Y)
+      GROUND(2.0, vWPos.zy / 7.0, wx, Z, Y)
+      GROUND(2.0, vWPos.xy / 7.0, wz, X, Y)
     }
     if (ws > 0.0) {
       float iw = 1.0 / ws;
       diffuseColor.rgb *= alb * iw * 2.0;
-      vec3 dN = dW * iw * 1.15;
-      if (wRock > 0.02) {
-        // the same blocks read again several times larger: the broad planes and tones of a
-        // cliff, which the 2 m height grid cannot carve
-        float bx = abs(wn.x), bz = abs(wn.z), bs = max(bx + bz, 1e-3);
-        vec4 ma = textureGrad(uSurfA, vec3(czy / 31.0, 2.0), gzx / 31.0, gzy / 31.0) * (bx / bs) + textureGrad(uSurfA, vec3(cxy / 31.0, 2.0), gxx / 31.0, gxy / 31.0) * (bz / bs);
-        vec4 mx = textureGrad(uSurfN, vec3(czy / 31.0, 2.0), gzx / 31.0, gzy / 31.0), mz = textureGrad(uSurfN, vec3(cxy / 31.0, 2.0), gxx / 31.0, gxy / 31.0);
-        diffuseColor.rgb *= mix(vec3(1.0), 0.55 + ma.rgb * 0.9, wRock) * (1.0 - 0.3 * deep);
-        dN += ((Z * (mx.r * 2.0 - 1.0) + Y * (mx.g * 2.0 - 1.0)) * (bx / bs) + (X * (mz.r * 2.0 - 1.0) + Y * (mz.g * 2.0 - 1.0)) * (bz / bs)) * wRock * 1.0;
-      }
-      normal = normalize((viewMatrix * vec4(normalize(wn + dN), 0.0)).xyz);
-      _rough = rgh * iw; _cav = cav * iw * (1.0 - 0.45 * deep); _specK = 1.0;
+      normal = normalize((viewMatrix * vec4(normalize(wn + dW * iw * 1.15), 0.0)).xyz);
+      _rough = rgh * iw; _cav = cav * iw; _specK = 1.0;
     }
+    #ifdef CLIFF_SKIN
+      _cav *= 1.0 - 0.4 * max(-vEdge, 0.0) * _rockK;
+    #endif
     // wildfire: scorched ground (patchy ash) and a hot rim while burning
     vec4 burn = texture2D(uBurnTex, guv);
     if (burn.r + burn.g > 0.002) {
@@ -549,21 +545,6 @@ uniform sampler2DArray uSurfA;
 uniform sampler2DArray uSurfN;
 float groundAbove(vec3 p){
   return p.y - texture2D(uHeightTex, (p.xz + uHeightP.x) * uHeightP.y + uHeightP.z).r;
-}
-// Parallax relief for a cliff's side projection: walk the view ray down through the height of
-// the big rock facets (layer 2 read at 31 m). Returns how far the visible point slides on that
-// plane (xy, metres) and how deep the ray ended (z: 0 on a crest .. 1 in the deepest hollow).
-vec3 reliefShift(vec2 pl, vec2 dir, float D, float lod){
-  float t = 0.0, dt = D / 14.0, h = 0.0, tp = 0.0, hp = 0.0;
-  for (int i = 0; i < 14; i++) {
-    h = (1.0 - clamp((textureLod(uSurfA, vec3((pl + dir * t) / 31.0, 2.0), lod).a - 0.3) / 0.55, 0.0, 1.0)) * D;
-    if (t >= h) break;
-    tp = t; hp = h; t += dt;
-  }
-  // where the ray crossed the surface, between the last two samples
-  float a = hp - tp, b = t - h;
-  t = tp + (t - tp) * clamp(a / max(a + b, 1e-4), 0.0, 1.0);
-  return vec3(dir * t, t / D);
 }
 `;
 const SURFACE_FRAG = `
@@ -748,7 +729,7 @@ export function patch(m, opts = {}) {
   const dissolveColor = { value: new THREE.Color(0.8, 0.45, 1.6) };
   m.userData.dissolve = dissolve;
   m.userData.dissolveColor = dissolveColor;
-  const isTerrain = !!opts.terrain;
+  const isTerrain = !!opts.terrain, isCliff = !!opts.cliff;
   const lodFade = !!opts.lodFade;
   const cards = !!opts.cards;
   if (cards) { m.alphaToCoverage = true; leafTexture(); }
@@ -771,7 +752,7 @@ export function patch(m, opts = {}) {
     sh.uniforms.uHeightTex = U.heightTex;
     sh.uniforms.uHeightP = U.heightP;
     sh.uniforms.uSeeA = U.seeA; sh.uniforms.uSeeB = U.seeB; sh.uniforms.uSeeR = U.seeR;
-    if (isTerrain) { sh.uniforms.uBurnTex = U.burnTex; sh.uniforms.uWet = U.wet; sh.uniforms.uSplatTex = U.splatTex; sh.uniforms.uRelief = U.relief; }
+    if (isTerrain) { sh.uniforms.uBurnTex = U.burnTex; sh.uniforms.uWet = U.wet; sh.uniforms.uSplatTex = U.splatTex; }
     sh.uniforms.uSurfA = U.surfA; sh.uniforms.uSurfN = U.surfN; sh.uniforms.uSkyRefl = U.skyRefl;
     if (cards) sh.uniforms.uLeafTex = U.leaf;
     let fs = sh.fragmentShader;
@@ -811,11 +792,14 @@ export function patch(m, opts = {}) {
     }
     if (hasSway) sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', WIND_VERT);
     if (isTerrain) {
-      sh.vertexShader = TERRAIN_VERT_PARS + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWNrm = normal;');
-      sh.fragmentShader = TERRAIN_FRAG_PARS + sh.fragmentShader.replace('#include <color_fragment>', TERRAIN_FRAG);
+      // (the define has to come before the declarations that test it)
+      const cl = isCliff ? '#define CLIFF_SKIN\n' : '';
+      sh.vertexShader = cl + TERRAIN_VERT_PARS + (isCliff ? 'attribute vec3 aRock;\nattribute float aEdge;\nvarying vec3 vRock;\nvarying float vEdge;\n' : '')
+        + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWNrm = normal;' + (isCliff ? '\nvRock = aRock; vEdge = aEdge;' : ''));
+      sh.fragmentShader = cl + TERRAIN_FRAG_PARS + sh.fragmentShader.replace('#include <color_fragment>', TERRAIN_FRAG);
     }
   };
-  m.customProgramCacheKey = () => `toon5|${hasSway}|${isTerrain}|${foliage}|${texKind}|${!!opts.noAO}|${!!opts.leafy}|${!!opts.noMoss}|${lodFade}|${cards}`;
+  m.customProgramCacheKey = () => `toon5|${hasSway}|${isTerrain}|${isCliff}|${foliage}|${texKind}|${!!opts.noAO}|${!!opts.leafy}|${!!opts.noMoss}|${lodFade}|${cards}`;
   return m;
 }
 

@@ -5,6 +5,7 @@ import { createNoise2D, fbm, ridged, smoothstep, lerp, clamp } from '../core/uti
 import { toon, U } from '../render/materials.js';
 import { PATHS, POI, PADS, PASSES, WORLD } from './layout.js';
 import { OUTER, outerWeights } from './regions/index.js';
+import { tier } from '../render/quality.js';
 
 // Chunked level of detail: CH grid cells (CH·step metres) per chunk side; LOD k draws every
 // 2^k-th vertex. A chunk picks its LOD from the camera's distance to its bounds.
@@ -12,6 +13,11 @@ const CH = 128;
 const LOD_R = [150, 420, 800];
 const LOD_KEEP = [450, 900];      // built LOD 0 / 1 geometry is freed beyond these distances
 const SKIRT = [3, 6, 12, 24];     // skirt depth per LOD: hides cracks between neighbouring LODs
+// Cliffs (Terrain.initCliffs): plan size (m) of a rock mass and of the facets cut into it,
+// and the half-width of the chamfer where two masses (at least) / two facets meet.
+const CL0 = 19, CL1 = 6.5, BEV0 = 0.7, BEV1 = 0.45;
+const hsh = (a, b, k) => { let h = Math.imul(a, 374761393) ^ Math.imul(b, 668265263) ^ Math.imul(k, 2246822519); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+const _c = new THREE.Color();
 // shared noise fields handed to the region height / paint functions (regions/README.md)
 const F = { b: 0, d: 0, rg: 0, dry: 0, n: null, n2: null, n3: null };
 const segT = (x, z, s) => {
@@ -24,7 +30,7 @@ const P = {
   grassLight: hex(0x9fc85a), grassMid: hex(0x6fa843), grassDark: hex(0x4a8238), grassTeal: hex(0x4e9468),
   grassWarm: hex(0xb3c052), grassCool: hex(0x5f9e5a),
   dry: hex(0xbfb466), dirt: hex(0xb89468), dirtDark: hex(0x86694b), dirtLight: hex(0xcdb088), worn: hex(0x7d8a4a),
-  rock: hex(0xa9adb6), rockDark: hex(0x7f8490), rockWarm: hex(0xb7ac9c), rockCool: hex(0x96a3b8),
+  rock: hex(0xb6b9c0), rockDark: hex(0x8c909b), rockWarm: hex(0xc4b8a6), rockCool: hex(0xa3aec2),
   sand: hex(0xe0cf9c), wetSand: hex(0xa8986e),
   snow: hex(0xc9d4e2), snowShade: hex(0x9fb0c6),
   ash: hex(0x564d60), ashLight: hex(0x7a6f86),
@@ -82,21 +88,26 @@ export class Terrain {
         this.pf[iz * N + ix] = this._lastPF;
       }
     }
+    this.initCliffs();
     this.buildMesh();
     this.buildHeightTexture();
   }
 
-  // Steep ground becomes blocky rock: the slope is cut into columns (cells in plan) and each
-  // column into tiers of its own height, so a hillside that was one smooth ramp turns into
-  // near-vertical faces with flat ledges between them, the columns standing proud of or
-  // behind their neighbours. Gentle ground and roads are untouched, and the result is still
-  // one height per (x, z), so collision, climbing and everything placed by height follow it.
-  terrace() {
-    const N = this.N, H = this.h, st = this.step, cnt = N * N;
+  // Steep ground is rebuilt as rock. The smooth slope is replaced by masses (cells in plan,
+  // each a tilted plane through the old surface: some nearly level benches, some leaning
+  // faces, each standing a little proud of or behind the slope) with smaller facets cut
+  // into them, all meeting in straight chamfered edges. It is still one height per (x, z),
+  // so walking, climbing, cameras and everything placed by height follow the same surface
+  // the eye sees. `base` keeps the smooth ground (the far LODs draw it), `cw` says how
+  // much of the rock form applies (0 on gentle ground and roads), and `h` is the final
+  // height at the grid points for whoever reads the grid directly.
+  initCliffs() {
+    const N = this.N, cnt = N * N, st = this.step, H = this.h;
+    this.base = H.slice();
     const nrm = gridNormals(H, N, st);
     let w = new Float32Array(cnt);
-    for (let i = 0; i < cnt; i++) w[i] = smoothstep(0.76, 0.56, nrm[i * 3 + 1]) * (1 - smoothstep(0.1, 0.5, this.pf[i])) * smoothstep(0.6, 2.5, H[i]);
-    // spread the weight a little so a face is cut as a whole, not in speckles
+    for (let i = 0; i < cnt; i++) w[i] = smoothstep(0.8, 0.64, nrm[i * 3 + 1]) * (1 - smoothstep(0.1, 0.5, this.pf[i])) * smoothstep(0.6, 2.5, H[i]);
+    // spread the weight so a face is rebuilt as a whole, not in speckles
     for (let pass = 0; pass < 2; pass++) {
       const b = new Float32Array(cnt);
       for (let iz = 1; iz < N - 1; iz++) for (let ix = 1; ix < N - 1; ix++) {
@@ -105,31 +116,103 @@ export class Terrain {
       }
       w = b;
     }
-    const hash = (a, b, k) => { let h = Math.imul(a, 374761393) ^ Math.imul(b, 668265263) ^ Math.imul(k, 2246822519); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
-    // one column's tiers: mostly riser, a slightly sloping tread
-    const tier = (h, s, ph) => {
-      const t = (h + ph) / s, k = Math.floor(t), f = t - k;
-      return (k + 0.1 * f + 0.9 * smoothstep(0.36, 0.64, f)) * s - ph;
-    };
-    for (let iz = 0; iz < N; iz++) for (let ix = 0; ix < N; ix++) {
-      const i = iz * N + ix;
-      if (w[i] < 0.004) continue;
-      const x = -this.half + ix * st, z = -this.half + iz * st, h = H[i];
-      // columns are wider and tiers taller out in the big ranges
-      const big = smoothstep(236, 340, Math.hypot(x, z));
-      const C = 9 + 9 * big;
-      const gx = Math.floor(x / C), gz = Math.floor(z / C);
-      let d1 = 1e9, d2 = 1e9, a1 = 0, b1 = 0, a2 = 0, b2 = 0;
-      for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
-        const cx = gx + k, cz = gz + j;
-        const d = Math.hypot((cx + hash(cx, cz, 1)) * C - x, (cz + hash(cx, cz, 2)) * C - z);
-        if (d < d1) { d2 = d1; a2 = a1; b2 = b1; d1 = d; a1 = cx; b1 = cz; } else if (d < d2) { d2 = d; a2 = cx; b2 = cz; }
-      }
-      const col = (cx, cz) => { const s = (6 + 8 * hash(cx, cz, 3)) * (1 + 0.9 * big); return tier(h, s, hash(cx, cz, 4) * s); };
-      // neighbouring columns meet in a steep face rather than a tear
-      const t = lerp(col(a1, b1), col(a2, b2), 0.5 * (1 - smoothstep(0, 2.6, d2 - d1)));
-      H[i] = lerp(h, t, w[i]);
+    // ...and make it a clear either/or with a narrow blend, so planes stay planes
+    for (let i = 0; i < cnt; i++) w[i] = smoothstep(0.08, 0.5, w[i]);
+    this.cw = w;
+    this.sites = new Map();
+    this._edge = 0;
+    for (let i = 0; i < cnt; i++) if (w[i] > 0) H[i] = this.cliffAt(-this.half + (i % N) * st, -this.half + Math.floor(i / N) * st, this.base[i], w[i]);
+    // 4 m blocks touched by rock are drawn by the cliff mesh instead of the grid
+    const NB = (this.NB = this.seg / 2), bs = (this.blockSteep = new Uint8Array(NB * NB));
+    for (let bz = 0; bz < NB; bz++) for (let bx = 0; bx < NB; bx++) {
+      let any = 0;
+      for (let j = 0; j <= 2 && !any; j++) for (let k = 0; k <= 2; k++) if (w[(bz * 2 + j) * N + bx * 2 + k] > 0) { any = 1; break; }
+      bs[bz * NB + bx] = any;
     }
+  }
+
+  // one rock mass: where it stands, and the plane of its top
+  site(cx, cz) {
+    const key = (cx + 2048) * 4096 + cz + 2048;
+    let s = this.sites.get(key);
+    if (!s) {
+      const x = (cx + 0.1 + 0.8 * hsh(cx, cz, 1)) * CL0, z = (cz + 0.1 + 0.8 * hsh(cx, cz, 2)) * CL0, e = 3, B = this.base;
+      let gx = (this.gridHeight(B, x + e, z) - this.gridHeight(B, x - e, z)) / (2 * e), gz = (this.gridHeight(B, x, z + e) - this.gridHeight(B, x, z - e)) / (2 * e);
+      const sl = Math.hypot(gx, gz);
+      // half are benches with nearly level tops (where grass grows), half lean at an easy
+      // angle; each also turns a little off the fall line, so no two tops are parallel
+      const r = hsh(cx, cz, 5), g = hsh(cx, cz, 3) < 0.5 ? 0.03 + 0.17 * r : 0.3 + 0.5 * r;
+      const a = (hsh(cx, cz, 6) - 0.5) * 0.9, ca = Math.cos(a), sa = Math.sin(a), k = sl > 1e-4 ? g / sl : 0;
+      s = { x, z, id: key, h: this.gridHeight(B, x, z) + (hsh(cx, cz, 4) - 0.5) * (1.5 + 2 * Math.min(sl, 1.6)), gx: (gx * ca - gz * sa) * k, gz: (gx * sa + gz * ca) * k };
+      this.sites.set(key, s);
+    }
+    return s;
+  }
+
+  // The masses alone, at (x, z): the nearer one's plane, chamfered into its neighbour's.
+  // Leaves in `_e` how strongly the point sits on a rim (> 0) or in a crease (< 0).
+  mass(x, z) {
+    const gx = Math.floor(x / CL0), gz = Math.floor(z / CL0);
+    let d1 = 1e18, d2 = 1e18, s1 = null, s2 = null;
+    for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
+      const s = this.site(gx + k, gz + j), dx = s.x - x, dz = s.z - z, d = dx * dx + dz * dz;
+      if (d < d1) { d2 = d1; s2 = s1; d1 = d; s1 = s; } else if (d < d2) { d2 = d; s2 = s; }
+    }
+    const p1 = s1.h + s1.gx * (x - s1.x) + s1.gz * (z - s1.z), p2 = s2.h + s2.gx * (x - s2.x) + s2.gz * (z - s2.z);
+    // distance to the line halfway between the two masses: a straight chamfer across it
+    const sd = Math.hypot(s2.x - s1.x, s2.z - s1.z), bd = (d2 - d1) / (2 * sd);
+    // the face between two masses stands at its own angle, from a lean of about 58 degrees
+    // to nearly sheer: the chamfer is as wide as that angle needs for the step it spans
+    const bev = Math.min(Math.max(0.5 * Math.abs(p1 - p2) * (0.1 + 0.52 * hsh(s1.id + s2.id, s1.id ^ s2.id, 7)), BEV0), 7);
+    this._bd = bd; this._bev = bev; this._nx = (s1.x - s2.x) / sd; this._nz = (s1.z - s2.z) / sd;
+    this._e = Math.sign(p1 - p2) * Math.min(Math.abs(p1 - p2) / 3, 1) * Math.max(0, 1 - Math.abs(bd - bev) / 1.2) * (bd < bev ? 0.6 : 1);
+    return p1 + (p2 - p1) * 0.5 * Math.max(0, 1 - bd / bev);
+  }
+
+  // Where a mesh vertex at (x, z) should sit so that the creases of the rock run along rows
+  // of vertices instead of zig-zagging between them: a vertex within `r` of the upper or
+  // lower edge of a chamfer (between masses, or between facet cells) moves onto that edge.
+  // Returns the moved position in `_sx`, `_sz`.
+  cliffSnap(x, z, r) {
+    const fx = Math.floor(x / CL1), fz = Math.floor(z / CL1);
+    let d1 = 1e18, d2 = 1e18, ax = 0, az = 0, bx = 0, bz = 0, ac = 0, aj = 0;
+    for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
+      const cx = fx + k, cz = fz + j, sx = (cx + hsh(cx, cz, 11)) * CL1, sz = (cz + hsh(cx, cz, 12)) * CL1;
+      const dx = x - sx, dz = z - sz, d = dx * dx + dz * dz;
+      if (d < d1) { d2 = d1; bx = ax; bz = az; d1 = d; ax = sx; az = sz; ac = cx; aj = cz; }
+      else if (d < d2) { d2 = d; bx = sx; bz = sz; }
+    }
+    this._sx = x; this._sz = z;
+    const fd = Math.hypot(bx - ax, bz - az) + 1e-6, bf = (d2 - d1) / (2 * fd);
+    this.mass(x + (hsh(ac, aj, 13) - 0.5) * 2.4, z + (hsh(ac, aj, 14) - 0.5) * 2.4);
+    // the nearer crease wins
+    const em = this._bd - this._bev, ef = bf - BEV1;
+    if (Math.abs(em) < r && Math.abs(em) <= Math.abs(ef)) { this._sx = x - em * this._nx; this._sz = z - em * this._nz; }
+    else if (Math.abs(ef) < r) { this._sx = x - ef * (ax - bx) / fd; this._sz = z - ef * (az - bz) / fd; }
+  }
+
+  // The rock surface at (x, z), given the smooth ground hb and the cliff weight w there.
+  // Each facet cell reads the masses from a slightly shifted place, which steps the outline
+  // of every mass in plan: a wall becomes a row of upright faces at different depths, like
+  // jointed rock, and a leaning top a few broad steps. Leaves the rim / crease value in `_edge`.
+  cliffAt(x, z, hb, w) {
+    const fx = Math.floor(x / CL1), fz = Math.floor(z / CL1);
+    let d1 = 1e18, d2 = 1e18, ax = 0, az = 0, bx = 0, bz = 0, ac = 0, aj = 0, bc = 0, bj = 0;
+    for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
+      const cx = fx + k, cz = fz + j, sx = (cx + hsh(cx, cz, 11)) * CL1, sz = (cz + hsh(cx, cz, 12)) * CL1;
+      const dx = x - sx, dz = z - sz, d = dx * dx + dz * dz;
+      if (d < d1) { d2 = d1; bx = ax; bz = az; bc = ac; bj = aj; d1 = d; ax = sx; az = sz; ac = cx; aj = cz; }
+      else if (d < d2) { d2 = d; bx = sx; bz = sz; bc = cx; bj = cz; }
+    }
+    let t = this.mass(x + (hsh(ac, aj, 13) - 0.5) * 2.4, z + (hsh(ac, aj, 14) - 0.5) * 2.4), e = this._e;
+    const bf = (d2 - d1) / (2 * Math.hypot(bx - ax, bz - az) + 1e-6);
+    if (bf < 0.9) {
+      const t2 = this.mass(x + (hsh(bc, bj, 13) - 0.5) * 2.4, z + (hsh(bc, bj, 14) - 0.5) * 2.4);
+      e += 0.6 * Math.sign(t - t2) * Math.min(Math.abs(t - t2) / 1.5, 1) * (1 - bf / 0.9);
+      if (bf < BEV1) t += (t2 - t) * 0.5 * (1 - bf / BEV1);
+    }
+    this._edge = Math.max(-1, Math.min(1, e)) * w;
+    return hb + (t - hb) * w;
   }
 
   inWorld(x, z) { return Math.abs(x) < this.half && Math.abs(z) < this.half; }
@@ -255,9 +338,15 @@ export class Terrain {
     return h;
   }
 
-  // exact triangle interpolation matching the mesh
   height(x, z, g = this) {
-    const N = g.N, H = g.h;
+    if (g !== this || !this.base) return this.gridHeight(g.h, x, z, g);
+    const hb = this.gridHeight(this.base, x, z), w = this.sampleGrid(this.cw, x, z);
+    return w > 0 ? this.cliffAt(x, z, hb, w) : hb;
+  }
+
+  // exact triangle interpolation matching the grid mesh
+  gridHeight(H, x, z, g = this) {
+    const N = g.N;
     let fx = (x + g.half) / g.step, fz = (z + g.half) / g.step;
     fx = clamp(fx, 0, g.seg - 0.0001); fz = clamp(fz, 0, g.seg - 0.0001);
     const ix = Math.floor(fx), iz = Math.floor(fz);
@@ -356,7 +445,7 @@ export class Terrain {
   // Curvature-based ambient occlusion: concave cells (valleys, cliff feet)
   // darken and cool slightly, convex ridges brighten a touch.
   ambientOcclusion(i, ix, iz) {
-    const N = this.N, H = this.h;
+    const N = this.N, H = this.base;
     let occ = 0, wsum = 0;
     for (const r of [1, 3, 6]) {
       const x0 = Math.max(0, ix - r), x1 = Math.min(this.seg, ix + r), z0 = Math.max(0, iz - r), z1 = Math.min(this.seg, iz + r);
@@ -367,8 +456,10 @@ export class Terrain {
   }
 
   buildMesh() {
-    const N = this.N, cnt = N * N, H = this.h, st = this.step;
+    const N = this.N, cnt = N * N, H = this.base, st = this.step;
     const col = (this.col = new Float32Array(cnt * 3));
+    // ground and rock colours for the cliff mesh, painted on demand (cliffPaint)
+    this.colG = new Float32Array(cnt * 3); this.colR = new Float32Array(cnt * 3); this.cpDone = new Uint8Array(cnt);
     this.gf = new Float32Array(cnt);
     this.sn = new Float32Array(cnt);
     const nrm = (this.nrm = gridNormals(H, N, st));
@@ -378,6 +469,12 @@ export class Terrain {
       const x = -this.half + (i % N) * st, z = -this.half + Math.floor(i / N) * st;
       const r = this.paint(x, z, H[i], nrm[i * 3 + 1], this.pf[i], c);
       this.gf[i] = r.gf; this.sn[i] = r.sn;
+      if (this.cw[i] > 0) {
+        // on rock, grass grows by the slope of the facet it stands on, not of the old hillside
+        const e = 0.6, hl = this.height(x - e, z), hr = this.height(x + e, z), hd = this.height(x, z - e), hu = this.height(x, z + e);
+        const r2 = this.paint(x, z, this.h[i], (2 * e) / Math.hypot(hl - hr, 2 * e, hd - hu), this.pf[i], _c);
+        this.gf[i] = r2.gf; this.sn[i] = r2.sn;
+      }
       splat[i * 4] = r.gf * 255; splat[i * 4 + 1] = r.dirt * 255; splat[i * 4 + 2] = r.sand * 255; splat[i * 4 + 3] = r.sn * 255;
       const curv = this.ambientOcclusion(i, i % N, Math.floor(i / N));
       // (rock catches light along its convex edges: the rims of ledges and blocks)
@@ -417,6 +514,8 @@ export class Terrain {
   buildChunks() {
     const N = this.N, NC = (this.NC = this.seg / CH);
     this.mat = toon(0xffffff, { vertexColors: true, terrain: true, rim: 0.05 });
+    this.cliffMat = toon(0xffffff, { vertexColors: true, terrain: true, cliff: true, rim: 0.05 });
+    this.skinK = tier().cliff;
     this.mesh = new THREE.Group();
     this.mesh.name = 'terrain';
     this.mesh.userData.noBake = true;
@@ -429,7 +528,9 @@ export class Terrain {
       }
       const x0 = -this.half + cx * CH * this.step, z0 = -this.half + cz * CH * this.step, sz = CH * this.step;
       const box = new THREE.Box3(new THREE.Vector3(x0, lo - SKIRT[3], z0), new THREE.Vector3(x0 + sz, hi, z0 + sz));
-      const ch = { cx, cz, x0, z0, x1: x0 + sz, z1: z0 + sz, lo, hi, box, sphere: box.getBoundingSphere(new THREE.Sphere()), geos: [null, null, null, null], lod: -1 };
+      let cliff = false;
+      for (let bz = cz * CH / 2; bz < (cz + 1) * CH / 2 && !cliff; bz++) for (let bx = cx * CH / 2; bx < (cx + 1) * CH / 2; bx++) if (this.blockSteep[bz * this.NB + bx]) { cliff = true; break; }
+      const ch = { cx, cz, x0, z0, x1: x0 + sz, z1: z0 + sz, lo, hi, box, sphere: box.getBoundingSphere(new THREE.Sphere()), geos: [null, null, null, null], skins: [null, null], cliff, lod: -1 };
       ch.geos[3] = this.chunkGeometry(ch, 3);
       ch.geos[2] = this.chunkGeometry(ch, 2);
       ch.mesh = new THREE.Mesh(ch.geos[3], this.mat);
@@ -457,6 +558,114 @@ export class Terrain {
     return new THREE.BufferAttribute(new Uint16Array(idx), 1);
   }
 
+  // Index buffer of one chunk at LOD 0 or 1 with the rock blocks left out (the cliff mesh
+  // draws those): same vertex layout as chunkIndex.
+  chunkIndexFor(ch, k) {
+    const n = CH >> k, V = n + 1, G = V * V, idx = [], NB = this.NB, sh = 1 - k;
+    const b0x = ch.cx * CH / 2, b0z = ch.cz * CH / 2;
+    for (let iz = 0; iz < n; iz++) for (let ix = 0; ix < n; ix++) {
+      if (this.blockSteep[(b0z + (iz >> sh)) * NB + b0x + (ix >> sh)]) continue;
+      const a = iz * V + ix, b = a + 1, c = a + V, d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+    const rim = this.rimOrder(n);
+    for (let j = 0; j < rim.length; j++) {
+      const a = rim[j], b = rim[(j + 1) % rim.length], sa = G + j, sb = G + ((j + 1) % rim.length);
+      idx.push(a, sa, b, b, sa, sb, a, b, sa, b, sb, sa);
+    }
+    return new THREE.BufferAttribute(new Uint16Array(idx), 1);
+  }
+
+  cliffPaint(i) {
+    if (this.cpDone[i]) return;
+    this.cpDone[i] = 1;
+    const N = this.N, x = -this.half + (i % N) * this.step, z = -this.half + Math.floor(i / N) * this.step, o = i * 3;
+    this.paint(x, z, this.base[i], 1, this.pf[i], _c);
+    this.colG[o] = _c.r; this.colG[o + 1] = _c.g; this.colG[o + 2] = _c.b;
+    this.paint(x, z, this.base[i], 0.2, this.pf[i], _c);
+    this.colR[o] = _c.r; this.colR[o + 1] = _c.g; this.colR[o + 2] = _c.b;
+  }
+
+  // The rock of one chunk: every 2 m cell of its rock blocks, K×K quads each, on the cliff
+  // surface. Vertices are shared, so the normals average across creases and edges turn
+  // softly, as worn rock does. `color` is the ground colour and `aRock` the rock colour (the
+  // shader picks by slope); `aEdge` marks rims and creases.
+  skinMesh(ch, k) {
+    const K = this.skinK[k], N = this.N, st = this.step, B = this.base, W = this.cw, NB = this.NB;
+    const b0x = ch.cx * CH / 2, b0z = ch.cz * CH / 2, cells = [];
+    for (let bz = 0; bz < CH / 2; bz++) for (let bx = 0; bx < CH / 2; bx++) {
+      if (!this.blockSteep[(b0z + bz) * NB + b0x + bx]) continue;
+      for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) cells.push((b0x + bx) * 2 + i, (b0z + bz) * 2 + j);
+    }
+    const nc = cells.length / 2, LW = this.seg * K + 1, snapR = (st / K) * 0.62;
+    const pos = [], col = [], rock = [], edge = [], idx = new Uint32Array(nc * K * K * 6), ids = new Map(), G = this.colG, R = this.colR;
+    const q = new Uint32Array((K + 1) * (K + 1));
+    let io = 0;
+    for (let c = 0; c < nc; c++) {
+      const gx = cells[c * 2], gz = cells[c * 2 + 1], i00 = gz * N + gx, i10 = i00 + 1, i01 = i00 + N, i11 = i01 + 1;
+      this.cliffPaint(i00); this.cliffPaint(i10); this.cliffPaint(i01); this.cliffPaint(i11);
+      const h00 = B[i00], h10 = B[i10], h01 = B[i01], h11 = B[i11], w00 = W[i00], w10 = W[i10], w01 = W[i01], w11 = W[i11];
+      const x0 = -this.half + gx * st, z0 = -this.half + gz * st;
+      for (let j = 0; j <= K; j++) for (let i = 0; i <= K; i++) {
+        const key = (gz * K + j) * LW + gx * K + i;
+        let v = ids.get(key);
+        if (v === undefined) {
+          v = pos.length / 3; ids.set(key, v);
+          const u = i / K, t = j / K, x = x0 + u * st, z = z0 + t * st;
+          // the smooth ground inside the cell, split like the grid's two triangles
+          const hb = u + t <= 1 ? h00 + (h10 - h00) * u + (h01 - h00) * t : h11 + (h01 - h11) * (1 - u) + (h10 - h11) * (1 - t);
+          const w = lerp(lerp(w00, w10, u), lerp(w01, w11, u), t);
+          if (w > 0) {
+            // creases get a row of vertices (only well inside the rock: its outline must meet
+            // the grid mesh exactly)
+            let sx = x, sz = z;
+            if (w > 0.999) { this.cliffSnap(x, z, snapR); sx = this._sx; sz = this._sz; }
+            const moved = sx !== x || sz !== z;
+            pos.push(sx, moved ? this.cliffAt(sx, sz, this.gridHeight(B, sx, sz), this.sampleGrid(W, sx, sz)) : this.cliffAt(x, z, hb, w), sz);
+            edge.push(this._edge);
+          } else { pos.push(x, hb, z); edge.push(0); }
+          const a = (1 - u) * (1 - t), b = u * (1 - t), cc = (1 - u) * t, d = u * t;
+          for (let n = 0; n < 3; n++) {
+            col.push(G[i00 * 3 + n] * a + G[i10 * 3 + n] * b + G[i01 * 3 + n] * cc + G[i11 * 3 + n] * d);
+            rock.push(R[i00 * 3 + n] * a + R[i10 * 3 + n] * b + R[i01 * 3 + n] * cc + R[i11 * 3 + n] * d);
+          }
+        }
+        q[j * (K + 1) + i] = v;
+      }
+      for (let j = 0; j < K; j++) for (let i = 0; i < K; i++) {
+        const a = q[j * (K + 1) + i], b = q[j * (K + 1) + i + 1], cc = q[(j + 1) * (K + 1) + i], d = q[(j + 1) * (K + 1) + i + 1];
+        // split each quad along its flatter diagonal, so creases stay straight
+        if (Math.abs(pos[a * 3 + 1] - pos[d * 3 + 1]) <= Math.abs(pos[b * 3 + 1] - pos[cc * 3 + 1])) { idx[io++] = a; idx[io++] = cc; idx[io++] = d; idx[io++] = a; idx[io++] = d; idx[io++] = b; }
+        else { idx[io++] = a; idx[io++] = cc; idx[io++] = b; idx[io++] = b; idx[io++] = cc; idx[io++] = d; }
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setAttribute('aRock', new THREE.Float32BufferAttribute(rock, 3));
+    g.setAttribute('aEdge', new THREE.Float32BufferAttribute(edge, 1));
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.computeVertexNormals();
+    g.computeBoundingBox(); g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, this.cliffMat);
+    m.castShadow = true; m.receiveShadow = true; m.matrixAutoUpdate = false; m.visible = false;
+    this.mesh.add(m);
+    return m;
+  }
+
+  // a quality change alters how finely the rock is meshed
+  applyQuality() {
+    const K = tier().cliff;
+    if (K[0] === this.skinK[0] && K[1] === this.skinK[1]) return;
+    this.skinK = K;
+    for (const ch of this.chunks) for (let k = 0; k < 2; k++) {
+      const m = ch.skins[k];
+      if (!m) continue;
+      this.mesh.remove(m); m.geometry.dispose(); ch.skins[k] = null;
+      if (ch.lod === k) ch.lod = -1; // rebuilt and shown again on the next update
+    }
+  }
+
   rimOrder(n) {
     const V = n + 1, r = [];
     for (let i = 0; i < n; i++) r.push(i);                    // top row, west → east
@@ -473,7 +682,7 @@ export class Terrain {
     const gx0 = ch.cx * CH, gz0 = ch.cz * CH;
     for (let iz = 0; iz < V; iz++) for (let ix = 0; ix < V; ix++) {
       const gx = gx0 + ix * s, gz = gz0 + iz * s, gi = gz * N + gx, o = (iz * V + ix) * 3;
-      pos[o] = -this.half + gx * this.step; pos[o + 1] = this.h[gi]; pos[o + 2] = -this.half + gz * this.step;
+      pos[o] = -this.half + gx * this.step; pos[o + 1] = this.base[gi]; pos[o + 2] = -this.half + gz * this.step;
       nor[o] = this.nrm[gi * 3]; nor[o + 1] = this.nrm[gi * 3 + 1]; nor[o + 2] = this.nrm[gi * 3 + 2];
       col[o] = this.col[gi * 3]; col[o + 1] = this.col[gi * 3 + 1]; col[o + 2] = this.col[gi * 3 + 2];
     }
@@ -487,7 +696,7 @@ export class Terrain {
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    g.setIndex(this.lodIndex[k]);
+    g.setIndex(k < 2 && ch.cliff ? this.chunkIndexFor(ch, k) : this.lodIndex[k]);
     g.boundingBox = ch.box; g.boundingSphere = ch.sphere;
     return g;
   }
@@ -503,12 +712,24 @@ export class Terrain {
       // hysteresis: keep a finer LOD a little past its switch distance
       const hy = (k) => LOD_R[k] * (ch.lod <= k ? 1.08 : 1);
       let want = d < hy(0) ? 0 : d < hy(1) ? 1 : d < hy(2) ? 2 : 3;
-      if (!ch.geos[want]) {
-        if (d < 90 || budget > 0) { ch.geos[want] = this.chunkGeometry(ch, want); budget--; }
-        else while (!ch.geos[want]) want++;
+      // a fine LOD of a chunk with rock is its grid and its cliff mesh together
+      const has = (k) => ch.geos[k] && (k >= 2 || !ch.cliff || ch.skins[k]);
+      if (!has(want)) {
+        if (d < 90 || budget > 0) {
+          if (!ch.geos[want]) ch.geos[want] = this.chunkGeometry(ch, want);
+          if (want < 2 && ch.cliff && !ch.skins[want]) ch.skins[want] = this.skinMesh(ch, want);
+          budget--;
+        } else while (!has(want)) want++;
       }
-      if (want !== ch.lod) { ch.mesh.geometry = ch.geos[want]; ch.lod = want; }
-      for (let k = 0; k < 2; k++) if (ch.geos[k] && ch.lod !== k && d > LOD_KEEP[k]) { const g = ch.geos[k]; g.index = null; g.dispose(); ch.geos[k] = null; }
+      if (want !== ch.lod) {
+        ch.mesh.geometry = ch.geos[want]; ch.lod = want;
+        for (let k = 0; k < 2; k++) if (ch.skins[k]) ch.skins[k].visible = k === want;
+      }
+      for (let k = 0; k < 2; k++) if (ch.lod !== k && d > LOD_KEEP[k]) {
+        const g = ch.geos[k], m = ch.skins[k];
+        if (g) { if (g.index === this.lodIndex[k]) g.index = null; g.dispose(); ch.geos[k] = null; }
+        if (m) { this.mesh.remove(m); m.geometry.dispose(); ch.skins[k] = null; }
+      }
     }
   }
 

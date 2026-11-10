@@ -578,6 +578,11 @@ export function house(opts = {}) {
 // Set dressing pieces (added into a parent group at local x, y, z)
 export function barrel(p, x, y, z, rnd = Math.random, o = {}) {
   const g = new THREE.Group(); g.position.set(x, y, z); g.rotation.y = rnd() * TAU; p.add(g);
+  if (authored('barrel', 'body', g)) {
+    // random draws match the code-built barrel, so the caller's sequence is unchanged
+    if (o.apples ?? rnd() < 0.35) { authored('barrel', 'apples', g); for (let i = 0; i < 12; i++) rnd(); }
+    return g;
+  }
   lathe([[0, 0], [0.3, 0], [0.36, 0.2], [0.38, 0.42], [0.36, 0.64], [0.3, 0.84], [0, 0.84]], 12, MAT.wood, 0, 0, 0, g);
   for (const hy of [0.12, 0.72]) mesh(new THREE.TorusGeometry(0.345, 0.025, 4, 14), MAT.iron, 0, hy, 0, g, { rx: Math.PI / 2 });
   mesh(new THREE.TorusGeometry(0.38, 0.025, 4, 14), MAT.iron, 0, 0.42, 0, g, { rx: Math.PI / 2 });
@@ -586,6 +591,11 @@ export function barrel(p, x, y, z, rnd = Math.random, o = {}) {
 }
 export function crate(p, x, y, z, s = 0.7, ry = 0, rnd = Math.random) {
   const g = new THREE.Group(); g.position.set(x, y, z); g.rotation.y = ry; p.add(g);
+  if (authored('crate', 'body', g)) {
+    g.scale.setScalar(s);   // the model is a unit crate centred on its origin
+    if (rnd() < 0.4) { authored('crate', 'produce', g); for (let i = 0; i < 15; i++) rnd(); }
+    return g;
+  }
   box(s, s, s, MAT.woodLight, 0, 0, 0, g);
   for (const sz of [-1, 1]) {
     box(s + 0.02, 0.08, 0.05, MAT.timber, 0, s / 2 - 0.05, sz * s / 2, g); box(s + 0.02, 0.08, 0.05, MAT.timber, 0, -s / 2 + 0.05, sz * s / 2, g);
@@ -595,6 +605,12 @@ export function crate(p, x, y, z, s = 0.7, ry = 0, rnd = Math.random) {
   return g;
 }
 function sack(p, x, y, z, rnd, col = 0xcbb08a) {
+  if (has('sack')) {
+    const g = new THREE.Group(); g.position.set(x, y, z); p.add(g);
+    g.rotation.set((rnd() - 0.5) * 0.12, rnd() * TAU, (rnd() - 0.5) * 0.12);
+    authored('sack', 'body', g);
+    return;
+  }
   const s = pball(0.3, col, x, y + 0.26, z, p, { detail: 1, sx: 0.9, sy: 0.95, sz: 0.75 });
   s.rotation.set((rnd() - 0.5) * 0.3, rnd() * TAU, (rnd() - 0.5) * 0.3);
   pcyl(0.07, 0.12, 0.14, 6, col, x, y + 0.56, z, p);
@@ -635,6 +651,7 @@ export function planter(p, x, z, rnd = Math.random, o = {}) {
 // Street lamp: stone foot, timber post with a curled bracket and a hanging lantern
 export function lampPost(rnd = Math.random) {
   const g = new THREE.Group();
+  if (authored('lamppost', 'body', g)) return g;
   box(0.5, 0.3, 0.5, MAT.stoneDark, 0, 0.12, 0, g);
   cyl(0.08, 0.11, 3.1, 8, MAT.timber, 0, 1.7, 0, g);
   box(0.16, 0.12, 1.0, MAT.timber, 0, 3.05, 0.4, g);
@@ -704,6 +721,12 @@ export function washingLine(len = 4.5, rnd = Math.random) {
 // Handcart with spoked wheels and shafts resting on the ground
 export function cart(rnd = Math.random, o = {}) {
   const g = new THREE.Group();
+  if (authored('cart', 'body', g)) {
+    const load = o.load ?? Math.floor(rnd() * 3);
+    authored('cart', 'load' + load, g);
+    for (let i = [12, 14, 0][load]; i > 0; i--) rnd();   // draws the code-built load used
+    return g;
+  }
   const L = 2.0, Wd = 1.2;
   const bed = new THREE.Group(); bed.position.y = 0.72; bed.rotation.z = 0.08; g.add(bed);
   box(L, 0.1, Wd, MAT.wood, 0, 0, 0, bed);
@@ -724,6 +747,11 @@ export function cart(rnd = Math.random, o = {}) {
   return g;
 }
 export function hayBale(p, x, y, z, s = 1, ry = 0) {
+  const made = authored('haybale', 'body', p);
+  if (made) {
+    for (const m of made) { m.position.set(x, y, z); m.rotation.y = ry; m.scale.setScalar(s); }
+    return made[0];
+  }
   const b = box(1.1 * s, 0.55 * s, 0.6 * s, MAT.straw, x, y, z, p, { ry });
   for (const k of [-0.25, 0.25]) box(0.04, 0.57 * s, 0.62 * s, MAT.timber, x + Math.cos(ry) * k * s, y, z - Math.sin(ry) * k * s, p, { ry });
   return b;
@@ -1105,6 +1133,15 @@ export function shrine(el, runeTex, opts = {}) {
 // open firebox between four posts, wide roof with upturned corners, finial.
 export function lanternStone() {
   const g = new THREE.Group();
+  if (authored('lantern', 'body', g)) {
+    const flame = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), flameMat.clone());
+    flame.position.y = 2.2; flame.visible = false; g.add(flame);
+    flame.add(crystalGlowSprite(0xffa040, 2.6, { intensity: 0.4 }));
+    const cage = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.62, 0.52), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.8, 1.0, 0.4), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    cage.position.y = 2.25; g.add(cage);
+    g.userData = { flame, cage, flameY: 2.25 };
+    return g;
+  }
   box(1.25, 0.28, 1.25, MAT.stoneDark, 0, 0.12, 0, g);
   cyl(0.5, 0.58, 0.22, 8, MAT.stone, 0, 0.36, 0, g);
   cyl(0.24, 0.3, 1.1, 8, MAT.stone, 0, 1.0, 0, g);
@@ -1251,6 +1288,10 @@ export function windmill() {
 // Well: fitted stone ring with a coping, timber frame, shingled roof, crank, rope & bucket
 export function well() {
   const g = new THREE.Group();
+  if (authored('well', 'body', g)) {
+    cyl(1.18, 1.18, 0.05, 20, new THREE.MeshBasicMaterial({ color: 0x1a3a4a }), 0, 0.7, 0, g, { cast: false });   // water
+    return g;
+  }
   const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.4, 1.1, 16, 1, true), toon(0xb8ad9a, { flat: true, side: THREE.DoubleSide, tex: 'stone' }));
   ring.position.y = 0.55; ring.castShadow = true; g.add(ring);
   mesh(new THREE.TorusGeometry(1.33, 0.14, 5, 16), MAT.stoneDark, 0, 1.12, 0, g, { rx: Math.PI / 2 });
@@ -1282,6 +1323,12 @@ export function stall(color = MAT.clothRed) {
   const g = new THREE.Group();
   const rnd = mulberry32(color === MAT.clothRed ? 5 : 9);
   const stripeA = color === MAT.clothRed ? 0xc0473a : 0x4a6fb0, stripeB = 0xf0e6d2;
+  if (authored('stall', 'body', g)) {
+    authored('stall', color === MAT.clothRed ? 'awningRed' : 'awningBlue', g);
+    sack(g, 1.9, 0, 0.4, rnd);
+    crate(g, -1.95, 0.3, 0.3, 0.6, 0.3, rnd);
+    return g;
+  }
   // counter
   box(3, 0.95, 1.3, MAT.woodLight, 0, 0.48, 0, g);
   box(3.2, 0.1, 1.45, MAT.wood, 0, 0.98, 0.02, g);
@@ -1319,6 +1366,25 @@ export function fence(len = 4) {
   const g = new THREE.Group();
   const rnd = mulberry32(Math.round(len * 100));
   const n = Math.max(2, Math.round(len / 1.6));
+  if (has('fence')) {
+    // riven posts with split rails lashed to their front; rails are 1.6 m models stretched to the bay
+    for (let i = 0; i <= n; i++) {
+      const [m] = authored('fence', i % 3 === 1 ? 'postB' : 'post', g);
+      m.position.set(-len / 2 + (i / n) * len, (rnd() - 0.5) * 0.08, 0);
+      m.rotation.z = (rnd() - 0.5) * 0.07;
+    }
+    for (let i = 0; i < n; i++) {
+      const x0 = -len / 2 + (i / n) * len, x1 = -len / 2 + ((i + 1) / n) * len;
+      for (const [k, y] of [[0, 0.86], [1, 0.46]]) {
+        const y0 = y + (rnd() - 0.5) * 0.06, y1 = y + (rnd() - 0.5) * 0.06;
+        const [m] = authored('fence', (i + k) % 2 ? 'railB' : 'rail', g);
+        m.position.set((x0 + x1) / 2, (y0 + y1) / 2, 0.085);
+        m.rotation.set(rnd() < 0.5 ? Math.PI : 0, 0, Math.atan2(y1 - y0, x1 - x0));
+        m.scale.x = Math.hypot(x1 - x0, y1 - y0) / 1.6;
+      }
+    }
+    return g;
+  }
   for (let i = 0; i <= n; i++) {
     const x = -len / 2 + (i / n) * len;
     box(0.15, 1.15 + (rnd() - 0.5) * 0.1, 0.15, MAT.timber, x, 0.55, 0, g, { rz: (rnd() - 0.5) * 0.06 });
@@ -1335,6 +1401,7 @@ export function fence(len = 4) {
 // Bench: plank seat on turned legs with a slatted back; seat height ~0.5 (NPCs sit on it)
 export function bench() {
   const g = new THREE.Group();
+  if (authored('bench', 'body', g)) return g;
   for (let i = 0; i < 3; i++) box(2, 0.07, 0.17, MAT.wood, 0, 0.5, -0.19 + i * 0.19, g);
   for (let i = 0; i < 2; i++) box(2, 0.12, 0.05, MAT.wood, 0, 0.78 + i * 0.2, -0.3, g, { rx: -0.15 });
   for (const sx of [-1, 1]) {
@@ -1349,6 +1416,13 @@ export function bench() {
 // Signpost: rounded post with a cap and arrow-shaped boards (ry per board)
 export function signpost(texts = []) {
   const g = new THREE.Group();
+  if (authored('signpost', 'post', g)) {
+    texts.forEach((t, i) => {   // boards point along +x from the post
+      const bg = new THREE.Group(); bg.position.y = 2.05 - i * 0.42; bg.rotation.y = t.ry || 0; g.add(bg);
+      authored('signpost', i % 2 ? 'boardB' : 'board', bg);
+    });
+    return g;
+  }
   box(0.4, 0.2, 0.4, MAT.stoneDark, 0, 0.08, 0, g);
   cyl(0.08, 0.1, 2.5, 8, MAT.timber, 0, 1.25, 0, g);
   mesh(new THREE.ConeGeometry(0.14, 0.2, 8), MAT.timber, 0, 2.58, 0, g);
@@ -1366,6 +1440,12 @@ export function signpost(texts = []) {
 // Roadside milestone: rounded stone slab with a carved band
 export function milestone(rnd = Math.random) {
   const g = new THREE.Group();
+  const stone = authored('milestone', 'body', g);
+  if (stone) {
+    const tilt = (rnd() - 0.5) * 0.08;
+    for (const m of stone) m.rotation.z = tilt;
+    return g;
+  }
   box(0.6, 0.9, 0.3, MAT.stone, 0, 0.4, 0, g, { rz: (rnd() - 0.5) * 0.08 });
   const top = mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.3, 10, 1, false, 0, Math.PI), MAT.stone, 0, 0.85, 0, g);
   top.rotation.set(Math.PI / 2, 0, Math.PI / 2);
@@ -1376,6 +1456,19 @@ export function milestone(rnd = Math.random) {
 // Stone cairn (돌탑): stacked flat stones, a prayer ribbon on the top
 export function cairn(rnd = Math.random, h = 1.4) {
   const g = new THREE.Group();
+  if (has('cairn')) {
+    // same stack (and random draws) as the code-built cairn, with sculpted flat stones
+    let y = 0, r = 0.55;
+    for (let i = 0; y < h; i++) {
+      const v = Math.floor(rnd() * 3), jx = (rnd() - 0.5) * 0.06, jz = (rnd() - 0.5) * 0.06, sx = 1 + (rnd() - 0.5) * 0.2;
+      const [m] = authored('cairn', 'stone' + 'ABCD'[(v + i) % 4], g);
+      m.position.set(jx, y + r * 0.35, jz);
+      m.scale.set(r * sx, r * 1.3, r);
+      m.rotation.y = rnd() * 3;
+      y += r * 0.62; r *= 0.82;
+    }
+    return g;
+  }
   let y = 0, r = 0.55;
   while (y < h) {
     const s = pball(r, [0x9a9282, 0x8a8478, 0xa8a090][Math.floor(rnd() * 3)], (rnd() - 0.5) * 0.06, y + r * 0.35, (rnd() - 0.5) * 0.06, g, { mat: MAT.paintStone, sy: 0.42, sx: 1 + (rnd() - 0.5) * 0.2 });
@@ -1416,6 +1509,7 @@ export function dock(len = 9, width = 2.2, rnd = Math.random) {
 // Grave: carved headstone with a rounded top, small stone kerb, flowers, a candle
 export function grave() {
   const g = new THREE.Group();
+  if (authored('grave', 'body', g)) return g;
   const rnd = mulberry32(17);
   box(1.4, 0.2, 0.7, MAT.stoneDark, 0, 0.05, 0.05, g);
   const s = box(0.9, 1.3, 0.25, MAT.stoneBlue, 0, 0.6, 0, g, { rx: -0.06 });
@@ -1542,8 +1636,39 @@ export function weaponRack(rnd = Math.random) {
 }
 
 // Ruined arch: segmented columns with bases, a lintel (sometimes fallen), moss
+// One ruined column from authored pieces: base, fluted drums (the last one cut short), in group p.
+// The random draws per drum follow the code-built versions (arch: offset then turn; pillar: tint then turn).
+function ruinColumn(p, x, y0, h, rnd, arch) {
+  for (let k = 0; k < Math.ceil(h / 1.2); k++) {
+    const dh = Math.min(1.2, h - k * 1.2) - 0.05;
+    if (dh < 0.1) break;
+    const a = rnd(), b = rnd();
+    const [m] = authored('ruin', arch ? ['drumA', 'drumB', 'drumC'][k % 3] : (a < 0.5 ? 'drumA' : k % 2 ? 'drumC' : 'drumB'), p);
+    m.position.set(x + (arch ? (a - 0.5) * 0.05 : 0), y0 + k * 1.2 + dh / 2, 0);
+    m.scale.y = dh / 1.15;
+    m.rotation.y = b * TAU;
+  }
+}
 export function ruinArch(rnd = Math.random) {
   const g = new THREE.Group();
+  if (has('ruin')) {
+    rnd();   // (the code-built arch drew its stone tint here)
+    let minH = 99;
+    const pillars = [];
+    for (const sx of [-1, 1]) {
+      const h = 5 + rnd() * 2;
+      minH = Math.min(minH, h);
+      pillars.push([sx * 2.2, h + 0.45]);
+      authored('ruin', 'base', g)[0].position.x = sx * 2.2;
+      ruinColumn(g, sx * 2.2, 0.45, h, rnd, true);
+    }
+    const lintel = new THREE.Group(); g.add(lintel);
+    authored('ruin', 'lintel', lintel);
+    if (rnd() < 0.6) { lintel.position.y = minH + 0.8; lintel.rotation.z = (rnd() - 0.5) * 0.12; }
+    else { lintel.position.set(0.6, 0.35, 1.6); lintel.rotation.set(0, 0.3, 0.12); }   // fallen beside the columns
+    g.userData.pillars = pillars;
+    return g;
+  }
   const mat = rnd() < 0.5 ? MAT.ruin : MAT.ruinMoss;
   let minH = 99;
   const pillars = [];
@@ -1574,6 +1699,17 @@ export function ruinArch(rnd = Math.random) {
 
 export function pillarBroken(h = 3, rnd = Math.random) {
   const g = new THREE.Group();
+  if (authored('ruin', 'base', g)) {
+    const pg = new THREE.Group(); pg.position.y = 0.42; pg.rotation.z = (rnd() - 0.5) * 0.1; g.add(pg);
+    ruinColumn(pg, 0, 0, h, rnd, false);
+    const [stub] = authored('ruin', 'stub', pg);
+    stub.position.y = h - 0.05;
+    stub.rotation.set(rnd() * 0.1, rnd() * 3, rnd() * 0.1);
+    const [ch] = authored('ruin', 'chunk', g);
+    ch.position.set(0.9 + rnd() * 0.5, 0.2, (rnd() - 0.5) * 1.2);
+    ch.rotation.set(rnd() * 3, rnd() * 3, 0);
+    return g;
+  }
   box(1.45, 0.45, 1.45, MAT.stoneDark, 0, 0.2, 0, g);
   const tilt = (rnd() - 0.5) * 0.1;
   const pg = new THREE.Group(); pg.position.y = 0.42; pg.rotation.z = tilt; g.add(pg);

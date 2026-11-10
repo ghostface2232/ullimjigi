@@ -656,6 +656,155 @@ export function faceMat(color, o = {}) {
   return m;
 }
 
+// Skin of an authored, sculpted head (ref/blender/ch_face.py). The mesh carries the forms and the
+// expressions (shape keys); this shader adds what is drawn on them, in the face coordinates
+// stored in the UV map (head radii about the head centre, so it follows the moving lids and
+// lips): lash lines on the lid margins, the lip tint and line, nostrils, blush. `surf` tells
+// the parts apart: 0 plain skin, 1 face skin, 2 eyeball (iris, pupil, catchlights painted on
+// the ball around the gaze direction), 3 lid rim, 4 mouth interior, 5 brow hair.
+// Skin is lit softly instead of with the hard toon band: a wide terminator, a warm lifted
+// shadow and a little blood colour along it, so the sculpted forms read.
+const FACE2_PARS = `
+varying vec3 vObj;
+varying vec2 vFace;
+varying float vSurfF;
+uniform vec4 uFaceC;   // head centre (bind space), radius
+uniform vec4 uEyeA;    // eye x, y, half width, tilt
+uniform vec4 uEyeB;    // upper height, lower height, eyeball radius, eyeball centre z
+uniform vec4 uLook;    // gaze x, y (-1..1), iris angular radius, pupil size (rel.)
+uniform vec3 uIris;
+uniform vec3 uLash;
+uniform vec4 uMouthP;  // mouth y, half width, upper lip height, lower lip height
+uniform vec4 uCheek;   // blush, wrinkles, freckles, lash thickness
+uniform vec3 uBlushC;
+uniform vec4 uFaceX;   // fringe shadow line y (9 = none), nose tip y, lip tint, lower lash
+float fLine(float d, float w, float aa) { return 1.0 - smoothstep(w - aa, w + aa, abs(d)); }
+float eyeU(float t) { return uEyeA.y + uEyeB.x * pow(max(0.0, 1.0 - pow(abs(t), 2.3)), 0.75) * (1.0 - 0.1 * t) + uEyeA.w * uEyeA.z * t; }
+float eyeL(float t) { return uEyeA.y - uEyeB.y * pow(max(0.0, 1.0 - t * t), 0.8) * (1.0 - 0.3 * t) + uEyeA.w * uEyeA.z * t; }
+float lipT(float x) { float q = min(1.0, abs(x) / uMouthP.y); return uMouthP.x + uMouthP.z * pow(max(0.0, 1.0 - pow(q, 2.2)), 0.7) * (1.0 + 0.28 * exp(-pow((q - 0.33) / 0.2, 2.0)) - 0.16 * exp(-pow(q / 0.14, 2.0))); }
+float lipB(float x) { float q = min(1.0, abs(x) / uMouthP.y); return uMouthP.x - uMouthP.w * pow(max(0.0, 1.0 - q * q), 0.75); }
+`;
+const FACE2_FRAG = `
+#include <color_fragment>
+float _eyeball = 0.0;
+{
+  vec2 f = vFace;
+  vec3 q3 = (vObj - uFaceC.xyz) / uFaceC.w;
+  float aa = max(fwidth(f.x), fwidth(f.y)) + 0.0012;
+  float sx = f.x < 0.0 ? -1.0 : 1.0;
+  float t = (abs(f.x) - uEyeA.x) / uEyeA.z, tc = clamp(t, -1.0, 1.0);
+  float yU = eyeU(tc), yL = eyeL(tc);
+  if (vSurfF < 0.5) {
+    // the jaw's shadow on the throat
+    if (q3.y < -0.8 && q3.y > -2.4 && abs(q3.x) < 0.7 && q3.z < 0.5) {
+      float ns = smoothstep(-1.3 - 0.16 * cos(q3.x * 4.0), -1.16 - 0.16 * cos(q3.x * 4.0), q3.y);
+      diffuseColor.rgb *= mix(vec3(1.0), vec3(0.84, 0.68, 0.66), ns);
+    }
+  } else if (vSurfF < 1.5) {
+    vec3 col = diffuseColor.rgb;
+    // fringe shadow, blush, freckles
+    float hy = uFaceX.x - 0.05 * cos(f.x * 7.0) - 0.035 * cos(f.x * 19.0 + 1.0);
+    col *= mix(vec3(1.0), vec3(0.86, 0.72, 0.7), smoothstep(hy - 0.02, hy + 0.02, f.y));
+    vec2 bc = vec2(abs(f.x) - 0.44, f.y + 0.3);
+    col = mix(col, uBlushC, exp(-dot(bc, bc) / 0.03) * uCheek.x * 0.4);
+    col = mix(col, col * vec3(1.06, 0.86, 0.8), exp(-pow(f.x / 0.08, 2.0) - pow((f.y - uFaceX.y) / 0.06, 2.0)) * 0.5);      // warmth at the nose tip
+    if (uCheek.z > 0.0) {
+      vec2 fp = f * 30.0; vec2 cell = floor(fp); vec2 fr = fract(fp) - 0.5;
+      float h = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
+      float zone = exp(-pow((abs(f.x) - 0.26) / 0.24, 2.0) - pow((f.y + 0.2) / 0.12, 2.0));
+      col = mix(col, col * vec3(0.76, 0.58, 0.48), (1.0 - smoothstep(0.1, 0.2, length(fr - (h - 0.5) * 0.4))) * step(0.5, h) * zone * uCheek.z);
+    }
+    // nostrils
+    vec2 nq = (vec2(abs(f.x) - 0.045, f.y - uFaceX.y + 0.034)) / vec2(0.02, 0.011);
+    col = mix(col, col * vec3(0.38, 0.22, 0.2), (1.0 - smoothstep(0.6, 1.1, length(nq))) * 0.85);
+    // lids: lash line along the upper margin, thickening outwards into a short flick;
+    // a finer line under the lower margin; the fold of the upper lid
+    float lt = uEyeB.x * uCheek.w * (0.6 + 0.55 * smoothstep(-0.7, 1.0, t));
+    float lash = (1.0 - smoothstep(lt - aa, lt + aa, f.y - yU)) * step(yU - 0.01, f.y) * (1.0 - smoothstep(1.0, 1.04, abs(t)));
+    float fy = yU + (t - 1.0) * uEyeA.z * 0.55;
+    lash = max(lash, fLine(f.y - fy - lt * 0.3, lt * 0.55 * clamp((1.4 - t) / 0.4, 0.0, 1.0), aa) * step(0.96, t) * step(t, 1.4));
+    float low = (1.0 - smoothstep(0.004, 0.004 + aa * 2.0, yL - f.y)) * step(f.y, yL + 0.01) * step(abs(t), 1.0) * (0.25 + 0.75 * uFaceX.w) * smoothstep(-0.2, 0.6, t) * 0.7;
+    float fold = fLine(f.y - yU - uEyeB.x * (0.42 + 0.2 * (1.0 - tc * tc)), 0.006, aa) * step(abs(t - 0.05), 0.9);
+    col = mix(col, col * vec3(0.7, 0.5, 0.46), fold * 0.6);
+    col = mix(col, uLash, max(lash, low));
+    // lips: vermilion tint between the borders, the line of the mouth
+    float xm = abs(f.x) / uMouthP.y;
+    float lipm = smoothstep(lipB(f.x) - 0.006, lipB(f.x) + 0.012, f.y) * (1.0 - smoothstep(lipT(f.x) - 0.012, lipT(f.x) + 0.006, f.y)) * (1.0 - smoothstep(0.92, 1.03, xm));
+    col = mix(col, col * vec3(1.0, 0.72, 0.7) * 0.94 + vec3(0.03, 0.0, 0.0), lipm * (0.35 + 0.55 * uFaceX.z));
+    col = mix(col, col * vec3(0.5, 0.28, 0.28), fLine(f.y - uMouthP.x, 0.0055, aa) * (1.0 - smoothstep(0.98, 1.06, xm)) * 0.9);
+    // age lines
+    if (uCheek.y > 0.0) {
+      float w1 = fLine(f.y - yL + uEyeB.y * 0.9 + 0.05 * tc * tc, 0.005, aa) * step(abs(t), 0.85);
+      float w3 = fLine(length(vec2(t - 1.25, (f.y - uEyeA.y) / uEyeA.z)) - 0.3, 0.02, aa * 4.0) * step(1.25, t);
+      col = mix(col, col * 0.74, max(w1, w3) * uCheek.y);
+    }
+    diffuseColor.rgb = col;
+  } else if (vSurfF < 2.5) {
+    // eyeball: iris, limbal ring, pupil and catchlights around the gaze direction
+    _eyeball = 1.0;
+    vec3 ec = vec3(sx * uEyeA.x, uEyeA.y, uEyeB.w);
+    vec3 d = normalize(q3 - ec);
+    vec3 fw = normalize(vec3(uLook.x * 0.42, uLook.y * 0.3, 1.0));
+    vec3 rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw)), up = cross(fw, rt);
+    vec2 ip = vec2(dot(d, rt), dot(d, up)) / max(dot(d, fw), 0.2);       // gnomonic coords about the gaze
+    float ir = uLook.z, di = length(ip);
+    vec3 col = vec3(0.95, 0.94, 0.92);
+    col *= mix(vec3(0.62, 0.64, 0.74), vec3(1.0), smoothstep(0.0, uEyeB.x * 0.9, yU - f.y));        // the upper lid's shadow
+    col *= 1.0 - 0.25 * smoothstep(0.55, 1.0, abs(t));
+    float upk = smoothstep(-ir, ir, ip.y);
+    vec3 iris = mix(uIris * 1.6 + vec3(0.06), uIris * 0.45, smoothstep(0.1, 0.9, upk));
+    float ang = atan(ip.y, ip.x);
+    iris *= 0.86 + 0.14 * sin(ang * 26.0 + sin(ang * 7.0) * 2.0) * smoothstep(0.2, 0.7, di / ir);
+    iris = mix(iris, uIris * 0.16, smoothstep(ir * 0.8, ir, di));
+    iris = mix(iris, uIris * 2.0 + vec3(0.12), (1.0 - smoothstep(ir * 0.3, ir * 0.62, length(ip - vec2(0.0, -ir * 0.3)))) * 0.45);
+    col = mix(col, iris, 1.0 - smoothstep(ir - aa * 3.0, ir + aa * 3.0, di));
+    float pr = ir * uLook.w;
+    col = mix(col, vec3(0.02, 0.015, 0.03), 1.0 - smoothstep(pr - aa * 3.0, pr + aa * 3.0, di));
+    float h1 = 1.0 - smoothstep(ir * 0.22, ir * 0.3, length((ip - vec2(ir * 0.38, ir * 0.42)) * vec2(1.0, 1.2)));
+    float h2 = 1.0 - smoothstep(ir * 0.08, ir * 0.13, length(ip - vec2(-ir * 0.36, -ir * 0.4)));
+    col = mix(col, vec3(1.0), max(h1, h2 * 0.8));
+    diffuseColor.rgb = col;
+  } else if (vSurfF < 3.5) {
+    diffuseColor.rgb = f.y > (yU + yL) * 0.5 ? uLash : diffuseColor.rgb * vec3(0.72, 0.5, 0.48);
+  }
+}
+`;
+const SKIN_SOFT = `
+#if NUM_SUN_LIGHTS > 0
+if (vSurfF < 1.5) {
+  float _ndl = dot(normal, sunLights[0].direction);
+  float _g = texture2D(gradientMap, vec2(clamp(_ndl * 0.5 + 0.5, 0.0, 1.0), 0.5)).r;
+  float _sh = _dirShadow * _cloudSh;
+  vec3 _base = reflectedLight.directDiffuse / mix(uShadeTint, vec3(1.0), _g * _sh);
+  float _soft = smoothstep(-0.34, 0.52, _ndl) * mix(0.2, 1.0, _sh);
+  vec3 _shade = uShadeTint * vec3(1.55, 1.1, 0.96) + vec3(0.11, 0.035, 0.02);
+  vec3 _sss = vec3(0.34, 0.08, 0.03) * exp(-pow((_ndl - 0.04) / 0.3, 2.0)) * (0.3 + 0.7 * _sh);
+  outgoingLight = _base * (mix(_shade, vec3(1.0), _soft) + _sss) + reflectedLight.indirectDiffuse + totalEmissiveRadiance;
+} else if (_eyeball > 0.5) {
+  outgoingLight = max(outgoingLight, diffuseColor.rgb * 0.34);       // eyes never go dead in shade
+}
+#endif
+`;
+export function faceMat2(color, o = {}) {
+  const m = bodyMat(color, { rim: o.rim ?? 0.3, vertexColors: true });
+  const u = {
+    uFaceC: { value: new THREE.Vector4(0, 1.6, 0, 0.13) }, uEyeA: { value: new THREE.Vector4(0.34, -0.05, 0.17, 0.08) }, uEyeB: { value: new THREE.Vector4(0.09, 0.05, 0.2, 0.6) },
+    uLook: { value: new THREE.Vector4(0, 0, 0.5, 0.42) }, uIris: { value: new THREE.Color(0x3a5a7a) }, uLash: { value: new THREE.Color(0x221612) },
+    uMouthP: { value: new THREE.Vector4(-0.64, 0.15, 0.06, 0.08) }, uCheek: { value: new THREE.Vector4(0, 0, 0, 0.2) }, uBlushC: { value: new THREE.Color(0xf09088) },
+    uFaceX: { value: new THREE.Vector4(9, -0.4, 0, 0) },
+  };
+  m.userData.face = u;
+  extend(m, 'face2', (sh) => {
+    Object.assign(sh.uniforms, u);
+    sh.vertexShader = 'attribute float surf;\nvarying float vSurfF;\nvarying vec2 vFace;\nvarying vec3 vObj;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvObj = position; vSurfF = surf; vFace = vec2(uv.x, 1.0 - uv.y);');
+    let fs = FACE2_PARS + sh.fragmentShader.replace('#include <color_fragment>', FACE2_FRAG).replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\nif (_eyeball > 0.5) { _specK = 9.0; _rough = 0.16; }');
+    const at = fs.indexOf('if (uDissolve > 0.0) outgoingLight +=');
+    if (at > 0) fs = fs.slice(0, at) + SKIN_SOFT + fs.slice(at);
+    sh.fragmentShader = fs;
+  });
+  return m;
+}
+
 // Clothing and hair: one vertex-coloured material whose response follows the per-vertex
 // `surf` kind (Sculpt.build o.surf): 0 woven cloth, 1 leather, 2 polished metal, 3 hair
 // (strand streaks, a highlight ring around the crown in bind space), 4 matte, 5 gem.

@@ -48,24 +48,6 @@ vec3 voro(vec2 p, vec2 per, float jit){
   return vec3(sqrt(f1), sqrt(f2), id);
 }
 
-// Faceted relief: the upper envelope of tilted bowls, one per scattered site. Where two meet
-// the crease is a straight line at whatever angle the two tilts give, so a face breaks into
-// angular planes with no rows, columns or cells of one size.
-// x = height, y = gap to the next bowl (0 on a crease), z = facet id
-vec3 facets(vec2 p, vec2 per){
-  vec2 n = floor(p), f = fract(p);
-  float b1 = -1e3, b2 = -1e3, id = 0.0;
-  for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
-    vec2 g = vec2(float(i), float(j)), c = mod(n + g, per);
-    // a third of the sites are left out, so their neighbours spread: planes of mixed sizes
-    if (h21(c + 3.3) < 0.34) continue;
-    vec2 r = f - g - h22(c);
-    float z = h21(c + 5.1) * 0.4 + dot(r, (h22(c + 13.7) - 0.5) * 1.4) - 0.5 * dot(r, r);
-    if (z > b1) { b2 = b1; b1 = z; id = h21(c + 7.7); } else if (z > b2) b2 = z;
-  }
-  return vec3(b1, b1 - b2, id);
-}
-
 // One layer: height (0..1), albedo multiplier around 1, roughness. Normal strength in nk.
 struct Surf { float h; vec3 c; float r; float nk; };
 Surf surf(vec2 uv){
@@ -96,21 +78,20 @@ Surf surf(vec2 uv){
     s.c *= 1.0 - 0.14 * rut;
     s.r = mix(0.9, 0.62, peb); s.nk = 1.3;
   } else if (uLayer == 2) {
-    // cliff face: tall angular planes meeting in valleys, smaller chips standing out as
-    // ridges across them, the odd long fracture; light and shade do the drawing, not lines
-    vec2 w = vec2(fbm(uv, vec2(3.0), 3), fbm(uv + 0.37, vec2(3.0), 3)) - 0.5;
-    vec2 q = uv + w * 0.07;
-    vec3 A = facets(vec2(q.x * 5.0 + q.y * 5.0, q.y * 3.0), vec2(5.0, 3.0));
-    vec3 B = facets(vec2(q.x * 11.0 - q.y * 11.0, q.y * 6.0) + 3.3, vec2(11.0, 6.0));
-    float cr = abs(vn(vec2(uv.x * 3.0 + uv.y * 3.0, uv.y * 2.0), vec2(3.0, 2.0)) - 0.5);
-    float crack = (1.0 - smoothstep(0.0, 0.03, cr)) * smoothstep(0.42, 0.62, fbm(uv + 0.4, vec2(2.0), 2));
-    float pit = fbm(uv, vec2(26.0), 4), brush = fbm(uv + 0.21, vec2(4.0, 3.0), 4);
-    s.h = 0.5 + 0.45 * A.x - 0.14 * B.x + 0.008 * (pit - 0.5) - 0.012 * crack;
-    float valley = 1.0 - smoothstep(0.0, 0.06, A.y), ridge = 1.0 - smoothstep(0.0, 0.04, B.y);
-    s.c = vec3(0.92 + 0.3 * (A.z - 0.5) + 0.12 * (B.z - 0.5)) * mix(vec3(1.05, 1.0, 0.93), vec3(0.94, 0.99, 1.06), fract(A.z * 7.3));
-    s.c *= (0.88 + 0.22 * brush) * (0.94 + 0.12 * pit) * (1.0 - 0.26 * valley) * (1.0 - 0.3 * crack);
-    s.c += 0.1 * ridge;
-    s.r = 0.8; s.nk = 34.0;
+    // cliff rock, painted rather than patterned: the form is real geometry (terrain.js), so
+    // this only lays broad tonal patches, brush strokes running up the face and a few faint
+    // scratches over it. Almost no relief: the facets must stay clean planes.
+    float tone = fbm(uv, vec2(2.0, 3.0), 4);
+    float stroke = fbm(vec2(uv.x + 0.13 * sin(uv.y * TAU), uv.y) , vec2(11.0, 2.0), 4);
+    float dab = fbm(uv + 0.37, vec2(6.0, 5.0), 3);
+    float cr = abs(vn(vec2(uv.x * 4.0 + uv.y * 4.0, uv.y * 2.0), vec2(4.0, 2.0)) - 0.5);
+    float scratch = (1.0 - smoothstep(0.0, 0.02, cr)) * smoothstep(0.5, 0.7, fbm(uv + 0.4, vec2(3.0), 2));
+    float grain = fbm(uv, vec2(40.0), 3);
+    s.h = 0.5 + 0.05 * (stroke - 0.5) + 0.03 * (grain - 0.5) - 0.06 * scratch;
+    s.c = vec3(1.0 + 0.16 * (tone - 0.5) + 0.1 * (stroke - 0.5) + 0.07 * (dab - 0.5));
+    s.c *= mix(vec3(1.03, 1.0, 0.95), vec3(0.95, 0.99, 1.06), smoothstep(0.3, 0.7, tone));
+    s.c *= 1.0 - 0.16 * scratch;
+    s.r = 0.84; s.nk = 1.6;
   } else if (uLayer == 3) {
     // sand: wind ripples that wander, grains
     float w = fbm(uv, vec2(4.0), 3);

@@ -237,7 +237,7 @@ export class Game {
         if (out) out.textContent = (FMT[k] || String)(+el.value);
         G.settings[k] = el.type === 'checkbox' ? el.checked : el.type === 'range' ? +el.value : el.value;
         G.audio.applyVolumes();
-        if (k === 'quality') { G.renderer.applyQuality(); G.world.sky.applyQuality(); G.world.grass.setQuality(el.value); }
+        if (k === 'quality') { G.renderer.applyQuality(); G.world.sky.applyQuality(); G.world.terrain.applyQuality(); G.world.grass.setQuality(el.value); }
         if (k === 'ui') G.hud.applyScale();
         this.saveSettings();
       });

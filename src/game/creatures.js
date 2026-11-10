@@ -117,7 +117,14 @@ export function surfaced(m, tex, o = {}) {
       .replace('#include <opaque_fragment>', `{
   vec3 _sv = normalize( vViewPosition );
   float _fr = pow( 1.0 - clamp( dot( normal, _sv ), 0.0, 1.0 ), 5.0 ), _gl = 1.0 - _rough;
-  outgoingLight += uSkyRefl * ( ( 0.04 + 0.96 * _fr ) * _gl * _gl * _cav * _specK * ( 0.4 + 1.1 * _mo.b ) );
+  // polished plate mirrors a stylised sky (dark ground, a bright band at the horizon, sky above), tinted by its paint
+  vec3 _rw = inverseTransformDirection( reflect( -_sv, normal ), viewMatrix );
+  float _w = 0.06 + 0.5 * _rough, _hz = smoothstep( -_w, _w * 0.4, _rw.y );
+  vec3 _sky = mix( vec3( dot( uSkyRefl, vec3( 0.3333 ) ) ), uSkyRefl, 0.35 );      // mostly its brightness: the paint keeps its own hue
+  vec3 _env = _sky * ( mix( 0.18, 1.0, _hz ) + 1.1 * _hz * ( 1.0 - smoothstep( 0.0, 0.35 + _w, _rw.y ) ) );
+  vec3 _tint = mix( vec3( 1.0 ), diffuseColor.rgb / max( max( diffuseColor.r, diffuseColor.g ), max( diffuseColor.b, 0.05 ) ), 0.85 );
+  outgoingLight += _env * _tint * ( _mo.b * _gl * uSurfP.y * 0.35 * _cav );
+  outgoingLight += uSkyRefl * ( ( 0.04 + 0.96 * _fr ) * _gl * _gl * _cav * _specK * 0.4 );
   outgoingLight = mix( outgoingLight, uGlowC * uSurfP.w, _mGlow );
 }
 #include <opaque_fragment>`);

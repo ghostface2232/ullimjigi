@@ -487,11 +487,11 @@ const metalMat = (rim = 0.9) => sheen(bodyMat(0xffffff, { vertexColors: true, ri
 function knightCfg(spectral) {
   const col = (x, k) => (spectral ? x : ashen(x, k));
   const c = {
-    key: 'knight', scale: 1.4, bodyW: 1.2, spectral, group: METAL,
+    key: 'knight', scale: 1.4, bodyW: 1.6, shoulderW: 1.2, legLen: 0.77, torsoLen: 1.1, headR: 0.14, armLen: 1.1, spectral, group: METAL,
     colors: { metal: col(0xb4b4c6), metalD: col(0x74748a), trim: col(0xd2b064, 0.28), under: col(0x30303a, 0.3), cape: col(0x2a4a9a, 0.6), lining: col(0x162452, 0.55), cloth: col(0x3558b0, 0.6), glow: 0xffffff, glowD: 0xa0a0a0 },
     bones(def, L) {
       const ch = capeChains(def, L, 1.02, { r1: 0.33 });
-      const hr = L.hr, p0 = L.HC.clone().add(v(0, hr * 1.28, -hr * 0.5)), names = []; let parent = 'head';
+      const hr = L.hr, p0 = L.HC.clone().add(v(0, hr * 0.86, -hr * 0.34)), names = []; let parent = 'head';
       for (let k = 0; k < 4; k++) { const p = p0.clone().add(v(0, -k * k * hr * 0.07, -k * hr * 0.55)), nm = 'crest' + k; def.add(nm, parent, p.x, p.y, p.z); names.push(nm); parent = nm; }
       ch.push({ names, tail: p0.clone().add(v(0, -hr * 1.4, -hr * 2.3)), kind: 'plume' });
       return (c._ch = ch);
@@ -650,7 +650,7 @@ export function makeKnight(spectral = false) {
   const glow = glowBasic(spectral ? 0x9ad0ff : 0xb080ff, 2.5);
   const metal = metalMat();
   const main = skinMat(0.6);
-  const rig = new HumanRig(T, { mats: { main, metal, glow }, castPose: false, hold: null, outline: 0.005, rim: 0.6, style: { armHang: 0.1 }, pose: knightPose, post: knightPost });
+  const rig = new HumanRig(T, { mats: { main, metal, glow }, castPose: false, hold: null, outline: 0.0032, rim: 0.6, style: { armHang: 0.1 }, pose: knightPose, post: knightPost });
   dress(rig, { mat: { main: { spec: 0.75 } } });
   const sword = new THREE.Group(), held = T.built.rigid || {};
   getSwordGeo();
@@ -810,7 +810,7 @@ export function makeShieldBearer() {
   const glow = glowBasic(0xc9a0ff, 2.6);
   const main = skinMat(0.6), held = T.built.rigid || {};
   const gear = held.shield ? main : metalMat(0.8);
-  const rig = new HumanRig(T, { mats: { main, metal: metalMat(0.8), glow }, castPose: false, hold: null, outline: 0.005, rim: 0.6, pose: shieldPose, post: shieldPost });
+  const rig = new HumanRig(T, { mats: { main, metal: metalMat(0.8), glow }, castPose: false, hold: null, outline: 0.0036, rim: 0.6, pose: shieldPose, post: shieldPost });
   dress(rig, { mat: { main: { spec: 1.0 } } });
   const B = rig.B;
   if (!held.shield) rig.mats.push(gear);

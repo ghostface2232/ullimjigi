@@ -614,16 +614,42 @@ export class World {
   }
 
   buildRift() {
-    const g = B.riftGate();
     const y = this.h(POI.rift.x, POI.rift.z);
-    g.position.set(POI.rift.x, y - 0.3, POI.rift.z);
+    const g = B.riftGate((lx, lz) => this.h(POI.rift.x + lx, POI.rift.z + lz) - y);
+    const A = g.userData.authored;   // the authored model stands on the ground; the code-built one is sunk 0.3 m
+    g.position.set(POI.rift.x, A ? y : y - 0.3, POI.rift.z);
     this.scene.add(g);
     this.rift = { group: g, y, center: new THREE.Vector3(POI.rift.x, y, POI.rift.z) };
     g.children.forEach((c) => {
-      if (c.userData.monolith) { const cc = this.col.addCircle(POI.rift.x + c.position.x, POI.rift.z + c.position.z, 1.5, -10, 40); cc.climb = false; cc.noTop = true; }
+      const m = c.userData.monolith;
+      if (m) { const cc = this.col.addCircle(POI.rift.x + c.position.x, POI.rift.z + c.position.z, m === true ? 1.5 : m, -10, 40); cc.climb = false; cc.noTop = true; }
     });
-    // gate plinths are solid blocks you can stand on
-    for (const sx of [-1, 1]) this.col.addBox(POI.rift.x + sx * 6.8, POI.rift.z - 14, 2.3, 2.3, 0, -10, y - 0.3 + 1.4);
+    if (!A) {
+      // gate plinths are solid blocks you can stand on
+      for (const sx of [-1, 1]) this.col.addBox(POI.rift.x + sx * 6.8, POI.rift.z - 14, 2.3, 2.3, 0, -10, y - 0.3 + 1.4);
+      return;
+    }
+    // Shapes of ref/blender/bd/rift.py: the seal floor, the landing and its two steps, then per side
+    // the stepped plinth, the pylon, the buttress (three steps down, outward) and the cheek block.
+    const X = POI.rift.x, Z = POI.rift.z, gz = A.portal[3];
+    this.col.addPlatform({ type: 'disc', x: X, z: Z, r: A.seal.r, top: y + A.seal.top });
+    this.col.addPlatform({ type: 'box', x: X, z: Z + gz - 0.05, hw: 4.5, hd: 1.15, top: y + A.step.top });
+    this.col.addPlatform({ type: 'box', x: X, z: Z + gz + 1.29, hw: 3.9, hd: 0.26, top: y + A.step.top - 0.16 });
+    this.col.addPlatform({ type: 'box', x: X, z: Z + gz + 1.74, hw: 4.15, hd: 0.26, top: y + A.step.top - 0.32 });
+    for (const sx of [-1, 1]) {
+      this.col.addBox(X + sx * 6.8, Z + gz, 2.3, 2.3, 0, -10, y + 0.97);
+      this.col.addBox(X + sx * 6.8, Z + gz, 2.0, 2.0, 0, -10, y + 1.52);
+      this.noClimb(this.col.addBox(X + sx * 6.8, Z + gz, 1.68, 1.68, 0, -10, y + 22));
+      const bt = this.col.addBox(X + sx * 11.1, Z + gz, 2.0, 0.95, 0, -10, y + 5.2);
+      bt.topFn = (lx) => { const d = sx * lx + 2.0; return y + (d < 1.5 ? 5.0 : d < 2.8 ? 3.3 : 1.7); };
+      this.col.addBox(X + sx * 4.6, Z + gz + 1.55, 0.5, 0.7, 0, -10, y + 1.53);
+    }
+    // the hanging stones breathe; the inlaid crystal pulses
+    const fl = g.userData.floaters, runes = g.userData.runes;
+    this.anims.push((dt) => {
+      fl.forEach((f, i) => { f.position.y = f.userData.y0 + Math.sin(G.time * 0.45 + i * 1.7) * (i ? 0.16 : 0.06); if (i) f.rotation.y += dt * 0.04 * (i % 2 ? 1 : -1); });
+      runes.color.setRGB(1.5, 0.95, 2.5).multiplyScalar(0.85 + 0.15 * Math.sin(G.time * 0.8));
+    });
   }
 
   buildLandmarks() {

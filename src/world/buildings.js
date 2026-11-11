@@ -2124,7 +2124,94 @@ export function pillarBroken(h = 3, rnd = Math.random) {
 // The Hush Rift gate: a ring of leaning monoliths veined with crystal, and a
 // massive broken stone arch framing an elliptical portal. The portal is a
 // shader disc (soft elliptical edge) inside a carved rim.
-export function riftGate() {
+// The portal: a lightless middle with thin filaments of light wound slowly into it, and a bright
+// line where it meets the gate's lip. Half sizes rx, ry; uAlpha fades the whole disc.
+function riftPortal(rx, ry) {
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uTime: U.time, uAlpha: { value: 1 } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: `uniform float uTime; uniform float uAlpha; varying vec2 vUv;
+      float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y); }
+      float fbm(vec2 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 4; i++) { s += a * vn(p); p = p * 2.03 + 17.0; a *= 0.5; } return s; }
+      void main(){ vec2 p = vUv * 2.0 - 1.0; float r = length(p); float a = atan(p.y, p.x);
+        float w = a + (1.0 - r) * 1.7 + uTime * 0.045;
+        vec2 q = vec2(cos(w), sin(w));
+        float dep = -log(r + 0.07);
+        float n1 = fbm(q * (2.6 + r * 1.6) + vec2(0.0, dep * 1.9 - uTime * 0.2));
+        float n2 = fbm(q * (4.6 + r * 2.4) + vec2(5.0, dep * 3.0 - uTime * 0.33));
+        float fil = smoothstep(0.5, 0.72, n1) * smoothstep(0.34, 0.62, n2);
+        float core = smoothstep(0.62, 0.05, r);
+        vec3 col = mix(vec3(0.012, 0.006, 0.035), vec3(0.2, 0.09, 0.46), n2 * smoothstep(0.1, 0.95, r));
+        col += vec3(1.25, 0.8, 2.2) * fil * (0.2 + 0.8 * smoothstep(0.2, 0.95, r));
+        col *= 1.0 - core * 0.92;
+        float rim = smoothstep(0.8, 0.95, r) * smoothstep(1.0, 0.95, r);
+        col += vec3(1.5, 1.05, 2.5) * rim * (0.8 + 0.2 * sin(uTime * 0.9));
+        gl_FragColor = vec4(col, smoothstep(1.0, 0.97, r) * uAlpha); }`,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  });
+  return new THREE.Mesh(new THREE.PlaneGeometry(rx * 2, ry * 2), mat);
+}
+// Authored rift (bd_riftgate.glb, ref/blender/bd/rift.py): the seal floor, the gate and the standing
+// stones are the model; the portal, the crystal growth and whatever hangs in the air are the game's.
+// groundAt(lx, lz): terrain height relative to the group's origin (the middle of the bowl).
+function authoredRift(P, groundAt) {
+  const g = new THREE.Group();
+  const rnd = mulberry32(777);
+  const [RX, RY, cy, gz] = P.meta.portal;
+  // inlaid crystal: its own unlit material (vertex colour = strength), pulsed by world.js
+  const runes = new THREE.MeshBasicMaterial({ vertexColors: true, color: new THREE.Color(1.5, 0.95, 2.5) });
+  const mats = { glow: runes };
+  const add = (grp, parent) => { for (const m of bdAdd(P, grp, parent, { mats }) || []) if (m.material === runes) m.castShadow = false; };
+  add('body', g);
+  const veinMat = crystalMaterial({ color: 0x6a4a9a, glow: 0xa070ff, intensity: 1.4, seed: 9 });
+  const vein = (seed, count, s, x, y, z, rx = 0, ry = 0, rz = 0) => {
+    const v = new THREE.Mesh(crystalGeometry('cluster', { seed, count }), veinMat);
+    v.scale.setScalar(s); v.position.set(x, y, z); v.rotation.set(rx, ry, rz); g.add(v);
+  };
+  // the outer ring: nine standing stones leaning toward the middle (colliders come from userData.monolith)
+  for (let i = 0; i < 9; i++) {
+    const a = (i / 9) * TAU;
+    rnd(); rnd();
+    let x = Math.cos(a) * (26 + rnd() * 4), z = Math.sin(a) * (26 + rnd() * 4);
+    // off the bowl's wall: pull it in until it stands on the floor
+    for (let k = 0; k < 10 && groundAt(x, z) > 0.03 * Math.hypot(x, z) + 1.0; k++) { x *= 0.96; z *= 0.96; }
+    const s = 0.85 + rnd() * 0.4;
+    const st = new THREE.Group();
+    st.position.set(x, groundAt(x, z), z);
+    st.rotation.set(0.02 + rnd() * 0.07, Math.atan2(-x, -z) + (rnd() - 0.5) * 0.5, (rnd() - 0.5) * 0.1, 'YXZ');
+    st.scale.setScalar(s);
+    st.userData.monolith = 1.75 * s;
+    add('stele' + 'ABCACBABC'[i], st); g.add(st);
+    const va = a + 1.2 + rnd();
+    vein(300 + i, 5, 0.5 + rnd() * 0.25, x + Math.cos(va) * 2.6 * s, groundAt(x + Math.cos(va) * 2.6 * s, z + Math.sin(va) * 2.6 * s) - 0.1, z + Math.sin(va) * 2.6 * s, (rnd() - 0.5) * 0.5, rnd() * 3, (rnd() - 0.5) * 0.5);
+  }
+  // crystal growth on the gate's buttresses and plinths
+  for (const sx of [-1, 1]) {
+    vein(400 + sx, 6, 0.7, sx * 9.8, 4.9, gz, 0.1, sx, sx * 0.25);
+    vein(410 + sx, 4, 0.5, sx * 11.2, 3.3, gz + 0.3, -0.2, 1, sx * 0.4);
+    vein(420 + sx, 4, 0.42, sx * 8.9, 0.9, gz + 2.0, 0.3, 2, sx * 0.3);
+  }
+  // what hangs in the silence: the lintel's middle, and stones adrift round the gate
+  const floaters = [bdPivot(P, 'gap', g, { mats })];
+  for (let i = 0; i < 5; i++) {
+    const f = new THREE.Group();
+    const a = rnd() * TAU, r = 9.5 + rnd() * 3.5;
+    f.position.set(Math.cos(a) * r, 6 + rnd() * 10, gz + Math.sin(a) * 3);
+    f.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
+    add('drift' + 'ABCBA'[i], f); g.add(f); floaters.push(f);
+  }
+  for (const f of floaters) f.userData.y0 = f.position.y;
+  const portal = riftPortal(RX, RY);
+  portal.position.set(0, cy, gz); g.add(portal);
+  const heartAnchor = new THREE.Object3D(); heartAnchor.position.set(0, 7, 0); g.add(heartAnchor);
+  g.userData = { portal, heartAnchor, floaters, runes, authored: P.meta };
+  return g;
+}
+export function riftGate(groundAt = () => 0) {
+  const A = bdParts('riftgate');
+  if (A) return authoredRift(A, groundAt);
   const g = new THREE.Group();
   const rnd = mulberry32(777);
   const veinMat = crystalMaterial({ color: 0x6a4a9a, glow: 0xa070ff, intensity: 1.4, seed: 9 });

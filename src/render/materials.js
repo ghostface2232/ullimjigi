@@ -97,41 +97,162 @@ export function noiseTexture() {
 noiseTexture();
 
 // ---------------------------------------------------------------------------
-// Leaf-clump atlas (2x2 variants) for foliage cards: alpha = leaf shapes, rgb = a tint
-// multiplier (leaves underneath are darker, each has a lit and a shaded half and a midrib).
+// Foliage atlas (4x4 tiles) for the cards of props.js: alpha = the shapes, rgb = a tint
+// multiplier (what lies underneath is darker; a leaf has a lit and a shaded half and a midrib).
+//   row 0: broadleaf clumps
+//   row 1: needle sprays (two; the twig runs along u from the left edge) and needle tufts (two)
+//   row 2: the snow lying on those four
+//   row 3: willow strands (two; hanging from v = 0) and blossom clusters (two)
 // Colour and coverage are drawn on separate canvases so the tint does not go dark where
 // the alpha fades (canvas pixels are premultiplied).
-function makeLeafTexture(S = 512) {
-  const C = S / 2;
-  const mk = () => { const cv = document.createElement('canvas'); cv.width = cv.height = S; return cv.getContext('2d'); };
+function makeLeafTexture(S = 2048) {
+  const C = S / 4;
+  const mk = () => { const cv = document.createElement('canvas'); cv.width = cv.height = S; return cv.getContext('2d', { willReadFrequently: true }); };
   const gc = mk(), ga = mk();
   gc.fillStyle = 'rgb(170,170,170)'; gc.fillRect(0, 0, S, S);
   ga.fillStyle = '#000'; ga.fillRect(0, 0, S, S);
   let s = 90210;
   const rnd = () => { s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const grey = (v) => { const k = Math.round(Math.min(255, Math.max(0, v))); return 'rgb(' + k + ',' + k + ',' + k + ')'; };
+  // Shapes are queued (the random numbers drawn once) and then painted on both canvases.
+  // sx, sy: units of the tile's own space (pixels by default; metres for the strands).
+  const paint = (v, ops, sx = 1, sy = 1) => {
+    for (const g of [gc, ga]) {
+      g.save();
+      g.beginPath(); g.rect((v % 4) * C, Math.floor(v / 4) * C, C, C); g.clip();
+      g.translate((v % 4) * C, Math.floor(v / 4) * C); g.scale(sx, sy);
+      for (const op of ops) op(g, g === ga);
+      g.restore();
+    }
+  };
+  const leaf = (ops, x, y, rot, L, W, tone, lw) => ops.push((g, A) => {
+    g.save();
+    g.translate(x, y); g.rotate(rot); g.translate(-L * 0.35, 0);
+    g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(L * 0.42, -W, L, 0); g.quadraticCurveTo(L * 0.42, W, 0, 0); g.closePath();
+    if (A) { g.fillStyle = '#fff'; g.fill(); } else {
+      const gr = g.createLinearGradient(0, -W * 0.5, 0, W * 0.5);
+      gr.addColorStop(0, grey(tone * 1.04)); gr.addColorStop(0.5, grey(tone)); gr.addColorStop(0.52, grey(tone * 0.88)); gr.addColorStop(1, grey(tone * 0.82));
+      g.fillStyle = gr; g.fill();
+      g.strokeStyle = grey(tone * 0.7); g.lineWidth = lw; g.stroke();
+    }
+    g.restore();
+  });
+  const line = (ops, x0, y0, x1, y1, w, tone) => ops.push((g, A) => {
+    g.strokeStyle = A ? '#fff' : grey(tone); g.lineWidth = w; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+  });
+  const poly = (ops, pts, tone) => ops.push((g, A) => {
+    g.fillStyle = A ? '#fff' : grey(tone);
+    g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.closePath(); g.fill();
+  });
+  // soft round shape, lit from the upper left (snow, petals)
+  const blob = (ops, x, y, rx, ry, rot, tone, edge = 0.8) => ops.push((g, A) => {
+    g.save(); g.translate(x, y); g.rotate(rot); g.scale(rx, ry);
+    g.beginPath(); g.arc(0, 0, 1, 0, 7);
+    if (A) g.fillStyle = '#fff'; else {
+      const gr = g.createRadialGradient(-0.25, -0.3, 0.1, 0, 0, 1);
+      gr.addColorStop(0, grey(tone)); gr.addColorStop(1, grey(tone * edge));
+      g.fillStyle = gr;
+    }
+    g.fill(); g.restore();
+  });
+  // -- row 0: clumps of broad leaves
   for (let v = 0; v < 4; v++) {
-    const cx = (v % 2) * C + C / 2, cy = Math.floor(v / 2) * C + C / 2;
-    const n = 18 + v * 3;
+    const ops = [], n = 18 + v * 3;
     for (let i = 0; i < n; i++) {
       const under = i < n * 0.45;
       const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * 0.26 * C;
       const L = (0.17 + rnd() * 0.06) * C * (under ? 1.08 : 1), W = L * (0.42 + rnd() * 0.14);
       const rot = a + (rnd() - 0.5) * 1.6;
       const tone = under ? 132 + rnd() * 28 : 206 + rnd() * 48;
-      for (const g of [gc, ga]) {
-        g.save();
-        g.translate(cx + Math.cos(a) * d, cy + Math.sin(a) * d); g.rotate(rot); g.translate(-L * 0.35, 0);
-        g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(L * 0.42, -W, L, 0); g.quadraticCurveTo(L * 0.42, W, 0, 0); g.closePath();
-        if (g === ga) { g.fillStyle = '#fff'; g.fill(); } else {
-          const gr = g.createLinearGradient(0, -W * 0.5, 0, W * 0.5);
-          gr.addColorStop(0, grey(tone * 1.04)); gr.addColorStop(0.5, grey(tone)); gr.addColorStop(0.52, grey(tone * 0.88)); gr.addColorStop(1, grey(tone * 0.82));
-          g.fillStyle = gr; g.fill();
-          g.strokeStyle = grey(tone * 0.7); g.lineWidth = S / 512; g.stroke();
-        }
-        g.restore();
+      leaf(ops, C / 2 + Math.cos(a) * d, C / 2 + Math.sin(a) * d, rot, L, W, tone, C / 256);
+    }
+    paint(v, ops);
+  }
+  // -- rows 1 and 2: conifer. A twig is a dark tapering body (so a spray keeps its mass at a
+  // distance) under needles that point forward on both sides.
+  const twig = (ops, x, y, ang, len, tone) => {
+    const ca = Math.cos(ang), sa = Math.sin(ang), bw = len * 0.12 + C * 0.012;
+    poly(ops, [[x, y], [x + ca * len * 0.3 - sa * bw, y + sa * len * 0.3 + ca * bw], [x + ca * len * 0.96, y + sa * len * 0.96], [x + ca * len * 0.3 + sa * bw, y + sa * len * 0.3 - ca * bw]], tone * 0.66);
+    const nl = Math.max(0.05 * C, len * 0.2), step = 0.019 * C;
+    for (let d = step * 0.6; d < len; d += step) {
+      const t = d / len, l = nl * (1 - 0.5 * t);
+      for (const sd of [-1, 1]) {
+        const na = ang + sd * (0.8 - 0.25 * t + (rnd() - 0.5) * 0.3), ll = l * (0.75 + rnd() * 0.45);
+        line(ops, x + ca * d, y + sa * d, x + ca * d + Math.cos(na) * ll, y + sa * d + Math.sin(na) * ll, C * 0.0115, tone * (0.84 + rnd() * 0.3));
       }
     }
+    line(ops, x, y, x + ca * len * 0.9, y + sa * len * 0.9, C * 0.008, tone * 0.55);
+  };
+  // snow resting along the inner part of each twig: needle tips stay out
+  const snowOn = (twigs) => {
+    const ops = [];
+    for (const [x, y, ang, len] of twigs) {
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      for (let d = len * 0.04; d < len * 0.74; d += C * 0.05) {
+        const t = d / len, r = C * (0.07 - 0.03 * t) * (0.75 + rnd() * 0.5);
+        const fit = (q) => Math.min(C - r - 3, Math.max(r + 3, q));   // (whole inside the tile)
+        blob(ops, fit(x + ca * d + (rnd() - 0.5) * r * 0.5), fit(y + sa * d + (rnd() - 0.5) * r * 0.5), r, r * (0.7 + rnd() * 0.2), ang, 226 + rnd() * 29, 0.82);
+      }
+    }
+    return ops;
+  };
+  for (let v = 4; v < 8; v++) {
+    const ops = [], twigs = [];
+    if (v < 6) {
+      // spray: side twigs alternate along the main one, longest before the middle
+      const x0 = 0.04 * C, x1 = 0.86 * C, bow = (rnd() - 0.5) * 0.07 * C, n = 7;
+      for (let k = 0; k < n; k++) for (const sd of [-1, 1]) {
+        const t = 0.04 + ((k + (sd > 0 ? 0.5 : 0)) / n) * 0.8;
+        const len = C * 0.5 * Math.pow(Math.sin(Math.PI * (0.17 + 0.8 * t)), 0.9) * (0.85 + rnd() * 0.22);
+        twigs.push([x0 + (x1 - x0) * t, 0.5 * C + Math.sin(t * Math.PI) * bow, sd * (0.84 - 0.3 * t + (rnd() - 0.5) * 0.14), len, (176 + rnd() * 62) * (0.84 + 0.2 * t)]);
+      }
+      twigs.push([x0, 0.5 * C, 0, x1 - x0 + 0.08 * C, 226]);
+    } else {
+      // tuft: twigs of every length all round a centre (a ragged ball, not a star)
+      const n = 17 + (v - 6) * 2;
+      for (let k = 0; k < n; k++) twigs.push([0.5 * C + (rnd() - 0.5) * 0.06 * C, 0.5 * C + (rnd() - 0.5) * 0.06 * C, k * 2.3999632 + rnd() * 0.4, C * (0.25 + rnd() * 0.17), k % 3 ? 196 + rnd() * 56 : 148 + rnd() * 30]);
+    }
+    // darker ones underneath
+    twigs.sort((a, b) => a[4] - b[4]);
+    for (const tw of twigs) twig(ops, tw[0], tw[1], tw[2], tw[3], tw[4]);
+    paint(v, ops);
+    paint(v + 4, snowOn(twigs));
+  }
+  // -- row 3: willow strands, drawn in metres on a 0.6 x 2.4 m tile
+  for (let v = 12; v < 14; v++) {
+    const ops = [];
+    for (let k = 0; k < 4; k++) {
+      const x0 = 0.1 + k * 0.133 + (rnd() - 0.5) * 0.04, len = 1.5 + rnd() * 0.82, ph = rnd() * 6.3, base = k % 2 ? 150 : 205;
+      const xa = (y) => x0 + Math.sin(y * 2.1 + ph) * 0.028 * Math.min(1, y * 2);
+      for (let y = 0; y < len - 0.06; y += 0.06) line(ops, xa(y), y, xa(y + 0.06), y + 0.06, 0.0075, base * 0.56);
+      let sd = 1;
+      for (let y = 0.02; y < len; y += 0.046 + rnd() * 0.02) {
+        sd = -sd;
+        const L = (0.105 + rnd() * 0.05) * (1 - 0.45 * Math.pow(y / len, 3));
+        leaf(ops, xa(y) + sd * 0.012, y + L * 0.3, Math.PI / 2 - sd * (0.32 + rnd() * 0.42), L, L * (0.19 + rnd() * 0.06), base + rnd() * 46, 0.0022);
+      }
+    }
+    paint(v, ops, C / 0.6, C / 2.4);
+  }
+  // -- row 3: blossom clusters over a few leaves
+  for (let v = 14; v < 16; v++) {
+    const ops = [];
+    for (let i = 0; i < 6; i++) {
+      const a = rnd() * Math.PI * 2, d = (0.1 + rnd() * 0.2) * C, L = (0.2 + rnd() * 0.06) * C;
+      leaf(ops, C / 2 + Math.cos(a) * d, C / 2 + Math.sin(a) * d, a + (rnd() - 0.5), L, L * 0.44, 118 + rnd() * 30, C / 256);
+    }
+    const n = 11 + (v - 14) * 2;
+    for (let i = 0; i < n; i++) {
+      const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * 0.31 * C, fr = (0.07 + rnd() * 0.03) * C;
+      const x = C / 2 + Math.cos(a) * d, y = C / 2 + Math.sin(a) * d, r0 = rnd() * 6.3, tone = i < n * 0.4 ? 178 + rnd() * 22 : 224 + rnd() * 31;
+      for (let k = 0; k < 5; k++) {
+        const pa = r0 + k * 1.2566;
+        blob(ops, x + Math.cos(pa) * fr * 0.56, y + Math.sin(pa) * fr * 0.56, fr * 0.56, fr * 0.43, pa, tone, 0.86);
+      }
+      blob(ops, x, y, fr * 0.2, fr * 0.2, 0, tone * 0.6, 0.9);
+    }
+    paint(v, ops);
   }
   const dc = gc.getImageData(0, 0, S, S).data, da = ga.getImageData(0, 0, S, S).data;
   const data = new Uint8Array(S * S * 4);
@@ -283,10 +404,10 @@ const DISSOLVE_CLIP = `
   if (uDissolve > 0.0 && _dnoise() < uDissolve * 1.08) discard;
   #ifdef LEAF_CARDS
   if (vCard.z >= 0.0) {
-    // one of the four clumps in the atlas; edges go to MSAA coverage (alphaToCoverage)
-    float _v = floor(vCard.z * 3.999);
-    vec4 _lf = texture2D(uLeafTex, (clamp(vCard.xy, 0.01, 0.99) + vec2(mod(_v, 2.0), floor(_v * 0.5))) * 0.5, -0.75);
-    float _a = clamp((_lf.a - 0.42) / max(fwidth(_lf.a), 0.02) + 0.5, 0.0, 1.0);
+    // one of the sixteen tiles of the atlas; edges go to MSAA coverage (alphaToCoverage)
+    float _v = floor(vCard.z);
+    vec4 _lf = texture2D(uLeafTex, (clamp(vCard.xy, 0.01, 0.99) + vec2(mod(_v, 4.0), floor(_v * 0.25))) * 0.25, -0.75);
+    float _a = clamp((_lf.a - 0.42) / max(fwidth(_lf.a), 0.02) + 0.5, 0.0, 1.0) * (1.0 - vCard.w);
     if (_a < 0.03) discard;
     diffuseColor.a = _a;
     diffuseColor.rgb *= _lf.rgb * 1.22;
@@ -304,19 +425,42 @@ const DISSOLVE_VERT = `
     vDWP = (modelMatrix * _dwp).xyz;
   }
   #ifdef LEAF_CARDS
-    // foliage card: its four vertices sit at one point and spread out facing the viewer,
-    // each card turned by its seed and rustling a little in the wind
-    vCard = vec3(0.0, 0.0, -1.0);
-    if (aCard.z > 0.0) {
-      float _cs = length(modelMatrix[0].xyz);
-      #ifdef USE_INSTANCING
-        _cs *= (length(instanceMatrix[0].xyz) + length(instanceMatrix[1].xyz)) * 0.5;
+    // foliage, textured from the atlas: aCard = (corner x, corner y, kind, tile + seed).
+    //   kind < 0: a sheet that stays where the mesh puts it (needle sprays, boughs)
+    //   0 < kind < 100: a card whose four vertices sit at one point and spread out facing the
+    //     viewer (half-width = kind), turned by its seed and rustling a little in the wind
+    //   kind > 100: a hanging strand: a strip down the tree's vertical that turns about it to
+    //     face the viewer (half-width = kind - 100); its lower end (y = 1) swings
+    vCard = vec4(0.0, 0.0, -1.0, 0.0);
+    if (aCard.z != 0.0) {
+      vCard = vec4(aCard.xy * 0.5 + 0.5, aCard.w, 0.0);
+      // foliage in the camera's way (too close to it, or between it and the player) makes room
+      // whole: cards and strands shrink, sheets thin out through their coverage. No stipple.
+      float _keep = 1.0;
+      #ifdef LEAF_SEE
+        _keep = 1.0 - seeFade(vDWP);
       #endif
-      float _cr = aCard.w * 6.2831853 + sin(uTime * (1.1 + aCard.w * 1.7) + aCard.w * 47.0) * 0.13 * uWind;
-      float _cc = cos(_cr), _sn = sin(_cr);
-      mvPosition.xy += vec2(aCard.x * _cc - aCard.y * _sn, aCard.x * _sn + aCard.y * _cc) * aCard.z * _cs;
-      gl_Position = projectionMatrix * mvPosition;
-      vCard = vec3(aCard.xy * 0.5 + 0.5, aCard.w);
+      if (aCard.z < 0.0) vCard.w = smoothstep(0.3, 0.7, 1.0 - _keep);
+      if (aCard.z > 0.0) {
+        float _fr = fract(aCard.w);
+        float _cs = length(modelMatrix[0].xyz);
+        vec3 _up = modelViewMatrix[1].xyz;
+        #ifdef USE_INSTANCING
+          _cs *= (length(instanceMatrix[0].xyz) + length(instanceMatrix[1].xyz)) * 0.5;
+          _up = (modelViewMatrix * vec4(instanceMatrix[1].xyz, 0.0)).xyz;
+        #endif
+        if (aCard.z < 100.0) {
+          float _cr = _fr * 6.2831853 + sin(uTime * (1.1 + _fr * 1.7) + _fr * 47.0) * 0.13 * uWind;
+          float _cc = cos(_cr), _sn = sin(_cr);
+          mvPosition.xy += vec2(aCard.x * _cc - aCard.y * _sn, aCard.x * _sn + aCard.y * _cc) * aCard.z * _cs * _keep;
+        } else {
+          vec3 _sd = cross(normalize(_up), normalize(mvPosition.xyz));
+          _sd /= max(length(_sd), 0.25);
+          float _lo = aCard.y * 0.5 + 0.5;
+          mvPosition.xyz += _sd * (aCard.x * (aCard.z - 100.0) * _cs * _keep + sin(uTime * (0.8 + _fr * 0.9) + _fr * 40.0) * 0.16 * uWind * _lo * _lo);
+        }
+        gl_Position = projectionMatrix * mvPosition;
+      }
     }
   #endif
 `;
@@ -405,6 +549,11 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
       float tr = pow( clamp( dot( -geometryViewDir, directLight.direction ), 0.0, 1.0 ), 3.0 );
       float leaf = _leafM >= 0.0 ? _leafM : smoothstep( 0.0, 0.06, material.diffuseColor.g - material.diffuseColor.r );
       reflectedLight.directDiffuse += directLight.color * material.diffuseColor * vec3( 1.0, 1.05, 0.7 ) * tr * leaf * 0.32 * ( 0.3 + 0.7 * _dirShadow * _cloudSh );
+      #ifdef LEAF_CARDS
+        // foliage cards seen from their far side (looking up into a crown): the sun that
+        // reaches them comes through the leaves
+        reflectedLight.directDiffuse += directLight.color * material.diffuseColor * vec3( 1.0, 1.1, 0.5 ) * ( clamp( -ndl - _ndlOff, 0.0, 1.0 ) * _isCard * 0.55 * _dirShadow * _cloudSh );
+      #endif
     #endif
   } else {
     vec3 irradiance = getGradientIrradiance( geometryNormal, directLight.direction ) * directLight.color;
@@ -824,7 +973,8 @@ const SURFACE_FRAG = `
           if (lf < (e - 0.4) * 1.6) discard;
           diffuseColor.rgb *= 1.0 - 0.18 * smoothstep(0.55, 0.3, lf) * smoothstep(0.2, 0.6, e);
         }
-        float _sf = seeFade(_p);
+        // (cards, strands and sheets make room in the vertex stage instead: LEAF_CARDS)
+        float _sf = _isCard > 0.5 ? 0.0 : seeFade(_p);
         if (_sf > 0.0) {
           float _ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
           if (_ign < _sf * 0.88) discard;
@@ -932,8 +1082,10 @@ export function patch(m, opts = {}) {
     fs = fs.replace('#include <opaque_fragment>', RIM_FRAG).replace('#include <clipping_planes_fragment>', DISSOLVE_CLIP);
     if (isToon && opts.leafy) fs = SEE_PARS + fs;
     const cdef = cards ? '#define LEAF_CARDS\n' : '';
-    sh.fragmentShader = defs + cdef + 'uniform float uRim;\nuniform vec3 uRimColor;\nuniform vec3 uSkyRefl;\nfloat _isCard = 0.0;\n#ifdef LEAF_CARDS\nvarying vec3 vCard;\nuniform sampler2D uLeafTex;\n#endif\n' + DISSOLVE_PARS + fs;
-    sh.vertexShader = cdef + '#ifdef LEAF_CARDS\nattribute vec4 aCard;\nvarying vec3 vCard;\n#endif\nuniform float uTime;\nuniform float uWind;\nuniform float uSway;\nuniform float uSwayBase;\nvarying vec3 vDWP;\n' + sh.vertexShader.replace('#include <project_vertex>', DISSOLVE_VERT);
+    sh.fragmentShader = defs + cdef + 'uniform float uRim;\nuniform vec3 uRimColor;\nuniform vec3 uSkyRefl;\nfloat _isCard = 0.0;\n#ifdef LEAF_CARDS\nvarying vec4 vCard;\nuniform sampler2D uLeafTex;\n#endif\n' + DISSOLVE_PARS + fs;
+    // (leafy card foliage moves out of the camera's way in the vertex stage: seeFade there too)
+    const vsee = cards && isToon && opts.leafy ? '#define LEAF_SEE\n' + SEE_PARS : '';
+    sh.vertexShader = cdef + vsee + '#ifdef LEAF_CARDS\nattribute vec4 aCard;\nvarying vec4 vCard;\n#endif\nuniform float uTime;\nuniform float uWind;\nuniform float uSway;\nuniform float uSwayBase;\nvarying vec3 vDWP;\n' + sh.vertexShader.replace('#include <project_vertex>', DISSOLVE_VERT);
     if (lodFade) {
       // per-instance cross-fade between a near and a far model: > 0 dithers this instance out
       // by that fraction, < 0 keeps only that fraction; the two use the same pattern so they

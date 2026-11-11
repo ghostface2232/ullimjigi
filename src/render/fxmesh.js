@@ -163,9 +163,14 @@ void main(){
 // Presets: colours are linear HDR; only fire/energy cores exceed the bloom threshold.
 const C = (r, g, b) => new THREE.Color(r, g, b);
 export const SPHERE_LOOK = {
-  fire: { mode: 0, hot: C(3.8, 2.7, 1.1), mid: C(2.2, 0.62, 0.08), cool: C(0.32, 0.05, 0.02), fres: 1.5, glow: 0.1, edge: 2.2, scale: 1.45, disp: 0.3, rise: 0.8, speed: 0.9, add: 0 },
+  fire: { mode: 0, hot: C(3.3, 2.1, 0.72), mid: C(2.2, 0.62, 0.08), cool: C(0.32, 0.05, 0.02), fres: 1.5, glow: 0.1, edge: 2.2, scale: 1.45, disp: 0.3, rise: 0.8, speed: 0.9, add: 0 },
   fireball: { mode: 0, hot: C(4.4, 3.3, 1.5), mid: C(2.6, 0.95, 0.16), cool: C(0.9, 0.18, 0.04), fres: 1.2, glow: 0.4, edge: 2.0, scale: 1.6, disp: 0.18, rise: 2.4, speed: 2.8, add: 0 },
-  sun: { mode: 0, hot: C(4.8, 3.6, 1.7), mid: C(2.8, 1.0, 0.16), cool: C(0.8, 0.14, 0.03), fres: 1.2, glow: 0.5, edge: 2.0, scale: 1.1, disp: 0.16, rise: 1.2, speed: 1.4, add: 0 },
+  // projectile body (불씨 탄): hot only at the heart, deep red and sooty at the rim, so the
+  // comet keeps a dark-edged silhouette instead of blooming into a ball
+  comet: { mode: 0, hot: C(2.6, 1.55, 0.45), mid: C(1.8, 0.48, 0.05), cool: C(0.36, 0.05, 0.02), fres: 1.0, glow: 0, edge: 1.2, scale: 2.2, disp: 0.34, rise: 3.4, speed: 3.0, add: 0 },
+  // big flying fire (화염구): the same idea at size, a little hotter at the heart
+  meteor: { mode: 0, hot: C(2.5, 1.45, 0.42), mid: C(1.8, 0.48, 0.06), cool: C(0.36, 0.05, 0.02), fres: 1.0, glow: 0, edge: 1.2, scale: 1.7, disp: 0.26, rise: 3.0, speed: 2.6, add: 0 },
+  sun: { mode: 0, hot: C(3.8, 2.5, 0.9), mid: C(2.6, 0.85, 0.12), cool: C(0.8, 0.14, 0.03), fres: 1.2, glow: 0.5, edge: 2.0, scale: 1.1, disp: 0.16, rise: 1.2, speed: 1.4, add: 0 },
   smoke: { mode: 1, hot: C(2.2, 0.65, 0.12), lit: C(0.46, 0.44, 0.44), shade: C(0.13, 0.13, 0.17), fres: 2, scale: 1.1, disp: 0.3, rise: 0.35, speed: 0.25, add: 0 },
   steam: { mode: 1, hot: C(0, 0, 0), lit: C(1.05, 1.07, 1.1), shade: C(0.55, 0.62, 0.72), fres: 2, scale: 1.0, disp: 0.28, rise: 0.6, speed: 0.3, add: 0 },
   dust: { mode: 1, hot: C(0, 0, 0), lit: C(0.72, 0.64, 0.5), shade: C(0.32, 0.3, 0.3), fres: 2, scale: 1.2, disp: 0.3, rise: 0.25, speed: 0.2, add: 0 },

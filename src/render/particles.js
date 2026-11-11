@@ -2,7 +2,8 @@
 // shape: 0 glow, 1 hot spark, 2 shard/diamond, 3 smoke puff, 4 star, 5 ring, 6 streak,
 //        7 flame tongue, 8 dissolving wisp (smoke that breaks up as it ages),
 //        9 droplet (specular water drop), 10 snowflake, 11 leaf, 12 rune glyph,
-//        13 electric spark (jagged, flickering), 14 bubble
+//        13 electric spark (jagged, flickering), 14 bubble, 15 glint (hairline cross flare),
+//        16 shock ring (thins with age), 17 hit spark (spiked burst that hollows out)
 // Sprites can rotate (rot/spin) and stretch along their screen-space velocity
 // (sparks, streaks and droplets do by default). Colour runs through up to three
 // keys (color → color2 at `mid` → color1) and size follows an ease curve.
@@ -187,12 +188,33 @@ void main(){
     a = smoothstep(1.0, 0.0, d) * spikes * 1.4 + smoothstep(0.25, 0.0, d);
     a *= step(0.28, h21(vec2(floor(uTime * 28.0), seed * 97.0)));
   }
-  else {
+  else if (vShape < 14.5) {
     // bubble: thin rim, bright highlight, faint body
     float rim = smoothstep(0.14, 0.0, abs(d - 0.84));
     float spec = smoothstep(0.2, 0.0, length(p0 - vec2(-0.35, -0.38)));
     a = rim * 0.85 + spec + smoothstep(1.0, 0.0, d) * 0.08;
     a *= step(d, 1.0);
+  }
+  else if (vShape < 15.5) {
+    // glint: long hairline across, a shorter one along, pin-point core (a flash with almost no area)
+    float sx = smoothstep(0.045, 0.0, abs(p.y)) * pow(max(1.0 - abs(p.x), 0.0), 1.5);
+    float sy = smoothstep(0.035, 0.0, abs(p.x)) * pow(max(1.0 - abs(p.y) * 2.4, 0.0), 1.5);
+    a = sx + sy * 0.8 + smoothstep(0.13, 0.0, d);
+  }
+  else if (vShape < 16.5) {
+    // shock ring: a crisp band that thins and breaks up as it ages (grow it with size)
+    float w = mix(0.11, 0.02, age);
+    float n = vn(vec2(atan(p.y, p.x) * 2.6, seed * 23.0));
+    a = smoothstep(w, w * 0.3, abs(d - (1.0 - w))) * smoothstep(age * 1.1 - 0.35, age * 1.1 + 0.05, n + 0.1);
+  }
+  else {
+    // hit spark: seven hard spikes of uneven length, hollowing out from the middle with age
+    float t = atan(p.y, p.x) * (7.0 / 6.2831853) + seed * 7.0;
+    float f = abs(fract(t) - 0.5);
+    float len = 0.42 + 0.58 * h21(vec2(mod(floor(t), 7.0), floor(seed * 64.0)));
+    float w = 0.2 * max(1.0 - d / len, 0.0);
+    a = smoothstep(w, w * 0.45, f) * step(d, len) * smoothstep(age * 0.85 - 0.2, age * 0.85, d);
+    a += smoothstep(0.2, 0.0, d) * (1.0 - age);
   }
   if (a < 0.004) discard;
   float al = vColor.a * a;

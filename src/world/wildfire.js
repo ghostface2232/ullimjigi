@@ -27,7 +27,7 @@ varying vec2 vUv;
 varying float vSeed;
 void main(){
   vUv = uv; vSeed = iSeed;
-  vec3 p = position * iFlame.w;
+  vec3 p = position * iFlame.w * 0.78;
   // lick sideways with height
   p.x += sin(uTime * 7.0 + iSeed * 13.0 + p.y * 3.0) * 0.12 * iFlame.w * uv.y;
   p.z += cos(uTime * 6.0 + iSeed * 7.0) * 0.08 * iFlame.w * uv.y;
@@ -47,9 +47,12 @@ void main(){
   float w = 1.0 - abs(uv.x - 0.5) * 2.0;
   float body = w * (1.0 - uv.y) * 1.35 + (n - 0.5) * 0.9 + (n2 - 0.5) * 0.45 - uv.y * 0.35;
   if (body < 0.18) discard;
-  vec3 c = body > 0.62 ? vec3(3.2, 2.2, 0.9) : body > 0.4 ? vec3(2.6, 0.95, 0.18) : vec3(1.1, 0.22, 0.06);
+  // Colours stay below white heat and the blue channel stays low, so crossed and
+  // overlapping cards add up to a saturated orange rather than a white wall; the flame
+  // also covers a little of what is behind it ("additive-over") to keep its hue on bright grass.
+  vec3 c = body > 0.72 ? vec3(2.2, 1.3, 0.34) : body > 0.42 ? vec3(1.7, 0.5, 0.07) : vec3(0.72, 0.12, 0.03);
   float a = smoothstep(0.18, 0.3, body);
-  gl_FragColor = vec4(c * a, a);
+  gl_FragColor = vec4(c * a * 0.8, a * 0.5);
 }`;
 
 export class Wildfire {
@@ -101,7 +104,8 @@ export class Wildfire {
     const mat = new THREE.ShaderMaterial({
       vertexShader: FLAME_VS, fragmentShader: FLAME_FS,
       uniforms: { uTime: U.time, uNoiseTex: U.noise },
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendEquation: THREE.AddEquation,
     });
     this.flames = new THREE.Mesh(g, mat);
     this.flames.frustumCulled = false;
@@ -275,7 +279,8 @@ export class Wildfire {
     this.flames.visible = n > 0;
     if (ln) {
       this.light.position.set(lx / ln, ly / ln + 2, lz / ln);
-      this.light.intensity = Math.min(1, ln / 12) * (22 + Math.sin(G.time * 17) * 4);
+      // sized for the dark; by day the same light only bleaches the grass (see VFX.lightK)
+      this.light.intensity = Math.min(1, ln / 12) * (22 + Math.sin(G.time * 17) * 4) * (G.vfx ? G.vfx.lightK() : 1);
     } else this.light.intensity = 0;
     // crackle bed at the fire nearest the player
     const near = ln > 0;

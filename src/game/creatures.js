@@ -99,15 +99,17 @@ function altMap(key, variant) {
 // layer hooks of the toon shader (_rough / _specK / _cav), the light ramp becomes a soft
 // half-lambert so the sculpt reads, smooth and metallic texels mirror the sky, and the
 // albedo's alpha is a glow mask lit with `glow` (a Color shared with the tier-coloured glow
-// material). o: { spec (highlight strength), metal (extra on metallic texels), ao, glowK, bump }
+// material). o: { spec (highlight strength), metal (extra on metallic texels), ao, glowK, bump,
+// glowAlb (0..1: the glow takes the painted colour: lit eyes and marks), glowBoost (extra light
+// where the mask is full, so only those texels bloom) }
 export function surfaced(m, tex, o = {}) {
   m.map = tex.map; m.normalMap = tex.normalMap;
   m.normalScale.set(o.bump ?? 1, o.bump ?? 1);
   for (const t of [tex.map, tex.normalMap, tex.orm]) if (t) t.anisotropy = 4;
-  const u = { uOrm: { value: tex.orm }, uSurfP: { value: new THREE.Vector4(o.spec ?? 0.6, o.metal ?? 3, o.ao ?? 0.4, o.glowK ?? 1) }, uGlowC: { value: o.glow || new THREE.Color(0, 0, 0) } };
+  const u = { uOrm: { value: tex.orm }, uSurfP: { value: new THREE.Vector4(o.spec ?? 0.6, o.metal ?? 3, o.ao ?? 0.4, o.glowK ?? 1) }, uGlowC: { value: o.glow || new THREE.Color(0, 0, 0) }, uGlowA: { value: new THREE.Vector2(o.glowAlb ?? 0, o.glowBoost ?? 0) } };
   m.userData.surf = u;
   return extendMat(m, 'surfaced', u, (sh) => {
-    sh.fragmentShader = 'uniform sampler2D uOrm;\nuniform vec4 uSurfP;\nuniform vec3 uGlowC;\n' + sh.fragmentShader
+    sh.fragmentShader = 'uniform sampler2D uOrm;\nuniform vec4 uSurfP;\nuniform vec3 uGlowC;\nuniform vec2 uGlowA;\n' + sh.fragmentShader
       .replace('float g = texture2D( gradientMap, vec2( clamp( ndl * 0.5 + 0.5, 0.0, 1.0 ), 0.5 ) ).r;', 'float g = smoothstep( -0.3, 0.7, ndl );')
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
   vec4 _mo = texture2D( uOrm, vMapUv );
@@ -125,7 +127,7 @@ export function surfaced(m, tex, o = {}) {
   vec3 _tint = mix( vec3( 1.0 ), diffuseColor.rgb / max( max( diffuseColor.r, diffuseColor.g ), max( diffuseColor.b, 0.05 ) ), 0.85 );
   outgoingLight += _env * _tint * ( _mo.b * _gl * uSurfP.y * 0.35 * _cav );
   outgoingLight += uSkyRefl * ( ( 0.04 + 0.96 * _fr ) * _gl * _gl * _cav * _specK * 0.4 );
-  outgoingLight = mix( outgoingLight, uGlowC * uSurfP.w, _mGlow );
+  outgoingLight = mix( outgoingLight, mix( uGlowC, uGlowC * diffuseColor.rgb, uGlowA.x ) * ( uSurfP.w * ( 1.0 + uGlowA.y * smoothstep( 0.86, 1.0, _mGlow ) ) ), _mGlow );
 }
 #include <opaque_fragment>`);
   });
@@ -642,7 +644,7 @@ function foxType() {
     for (const sd of [1, -1]) {
       const n = sd > 0 ? 'L' : 'R';
       d.add('ear' + n, 'head', sd * 0.048, 0.22, 0.255, [sd * 0.08, 0.35, 0.235]);
-      d.add('eye' + n, 'head', sd * 0.037, 0.182, 0.345, [sd * 0.037, 0.2, 0.345]);
+      d.add('eye' + n, 'head', sd * 0.0409, 0.1863, 0.3397, [sd * 0.0409, 0.2043, 0.3397]);   // the centre of the painted eye (it closes by scaling)
       d.add('fArm' + n, 'chest', sd * 0.055, 0.0, 0.15);
       d.add('fFore' + n, 'fArm' + n, sd * 0.058, -0.095, 0.165);
       d.add('fPaw' + n, 'fFore' + n, sd * 0.058, -0.19, 0.16, [sd * 0.058, -0.205, 0.2]);
@@ -757,15 +759,17 @@ class FoxRig extends CreatureRig {
   constructor() {
     const T = foxType();
     const M = {
-      fur: bodyMat(0xffffff, { vertexColors: true, emissive: 0x2a7a8c, emissiveIntensity: 0.55, rim: 1.1 }),
-      inner: bodyMat(0xbff4ff, { emissive: 0x6ad8e8, emissiveIntensity: 0.9, rim: 1 }),
+      fur: bodyMat(0xffffff, { vertexColors: true, emissive: 0x2a7a8c, emissiveIntensity: 0.3, rim: 1.1 }),
+      inner: bodyMat(0xffffff, { emissive: 0x3a98b8, emissiveIntensity: 0.5, rim: 0.6 }),
       dark: bodyMat(0x1a2a3a, { rim: 0.4 }),
       glow: new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 2.2, 2.2), vertexColors: true }),
     };
-    super(T, M, { main: 'fur', dress: { mat: { fur: { spec: 0.4, ao: 0.3 } } } });
+    // the painted eyes and marks are lit by their own colour; only full-mask texels bloom
+    const lit = { glowAlb: 1, glowBoost: 1.6 };
+    super(T, M, { main: 'fur', dress: { glow: new THREE.Color(1.1, 1.1, 1.1), mat: { fur: { spec: 0.4, ao: 0.3, ...lit }, inner: { spec: 0.3, ...lit }, dark: { spec: 1.2 } } } });
     const B = this.B;
     this.p = { head: B.head, torso: B.chest, hips: B.hips };
-    const aura = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 12), fresnelMat(0x000000, 0x7ae8ff, { intensity: 0.28, power: 3 }));
+    const aura = new THREE.Mesh(new THREE.SphereGeometry(0.42, 40, 24), fresnelMat(0x000000, 0x7ae8ff, { intensity: 0.12, power: 3.5 }));   // a faint shimmer, not a bubble
     aura.position.set(0, 0.03, 0);
     this.body.add(aura); this.aura = aura;
     this.blinkT = 2; this.blink = 0;
@@ -870,7 +874,7 @@ function catType() {
     for (const sd of [1, -1]) {
       const n = sd > 0 ? 'L' : 'R';
       d.add('ear' + n, 'head', sd * 0.042, 0.345, 0.05, [sd * 0.058, 0.395, 0.045]);
-      d.add('eye' + n, 'head', sd * 0.03, 0.306, 0.114, [sd * 0.03, 0.32, 0.114]);
+      d.add('eye' + n, 'head', sd * 0.0329, 0.3059, 0.1138, [sd * 0.0329, 0.32, 0.1138]);   // the centre of the painted eye
       d.add('fLeg' + n, 'chest', sd * 0.036, 0.17, 0.055);
       d.add('fPaw' + n, 'fLeg' + n, sd * 0.036, 0.03, 0.07, [sd * 0.036, 0.012, 0.1]);
       d.add('hLeg' + n, 'hips', sd * 0.058, 0.07, -0.04, [sd * 0.055, 0.02, 0.04]);
@@ -951,7 +955,8 @@ class CatRig extends CreatureRig {
       fur: model('mn_cat') ? bodyMat(0xffffff, { vertexColors: true, rim: 0.5 }) : tabby(bodyMat(0xffffff, { vertexColors: true, rim: 0.5 }), 0xb47a62, { freq: 38, width: 0.34 }),   // the authored coat has its stripes painted
       main: bodyMat(0xffffff, { vertexColors: true, rim: 0.4 }),
     };
-    super(T, M, { main: 'fur', outline: 0.004, dress: { mat: { fur: { spec: 0.35 }, main: { spec: 1.4 } } } });
+    // the painted eyes are lit by their own colour (their glow mask stays under the bloom boost)
+    super(T, M, { main: 'fur', outline: 0.004, dress: { glow: new THREE.Color(1, 1, 1), mat: { fur: { spec: 0.35 }, main: { spec: 1.4, glowAlb: 1 } } } });
     const B = this.B;
     this.p = { head: B.head, torso: B.chest, hips: B.hips };
     this.t = rand() * 10;

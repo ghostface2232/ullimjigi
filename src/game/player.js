@@ -705,7 +705,8 @@ export class Player {
   }
   beginCharge() {
     const el = this.element;
-    this.charge = { el, t0: performance.now() / 1000, ready: false, fx: G.vfx.charge(el, () => this.gemPos() || this.staffTip(), CHARGE_T, { big: 0.85, hold: 60, ground: this.root }) };
+    // the hold shows what is being made (a lance drawn out, a bomb swelling, a rod crackling…)
+    this.charge = { el, t0: performance.now() / 1000, ready: false, fx: G.vfx.chargeShot(el, () => this.gemPos() || this.staffTip(), () => G.cameraRig.forward, CHARGE_T, { ground: this.root }) };
     G.audio.play('charge_hold', { pos: this.staffTip() });
   }
   updateCharge() {
@@ -715,10 +716,8 @@ export class Player {
     const k = Math.min(1, (performance.now() / 1000 - c.t0) / CHARGE_T);
     if (!c.ready && k >= 1) {
       c.ready = true;
-      const tip = this.staffTip();
-      G.audio.play('charge_ready', { pos: tip });
-      G.vfx.glint(tip, c.el, 1.8, 0.14);
-      G.vfx.puffRing(tip, c.el, 1.3, 0.22);
+      G.audio.play('charge_ready', { pos: this.staffTip() });
+      c.fx.ready(); // the held shape locks (fuse lit, blade upright, rod forked…)
     }
     if (G.hud.chargeRing) G.hud.chargeRing(k, c.ready, c.el, this.mana >= CHARGED[c.el].cost);
   }

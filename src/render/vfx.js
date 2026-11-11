@@ -306,11 +306,11 @@ const STREAK_FS = `
 
 // projectile ribbons
 const RIBBON_VS = `
-  attribute float aK; attribute float aS; varying float vK; varying float vS;
-  void main(){ vK = aK; vS = aS; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+  attribute float aK; attribute float aS; varying float vK; varying float vS; varying float vD;
+  void main(){ vK = aK; vS = aS; vec4 mv = modelViewMatrix * vec4(position, 1.0); vD = -mv.z; gl_Position = projectionMatrix * mv; }`;
 const RIBBON_FS = `
   uniform vec3 uCore; uniform vec3 uGlow; uniform float uAlpha; uniform float uTime; uniform float uWave;
-  varying float vK; varying float vS;
+  varying float vK; varying float vS; varying float vD;
   void main(){
     float e = 1.0 - abs(vS);
     float soft = smoothstep(0.0, 1.0, e);
@@ -318,7 +318,10 @@ const RIBBON_FS = `
     float fade = pow(1.0 - k, 1.35);
     float wob = 1.0 + uWave * 0.35 * sin(k * 40.0 - uTime * 30.0);
     vec3 col = mix(uGlow, uCore, pow(e, 3.0) * (1.0 - k * 0.8));
-    gl_FragColor = vec4(col * wob, uAlpha * soft * fade);
+    // an additive trail that leaves from beside the lens covers a large part of the frame for
+    // its first metres: it thins out there and reaches full strength about 7 m out
+    float near = mix(0.22, 1.0, smoothstep(1.0, 7.0, vD));
+    gl_FragColor = vec4(col * wob, uAlpha * soft * fade * near);
   }`;
 
 // ground decals (premultiplied: darkens via base, adds glow)
@@ -1664,7 +1667,7 @@ export class VFX {
     m.visible = true;
     let t = 0, out = 0;
     const h = {
-      m, done: false,
+      m, done: false, radius: null,
       end() { h.done = true; },
       set(p, dd) { m.position.copy(p); if (dd) setBasis(_sd2.copy(dd).normalize()); },
       update: (dt) => {
@@ -1672,7 +1675,7 @@ export class VFX {
         const k = persist ? 0 : clamp(t / dur, 0, 1);
         if (o.follow) m.position.copy(o.follow);
         const g = 1 + (o.grow ?? 0) * k;
-        m.scale.setScalar(R * g);
+        m.scale.setScalar((h.radius ?? R) * g);
         u.uReveal.value = o.reveal ? Math.min(1.2, t / o.reveal * 1.2) : 1.2;
         const ea = o.erodeAt ?? 0.45;
         let er = persist ? 0 : k < ea ? 0 : (k - ea) / (1 - ea);
@@ -1826,6 +1829,135 @@ export class VFX {
     return h;
   }
 
+  // ---------------- charged-shot hold (basic spell held down) ----------------
+  // Each element shows what is being made, growing at the crystal over `dur` and then held:
+  // arcane draws a star-needle out along the aim, fire swells a crusted bomb with a lit fuse,
+  // wind spins a crescent up to speed and locks it, frost grows a lance that sheds cold,
+  // storm raises a crackling rod over the staff, water swells a wobbling globe.
+  // Shapes and lines only (no filled glow), so the caster stays readable behind them.
+  // getPos(): crystal position, getDir(): aim direction. Handle: ready(), end().
+  chargeShot(el, getPos, getDir, dur = 0.75, o = {}) {
+    const p = pal(el);
+    const c = getPos().clone(), d = new THREE.Vector3(), at = c.clone(), bx = new THREE.Vector3(), by = new THREE.Vector3();
+    const h = {
+      done: false, isReady: false, rt: 0,
+      end() { h.done = true; },
+      ready: () => { if (h.isReady) return; h.isReady = true; this.glint(at, el, 1.1, 0.1); this.puffRing(at, el, 0.75, 0.16, { alpha: 0.8 }); },
+    };
+    const mark = o.ground ? this.circle(o.ground.position, p.glow, 0.8, 0, { follow: o.ground, spin: 4, intensity: 1.0, alt: el !== 'arcane', alpha: 0.7, wipe: Math.min(0.5, dur) }) : null;
+    const body = el === 'arcane' || el === 'frost' ? this.body(el === 'arcane' ? 'needle' : 'shard', 0.01) : null;
+    const ball = el === 'fire' || el === 'water' ? this.sphere(el === 'fire' ? 'meteor' : 'water', at, { mini: true, r0: 0.03, dur: 0, follow: at, alpha: 1, disp: el === 'water' ? 0.2 : 0.3 }) : null;
+    const so = { el: 'wind', face: true, roll: rand() * 6.28, radius: 0.2, dur: 0, thick: 0.5 };
+    const blade = el === 'wind' ? this.slash(c, getDir(), so) : null;
+    let t = 0, acc = 0, acc2 = 0, tick = 0, roll = so.roll;
+    h.update = (dt) => {
+      if (h.done) {
+        if (mark) mark.end();
+        if (body) this.releaseBody(body);
+        if (ball) ball.end();
+        if (blade) blade.end();
+        return false;
+      }
+      t += dt;
+      const k = Math.min(1, t / dur), e = k * k * (3 - 2 * k), rd = h.isReady;
+      if (rd) h.rt += dt;
+      const beat = rd ? 1 + Math.sin(h.rt * 18) * 0.05 : 1;
+      c.copy(getPos()); d.copy(getDir()).normalize();
+      bx.crossVectors(UPV, d); if (bx.lengthSq() < 1e-6) bx.set(1, 0, 0); bx.normalize(); by.crossVectors(d, bx);
+      switch (el) {
+        case 'arcane': {
+          // the needle is drawn out of the crystal along the aim, spinning faster as it fills
+          const s = (0.18 + 0.6 * e) * beat;
+          at.copy(c).addScaledVector(d, 0.22 + s * 0.4);
+          body.scale.setScalar(s); body.position.copy(at);
+          roll += dt * (4 + 22 * e);
+          body.quaternion.setFromUnitVectors(UPV, d); body.rotateY(roll);
+          // glyphs close on the aim axis in a ring across it
+          acc += dt * (8 + 12 * e);
+          for (; acc >= 1; acc--) {
+            const a = rand() * 6.28, r = 0.55 - 0.25 * e, life = randRange(0.16, 0.24), ca = Math.cos(a), sa = Math.sin(a);
+            const x = bx.x * ca + by.x * sa, y = bx.y * ca + by.y * sa, z = bx.z * ca + by.z * sa, sp = r * 0.75 / life;
+            this.add.emit({ p: [at.x + x * r, at.y + y * r, at.z + z * r], v: [-x * sp, -y * sp, -z * sp], life, size: randRange(0.05, 0.1), size1: 0.03, color: p.glow, color1: p.core, alpha: 0.35, alpha1: 1, shape: rand() < 0.5 ? 12 : 4 });
+          }
+          if (rd && (tick -= dt) <= 0) { tick = 0.38; this.glint(tmpV.copy(at).addScaledVector(d, s * 1.2), 'arcane', 0.8, 0.09); }
+          break;
+        }
+        case 'fire': {
+          // a crusted bomb swells on the crystal; once full its fuse spits
+          const r = (0.05 + 0.13 * e) * beat;
+          at.copy(c).addScaledVector(d, 0.1); at.y += 0.04 + r * 0.7;
+          ball.r = r;
+          acc += dt * (6 + 16 * e);
+          for (; acc >= 1; acc--) this.add.emit({ p: [at.x + rv(r * 0.5), at.y + r * 0.6, at.z + rv(r * 0.5)], v: [rv(0.25), randRange(0.8, 1.6), rv(0.25)], life: randRange(0.16, 0.28), size: randRange(0.1, 0.17) * (0.6 + e), size1: 0.03, color: EMBER_A, color2: EMBER_B, mid: 0.3, color1: PAL.fire.deep, alpha: 0.8, alpha1: 0, drag: 2, grav: -1.5, shape: 7 });
+          acc2 += dt * (rd ? 34 : 5 * e);
+          for (; acc2 >= 1; acc2--) {
+            if (rd) this.streaks.emit({ p: [at.x, at.y + r, at.z], v: [rv(2.2), randRange(2.5, 5), rv(2.2)], life: randRange(0.12, 0.22), w: 0.018, stretch: 0.03, minL: 0.05, maxL: 0.5, color: PAL.fire.core, color1: PAL.fire.glow, alpha: 1, alpha1: 0, grav: 14, drag: 1 });
+            else { const a = t * 9 + rand() * 6.28; this.add.emit({ p: [at.x + Math.cos(a) * (r + 0.1), at.y + rv(0.06), at.z + Math.sin(a) * (r + 0.1)], v: [-Math.sin(a) * 1.4, 0.4, Math.cos(a) * 1.4], life: 0.3, size: 0.035, size1: 0.01, color: FIRE_WHITE, color1: PAL.fire.glow, alpha: 1, alpha1: 0, shape: 1 }); }
+          }
+          break;
+        }
+        case 'wind': {
+          // a crescent spins up across the aim, then locks upright
+          at.copy(c).addScaledVector(d, 0.3);
+          if (rd) roll += Math.sin(-roll) * Math.min(1, dt * 16); else roll += dt * (5 + 26 * e);
+          so.roll = roll;
+          blade.radius = (0.2 + 0.45 * e) * beat;
+          blade.set(at, d);
+          acc += dt * (rd ? 10 : 14 + 22 * e);
+          for (; acc >= 1; acc--) {
+            const a = rand() * 6.28, r = blade.radius * randRange(0.9, 1.25), ca = Math.cos(a), sa = Math.sin(a), sp = 5 + 6 * e;
+            this.streaks.emit({ p: [at.x + (bx.x * ca + by.x * sa) * r, at.y + (bx.y * ca + by.y * sa) * r, at.z + (bx.z * ca + by.z * sa) * r], v: [(-bx.x * sa + by.x * ca) * sp, (-bx.y * sa + by.y * ca) * sp, (-bx.z * sa + by.z * ca) * sp], life: 0.14, w: 0.02, stretch: 0.04, minL: 0.1, maxL: 0.6, color: p.core, color1: p.glow, alpha: 0.75, alpha1: 0, drag: 1, grav: 0 });
+          }
+          break;
+        }
+        case 'frost': {
+          // a lance grows out of the crystal, still and heavy, shedding cold
+          const s = (0.15 + 0.6 * e) * beat;
+          at.copy(c).addScaledVector(d, 0.2 + s * 0.45);
+          body.scale.setScalar(s); body.position.copy(at);
+          roll += dt * 0.9;
+          body.quaternion.setFromUnitVectors(UPV, d); body.rotateY(roll);
+          acc += dt * (4 + 7 * e);
+          for (; acc >= 1; acc--) this.norm.emit({ p: [at.x + rv(0.1), at.y - 0.05, at.z + rv(0.1)], v: [rv(0.15), randRange(-0.7, -0.3), rv(0.15)], life: randRange(0.5, 0.8), size: 0.12, size1: 0.5, color: BREATH_A, color1: BREATH_B, alpha: 0.26, alpha1: 0, drag: 1.5, shape: 8 });
+          acc2 += dt * (rd ? 9 : 10 * (1 - e) + 3);
+          for (; acc2 >= 1; acc2--) {
+            if (rd) this.add.emit({ p: [at.x + d.x * rv(s) + rv(0.05), at.y + d.y * rv(s) + rv(0.05), at.z + d.z * rv(s) + rv(0.05)], life: randRange(0.12, 0.2), size: randRange(0.08, 0.14), size1: 0.02, color: PAL.white.core, color1: p.glow, alpha: 1, alpha1: 0, shape: 4 });
+            else { sphereV(tmpV); const r = randRange(0.35, 0.6), life = randRange(0.2, 0.3), sp = r * 0.8 / life; this.add.emit({ p: [at.x + tmpV.x * r, at.y + tmpV.y * r, at.z + tmpV.z * r], v: [-tmpV.x * sp, -tmpV.y * sp, -tmpV.z * sp], life, size: randRange(0.05, 0.09), size1: 0.03, color: PAL.white.core, color1: p.glow, alpha: 0.4, alpha1: 1, shape: 10 }); }
+          }
+          break;
+        }
+        case 'storm': {
+          // a crackling rod stands up from the crystal and reaches higher as it fills
+          at.copy(c);
+          const L = 0.25 + 0.95 * e;
+          if ((tick -= dt) <= 0) {
+            tick = rd ? 0.05 : 0.08;
+            this.lightning(c.clone(), new THREE.Vector3(c.x + rv(0.1 + 0.1 * e), c.y + L, c.z + rv(0.1 + 0.1 * e)), { width: 0.02 + 0.018 * e, dur: 0.09, branches: rd ? 1 : 0, segs: 8, jag: 0.2 });
+            if (o.ground && rand() < 0.25 + 0.35 * e) this.arcs(o.ground.position, 1, 0.5, { width: 0.016, up: 0.25 });
+          }
+          acc += dt * (8 + 16 * e);
+          for (; acc >= 1; acc--) this.add.emit({ p: [c.x + rv(0.12), c.y + rand() * L, c.z + rv(0.12)], v: [rv(1.2), rv(1.2), rv(1.2)], life: randRange(0.08, 0.16), size: randRange(0.07, 0.13), size1: 0.02, color: p.core, color1: p.glow, alpha: 1, alpha1: 0, drag: 4, shape: 13 });
+          break;
+        }
+        case 'water': {
+          // a globe swells under the crystal, droplets circling in, the odd drip falling
+          const r = (0.05 + 0.14 * e) * (1 + Math.sin(t * 9) * (rd ? 0.1 : 0.05));
+          at.copy(c).addScaledVector(d, 0.1); at.y -= r * 0.3;
+          ball.r = r;
+          acc += dt * (12 + 10 * e);
+          for (; acc >= 1; acc--) { const a = t * 9 + rand() * 6.28, rr = r + 0.08 + 0.16 * (1 - e); this.add.emit({ p: [at.x + Math.cos(a) * rr, at.y + Math.sin(a * 2) * 0.05, at.z + Math.sin(a) * rr], v: [-Math.sin(a) * 1.6, 0, Math.cos(a) * 1.6], life: 0.16, size: 0.06, size1: 0.02, color: p.core, color1: p.glow, alpha: 0.9, alpha1: 0, shape: 9 }); }
+          acc2 += dt * (2 + 5 * e);
+          for (; acc2 >= 1; acc2--) this.norm.emit({ p: [at.x + rv(r * 0.5), at.y - r, at.z + rv(r * 0.5)], v: [0, -0.5, 0], life: 0.45, size: 0.05, size1: 0.035, color: DROP_A, color1: DROP_B, alpha: 0.9, alpha1: 0.3, grav: 9, shape: 9 });
+          if (rd && (tick -= dt) <= 0) { tick = 0.45; this.ring(at, p.core, r * 2.8, 0.32, { y: 0, thick: 0.12, alpha: 0.55, r0: r }); }
+          break;
+        }
+      }
+      return true;
+    };
+    this.fx.push(h);
+    return h;
+  }
+
   // ---------------- skill learned flourish ----------------
   learn(tree, kind = 'passive', center = null) {
     const P = G.player;
@@ -1903,13 +2035,20 @@ export class VFX {
   cast(el, origin, dir, kind = 'bolt') {
     const p = pal(el);
     const big = kind !== 'bolt';
+    // a charged shot is already drawn at the staff (chargeShot): its release is only lines
+    // (a thin ring thrown along the aim, a hairline glint), never a disc over the caster
+    const shot = kind === 'charged';
     const n = big ? 2 : 1;
-    this.glint(origin, el, big ? 2.2 : 1.0, big ? 0.11 : 0.07);
-    this.burst(origin, 'glow', 1, { el, size: big ? 0.6 : 0.4, size1: big ? 0.9 : 0.55, life: 0.07, alpha: 0.5 });
+    this.glint(origin, el, shot ? 1.3 : big ? 2.2 : 1.0, big ? 0.11 : 0.07);
+    if (!shot) this.burst(origin, 'glow', 1, { el, size: big ? 0.6 : 0.4, size1: big ? 0.9 : 0.55, life: 0.07, alpha: 0.5 });
     // (bolts get no rune circle: seen end-on at that size it is just a bubble at the staff)
-    if (big) this.circle(origin, p.glow, 0.45, 0.14, { vertical: true, dir, spin: 7, intensity: 0.9, grow: true, alt: el !== 'arcane' });
-    this.sparks(origin, dir, big ? 10 : 4, { el, spread: 0.3, speed: big ? 20 : 14, grav: 2, life: 0.16, w: 0.028, alpha: 0.9 });
-    if (big) {
+    if (big && !shot) this.circle(origin, p.glow, 0.45, 0.14, { vertical: true, dir, spin: 7, intensity: 0.9, grow: true, alt: el !== 'arcane' });
+    this.sparks(origin, dir, big ? 10 : 4, { el, spread: shot ? 0.16 : 0.3, speed: shot ? 30 : big ? 20 : 14, grav: 2, life: 0.16, w: 0.028, alpha: 0.9 });
+    if (shot) {
+      this.ring(origin, p.core, 0.75, 0.2, { up: dir, y: 0, thick: 0.1, alpha: 0.75, r0: 0.12 });
+      this.flash(origin, p.light, 6, 5, 0.14);
+      this.distort.ring(origin, 1.6, 0.22, { up: dir, amp: 0.02 });
+    } else if (big) {
       this.puffRing(tmpV.copy(origin).addScaledVector(dir, 0.25), el, 1.9, 0.22);
       this.flash(origin, p.light, 9, 6, 0.18);
       this.distort.ring(origin, 2.2, 0.28, { up: dir, amp: 0.028 });
@@ -2534,6 +2673,8 @@ function coneDir(out, dir, spread) {
 const D = [0, 0, 0];
 const GREY = C(0.12, 0.11, 0.13), GREY2 = C(0.3, 0.29, 0.31);
 const FIREBALL_C0 = C(2.2, 0.8, 0.15), FIREBALL_C1 = C(0.5, 0.06, 0.01), FIRE_WHITE = C(4.4, 3.6, 2.2);
+// flame below white heat (keeps its colour over grass), cold breath, water drops
+const EMBER_A = C(2.6, 1.6, 0.5), EMBER_B = C(2.0, 0.6, 0.08), BREATH_A = C(0.85, 0.94, 1), BREATH_B = C(0.8, 0.9, 1), DROP_A = C(0.8, 0.92, 1.05), DROP_B = C(0.6, 0.8, 1);
 
 // ------------------------------------------------------------------
 // Particle presets. `this` = VFX.  (pos, opts, index, count)

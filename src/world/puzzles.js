@@ -29,12 +29,12 @@ export const CHESTS = [
 
 // Borum's nudge when the player lingers by a sleeping seed without waking it
 const LINGER = {
-  braziers: '식은 화로 둘이 씨앗을 지키고 있구나. 씨앗이 온기를 기다리는 게로다.',
-  ice: '얼음 속에 갇혔구나. 차갑게 잠든 것을 깨우는 법이야… 너도 알 테지?',
-  wheels: '바람개비가 셋이로구나. 바람을 기다리는 모양이니라.',
-  buoy: '저 유리 부표 안에 씨앗이 들었구나! 물결 따라 떠도니 잘 겨누거라.',
-  thorns: '가시덤불이 씨앗을 칭칭 감쌌구나. 가시가 무엇에 약한지 생각해 보거라.',
-  sky: '허공에 씨앗이 떠 있구나. 높은 데서 뛰어내려 이 몸의 바람을 타 보거라.',
+  braziers: '식은 화로가 둘, 그 사이에 오므린 봉오리라. …추워서 못 피는 게지, 저건.',
+  ice: '얼음 속에서 자는구나. 언 것을 깨우는 노래야, 할멈한테 맨 먼저 배웠을 텐데.',
+  wheels: '바람개비가 셋. 죄다 멈춰 섰구나. 바람을 기다리는 눈치다. 누구 바람인지는 알겠지?',
+  buoy: '저 유리 부표 속에서 뭐가 반짝인다. 물결 따라 떠도니, 가는 길을 보고 겨누거라.',
+  thorns: '가시덤불이 씨앗을 칭칭 감았구나. 바싹 말랐다, 저건. 마른 가시가 뭘 무서워하겠느냐.',
+  sky: '씨앗이 허공에 걸렸구나. 걸어서는 못 간다. 높은 데서 뛰어— 이 몸의 바람을 타거라.',
 };
 const LINGER_T = 20; // seconds nearby before Borum speaks
 const HOLD_SPIN = 4;  // a puzzle wind wheel keeps turning this long after a gust
@@ -71,76 +71,128 @@ function makeBud() {
 }
 
 let thornGeo = null;
+// One bramble bush: canes that spring from a crown of dead stubs, arch over and droop, thick at
+// the foot and whip-thin at the tip, set with pale hooked thorns; dry leaves caught among them
+// and fallen round the foot.
 function thornGeometry() {
   if (thornGeo) return thornGeo;
   const rnd = mulberry32(41), parts = [];
-  const dark = new THREE.Color(0x3b3526), olive = new THREE.Color(0x5d5a34), tip = new THREE.Color(0xb9a27a);
+  const C = (h) => new THREE.Color(h);
+  const bark = C(0x3a2628), young = C(0x7c4436), grey = C(0x574c44), horn = C(0xcdb88e), hornTip = C(0x4a2c22);
+  const leafC = [C(0x56602f), C(0x6e5630), C(0x6a4a30), C(0x4a5630)];
+  const c = new THREE.Color(), P = new THREE.Vector3(), tan = new THREE.Vector3(), side = new THREE.Vector3(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+  // colour per vertex of the indexed part, then un-index it (which keeps its smooth normals)
   const paint = (geo, fn) => {
-    geo = geo.index ? geo.toNonIndexed() : geo; geo.deleteAttribute('uv');
-    const p = geo.attributes.position, col = new Float32Array(p.count * 3), c = new THREE.Color();
-    for (let i = 0; i < p.count; i++) { fn(c, p.getY(i)); col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
+    const p = geo.attributes.position, col = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) { fn(c, i, p.getY(i)); col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    return geo;
+    geo.deleteAttribute('uv');
+    return geo.index ? geo.toNonIndexed() : geo;
   };
-  const cane = new THREE.Color(0x4a2e2a), caneTip = new THREE.Color(0x8a4a38);
-  // a low tangled root mass
-  for (let i = 0; i < 2; i++) {
-    const s = new THREE.IcosahedronGeometry(0.4 + rnd() * 0.12, 1);
-    s.scale(1.2, 0.6, 1.2); s.translate((rnd() - 0.5) * 0.5, 0.2 + i * 0.15, (rnd() - 0.5) * 0.5);
-    parts.push(paint(s, (c, y) => c.copy(dark).lerp(olive, clamp(y, 0, 1) * 0.6)));
-  }
-  // bramble canes: rise, arch outward and droop, studded with pale thorns
-  const up = new THREE.Vector3(0, 1, 0), tan = new THREE.Vector3(), side = new THREE.Vector3(), q = new THREE.Quaternion();
-  for (let i = 0; i < 16; i++) {
-    const a = (i / 16) * TAU + (rnd() - 0.5) * 0.5, dx = Math.cos(a), dz = Math.sin(a);
-    const h = 1.5 + rnd() * 0.9, reach = 0.8 + rnd() * 0.6, ox = (rnd() - 0.5) * 0.4, oz = (rnd() - 0.5) * 0.4;
-    const curve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(ox, 0, oz),
-      new THREE.Vector3(ox + dx * reach * 0.15, h * 0.55, oz + dz * reach * 0.15),
-      new THREE.Vector3(ox + dx * reach * 0.6, h, oz + dz * reach * 0.6),
-      new THREE.Vector3(ox + dx * reach, h - 0.55 - rnd() * 0.4, oz + dz * reach),
-    ]);
-    const tube = new THREE.TubeGeometry(curve, 10, 0.045, 4, false);
-    parts.push(paint(tube, (c, y) => c.copy(cane).lerp(caneTip, clamp(y / h, 0, 1))));
-    for (let t = 0.2; t < 0.97; t += 0.1 + rnd() * 0.05) {
-      const p = curve.getPoint(t); curve.getTangent(t, tan);
-      side.set(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).cross(tan).normalize();
-      const th = new THREE.ConeGeometry(0.028, 0.16, 3); th.translate(0, 0.08, 0);
-      q.setFromUnitVectors(up, side); th.applyQuaternion(q); th.translate(p.x, p.y, p.z);
-      parts.push(paint(th, (c) => c.copy(tip)));
+  // tapered tube along a curve through pts
+  const R = 5;
+  const cane = (pts, r0, r1, c0, c1, seg) => {
+    const curve = new THREE.CatmullRomCurve3(pts);
+    const tube = new THREE.TubeGeometry(curve, seg, 1, R, false), p = tube.attributes.position;
+    for (let i = 0; i <= seg; i++) {
+      curve.getPointAt(i / seg, P);
+      const r = r0 + (r1 - r0) * (i / seg) ** 0.7;
+      for (let j = 0; j <= R; j++) { const k = i * (R + 1) + j; p.setXYZ(k, P.x + (p.getX(k) - P.x) * r, P.y + (p.getY(k) - P.y) * r, P.z + (p.getZ(k) - P.z) * r); }
     }
-    // a few dry leaves hang on
-    if (rnd() < 0.6) {
-      const p = curve.getPoint(0.45 + rnd() * 0.3);
-      const lf = new THREE.TetrahedronGeometry(0.13); lf.scale(1, 0.35, 1.6); lf.rotateY(rnd() * TAU); lf.translate(p.x, p.y, p.z);
-      parts.push(paint(lf, (c) => c.copy(olive).multiplyScalar(0.9 + rnd() * 0.3)));
+    const tone = 0.85 + rnd() * 0.3;
+    parts.push(paint(tube, (col, k) => col.copy(c0).lerp(c1, Math.floor(k / (R + 1)) / seg).multiplyScalar(tone)));
+    return curve;
+  };
+  const thorn = (at, dir, s) => {
+    const g = paint(new THREE.ConeGeometry(0.03 * s, 0.2 * s, 4, 2), (col, k, y) => col.copy(horn).lerp(hornTip, clamp(y / (0.2 * s) + 0.35, 0, 1)));
+    g.translate(0, 0.09 * s, 0); q.setFromUnitVectors(up, dir); g.applyQuaternion(q); g.translate(at.x, at.y, at.z);
+    parts.push(g);
+  };
+  const leaf = (at, s, flat) => {
+    const tone = leafC[Math.floor(rnd() * leafC.length)], k = 0.85 + rnd() * 0.3;
+    const g = paint(new THREE.OctahedronGeometry(s), (col) => col.copy(tone).multiplyScalar(k));
+    g.scale(0.62, 0.1, 1); g.computeVertexNormals();
+    g.rotateX(flat ? (rnd() - 0.5) * 0.3 : (rnd() - 0.5) * 2.2); g.rotateY(rnd() * TAU); g.translate(at.x, at.y, at.z);
+    parts.push(g);
+  };
+  // the canes: rise out of the crown, arch outward and droop past their own height
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * TAU + (rnd() - 0.5) * 0.5, dx = Math.cos(a), dz = Math.sin(a);
+    const h = 1.45 + rnd() * 0.95, reach = 0.8 + rnd() * 0.6, ox = (rnd() - 0.5) * 0.5, oz = (rnd() - 0.5) * 0.5;
+    const w1 = (rnd() - 0.5) * 0.3, w2 = (rnd() - 0.5) * 0.36, drop = 0.5 + rnd() * 0.55;
+    const curve = cane([
+      new THREE.Vector3(ox, -0.05, oz),
+      new THREE.Vector3(ox + dx * reach * 0.12 - dz * w1, h * 0.5, oz + dz * reach * 0.12 + dx * w1),
+      new THREE.Vector3(ox + dx * reach * 0.55 - dz * w2, h, oz + dz * reach * 0.55 + dx * w2),
+      new THREE.Vector3(ox + dx * reach, h - drop * 0.55, oz + dz * reach),
+      new THREE.Vector3(ox + dx * reach * 1.12, h - drop - 0.25, oz + dz * reach * 1.12),
+    ], 0.05 + rnd() * 0.022, 0.011, bark, young, 14);
+    for (let t = 0.16, k = 0; t < 0.97; t += 0.085 + rnd() * 0.05, k++) {
+      curve.getPointAt(t, P); curve.getTangentAt(t, tan);
+      side.set(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).cross(tan).normalize().addScaledVector(tan, 0.35).normalize();
+      thorn(P, side, 1.1 - t * 0.5);
+      if (k % 3 === 2 && rnd() < 0.7) leaf(P.addScaledVector(side, 0.08), 0.1 + rnd() * 0.05, false);
     }
   }
+  // thin whips among them, and the grey stubs of last year's canes
+  for (let i = 0; i < 7; i++) {
+    const a = rnd() * TAU, dx = Math.cos(a), dz = Math.sin(a), h = 0.8 + rnd() * 0.9, reach = 0.5 + rnd() * 0.7, w = (rnd() - 0.5) * 0.5;
+    const curve = cane([
+      new THREE.Vector3(dx * 0.15, -0.05, dz * 0.15),
+      new THREE.Vector3(dx * reach * 0.35 - dz * w, h * 0.7, dz * reach * 0.35 + dx * w),
+      new THREE.Vector3(dx * reach, h, dz * reach),
+      new THREE.Vector3(dx * reach * 1.3, h - 0.3 - rnd() * 0.3, dz * reach * 1.3),
+    ], 0.026, 0.008, young, young, 9);
+    for (let t = 0.3; t < 0.95; t += 0.16 + rnd() * 0.08) {
+      curve.getPointAt(t, P); curve.getTangentAt(t, tan);
+      thorn(P, side.set(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).cross(tan).normalize(), 0.6);
+    }
+  }
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU + rnd() * 0.6, dx = Math.cos(a), dz = Math.sin(a), l = 0.25 + rnd() * 0.3;
+    cane([
+      new THREE.Vector3(dx * 0.1, -0.05, dz * 0.1),
+      new THREE.Vector3(dx * (0.2 + l * 0.5), 0.12 + l * 0.6, dz * (0.2 + l * 0.5)),
+      new THREE.Vector3(dx * (0.3 + l), 0.16 + l * 0.9, dz * (0.3 + l)),
+    ], 0.06, 0.036, grey, grey, 4);
+  }
+  // litter round the foot
+  for (let i = 0; i < 16; i++) { const a = rnd() * TAU, d = 0.25 + rnd() * 0.85; leaf(P.set(Math.cos(a) * d, 0.11 + rnd() * 0.03, Math.sin(a) * d), 0.07 + rnd() * 0.04, true); }
   thornGeo = mergeParts(parts);
-  thornGeo.computeVertexNormals();
   return thornGeo;
 }
 function mergeParts(parts) {
   let n = 0; for (const p of parts) n += p.attributes.position.count;
-  const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), col = new Float32Array(n * 3);
   let o = 0;
-  for (const p of parts) { pos.set(p.attributes.position.array, o * 3); col.set(p.attributes.color.array, o * 3); o += p.attributes.position.count; }
+  for (const p of parts) { pos.set(p.attributes.position.array, o * 3); nrm.set(p.attributes.normal.array, o * 3); col.set(p.attributes.color.array, o * 3); o += p.attributes.position.count; }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return g;
 }
 
 function chestModel() {
   const g = new THREE.Group();
-  B.box(1.1, 0.58, 0.72, B.MAT.wood, 0, 0.29, 0, g);
-  for (const x of [-0.42, 0.42]) B.box(0.08, 0.6, 0.76, B.MAT.iron, x, 0.3, 0, g);
-  B.box(1.14, 0.06, 0.76, B.MAT.iron, 0, 0.03, 0, g);
   // lid hinged at the back edge
-  const lid = new THREE.Group(); lid.position.set(0, 0.58, -0.36); g.add(lid);
-  B.box(1.1, 0.24, 0.72, B.MAT.woodLight, 0, 0.12, 0.36, lid);
-  for (const x of [-0.42, 0.42]) B.box(0.08, 0.26, 0.76, B.MAT.iron, x, 0.13, 0.36, lid);
-  B.box(0.16, 0.2, 0.05, B.MAT.gold, 0, 0.02, 0.74, lid);
+  const lid = new THREE.Group(); g.add(lid);
+  const P = B.authoredParts('chest');
+  if (P && P.body && P.lid) {
+    // authored (ref/blender/props/loose.py): the lid is modelled closed in the chest's space, rim at 0.5
+    const hinge = new THREE.Vector3(0, 0.5, -0.36);
+    lid.position.copy(hinge);
+    for (const { geo, mat } of P.body) { const m = new THREE.Mesh(geo, mat); m.castShadow = m.receiveShadow = true; g.add(m); }
+    for (const { geo, mat } of P.lid) { const m = new THREE.Mesh(geo.clone().translate(-hinge.x, -hinge.y, -hinge.z), mat); m.castShadow = m.receiveShadow = true; lid.add(m); }
+  } else {
+    B.box(1.1, 0.58, 0.72, B.MAT.wood, 0, 0.29, 0, g);
+    for (const x of [-0.42, 0.42]) B.box(0.08, 0.6, 0.76, B.MAT.iron, x, 0.3, 0, g);
+    B.box(1.14, 0.06, 0.76, B.MAT.iron, 0, 0.03, 0, g);
+    lid.position.set(0, 0.58, -0.36);
+    B.box(1.1, 0.24, 0.72, B.MAT.woodLight, 0, 0.12, 0.36, lid);
+    for (const x of [-0.42, 0.42]) B.box(0.08, 0.26, 0.76, B.MAT.iron, x, 0.13, 0.36, lid);
+    B.box(0.16, 0.2, 0.05, B.MAT.gold, 0, 0.02, 0.74, lid);
+  }
   const shine = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 2.3, 1), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
   shine.position.set(0, 0.5, 0); g.add(shine);
   g.userData = { lid, shine };
@@ -214,7 +266,7 @@ export class Puzzles {
           };
           w.onStop = () => {
             // one wind wheel ran down while another was still turning: say so, once
-            if (!L.solved && L.parts.some((q) => q.active)) G.story && G.story.cSay('하나씩 돌려서는 안 되겠구나. 셋이 한꺼번에 돌아야 하는 게야.', 'swheel_fail', 6);
+            if (!L.solved && L.parts.some((q) => q.active)) G.story && G.story.cSay('하나를 돌리면 하나가 선다. 셋이 한꺼번에 돌아야 하는 게야.', 'swheel_fail', 6);
           };
           return w;
         });

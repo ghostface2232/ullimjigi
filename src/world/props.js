@@ -1050,15 +1050,15 @@ export function rockModel(name, lod) {
   if (m) { g.userData.masses = Array.from(m); for (let i = 1; i < m.length; i += 4) g.userData.masses[i] = -m[i]; }
   return g;
 }
-// Material of the scattered rocks. The sculpted ones are painted in an atlas (albedo and a
-// normal map with the chiselled edges, public/models/pr_rocktex.glb), moss included; the
-// world-space rock layer of the toon shader adds the grain on top.
+// Material of the scattered rocks. The sculpted ones are painted in an atlas (albedo, moss
+// included, public/models/pr_rocktex.glb); their chiselled edges are in the meshes, so the
+// atlas carries no normal map. The world-space rock layer of the toon shader adds the grain.
 export function rockMaterial(o = {}) {
   const tex = authoredParts('rocks') && authoredTex('rocktex');
   if (!tex) return toon(0xffffff, { vertexColors: true, flat: true, rim: 0.15, tex: 'rock', ...o });
   const m = toon(0xffffff, { vertexColors: true, rim: 0.15, tex: 'rock', noMoss: true, nocache: true, ...o });
-  m.map = tex.map; m.normalMap = tex.normalMap;
-  m.normalScale.set(1, -1);   // glTF UVs without tangents (what GLTFLoader does)
+  m.map = tex.map;
+  if (tex.normalMap) { m.normalMap = tex.normalMap; m.normalScale.set(1, -1); }   // (an atlas baked before the chips moved into the meshes)
   return m;
 }
 // the authored rock standing in for each code-built variant (kind + seed)

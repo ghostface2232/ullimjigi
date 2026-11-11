@@ -1,6 +1,6 @@
 // DOM HUD: vitals, compass, spell bar, world-anchored labels, banners, map & journal.
 import * as THREE from 'three';
-import { G, ELEMENTS, EL_INFO, EL_SVG } from '../core/context.js';
+import { G, ELEMENTS, EL_INFO, EL_SVG, ICON, fillIcons, iconImage } from '../core/context.js';
 import { BOLT, HEAVY, CHARGED, WEAVE, weaveInfo, WEAVE_CD, WEAVE_COST, ultInfo } from './spells.js';
 import { TREES, TREE_ORDER, NODES, ULTS, ULT_COST, TIER_GATE, SIG, WEAVE_NODE, isTechnique, treeColor } from './skills.js';
 import { REACTIONS } from './combat.js';
@@ -27,24 +27,34 @@ function heartSVG(q) {
   ];
   let fill = '';
   for (let i = 0; i < 4; i++) if (i < q) fill += quads[i];
-  return `<svg viewBox="0 0 26 24"><path d="${HEART_PATH}" fill="rgba(40,8,14,.75)" stroke="#fff8ee" stroke-width="1.6"/>
-    <g clip-path="url(#heartClip)" fill="#ff4d62">${fill}</g>
-    <path d="M6.5 6.5c1.2-1.4 3-1.2 4 .3" stroke="rgba(255,255,255,.7)" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>`;
+  return `<svg viewBox="0 0 26 24"><path d="${HEART_PATH}" fill="rgba(12,10,24,.86)" stroke="#fff4dc" stroke-width="1.7" stroke-linejoin="round"/>
+    <g clip-path="url(#heartClip)" fill="url(#heartFill)">${fill}</g>
+    ${q ? '<path d="M6.3 6.6c1.2-1.5 3.1-1.3 4.1.3" stroke="rgba(255,255,255,.75)" stroke-width="1.3" fill="none" stroke-linecap="round"/>' : ''}</svg>`;
 }
+// 'verb — target' labels: the part after the dash is set apart
+const dashed = (t) => { const i = t.indexOf(' — '); return i < 0 ? [t, ''] : [t.slice(0, i), t.slice(i + 3)]; };
+const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+// enemy status marks, in the icon family
+const STATUS = [
+  ['burn', 'fire', EL_INFO.fire.css], ['chill', 'frost', EL_INFO.frost.css], ['frozen', 'frost', '#ffffff'], ['shock', 'storm', EL_INFO.storm.css],
+  ['wet', 'water', EL_INFO.water.css], ['electro', 'storm', '#fff3a8'], ['steam', 'wind', '#e8f4ff'],
+];
 
 export class HUD {
   constructor() {
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     defs.setAttribute('width', 0); defs.setAttribute('height', 0); defs.style.position = 'absolute';
-    defs.innerHTML = `<defs><clipPath id="heartClip"><path d="${HEART_PATH}"/></clipPath></defs>`;
+    defs.innerHTML = `<defs><clipPath id="heartClip"><path d="${HEART_PATH}"/></clipPath><linearGradient id="heartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff7d8c"/><stop offset="1" stop-color="#f03653"/></linearGradient></defs>`;
     document.body.appendChild(defs);
+    fillIcons();
     this.el = {
       hud: $('#hud'), hearts: $('#hearts'), manaFill: $('.mana-fill'), manaGhost: $('.mana-ghost'), mana: $('#mana'),
       xpFill: $('.xp-fill'), xpLv: $('.xp-lv'), compassStrip: $('.compass-strip'), compassMarkers: $('.compass-markers'),
       qtTitle: $('.qt-title'), qtObj: $('.qt-obj'), crosshair: $('#crosshair'), lock: $('#lock-marker'),
       stamina: $('#stamina'), stFill: $('.st-fill'), elements: $('#elements'), weaveSlot: $('#weave-slot'),
-      weaveIcons: $('.weave-icons'), weaveName: $('.weave-name'), weaveCd: $('.weave-cd'), heavyName: $('#heavy-slot .hn'), heavyCd: $('.heavy-cd'),
-      boss: $('#boss-bar'), bossName: $('.boss-name'), bossFill: $('.boss-fill'), bossGhost: $('.boss-ghost'), bossTrack: $('.boss-track'), bossBreak: $('.boss-break'), bossBreakFill: $('.boss-break-fill'),
+      weaveIcons: $('.weave-icons'), weaveName: $('.weave-name'), weaveT: $('#weave-slot .act-t'), heavyName: $('#heavy-slot .hn'), heavyT: $('#heavy-slot .act-t'), heavyIco: $('.heavy-ico'),
+      ultPct: $('.ult-pct'), lv: $('#xpbar'), saveMark: $('#save-mark'),
+      boss: $('#boss-bar'), bossName: $('.boss-name'), bossEpi: $('.boss-epi'), bossFill: $('.boss-fill'), bossGhost: $('.boss-ghost'), bossTrack: $('.boss-track'), bossBreak: $('.boss-break'), bossBreakFill: $('.boss-break-fill'),
       bars: $('#enemy-bars'), dmg: $('#dmg-layer'), markers: $('#markers-layer'), prompt: $('#prompt'), promptT: $('#prompt .pt'),
       hint: $('#hint'), area: $('#area-title'), banner: $('#banner'), toasts: $('#toasts'), comp: $('#companion-line'), barks: $('#barks'),
       sp: $('#sp-badge'), ult: $('#ult-slot'), ultName: $('#ult-slot .un'), ultGauge: $('#ult-slot .ug'),
@@ -66,15 +76,15 @@ export class HUD {
     this.applyScale();
     window.addEventListener('resize', () => this.applyScale());
     this.bossTarget = null;
-    this.qmark = document.createElement('div'); this.qmark.className = 'wmark'; this.qmark.innerHTML = '◆<span class="d"></span>'; this.el.markers.appendChild(this.qmark);
+    this.qmark = document.createElement('div'); this.qmark.className = 'wmark'; this.qmark.innerHTML = `${ICON.quest}<span class="d"></span>`; this.el.markers.appendChild(this.qmark);
+    this.qmarkD = this.qmark.querySelector('.d');
     this.barkEls = [];
-    const style = document.createElement('style');
-    style.textContent = `#hud.dlg #quest-tracker,#hud.dlg #crosshair,#hud.dlg #spellbar,#hud.dlg #compass,#hud.dlg #vitals,#hud.dlg #enemy-bars,#hud.dlg #stamina,#hud.dlg #prompt,#hud.dlg #hint,#hud.dlg #boss-bar,#hud.dlg #minimap{opacity:0!important;transition:opacity .4s}
-      #quest-tracker,#crosshair,#spellbar,#compass,#vitals{transition:opacity .4s}
-      .castname{position:absolute;left:50%;top:58%;transform:translateX(-50%);font-family:var(--blade);font-size:22px;letter-spacing:.2em;text-shadow:0 0 18px currentColor,0 2px 4px #000;animation:reactPop 1.6s ease-out forwards;white-space:nowrap}
-      .castname.big{top:30%;font-family:var(--title);font-size:46px;letter-spacing:.3em;animation:ultPop 2.2s ease-out forwards}`;
-    document.head.appendChild(style);
   }
+  // world-anchored elements move by `translate` (compositor only, and it composes with their
+  // own transform animations) instead of left / top
+  at(el, x, y) { el.style.translate = `${Math.round(x)}px ${Math.round(y)}px`; }
+  // a small mark next to the minimap whenever the journey is written down
+  saved() { this.restart(this.el.saveMark, 'show'); }
 
   show(v) { this.el.hud.classList.toggle('hidden', !v); }
   // Interface size follows the window (1600×900 = 1, eased so it neither balloons on big
@@ -84,6 +94,7 @@ export class HUD {
     const s = clamp(Math.pow(fit, 0.8), 0.68, 1.5) * clamp((G.settings.ui ?? 100) / 100, 0.75, 1.35);
     document.documentElement.style.setProperty('--ui', s.toFixed(3));
     this.uiScale = s;
+    this.compassHalf = 0;
   }
 
   // ---------------- vitals ----------------
@@ -97,12 +108,18 @@ export class HUD {
     }
     this.el.hearts.innerHTML = html;
     this.el.hearts.classList.toggle('low', P.hp <= 4);
+    if (hurt) this.restart(this.el.hearts, 'hurt');
     this.lastMax = P.maxHp;
   }
   updateXP() {
     const P = G.player;
-    this.el.xpFill.style.width = `${(P.xp / xpNeed(P.level)) * 100}%`;
-    this.el.xpLv.textContent = `Lv ${P.level}`;
+    // the emblem's rim is the XP bar (path length 100)
+    this.el.xpFill.style.strokeDashoffset = 100 - clamp(P.xp / xpNeed(P.level), 0, 1) * 100;
+    if (this.shownLv !== P.level) {
+      if (this.shownLv !== undefined && P.level > this.shownLv) this.restart(this.el.lv, 'up');
+      this.shownLv = P.level;
+      this.el.xpLv.textContent = P.level;
+    }
   }
   restart(el, cls) { if (!el) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
   // not enough mana: bar shake + red flash, "마나 부족" under the crosshair (rate-limited)
@@ -128,9 +145,8 @@ export class HUD {
   buildCompass() {
     let html = '';
     for (let d = 0; d < 360; d += 15) {
-      const card = { 0: 'N', 90: 'E', 180: 'S', 270: 'W' }[d];
-      const mid = { 45: 'NE', 135: 'SE', 225: 'SW', 315: 'NW' }[d];
-      html += card ? `<span class="card" data-a="${d}">${card}</span>` : mid ? `<span data-a="${d}" style="font-size:10px;opacity:.7">${mid}</span>` : `<span class="tick" data-a="${d}"></span>`;
+      const card = { 0: '북', 90: '동', 180: '남', 270: '서' }[d];
+      html += card ? `<span class="card" data-a="${d}">${card}</span>` : `<span class="${d % 45 === 0 ? 'mid' : 'tick'}" data-a="${d}"></span>`;
     }
     this.el.compassStrip.innerHTML = html;
     this.compassItems = [...this.el.compassStrip.children].map((e) => ({ e, a: (+e.dataset.a * Math.PI) / 180 }));
@@ -139,12 +155,13 @@ export class HUD {
   compassPos(heading, ang) {
     const rel = wrapAngle(ang - heading);
     if (Math.abs(rel) > Math.PI * 0.55) return null;
-    return 260 + (rel / (Math.PI / 2)) * 260;
+    return this.compassHalf + (rel / (Math.PI / 2)) * 260; // 260 px per quarter turn, whatever the strip's width
   }
   updateCompass() {
     const cr = G.cameraRig;
     const fx = -Math.sin(cr.yaw), fz = -Math.cos(cr.yaw);
     const heading = Math.atan2(fx, -fz);
+    this.compassHalf ||= this.el.compassStrip.clientWidth / 2 || 260; // measured once per resize
     for (const it of this.compassItems) {
       const x = this.compassPos(heading, it.a);
       if (x === null) it.e.style.display = 'none';
@@ -153,21 +170,29 @@ export class HUD {
     const P = G.player.pos;
     const marks = [];
     const q = G.story && G.story.markers();
-    if (q) for (const m of q) marks.push({ id: 'q' + m.x + m.z, x: m.x, z: m.z, cls: 'quest', sym: '◆', dist: true });
-    for (const L of Object.values(G.world.lanterns)) if (L.lit) marks.push({ id: 'L' + L.id, x: L.x, z: L.z, cls: '', sym: '<span style="color:#ffc870">▲</span>' });
-    marks.push({ id: 'village', x: POI.bellTower.x, z: POI.bellTower.z, cls: '', sym: '<span style="color:#e8e0d0;font-size:11px">⌂</span>' });
-    if (G.story && G.story.flag('prologueDone')) marks.push({ id: 'tower', x: POI.tower.x, z: POI.tower.z, cls: '', sym: '<span style="color:#b894ff;font-size:12px">✦</span>' });
+    if (q) for (const m of q) marks.push({ id: 'q' + m.x + m.z, x: m.x, z: m.z, cls: 'quest', sym: 'quest', dist: true });
+    for (const L of Object.values(G.world.lanterns)) if (L.lit) marks.push({ id: 'L' + L.id, x: L.x, z: L.z, cls: 'way', sym: 'waystone' });
+    marks.push({ id: 'village', x: POI.bellTower.x, z: POI.bellTower.z, cls: 'home', sym: 'home' });
+    if (G.story && G.story.flag('prologueDone')) marks.push({ id: 'tower', x: POI.tower.x, z: POI.tower.z, cls: 'tower', sym: 'tower' });
     const seen = new Set();
     for (const m of marks) {
       seen.add(m.id);
       let e = this.cmarks.get(m.id);
-      if (!e) { e = document.createElement('div'); e.className = 'cm ' + m.cls; this.el.compassMarkers.appendChild(e); this.cmarks.set(m.id, e); }
+      if (!e) {
+        // built once; afterwards only its position (and the distance text, when it changes) is touched
+        e = document.createElement('div'); e.className = 'cm ' + m.cls;
+        e.innerHTML = ICON[m.sym] + (m.dist ? '<span class="dist"></span>' : '');
+        e._d = e.querySelector('.dist');
+        this.el.compassMarkers.appendChild(e); this.cmarks.set(m.id, e);
+      }
       const ang = Math.atan2(m.x - P.x, -(m.z - P.z));
       const x = this.compassPos(heading, ang);
       const d = Math.hypot(m.x - P.x, m.z - P.z);
-      if (x === null || (d < 4 && !m.dist)) { e.style.display = 'none'; continue; }
-      e.style.display = ''; e.style.left = x + 'px';
-      e.innerHTML = m.sym + (m.dist ? `<span class="dist">${Math.round(d)}m</span>` : '');
+      const show = x !== null && (d >= 4 || m.dist);
+      if (e._show !== show) { e._show = show; e.style.display = show ? '' : 'none'; }
+      if (!show) continue;
+      e.style.left = x + 'px';
+      if (e._d) { const t = Math.round(d) + 'm'; if (e._t !== t) { e._t = t; e._d.textContent = t; } }
     }
     for (const [id, e] of this.cmarks) if (!seen.has(id)) { e.remove(); this.cmarks.delete(id); }
   }
@@ -177,14 +202,14 @@ export class HUD {
     this.el.qtTitle.textContent = title || '';
     if (this.el.qtObj.textContent !== obj) {
       this.el.qtObj.innerHTML = obj || '';
-      if (flash) { this.el.qtObj.classList.remove('flash'); void this.el.qtObj.offsetWidth; this.el.qtObj.classList.add('flash'); }
+      if (flash) { this.restart(this.el.qtObj, 'flash'); this.restart($('.qt-ico'), 'flash'); }
     }
     $('#quest-tracker').style.opacity = title ? 1 : 0;
   }
 
   // ---------------- spells ----------------
   buildElements() {
-    this.el.elements.innerHTML = ELEMENTS.map((e, i) => `<div class="el" data-el="${e}" style="color:${EL_INFO[e].css}">${EL_SVG[e]}<span class="key">${i + 1}</span></div>`).join('');
+    this.el.elements.innerHTML = ELEMENTS.map((e, i) => `<div class="el" data-el="${e}" style="color:${EL_INFO[e].css};--c:${EL_INFO[e].css}">${EL_SVG[e]}<span class="key">${i + 1}</span></div>`).join('');
     this.elNodes = {};
     for (const n of this.el.elements.children) this.elNodes[n.dataset.el] = n;
   }
@@ -213,9 +238,11 @@ export class HUD {
     this.el.heavySlot.classList.toggle('locked', !hKnown);
     this.el.heavySlot.classList.toggle('hidden', !hKnown && !(G.skills && Object.values(SIG).some((id) => G.skills.has(id))));
     this.el.heavyName.textContent = HEAVY[P.element].name;
-    this.el.heavyName.style.color = hKnown ? EL_INFO[P.element].css : '';
+    this.el.heavySlot.style.setProperty('--c', EL_INFO[P.element].css);
+    this.el.heavyIco.innerHTML = hKnown ? EL_SVG[P.element] : ICON.lock;
     this.el.heavyCost.innerHTML = hKnown ? `<i></i>${HEAVY[P.element].cost}` : '미습득';
     this.el.tickH.style.setProperty('--tc', EL_INFO[P.element].css);
+    if (!wKnown) this.el.weaveIcons.innerHTML = `<span>${ICON.lock}</span>`;
     this.updateUlt();
     this.updateSP();
   }
@@ -228,6 +255,7 @@ export class HUD {
     this.el.ult.classList.toggle('none', !id);
     this.el.ultName.textContent = id ? NODES[id].name : '궁극기 없음';
     this.el.ult.style.color = EL_INFO[P.element].css;
+    if (this.ultEl !== P.element) { this.ultEl = P.element; $('.ult-ico').innerHTML = EL_SVG[P.element]; }
   }
   updateSP(flash = false) {
     const K = G.skills; if (!K) return;
@@ -237,7 +265,7 @@ export class HUD {
     if (flash) { b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); }
   }
   ultReady() { const u = this.el.ult; u.classList.remove('flash'); void u.offsetWidth; u.classList.add('flash'); }
-  ultShort() { this.el.ult.animate([{ transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'none' }], { duration: 200 }); this.toast(`울림 게이지가 아직 차지 않았다 — 적을 맞히고, 특히 <b>원소 반응</b>을 일으키면 빨리 찬다`); }
+  ultShort() { this.restart(this.el.ult, 'bump'); this.toast(`울림 게이지가 아직 차지 않았다 — 적을 맞히고, 특히 <b>원소 반응</b>을 일으키면 빨리 찬다`); }
   chain(n, kinds) {
     let el = this.chainEl;
     if (!el) { el = this.chainEl = document.createElement('div'); el.className = 'chain'; this.el.hud.appendChild(el); }
@@ -257,8 +285,18 @@ export class HUD {
     this.toast(`<span style="color:${info.color}">새로운 반응 발견 — <b>${info.name}</b></span> · ${info.desc}`, 5200);
   }
   cooldownFlash(k) {
-    const n = k === 'weave' ? this.el.weaveSlot : this.el.heavySlot;
-    n.animate([{ transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'none' }], { duration: 200 });
+    this.restart(k === 'weave' ? this.el.weaveSlot : this.el.heavySlot, 'bump');
+  }
+  // an action button's cooldown: a dark wedge that shrinks, with the seconds left on top.
+  // Only writes when the shown value changes.
+  coolSlot(slot, tEl, left, total) {
+    const k = total > 0 && left > 0 ? Math.round(clamp(left / total, 0, 1) * 200) / 200 : 0;
+    if (slot._k !== k) {
+      if (slot._k > 0 && k === 0) this.restart(slot, 'done'); // ready again: one pulse
+      slot._k = k; slot.style.setProperty('--cd', k); slot.classList.toggle('cooling', k > 0);
+    }
+    const t = left > 0.05 ? (left < 10 ? left.toFixed(1) : String(Math.ceil(left))) : '';
+    if (slot._t !== t) { slot._t = t; tEl.textContent = t; }
   }
   // charged basic spell: a ring around the crosshair fills while the button is held
   chargeRing(k, ready, el, affordable = true) {
@@ -272,13 +310,16 @@ export class HUD {
     r.classList.toggle('short', !affordable);
   }
   castPulse() { const c = this.el.crosshair; c.classList.remove('cast'); void c.offsetWidth; c.classList.add('cast'); }
+  // The name of a charged shot or a weave, in the action lane at the right above the spell bar
+  // (see styles.css). One node, reused: a new cast replaces the name still showing.
   castName(name, els, big = false) {
-    const d = document.createElement('div');
+    let d = this.castEl;
+    if (!d) { d = this.castEl = document.createElement('div'); this.el.hud.appendChild(d); }
+    const known = els.filter((e) => EL_INFO[e]);
     d.className = 'castname' + (big ? ' big' : '');
-    d.style.color = EL_INFO[els[0]].css;
-    d.textContent = name;
-    this.el.hud.appendChild(d);
-    setTimeout(() => d.remove(), big ? 2300 : 1700);
+    d.style.setProperty('--c', known.length ? EL_INFO[known[0]].css : '#f1d48a');
+    d.innerHTML = `${known.map((e) => `<i style="color:${EL_INFO[e].css}">${EL_SVG[e]}</i>`).join('')}<span>${esc(name)}</span>`;
+    this.restart(d, 'show');
   }
 
   // ---------------- world-anchored ----------------
@@ -319,12 +360,12 @@ export class HUD {
   }
   placeFloat(f) {
     const p = this.project(f.pos);
-    f.el.style.display = p.vis ? '' : 'none';
-    f.el.style.left = p.x + 'px'; f.el.style.top = p.y + 'px';
+    if (f.vis !== p.vis) { f.vis = p.vis; f.el.style.display = p.vis ? '' : 'none'; }
+    if (p.vis) this.at(f.el, p.x, p.y);
   }
   alertMark(e) {
     const d = document.createElement('div');
-    d.className = 'alert-mark'; d.textContent = '!';
+    d.className = 'alert-mark'; d.innerHTML = ICON.alert;
     this.addFloat(d, e.center().add(new THREE.Vector3(0, e.height * 0.7, 0)), 900);
   }
   playerHurt(n) {
@@ -340,9 +381,13 @@ export class HUD {
     const b = { el: d, npc, t: 4 + text.length * 0.05 };
     this.barkEls.push(b);
   }
-  companion(text, dur) {
+  // A one-liner at the bottom of the screen. Boreum's unless `who` names another speaker:
+  // { name, color } (both optional).
+  companion(text, dur, who) {
     const c = this.el.comp;
-    c.innerHTML = `<b>보름</b>${fillName(text, G.playerName).replace(/\*([^*]+)\*/g, '<em>$1</em>')}`;
+    const name = (who && who.name) || '보름', col = who && who.color;
+    c.innerHTML = `<b${col ? ` style="color:${col}"` : ''}>${esc(fillName(name, G.playerName))}</b>${fillName(text, G.playerName).replace(/\*([^*]+)\*/g, '<em>$1</em>')}`;
+    c.style.setProperty('--who', col || '');
     c.classList.add('show');
     this.compT = dur ?? 3.5 + text.length * 0.06;
     let n = 0;
@@ -350,9 +395,12 @@ export class HUD {
     const iv = setInterval(() => { if (n++ > Math.min(14, text.length / 3)) clearInterval(iv); else G.audio.blip(v); }, 70);
   }
   prompt(text) {
-    if (!text) { this.el.prompt.classList.add('hidden'); return; }
+    if (!text) { if (this.promptText !== null) { this.promptText = null; this.el.prompt.classList.add('hidden'); } return; }
+    if (this.promptText === text) return;
+    this.promptText = text;
     this.el.prompt.classList.remove('hidden');
-    this.el.promptT.textContent = text;
+    const [verb, what] = dashed(text);
+    this.el.promptT.innerHTML = esc(verb) + (what ? `<em>${esc(what)}</em>` : '');
   }
   // Tutorial tips sit in a card at the left edge, away from the aim point. A tip that
   // arrives while another is still fresh waits its turn, and the timer only runs in free
@@ -428,7 +476,8 @@ export class HUD {
     this.bossTarget = target;
     if (!target) { this.el.boss.classList.add('hidden'); return; }
     this.el.boss.classList.remove('hidden');
-    this.el.bossName.textContent = name || target.name;
+    const [nm, epithet] = dashed(name || target.name);
+    this.el.bossName.textContent = nm; this.el.bossEpi.textContent = epithet;
     // phase thresholds as notches on the health bar
     for (const n of this.el.bossTrack.querySelectorAll('.boss-notch')) n.remove();
     for (const a of target.phaseAt || []) {
@@ -487,13 +536,17 @@ export class HUD {
     this.el.stamina.classList.toggle('on', showSt && G.mode === 'free');
     this.el.stamina.classList.toggle('tired', P.exhausted);
     const sp = this.project(v3.set(P.pos.x, P.pos.y + 1.2, P.pos.z));
-    this.el.stamina.style.left = sp.x + 70 + 'px'; this.el.stamina.style.top = sp.y - 30 + 'px';
+    if (showSt) this.at(this.el.stamina, sp.x + 70, sp.y - 30);
     // cooldowns
-    this.el.weaveCd.style.width = `${(P.cd.weave / WEAVE_CD) * 100}%`;
-    this.el.heavyCd.style.width = `${P.cd.heavyMax ? (P.cd.heavy / P.cd.heavyMax) * 100 : 0}%`;
+    this.coolSlot(this.el.weaveSlot, this.el.weaveT, P.cd.weave, WEAVE_CD);
+    this.coolSlot(this.el.heavySlot, this.el.heavyT, P.cd.heavy, P.cd.heavyMax || 0);
     if (G.skills && !this.el.ult.classList.contains('hidden')) {
-      const k = G.skills.gauge / ULT_COST;
-      this.el.ultGauge.style.strokeDashoffset = 119.4 * (1 - k);
+      const k = clamp(G.skills.gauge / ULT_COST, 0, 1), pct = Math.floor(k * 100);
+      if (this.ultPct !== pct) {
+        this.ultPct = pct;
+        this.el.ultGauge.style.strokeDashoffset = 100 - pct;
+        this.el.ultPct.textContent = pct >= 100 ? '준비됨' : pct + '%';
+      }
       this.el.ult.classList.toggle('ready', k >= 1 && !this.el.ult.classList.contains('none'));
     }
     // pending level-up crossroads badge
@@ -511,14 +564,14 @@ export class HUD {
     g.uFlash.value = Math.max(0, g.uFlash.value - dt * 2.5);
     if (P.hp <= 4 && !P.dead && G.mode === 'free') { this.hbT = (this.hbT || 0) - dt; if (this.hbT <= 0) { this.hbT = 1.1; G.audio.play('heartbeat'); } }
     // crosshair enemy state
-    let over = false;
+    let over = false, aimed = null;
     if (G.mode === 'free') {
       const cam = G.camera; const d = new THREE.Vector3(); cam.getWorldDirection(d);
       for (const e of G.enemies.list) {
         if (!e.alive || !e.hittable) continue;
         const to = v3.subVectors(e.center(), cam.position); const dist = to.length();
         if (dist > 60) continue;
-        if (Math.acos(clamp(to.dot(d) / dist, -1, 1)) < 0.06 + Math.atan2(e.radius, dist)) { over = true; break; }
+        if (Math.acos(clamp(to.dot(d) / dist, -1, 1)) < 0.06 + Math.atan2(e.radius, dist)) { over = true; aimed = e; break; }
       }
     }
     this.el.crosshair.classList.toggle('enemy', over);
@@ -527,39 +580,63 @@ export class HUD {
     if (P.lockTarget && P.lockTarget.alive) {
       const p = this.project(P.lockTarget.center());
       this.el.lock.classList.toggle('hidden', !p.vis);
-      this.el.lock.style.left = p.x + 'px'; this.el.lock.style.top = p.y + 'px';
+      this.at(this.el.lock, p.x, p.y);
     } else this.el.lock.classList.add('hidden');
-    // enemy bars
-    const seen = new Set();
+    // enemy bars. Only one carries its full name: the locked target, else the one under the
+    // crosshair, else the nearest; the rest show level, health and marks. Bars that would land
+    // on top of each other are stacked upwards, the named one first, then by distance.
+    const seen = new Set(), placed = (this._placed ||= []);
+    placed.length = 0;
+    let nearest = null, nd = 1e9;
     for (const e of G.enemies.list) {
       if (!e.alive || (e.boss && e === this.bossTarget)) continue;
       const d = e.pos.distanceTo(P.pos);
-      const show = (e.barT > 0 || (e.aggroed && d < 30) || P.lockTarget === e) && d < 45;
-      if (!show) continue;
+      e._barD = (e.barT > 0 || (e.aggroed && d < 30) || P.lockTarget === e) && d < 45 ? d : -1;
+      if (e._barD >= 0 && d < nd) { nd = d; nearest = e; }
+    }
+    const lockE = P.lockTarget && P.lockTarget.alive && P.lockTarget._barD >= 0 ? P.lockTarget : null;
+    const named = lockE || (aimed && aimed._barD >= 0 ? aimed : nearest);
+    const uw = Math.max(1, this.uiScale || 1), bw = 118 * uw;
+    const shown = (this._shown ||= []);
+    shown.length = 0;
+    for (const e of G.enemies.list) if (e.alive && !(e.boss && e === this.bossTarget) && e._barD >= 0) shown.push(e);
+    shown.sort((a, b) => (a === named ? -1 : a._barD) - (b === named ? -1 : b._barD));
+    for (const e of shown) {
       const p = this.project(v3.copy(e.center()).setY(e.pos.y + e.height + 0.5));
       if (!p.vis) continue;
       seen.add(e);
+      // a bar covers [y - bh, y] above its anchor; step it up past any bar already placed there
+      const full = e === named, bh = (full ? 52 : 34) * uw;
+      p.y = Math.max(p.y, 84 * (this.uiScale || 1) + bh); // an enemy towering over the camera: keep its bar under the compass
+      for (let k = 0, hit = true; hit && k < 4; k++) {
+        hit = false;
+        for (let i = 0; i < placed.length; i += 3) if (Math.abs(p.x - placed[i]) < bw && p.y > placed[i + 1] - placed[i + 2] && p.y - bh < placed[i + 1]) { p.y = placed[i + 1] - placed[i + 2]; hit = true; }
+      }
+      placed.push(p.x, p.y, bh);
       let b = this.barPool.get(e);
       if (!b) {
         b = document.createElement('div');
         b.className = 'ebar' + (e.elite ? ' elite' : '');
         const weak = Object.entries(e.resist || {}).filter(([k, v]) => v >= 1.2 && EL_INFO[k]).map(([k]) => `<i class="wk" style="color:${EL_INFO[k].css}" title="약점">${EL_SVG[k]}</i>`).join('');
         const imm = (e.immune || []).filter((k) => EL_INFO[k]).map((k) => `<i class="wk im" style="color:${EL_INFO[k].css}" title="면역">${EL_SVG[k]}</i>`).join('');
-        b.innerHTML = `<div class="en">${e.name || ''}</div><div class="elv"><span>Lv ${e.level}</span><span class="st"></span><span class="wks">${weak}${imm}</span></div><div class="etrack"><div class="efill"></div></div>${e.armor ? '<div class="armor"></div>' : ''}`;
+        b.innerHTML = `<div class="en">${e.name || ''}</div><div class="erow"><b class="elv">${e.level}</b><div class="etrack"><i class="eghost"></i><i class="efill"></i>${e.armor ? '<i class="armor"></i>' : ''}</div></div><div class="emeta"><span class="st"></span><span class="wks">${weak}${imm}</span></div>`;
         this.el.bars.appendChild(b); this.barPool.set(e, b);
-        b._fill = b.querySelector('.efill'); b._st = b.querySelector('.st'); b._ar = b.querySelector('.armor');
+        b._fill = b.querySelector('.efill'); b._ghost = b.querySelector('.eghost'); b._st = b.querySelector('.st'); b._ar = b.querySelector('.armor');
       }
-      b.style.left = p.x + 'px'; b.style.top = p.y + 'px';
-      b._fill.style.width = (e.hp / e.maxHp) * 100 + '%';
+      this.at(b, p.x, p.y);
+      if (b._full !== full) { b._full = full; b.classList.toggle('brief', !full); }
+      // health in half-percent steps: the bar (and its trailing ghost) is only written when it moves
+      const hp = Math.round(clamp(e.hp / e.maxHp, 0, 1) * 200) / 2;
+      if (b._hp !== hp) { b._hp = hp; b._fill.style.width = b._ghost.style.width = hp + '%'; }
+      // status marks: a key of the active ones, rebuilt only when the set changes
       const st = e.st; let s = '';
-      if (st.burn > 0) s += `<i style="color:${EL_INFO.fire.css}"></i>`;
-      if (st.chill > 0 || st.frozen > 0) s += `<i style="color:${EL_INFO.frost.css}${st.frozen > 0 ? ';box-shadow:0 0 8px #fff' : ''}"></i>`;
-      if (st.shock > 0) s += `<i style="color:${EL_INFO.storm.css}"></i>`;
-      if (st.wet > 0) s += `<i style="color:#4a8aff"></i>`;
-      if (st.electro > 0) s += `<i style="color:${EL_INFO.storm.css};box-shadow:0 0 6px ${EL_INFO.storm.css}"></i>`;
-      if (st.steam > 0) s += `<i style="color:#e8f4ff;opacity:.8"></i>`;
-      if (b._s !== s) { b._st.innerHTML = s; b._s = s; }
-      if (b._ar) b._ar.style.opacity = st.armorBroken > 0 ? 0 : 1;
+      for (const [k] of STATUS) if (st[k] > 0 && !(k === 'chill' && st.frozen > 0)) s += k + ' ';
+      if (b._s !== s) {
+        b._s = s;
+        b._st.innerHTML = STATUS.filter(([k]) => s.includes(k + ' ')).map(([k, el, col]) => `<i class="${k === 'frozen' || k === 'electro' ? 'hot' : ''}" style="color:${col}">${EL_SVG[el]}</i>`).join('');
+      }
+      const ar = st.armorBroken > 0 ? 0 : 1;
+      if (b._ar && b._arv !== ar) { b._arv = ar; b._ar.style.opacity = ar; }
     }
     for (const [e, b] of this.barPool) if (!seen.has(e)) { b.remove(); this.barPool.delete(e); }
     // boss bar
@@ -587,7 +664,7 @@ export class HUD {
       if (b.t <= 0 || G.mode !== 'free') { b.el.remove(); this.barkEls.splice(i, 1); continue; }
       const p = this.project(b.npc.headPos().add(new THREE.Vector3(0, 0.55, 0)));
       b.el.style.display = p.vis ? '' : 'none';
-      b.el.style.left = p.x + 'px'; b.el.style.top = p.y + 'px';
+      this.at(b.el, p.x, p.y);
     }
     // quest world marker
     const qm = G.story && G.story.markers();
@@ -597,8 +674,9 @@ export class HUD {
       const p = this.project(v3.set(m.x, gy + (m.h ?? 3.5), m.z));
       const d = Math.hypot(m.x - P.pos.x, m.z - P.pos.z);
       this.qmark.style.display = p.vis && d > 8 ? '' : 'none';
-      this.qmark.style.left = p.x + 'px'; this.qmark.style.top = p.y + 'px';
-      this.qmark.querySelector('.d').textContent = Math.round(d) + 'm';
+      this.at(this.qmark, p.x, p.y);
+      const t = Math.round(d) + 'm';
+      if (this.qmarkT !== t) { this.qmarkT = t; this.qmarkD.textContent = t; }
     } else this.qmark.style.display = 'none';
     // hint / companion timers
     if (this.hintT > 0 && G.mode === 'free' && !G.paused) { this.hintT -= dt; this.hintAge += dt; if (this.hintT <= 0) this.hideHint(); }
@@ -634,8 +712,11 @@ export class HUD {
   // cursor, dragging pans. Places not yet seen lie under fog (G.atlas).
   openMap() {
     const P = G.player.pos;
-    this.mapView = { x: P.x, z: P.z, span: 520 };
+    this.mapView = { x: P.x, z: P.z, span: 520 }; this.mapSig = null; this.mapHover = null;
     this.clampMap();
+    // draw at the resolution the canvas is shown at (the map page is laid out by now)
+    const cv = $('#map-canvas'), px = Math.round(cv.clientWidth * (this.uiScale || 1) * Math.min(2, window.devicePixelRatio || 1));
+    if (px > 200 && cv.width !== px) cv.width = cv.height = px;
     this.drawMap();
   }
   clampMap() {
@@ -707,8 +788,14 @@ export class HUD {
     fg.imageSmoothingEnabled = true;
     fg.drawImage(G.atlas.maskCanvas(), (-T.half - x0) * k, (-T.half - z0) * k, T.size * k, T.size * k);
     g.drawImage(fog, 0, 0);
-    const label = (x, z, t, c = '#fff', size = 14) => { const [sx, sz] = w2s(x, z); g.font = `${size}px 'Hahmlet', serif`; g.fillStyle = 'rgba(0,0,0,.6)'; g.textAlign = 'center'; g.fillText(t, sx + 1, sz + 1); g.fillStyle = c; g.fillText(t, sx, sz); };
-    label(0, 38, '하늬 마을', '#fff4d8', 16);
+    // sizes below are in CSS px at the size the canvas is shown
+    const u = S / (cv.clientWidth || 760);
+    this.mapRedraw ||= () => { if (G.game.menu === 'map') this.drawMap(); };
+    const icon = (name, col, sx, sz, s) => { const im = iconImage(name, col, this.mapRedraw); if (im) g.drawImage(im, sx - (s * u) / 2, sz - (s * u) / 2, s * u, s * u); };
+    g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.lineJoin = 'round';
+    const names = [], label = (...a) => names.push(a);
+    const letter = (x, z, t, c = '#fff', size = 15) => { const [sx, sz] = w2s(x, z); g.font = `700 ${size * u}px 'HeirOfLight', 'ForgedBlade', serif`; g.lineWidth = 3.5 * u; g.strokeStyle = 'rgba(8,10,20,.82)'; g.strokeText(t, sx, sz); g.fillStyle = c; g.fillText(t, sx, sz); };
+    label(0, 38, '하늬 마을', '#fff4d8', 17);
     label(POI.tower.x, POI.tower.z + 12, '모라의 탑', '#e0d0ff');
     label(POI.lake.x, POI.lake.z, '거울 호수', '#d8f0ff');
     const S_ = G.story;
@@ -717,41 +804,61 @@ export class HUD {
       label(POI.storm.x, POI.storm.z + 16, '천둥 고원', '#ffe890');
       label(POI.rift.x, POI.rift.z + 18, '고요의 틈', '#d0b0ff');
     }
-    label(POI.meadow.x, POI.meadow.z + 10, '노을 들판', '#ffe0b0', 12);
-    for (const r of OUTER) if (r.name && r.label && G.atlas.seen(r.label[0], r.label[1])) label(r.label[0], r.label[1], r.name, '#f4ecd8', 17);
-    // lanterns
+    label(POI.meadow.x, POI.meadow.z + 10, '노을 들판', '#ffe0b0', 14);
+    for (const r of OUTER) if (r.name && r.label && G.atlas.seen(r.label[0], r.label[1])) label(r.label[0], r.label[1], r.name, '#f4ecd8', 19);
+    // waystones
     this.mapLanterns = [];
     for (const L of Object.values(G.world.lanterns)) {
       const [sx, sz] = w2s(L.x, L.z);
       if (sx < -20 || sz < -20 || sx > S + 20 || sz > S + 20) continue;
-      g.beginPath(); g.arc(sx, sz, L.lit ? 7 : 5, 0, Math.PI * 2);
-      g.fillStyle = L.lit ? '#ffc870' : 'rgba(80,80,80,.8)'; g.fill();
-      g.strokeStyle = '#1a1208'; g.lineWidth = 2; g.stroke();
+      const hot = L.lit && this.mapHover === L;
+      if (hot) { // hovered: a halo and its name, so fast travel shows what it will do
+        g.beginPath(); g.arc(sx, sz, 15 * u, 0, Math.PI * 2); g.fillStyle = 'rgba(255,226,168,.22)'; g.fill(); g.lineWidth = 1.5 * u; g.strokeStyle = '#fff4d0'; g.stroke();
+      }
+      icon('waystone', L.lit ? '#ffc870' : '#8d8f9a', sx, sz, hot ? 24 : L.lit ? 20 : 15);
       if (L.lit) this.mapLanterns.push({ L, sx, sz });
-      if (L.lit && this.mapHover === L) {
-        // hovered waystone: halo and its name, so fast travel shows what it will do
-        g.beginPath(); g.arc(sx, sz, 13, 0, Math.PI * 2); g.lineWidth = 2.5; g.strokeStyle = '#fff4d0'; g.stroke();
-        g.font = "600 17px 'Hahmlet', serif"; g.textAlign = 'center';
-        const t = `${L.name || '등석'} — 이동`;
-        g.lineWidth = 4; g.strokeStyle = 'rgba(0,0,0,.75)'; g.strokeText(t, sx, sz - 20);
-        g.fillStyle = '#ffe2a8'; g.fillText(t, sx, sz - 20);
+      if (hot) {
+        const t = `${L.name || '등석'}  ·  이동`;
+        g.font = `500 ${15 * u}px 'ForgedBlade', sans-serif`;
+        const w = g.measureText(t).width + 24 * u, y = sz - 38 * u;
+        g.fillStyle = 'rgba(9,12,26,.92)'; g.beginPath(); g.roundRect(sx - w / 2, y, w, 26 * u, 13 * u); g.fill(); g.lineWidth = u; g.strokeStyle = 'rgba(241,212,138,.7)'; g.stroke();
+        g.fillStyle = '#fff2cc'; g.fillText(t, sx, y + 18 * u);
       }
     }
     // quest markers
     const qm = S_ && S_.markers();
-    if (qm) for (const m of qm) { const [sx, sz] = w2s(m.x, m.z); g.fillStyle = '#f1d48a'; g.save(); g.translate(sx, sz); g.rotate(Math.PI / 4); g.fillRect(-7, -7, 14, 14); g.strokeStyle = '#000'; g.strokeRect(-7, -7, 14, 14); g.restore(); }
+    if (qm) for (const m of qm) { const [sx, sz] = w2s(m.x, m.z); icon('quest', '#f1d48a', sx, sz, 24); }
+    for (const a of names) letter(...a);
     // player
     const P = G.player; const [px, pz] = w2s(P.pos.x, P.pos.z);
     g.save(); g.translate(px, pz); g.rotate(-P.yaw + Math.PI);
-    g.beginPath(); g.moveTo(0, -12); g.lineTo(8, 9); g.lineTo(0, 4); g.lineTo(-8, 9); g.closePath();
-    g.fillStyle = '#5ad0ff'; g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke(); g.restore();
+    g.beginPath(); g.moveTo(0, -12 * u); g.lineTo(8 * u, 9 * u); g.lineTo(0, 4.5 * u); g.lineTo(-8 * u, 9 * u); g.closePath();
+    g.lineWidth = 5 * u; g.strokeStyle = '#0a0c18'; g.stroke(); g.fillStyle = '#5ad0ff'; g.fill(); g.lineWidth = 1.5 * u; g.strokeStyle = '#fff'; g.stroke(); g.restore();
     // scale bar: 100 m
-    const bar = 100 * k;
-    g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(S - bar - 30, S - 34, bar + 16, 22);
-    g.fillStyle = '#f4ecd8'; g.fillRect(S - bar - 22, S - 20, bar, 2);
-    g.font = "12px 'Hahmlet', serif"; g.textAlign = 'center'; g.fillText('100m', S - bar / 2 - 22, S - 24);
+    const bar = 100 * k, bx = S - bar - 22 * u, by = S - 20 * u;
+    g.fillStyle = 'rgba(9,12,26,.7)'; g.beginPath(); g.roundRect(bx - 10 * u, by - 22 * u, bar + 20 * u, 32 * u, 4 * u); g.fill();
+    g.fillStyle = '#f1eadb'; g.fillRect(bx, by, bar, 1.5 * u); g.fillRect(bx, by - 4 * u, 1.5 * u, 6 * u); g.fillRect(bx + bar - 1.5 * u, by - 4 * u, 1.5 * u, 6 * u);
+    g.font = `700 ${12.5 * u}px 'HeirOfLight', serif`; g.fillText('100m', bx + bar / 2, by - 7 * u);
     // legend
-    $('.map-keys').innerHTML = `<div><span style="color:#5ad0ff">▲</span> 현재 위치</div><div><span style="color:#f1d48a">◆</span> 목표</div><div><span style="color:#ffc870">●</span> 밝힌 등석<br><small style="opacity:.7">— 클릭하면 그곳으로 이동</small></div><div style="margin-top:14px;opacity:.8">노래 씨앗 ${G.story ? G.story.seedCount() : 0} / 16</div><div style="margin-top:14px;opacity:.6;font-size:12px;line-height:1.6">휠 · 확대와 축소<br>끌기 · 지도 옮기기</div>`;
+    const mk = (ic, col, t, sub = '') => `<div class="mk"><span class="ico" style="color:${col}">${ICON[ic]}</span><span>${t}${sub ? `<small>${sub}</small>` : ''}</span></div>`;
+    // the side panel is rebuilt only when what it lists changes (hovering redraws the canvas often)
+    const lit = Object.values(G.world.lanterns).filter((L) => L.lit);
+    const sig = lit.map((L) => L.id).join() + '|' + (G.story ? G.story.seedCount() : 0) + '|' + Math.round(P.pos.x / 4) + ',' + Math.round(P.pos.z / 4);
+    const keys = $('.map-keys');
+    if (this.mapSig !== sig) {
+      this.mapSig = sig;
+      const dist = (L) => Math.hypot(L.x - P.pos.x, L.z - P.pos.z);
+      keys.innerHTML = `<div class="mk-row">${mk('player', '#5ad0ff', '현재 위치')}${mk('quest', '#f1d48a', '목표')}${mk('waystone', '#ffc870', '밝힌 등석')}${mk('waystone', '#8d8f9a', '잠든 등석')}${mk('seed', '#bfe8c8', `노래 씨앗 ${G.story ? G.story.seedCount() : 0} / 16`)}</div>`
+        + `<div class="mk-sec">등석으로 이동<b>${lit.length}</b></div><div class="mk-list">${lit.sort((a, b) => dist(a) - dist(b)).map((L) => `<button class="mk-way${dist(L) < 6 ? ' here' : ''}" data-id="${L.id}"><span class="ico">${ICON.waystone}</span><span>${L.name || '등석'}</span><em>${dist(L) < 6 ? '이곳' : Math.round(dist(L)) + 'm'}</em></button>`).join('') || '<p class="mk-none">아직 밝힌 등석이 없다. 등석을 밝히면 이곳에서 바로 이동할 수 있다.</p>'}</div>`
+        + `<div class="keys mk-keys"><span><i class="ico" style="width:16px;height:16px;color:var(--gold)">${ICON.controls}</i>휠 · 확대와 축소</span><span><i class="ico" style="width:16px;height:16px;color:var(--gold)">${ICON.mouseL}</i>끌기 · 지도 옮기기</span></div>`;
+      for (const b of keys.querySelectorAll('.mk-way:not(.here)')) {
+        const L = G.world.lanterns[b.dataset.id];
+        b.addEventListener('mouseenter', () => { G.audio.play('ui_hover'); this.mapHover = L; this.drawMap(); });
+        b.addEventListener('mouseleave', () => { if (this.mapHover === L) { this.mapHover = null; this.drawMap(); } });
+        b.addEventListener('click', () => G.game.travel(L));
+      }
+    }
+    for (const b of keys.querySelectorAll('.mk-way')) b.classList.toggle('hot', !!this.mapHover && b.dataset.id === String(this.mapHover.id));
   }
   // soft cloudy blotches over the fog (a seamless tile: every blob is drawn wrapped), made once
   mapFogPattern(g) {
@@ -774,79 +881,110 @@ export class HUD {
     if (this.mapDragged) { this.mapDragged = false; return null; } // the end of a drag is not a click
     const [x, y] = this.mapPx(ev);
     // generous target (about 40 px on screen): the nearest lit waystone within reach
-    let best = null, bd = 24;
+    const cv = $('#map-canvas');
+    let best = null, bd = 22 * (cv.width / (cv.clientWidth || cv.width));
     for (const m of this.mapLanterns || []) { const d = Math.hypot(m.sx - x, m.sz - y); if (d < bd) { bd = d; best = m.L; } }
     return best;
   }
 
   // ---------------- journal ----------------
+  // the hub's tab bar and header follow the open page
+  hubState(menu, tab) {
+    const key = menu === 'journal' ? `journal:${tab}` : menu;
+    let title = '';
+    for (const b of document.querySelectorAll('.hub-nav button')) { const on = b.dataset.nav === key; b.classList.toggle('on', on); if (on) title = b.querySelector('span').textContent; }
+    $('.hub-title b').textContent = title;
+    $('.hub-lv').textContent = G.player.level;
+    $('.hub-sp').textContent = G.skills ? G.skills.points : 0;
+  }
   drawJournal(tab = 'quests') {
     const body = $('.jr-body');
-    document.querySelectorAll('.jr-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+    this.hubState('journal', tab);
+    body.scrollTop = 0;
     const S = G.story, P = G.player;
+    const ico = (n, col) => `<span class="ico"${col ? ` style="color:${col}"` : ''}>${ICON[n] || EL_SVG[n]}</span>`;
+    const sec = (t, sub = '', cnt = '') => `<div class="jsec">${t}${sub ? `<small>${sub}</small>` : ''}${cnt ? `<span class="cnt">${cnt}</span>` : ''}</div>`;
+    const mana = (n) => `<span class="tag"><i></i>${n}</span>`;
     if (tab === 'quests') {
       const qs = S ? Object.values(S.quests) : [];
       const act = qs.filter((q) => q.state === 'active'), done = qs.filter((q) => q.state === 'done');
-      const row = (q) => `<div class="jq ${q.state === 'done' ? 'done' : ''}"><h3>${q.title}<small>${q.type === 'main' ? '이야기' : '곁가지'}</small></h3><p>${fillName(q.desc || '', G.playerName)}</p>${q.state === 'active' && q.obj ? `<p class="obj">▸ ${q.obj}</p>` : ''}</div>`;
-      body.innerHTML = `<div class="jsec">진행 중</div>${act.map(row).join('') || '<p style="opacity:.6">진행 중인 여정이 없다.</p>'}<div class="jsec">지난 여정</div>${done.map(row).join('') || '<p style="opacity:.6">—</p>'}`;
+      const row = (q) => `<div class="jq ${q.state === 'done' ? 'done' : q.type === 'main' ? 'main' : ''}">${ico(q.state === 'done' ? 'check' : q.type === 'main' ? 'quest' : 'side')}<h3>${q.title}<small>${q.type === 'main' ? '이야기' : '곁가지'}</small></h3><p>${fillName(q.desc || '', G.playerName)}</p>${q.state === 'active' && q.obj ? `<p class="obj">${q.obj}</p>` : ''}</div>`;
+      body.innerHTML = `<div class="jcols"><div>${sec('진행 중', '', act.length || '')}${act.map(row).join('') || '<p class="jempty">진행 중인 여정이 없다.</p>'}</div>
+        <div>${sec('지난 여정', '', done.length || '')}${done.map(row).join('') || '<p class="jempty">아직 마친 여정이 없다.</p>'}</div></div>`;
     } else if (tab === 'spells') {
       const K = G.skills;
-      let h = `<div class="jsec">속성의 노래 · 레벨 ${P.level} · 마법 위력 ${P.power().toFixed(1)} · 울림점 ${K ? K.points : 0} (<kbd>K</kbd> 울림 나무)</div><p style="opacity:.75;font-size:13px">마나 ${Math.floor(P.mana)} / ${P.maxMana} · 전투 중 초당 ${P.manaRegenRate(true).toFixed(1)}, 전투 밖 초당 ${P.manaRegenRate(false)} 회복 (마지막 시전 1.4초 뒤부터). 적을 쓰러뜨리면 떨어지는 마나 방울, 원소 반응(+3), 완벽 회피(+15)로 되찾는다.</p>`;
+      const chip = (i, t, v) => `<span class="chip"><i data-ico>${ICON[i]}</i><span>${t}</span><b>${v}</b></span>`;
+      let h = sec('속성의 노래') + `<div class="jstat">${chip('spark', '레벨', P.level)}${chip('diamond', '마법 위력', P.power().toFixed(1))}${chip('point', '울림점', K ? K.points : 0)}${chip('mana', '마나', `${Math.floor(P.mana)} / ${P.maxMana}`)}</div>`
+        + `<p class="jnote">마나는 전투 중 초당 ${P.manaRegenRate(true).toFixed(1)}, 전투 밖 초당 ${P.manaRegenRate(false)} 회복된다 (마지막 시전 1.4초 뒤부터). 적을 쓰러뜨리면 떨어지는 마나 방울, 원소 반응(+3), 완벽 회피(+15)로 되찾는다.</p>`;
+      const row = (inp, name, tags, desc, off = false) => `<div class="sp-row${off ? ' off' : ''}"><div class="in">${inp}</div><div><h5>${name}${tags}</h5><p>${desc}</p></div></div>`;
       for (const e of ELEMENTS) {
-        const u = P.unlocked.has(e);
-        if (!u) continue;
-        const ult = ultInfo(e);
-        const hasUlt = K && K.ultFor(e);
-        h += `<div class="jsp ${u ? '' : 'locked'}"><div class="ic" style="color:${EL_INFO[e].css}">${EL_SVG[e]}</div><div><h4 style="color:${EL_INFO[e].css}">${u ? EL_INFO[e].name + '의 노래' : '??? 의 노래'}${u && K ? `<small>울림 나무 ${K.spentIn(e)}점</small>` : ''}</h4>${u ? `<p>${EL_INFO[e].desc}</p><p><b>좌클릭 · ${BOLT[e].name}</b>${BOLT[e].cost ? ` (마나 ${BOLT[e].cost})` : ''} — ${BOLT[e].desc}</p><p><b>좌클릭 누르고 있다가 떼기 · ${CHARGED[e].name}</b> (마나 ${CHARGED[e].cost}) — ${CHARGED[e].desc}</p>${K && !K.has(SIG[e]) ? `<p style="opacity:.6"><b>우클릭 · ${HEAVY[e].name}</b> (마나 ${HEAVY[e].cost}) — 아직 익히지 못한 기술. 울림 나무(<kbd>K</kbd>) ${EL_INFO[e].name}의 뿌리에서 울림점 ${NODES[SIG[e]].cost}점으로 익히거나, 레벨이 오를 때 <b>울림의 갈림길</b>에서 고를 수 있다.</p>` : `<p><b>우클릭 · ${HEAVY[e].name}</b> (마나 ${HEAVY[e].cost} · 재사용 ${HEAVY[e].cd}초) — ${HEAVY[e].desc}</p>`}<p style="opacity:${hasUlt ? 1 : 0.5}"><b>F · ${ult.name}</b> ${hasUlt ? '' : '(울림 나무 끝에서 익힐 수 있다)'} — ${ult.desc(1).replace('궁극기 (F). ', '')}</p>` : '<p>아직 배우지 못한 노래.</p>'}</div></div>`;
+        if (!P.unlocked.has(e)) continue;
+        const ult = ultInfo(e), hasUlt = K && K.ultFor(e), col = EL_INFO[e].css;
+        const heavy = K && !K.has(SIG[e])
+          ? row(`${ico('mouseR')}우클릭`, HEAVY[e].name, mana(HEAVY[e].cost), `아직 익히지 못한 기술. 울림 나무(<kbd>K</kbd>) ${EL_INFO[e].name}의 뿌리에서 울림점 ${NODES[SIG[e]].cost}점으로 익히거나, 레벨이 오를 때 <b>울림의 갈림길</b>에서 고를 수 있다.`, true)
+          : row(`${ico('mouseR')}우클릭`, HEAVY[e].name, `${mana(HEAVY[e].cost)}<span class="tag cd">재사용 ${HEAVY[e].cd}초</span>`, HEAVY[e].desc);
+        h += `<div class="jsp" style="--c:${col}"><div class="ic">${EL_SVG[e]}</div><div><h4>${EL_INFO[e].name}의 노래${K ? `<small>울림 나무 ${K.spentIn(e)}점</small>` : ''}</h4><p>${EL_INFO[e].desc}</p>`
+          + row(`${ico('mouseL')}좌클릭`, BOLT[e].name, BOLT[e].cost ? mana(BOLT[e].cost) : '', BOLT[e].desc)
+          + row(`${ico('mouseL')}길게 눌러 떼기`, CHARGED[e].name, mana(CHARGED[e].cost), CHARGED[e].desc)
+          + heavy
+          + row('<kbd>F</kbd>궁극기', ult.name, hasUlt ? '' : '<span class="tag cd">울림 나무 끝에서 익힐 수 있다</span>', ult.desc(1).replace('궁극기 (F). ', ''), !hasUlt)
+          + '</div></div>';
       }
       if (P.unlocked.size < ELEMENTS.length) h += `<p class="jsp-more">아직 듣지 못한 노래가 골짜기 어딘가에 잠들어 있다.</p>`;
       const wk = !K || K.has(WEAVE_NODE);
-      h += `<div class="jsec">엮기 (Q) — 지금 속성 + 직전 속성 · 마나 ${WEAVE_COST} · 재사용 ${WEAVE_CD}초</div>${wk ? '' : `<p style="opacity:.7">아직 익히지 못한 기술. 두 가지 속성을 깨우친 뒤 울림 나무(<kbd>K</kbd>) 조화의 뿌리 <b>두 노래 엮기</b>를 익히면 쓸 수 있다.</p>`}<div class="react-grid" style="opacity:${wk ? 1 : 0.6}">`;
+      h += sec('엮기', `<kbd>Q</kbd> 지금 속성 + 직전 속성 · 마나 ${WEAVE_COST} · 재사용 ${WEAVE_CD}초`)
+        + (wk ? '' : `<p class="jnote">아직 익히지 못한 기술. 두 가지 속성을 깨우친 뒤 울림 나무(<kbd>K</kbd>) 조화의 뿌리 <b>두 노래 엮기</b>를 익히면 쓸 수 있다.</p>`) + `<div class="react-grid" style="opacity:${wk ? 1 : 0.6}">`;
       for (const [k, w] of Object.entries(WEAVE)) {
         const els = k === 'arcane' ? ['arcane'] : k.split('+');
-        const u = els.every((e) => P.unlocked.has(e));
-        if (!u) continue;
-        h += `<div><b>${k === 'arcane' ? '비전 + 아무 속성' : els.map((e) => EL_INFO[e].name).join(' + ')} → ${w.name}</b><br>${w.desc}</div>`;
+        if (!els.every((e) => P.unlocked.has(e))) continue;
+        h += `<div><span class="rc">${k === 'arcane' ? '비전 + 아무 속성' : els.map((e) => `<span style="color:${EL_INFO[e].css}">${EL_INFO[e].name}</span>`).join(' + ')}</span><b>${w.name}</b><br>${w.desc}</div>`;
       }
       const disc = K ? K.discovered : new Set();
-      h += `</div><div class="jsec">원소 반응 도감 — ${[...disc].filter((r) => REACTIONS[r]).length} / ${Object.keys(REACTIONS).length} 발견</div><div class="react-grid codex">`;
+      h += '</div>' + sec('원소 반응 도감', '', `${[...disc].filter((r) => REACTIONS[r]).length} / ${Object.keys(REACTIONS).length} 발견`) + '<div class="react-grid codex">';
       // unknown elements show as a plain '?', and so does the recipe that needs them
       const known = (e) => e === '*' || P.unlocked.has(e);
-      const ic = (e) => (e === '*' ? '<span class="cx-any">✦</span>' : !known(e) ? '<span class="cx-any">?</span>' : `<span style="color:${EL_INFO[e].css}">${EL_SVG[e]}</span>`);
+      const ic = (e) => (e === '*' ? `<span class="cx-any">${ICON.spark}</span>` : !known(e) ? '<span class="cx-any">?</span>' : `<span style="color:${EL_INFO[e].css}">${EL_SVG[e]}</span>`);
       for (const [id, r] of Object.entries(REACTIONS)) {
         const d = disc.has(id);
         const hid = !d && !r.els.every(known);
-        h += `<div class="cx ${d ? '' : 'unk'}"><span class="cx-els">${ic(r.els[0])}<i>+</i>${ic(r.els[1])}</span><span><b style="color:${d ? r.color : '#8a8478'}">${d ? r.name : '??? '}</b> — ${hid ? '아직 모르는 노래가 있어야 일어난다.' : r.desc}</span></div>`;
+        h += `<div class="cx ${d ? '' : 'unk'}"><span class="cx-els">${ic(r.els[0])}<i>+</i>${ic(r.els[1])}</span><span><b style="color:${d ? r.color : '#8a8478'}">${d ? r.name : '???'}</b><br>${hid ? '아직 모르는 노래가 있어야 일어난다.' : r.desc}</span></div>`;
       }
       h += '</div>';
       // lingering fields and what a second element turns them into
       const fm = Object.entries(FIELD_MIX);
-      h += `<div class="jsec">땅의 흔적 — 불길·서리밭·물웅덩이·김·대전된 땅에 다른 속성을 더하면 모습이 바뀐다 · ${fm.filter(([k]) => disc.has('f:' + k)).length} / ${fm.length} 발견</div><div class="react-grid codex">`;
+      h += sec('땅의 흔적', '불길·서리밭·물웅덩이·김·대전된 땅에 다른 속성을 더하면 모습이 바뀐다', `${fm.filter(([k]) => disc.has('f:' + k)).length} / ${fm.length} 발견`) + '<div class="react-grid codex">';
       for (const [k, m] of fm) {
         const d = disc.has('f:' + k);
         const [from, by] = k.includes('+') ? k.split('+') : k.startsWith('whirl:') ? [null, k.slice(6)] : [null, 'arcane'];
-        const src = from ? `<span class="cx-f" style="color:${FIELDS[from].color}">${FIELDS[from].name}</span>` : k.startsWith('whirl:') ? '<span class="cx-any">◎</span>' : '<span class="cx-any">✦</span>';
+        const src = from ? `<span class="cx-f" style="color:${FIELDS[from].color}">${FIELDS[from].name}</span>` : `<span class="cx-any">${k.startsWith('whirl:') ? ICON.whirl : ICON.spark}</span>`;
         const hid = !d && (!known(by) || (from && !P.unlocked.has(FIELDS[from].el || 'arcane')));
-        h += `<div class="cx ${d ? '' : 'unk'}"><span class="cx-els">${hid && from ? '<span class="cx-any">?</span>' : src}<i>+</i>${ic(by)}</span><span><b style="color:${d ? m.color : '#8a8478'}">${d ? m.name : '??? '}</b> — ${hid ? '아직 모르는 노래가 있어야 일어난다.' : m.desc}</span></div>`;
+        h += `<div class="cx ${d ? '' : 'unk'}"><span class="cx-els">${hid && from ? '<span class="cx-any">?</span>' : src}<i>+</i>${ic(by)}</span><span><b style="color:${d ? m.color : '#8a8478'}">${d ? m.name : '???'}</b><br>${hid ? '아직 모르는 노래가 있어야 일어난다.' : m.desc}</span></div>`;
       }
-      h += '</div>';
-      body.innerHTML = h;
+      body.innerHTML = h + '</div>';
     } else if (tab === 'memories') {
-      let h = (G.sketches ? G.sketches.html() : '') + `<div class="jsec">모라의 기억 — 골짜기에 두고 온 것들</div>`;
+      let h = (G.sketches ? G.sketches.html() : '') + sec('모라의 기억', '골짜기에 두고 온 것들');
       for (const [id, m] of Object.entries(MEMORIES)) {
         const st = S ? S.memoryState(id) : 'none';
-        h += `<div class="jq ${st === 'given' ? 'done' : ''}"><h3>${st === 'none' ? '???' : m.name}<small>${st === 'given' ? '전해 줌' : st === 'have' ? '가지고 있음' : ''}</small></h3><p>${st === 'none' ? '아직 찾지 못했다.' : m.desc}</p></div>`;
+        h += `<div class="jq ${st === 'given' ? 'done' : st === 'none' ? 'unk' : ''}">${ico(st === 'given' ? 'check' : st === 'none' ? 'lock' : 'memory')}<h3>${st === 'none' ? '???' : m.name}${st === 'given' ? '<small>전해 줌</small>' : st === 'have' ? '<small>가지고 있음</small>' : ''}</h3><p>${st === 'none' ? '아직 찾지 못했다.' : m.desc}</p></div>`;
       }
-      h += `<div class="jsec">노래 씨앗</div><p>골짜기 곳곳에서 들려오는 작은 노랫소리를 따라가면 씨앗을 찾을 수 있다. 네 개를 모을 때마다 울림이 깊어진다.<br>모은 씨앗: <b>${S ? S.seedCount() : 0} / 16</b></p>`;
+      h += sec('노래 씨앗', '', `${S ? S.seedCount() : 0} / 16`) + `<p class="jnote">골짜기 곳곳에서 들려오는 작은 노랫소리를 따라가면 씨앗을 찾을 수 있다. 네 개를 모을 때마다 울림이 깊어진다.</p>`;
       body.innerHTML = h;
     } else {
+      // keys: plain strings are keycaps, '@name' is a glyph from the icon family
       const rows = [
-        ['W A S D', '이동'], ['마우스', '시점 · 조준 (화면 클릭 시 마우스 고정)'], ['Shift 누르기', '달리기'], ['Shift 짧게', '순간이동 (회피, 무적 시간)'],
-        ['Space', G.story && G.story.flag('glide') ? '점프 / 공중에서 누르고 있기: 활공' : '점프'], ['좌클릭', '기본 마법 (누르고 있다가 떼면 모아 쏘기)'], ['우클릭', '고유 마법 (울림 나무에서 익힌 속성만)'], ['Q', '엮기: 현재 속성 + 직전 속성 (조화 · 두 노래 엮기)'],
-        ['F', '궁극기 (울림 게이지가 가득 찼을 때)'], ['1 ~ 6 / 휠', '속성 전환'], ['T / 휠 클릭', '대상 고정'], ['E', '대화 · 조사 · 상호작용'], ['M', '지도 (등석 클릭: 빠른 이동)'], ['Tab / J', '여정 · 마법서'], ['K', '울림 나무 (스킬 트리)'], ['1 / 2 / 3', '울림의 갈림길에서 고르기 (레벨업 후)'], ['Esc', '일시 정지'],
+        [['W', 'A', 'S', 'D'], '이동'], [['@controls'], '시점 · 조준 (화면 클릭 시 마우스 고정)'], [['Shift'], '누르고 있기: 달리기'], [['Shift'], '짧게: 순간이동 (회피, 무적 시간)'],
+        [['Space'], G.story && G.story.flag('glide') ? '점프 / 공중에서 누르고 있기: 활공' : '점프'], [['@mouseL'], '기본 마법 (누르고 있다가 떼면 모아 쏘기)'], [['@mouseR'], '고유 마법 (울림 나무에서 익힌 속성만)'], [['Q'], '엮기: 현재 속성 + 직전 속성 (조화 · 두 노래 엮기)'],
+        [['F'], '궁극기 (울림 게이지가 가득 찼을 때)'], [['1', '~', '6', '휠'], '속성 전환'], [['T', '휠 클릭'], '대상 고정'], [['E'], '대화 · 조사 · 상호작용'], [['M'], '지도 (등석 클릭: 빠른 이동)'], [['Tab', 'J'], '여정 · 마법서'], [['K'], '울림 나무 (스킬 트리)'], [['1', '2', '3'], '울림의 갈림길에서 고르기 (레벨업 후)'], [['Esc'], '일시 정지'],
       ];
-      body.innerHTML = `<div class="jsec" style="text-align:center">조작</div><div class="ctrl-grid">${rows.map(([k, v]) => `<kbd>${k}</kbd><span>${v}</span>`).join('')}</div>
-        <div class="jsec" style="text-align:center;margin-top:30px">요령</div><p style="max-width:620px;margin:0 auto;opacity:.85">· 속성을 번갈아 쓰면 적에게 쌓인 상태와 반응한다. 얼리고 → 번개로 부수고, 물로 적시고 → 번개로 감전시키고, 불태우고 → 바람으로 퍼뜨려라. 불타는 적에게 물을 끼얹으면 불이 꺼지며 피해가 준다.<br>· 공격이 닿기 직전 순간이동으로 피하면 <b>완벽 회피</b> — 잠시 적이 느려진다.<br>· 적을 맞히고 반응을 일으키면 울림 게이지가 차고, 가득 차면 <kbd>F</kbd> 궁극기를 쓸 수 있다.<br>· 레벨이 오르면 <b>울림의 갈림길</b>이 열린다. 고유 마법·엮기·궁극기 같은 기술은 하나씩 익혀야 쓸 수 있다.<br>· 마나는 전투 중엔 천천히 찬다. 적이 떨어뜨리는 마나 방울을 모으고, 반응을 일으켜라.<br>· 흐느낌의 구체는 마법으로 맞혀 없앨 수 있다.<br>· 활공 중 바람의 고유 마법을 쓰면 상승 기류를 탄다.<br>· 서리 마법은 물 위에 얼음 발판을 만든다.<br>· 등석을 밝히면 체력을 회복하고, 쓰러졌을 때 그곳에서 깨어난다.</p>`;
+      const key = (k) => (k[0] === '@' ? ico(k.slice(1)) : k === '~' ? '<span>~</span>' : `<kbd>${k}</kbd>`);
+      const tips = [
+        '속성을 번갈아 쓰면 적에게 쌓인 상태와 반응한다. 얼리고 → 번개로 부수고, 물로 적시고 → 번개로 감전시키고, 불태우고 → 바람으로 퍼뜨려라. 불타는 적에게 물을 끼얹으면 불이 꺼지며 피해가 준다.',
+        '공격이 닿기 직전 순간이동으로 피하면 <b>완벽 회피</b> — 잠시 적이 느려진다.', '적을 맞히고 반응을 일으키면 울림 게이지가 차고, 가득 차면 <kbd>F</kbd> 궁극기를 쓸 수 있다.',
+        '레벨이 오르면 <b>울림의 갈림길</b>이 열린다. 고유 마법·엮기·궁극기 같은 기술은 하나씩 익혀야 쓸 수 있다.', '마나는 전투 중엔 천천히 찬다. 적이 떨어뜨리는 마나 방울을 모으고, 반응을 일으켜라.',
+        '흐느낌의 구체는 마법으로 맞혀 없앨 수 있다.', '활공 중 바람의 고유 마법을 쓰면 상승 기류를 탄다.', '서리 마법은 물 위에 얼음 발판을 만든다.', '등석을 밝히면 체력을 회복하고, 쓰러졌을 때 그곳에서 깨어난다.',
+      ];
+      body.innerHTML = `<div class="ctrl-wrap"><div>${sec('조작')}<div class="ctrl-grid">${rows.map(([k, v]) => `<span class="k">${k.map(key).join('')}</span><span>${v}</span>`).join('')}</div></div>
+        <div>${sec('요령')}<ul class="tips">${tips.map((t) => `<li>${t}</li>`).join('')}</ul></div></div>`;
     }
   }
 
@@ -875,8 +1013,10 @@ export class HUD {
   }
   skillReset() {
     const K = G.skills;
-    if (!this.skResetArm) { this.skResetArm = true; this.toast('한 번 더 누르면 익힌 노래를 모두 잊고 울림점을 되돌려 받습니다.'); setTimeout(() => (this.skResetArm = false), 3000); return; }
-    this.skResetArm = false;
+    const btn = $('[data-act="skills-reset"]'), label = '모두 잊기 · 울림점 되돌리기';
+    const disarm = () => { this.skResetArm = false; btn.classList.remove('armed'); btn.textContent = label; };
+    if (!this.skResetArm) { this.skResetArm = true; btn.classList.add('armed'); btn.textContent = '한 번 더 누르면 모두 잊는다'; clearTimeout(this.skResetT); this.skResetT = setTimeout(disarm, 3000); return; }
+    clearTimeout(this.skResetT); disarm();
     const n = K.reset();
     G.audio.play('dissolve');
     this.toast(`익힌 노래를 잊었다. 울림점 <b>${n}</b>점을 되찾았다.${K.granted.size ? ' <small>(이야기에서 얻은 기술은 남는다)</small>' : ''}`);
@@ -895,14 +1035,14 @@ export class HUD {
   drawSkills() {
     const K = G.skills, P = G.player;
     const root = document.querySelector('#skills');
-    root.querySelector('.sk-points b').textContent = K.points;
+    this.hubState('skills');
     // tabs
     const tabs = root.querySelector('.sk-tabs');
     tabs.innerHTML = TREE_ORDER.filter((t) => t === 'harmony' || K.treeOpen(t)).map((t) => {
       const open = K.treeOpen(t);
       const col = t === 'harmony' ? '#f1d48a' : EL_INFO[t].css;
-      const icon = t === 'harmony' ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="8.5" cy="12" r="5.5"/><circle cx="15.5" cy="12" r="5.5"/></svg>' : EL_SVG[t];
-      return `<button class="sk-tab ${t === this.skTree ? 'on' : ''} ${open ? '' : 'locked'}" data-t="${t}" style="color:${col}"><span class="ti">${icon}</span><span class="tn">${TREES[t].name}</span><span class="tp">${open ? K.spentIn(t) : '🔒'}</span></button>`;
+      const icon = t === 'harmony' ? ICON.harmony : EL_SVG[t];
+      return `<button class="sk-tab ${t === this.skTree ? 'on' : ''} ${open ? '' : 'locked'}" data-t="${t}" style="color:${col}"><span class="ti">${icon}</span><span class="tn">${TREES[t].name}</span><span class="tp">${open ? K.spentIn(t) : ICON.lock}</span></button>`;
     }).join('');
     tabs.querySelectorAll('.sk-tab').forEach((b) => b.addEventListener('click', () => {
       if (!K.treeOpen(b.dataset.t)) { G.audio.play('mana_empty'); this.toast(b.dataset.t === 'harmony' ? '조화의 나무는 두 가지 속성을 깨우친 뒤에 열린다.' : `${EL_INFO[b.dataset.t].name}의 노래를 아직 모른다.`); return; }
@@ -911,12 +1051,13 @@ export class HUD {
     // nodes
     const T = TREES[this.skTree];
     const col = this.skTree === 'harmony' ? '#f1d48a' : EL_INFO[this.skTree].css;
-    root.querySelector('.sk-motto').innerHTML = `<b style="color:${col}">${T.name}의 나무</b><span>${T.motto}</span>${this.skTree !== 'harmony' ? `<span>이 나무에 쓴 울림점 <em>${K.spentIn(this.skTree)}</em></span>` : '<span>두 속성 나무에 각각 2점 이상</span>'}`;
+    root.querySelector('.sk-motto').innerHTML = `<b style="color:${col}">${T.name}의 나무</b><span>${T.motto}</span>${this.skTree !== 'harmony' ? `<span>이 나무에 쓴 울림점<em>${K.spentIn(this.skTree)}</em></span>` : '<span>두 속성 나무에 각각 2점 이상</span>'}`;
     const box = root.querySelector('.sk-tree');
     const W = box.clientWidth || 560, H = box.clientHeight || 470;
     const maxT = T.maxTier || 4;
     // top margin leaves room for the motto + the ult diamond, bottom for the root node's name
-    const top = Math.max(T.harmony ? 74 : 50, H * 0.1), bot = Math.max(60, H * 0.12);
+    const tight = H < 480; // a short tree (big UI scale on a small window) keeps less margin
+    const top = Math.max(T.harmony ? 74 : tight ? 38 : 50, H * 0.1), bot = Math.max(tight ? 44 : 60, H * 0.12);
     const ty = (t) => top + (H - top - bot) * (1 - t / maxT);
     const pos = (n) => ({ x: W * (0.2 + n.col * 0.3), y: ty(n.tier) });
     const nodes = root.querySelector('.sk-nodes');
@@ -947,7 +1088,7 @@ export class HUD {
     }
     lines.innerHTML = lh;
     const kindName = { passive: '', active: '', ult: '궁극기', harmony: '조화' };
-    const harmIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="8.5" cy="12" r="5.5"/><circle cx="15.5" cy="12" r="5.5"/></svg>';
+    const harmIcon = ICON.harmony;
     nodes.innerHTML = T.nodes.map((n) => {
       const p = pos(n);
       const r = K.r(n.id);
@@ -955,7 +1096,7 @@ export class HUD {
       const state = r >= n.max ? 'max' : r > 0 ? 'some' : !why ? 'avail' : 'locked';
       let icon;
       const veil = veiled(n);
-      if (n.kind === 'harmony') icon = `<span class="pair">${n.els.map((e) => e === '*' ? '<span style="color:#f1d48a">✦</span>' : !elKnown(e) ? '<span style="color:#8a8478">?</span>' : `<span style="color:${EL_INFO[e].css}">${EL_SVG[e]}</span>`).join('')}</span>`;
+      if (n.kind === 'harmony') icon = `<span class="pair">${n.els.map((e) => e === '*' ? `<span style="color:#f1d48a">${ICON.spark}</span>` : !elKnown(e) ? '<span style="color:#8a8478">?</span>' : `<span style="color:${EL_INFO[e].css}">${EL_SVG[e]}</span>`).join('')}</span>`;
       else icon = `<span class="gl" style="color:${col}">${this.skTree === 'harmony' ? harmIcon : EL_SVG[this.skTree]}</span>`;
       const pips = n.max > 1 ? `<span class="pips">${Array.from({ length: n.max }, (_, i) => `<i class="${i < r ? 'on' : ''}"></i>`).join('')}</span>` : '';
       return `<div class="sk-node ${state} k-${n.kind} ${this.skSel === n.id ? 'sel' : ''}" data-id="${n.id}" style="left:${p.x}px;top:${p.y}px;--c:${col}">${n.kind === 'active' ? '<span class="sk-badge">기술</span>' : n.kind === 'ult' ? '<span class="sk-badge ult">궁극기</span>' : ''}<div class="sk-orb">${icon}${pips}</div><div class="sk-name">${veil ? '???' : n.name}${n.kind === 'harmony' ? `<small>${kindName[n.kind]}</small>` : ''}</div></div>`;
@@ -981,12 +1122,12 @@ export class HUD {
     if (!id) {
       const T = TREES[this.skTree];
       const learned = T.nodes.filter((n) => K.has(n.id));
-      box.innerHTML = `<div class="si-empty"><div class="si-k">울림점</div><div class="si-big">${K.points}</div><p>레벨이 오를 때마다 울림점 2점을 얻고 <b>울림의 갈림길</b>이 열린다. 보스, 이름 붙은 것들, 모라의 기억, 노래 씨앗 넷도 울림점을 준다.</p><p>나무의 뿌리는 <b>기술</b>이다. 고유 마법(우클릭)과 엮기(Q)는 익혀야 쓸 수 있고, 뿌리를 익혀야 위의 갈래가 열린다. 끝에는 <b>궁극기(F)</b>가 기다린다.</p><p>노드를 눌러 살펴보고, 한 번 더 누르면 익힌다.</p>${learned.length ? `<div class="si-k" style="margin-top:14px">이 나무에서 익힌 노래</div><ul>${learned.map((n) => `<li>${n.name}${n.max > 1 ? ` ${K.r(n.id)}/${n.max}` : ''}</li>`).join('')}</ul>` : ''}</div>`;
+      box.innerHTML = `<div class="si-empty"><div class="si-k">울림점</div><div class="si-big">${K.points}</div><p>레벨이 오를 때마다 울림점 2점을 얻고 <b>울림의 갈림길</b>이 열린다. 보스, 이름 붙은 것들, 모라의 기억, 노래 씨앗 넷도 울림점을 준다.</p><p>나무의 뿌리는 <b>기술</b>이다. 고유 마법(우클릭)과 엮기(Q)는 익혀야 쓸 수 있고, 뿌리를 익혀야 위의 갈래가 열린다. 끝에는 <b>궁극기(F)</b>가 기다린다.</p><p>노드를 눌러 살펴보고, 한 번 더 누르면 익힌다.</p>${learned.length ? `<div class="si-k" style="margin-top:18px">이 나무에서 익힌 노래</div><ul>${learned.map((n) => `<li>${n.name}${n.max > 1 ? `<span>${K.r(n.id)} / ${n.max}</span>` : ''}</li>`).join('')}</ul>` : ''}</div>`;
       return;
     }
     const n = NODES[id];
     if (veiled(n)) {
-      box.innerHTML = `<div class="si-head" style="color:#8a8478"><div class="si-name">???</div><div class="si-kind">조화</div></div><div class="si-row"><p>아직 듣지 못한 노래와 엮이는 갈래. 그 노래를 깨우치면 모습을 드러낸다.</p></div>`;
+      box.innerHTML = `<div class="si-head" style="color:#8a8478"><div class="si-kind">조화</div><div class="si-name">???</div></div><div class="si-row"><p>아직 듣지 못한 노래와 엮이는 갈래. 그 노래를 깨우치면 모습을 드러낸다.</p></div>`;
       return;
     }
     const r = K.r(id);
@@ -995,8 +1136,9 @@ export class HUD {
     const kind = n.kind === 'ult' ? '궁극기 · F' : n.kind === 'active' ? (n.sig ? '기술 · 고유 마법 · 우클릭' : '기술 · 엮기 · Q') : n.kind === 'harmony' ? `조화 · ${n.els.map((e) => (e === '*' ? '아무 두 속성' : EL_INFO[e].name)).join(' + ')}` : n.max > 1 ? `지속 효과 · 최대 ${n.max}단계` : '지속 효과';
     const cur = r > 0 ? `<div class="si-row"><span class="si-k">지금</span><p>${n.desc(r)}</p></div>` : '';
     const next = r < n.max ? `<div class="si-row"><span class="si-k">${r > 0 ? '다음 단계' : '익히면'}</span><p>${n.desc(r + 1)}</p></div>` : '<div class="si-row"><span class="si-k">완성</span><p>이 노래를 모두 익혔다.</p></div>';
-    const btn = r < n.max ? `<button class="sk-learn ${why ? 'off' : ''}" data-id="${id}">${why ? why : `익히기 · 울림점 ${n.cost}`}</button>` : '';
-    box.innerHTML = `<div class="si-head" style="color:${col}"><div class="si-name">${n.name}</div><div class="si-kind">${kind}</div>${n.max > 1 ? `<div class="si-rank">${r} / ${n.max}</div>` : ''}</div>${cur}${next}${btn}`;
+    const btn = r < n.max ? `<button class="sk-learn ${why ? 'off' : ''}" data-id="${id}">${why ? `<span class="ico">${ICON.lock}</span>${why}` : `익히기 · 울림점 <b>${n.cost}</b>`}</button>` : '';
+    const pips = n.max > 1 ? `<div class="si-rank"><span class="pips">${Array.from({ length: n.max }, (_, i) => `<i class="${i < r ? 'on' : ''}"></i>`).join('')}</span>${r} / ${n.max}</div>` : '';
+    box.innerHTML = `<div class="si-head" style="color:${col}"><div class="si-kind">${kind}</div><div class="si-name">${n.name}</div>${pips}</div>${cur}${next}${btn}`;
     const b = box.querySelector('.sk-learn');
     if (b) b.addEventListener('click', () => this.skLearn(id));
   }
@@ -1008,28 +1150,28 @@ export class HUD {
     if (!offers.length) return false;
     this.crOffers = offers; this.crBusy = false;
     const root = $('#crossroads');
-    root.querySelector('.cr-lv').innerHTML = `LEVEL ${P.level}${K.cross > 1 ? ` <span>· 남은 갈림길 ${K.cross}</span>` : ''}`;
+    root.querySelector('.cr-lv').innerHTML = `레벨 <b>${P.level}</b>${K.cross > 1 ? ` <span>· 남은 갈림길 ${K.cross}</span>` : ''}`;
     root.querySelector('.cr-desc').innerHTML = '울림이 깊어지며 노래의 길이 갈라진다. 한 갈래를 골라 익히자.';
     const q = root.querySelector('.cr-quote');
     if (G.story && G.story.flag('v_altar') && G.story.once('c:cross1')) {
-      q.innerHTML = '<b>보름</b>갈림길이로구나. 노래는 한 번에 한 갈래씩 깊어지는 법이니라. 욕심내지 말고, 지금 네게 필요한 것을 고르거라.';
+      q.innerHTML = '<b>보름</b>갈림길이로구나. 노래는 한 번에 한 갈래씩 깊어진다. 욕심은 다음 갈림길에 부리거라.';
       q.classList.remove('hidden');
       let k = 0; const iv = setInterval(() => { if (k++ > 10) clearInterval(iv); else G.audio.blip({ f: 760, type: 'sine', formant: 2300, d: 0.035, v: 0.05, slide: 1.12 }); }, 70);
     } else q.classList.add('hidden');
-    root.querySelector('.cr-pts').innerHTML = `울림점 <b>${K.points}</b>`;
-    const harmIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="8.5" cy="12" r="5.5"/><circle cx="15.5" cy="12" r="5.5"/></svg>';
+    root.querySelector('.cr-pts').innerHTML = `<i data-ico>${ICON.point}</i><span>울림점</span><b>${K.points}</b>`;
+    const harmIcon = ICON.harmony;
     const cards = root.querySelector('.cr-cards');
     cards.innerHTML = offers.map((c, i) => {
       const n = c.n, r = c.r, col = treeColor(n.tree);
       const tag = n.kind === 'ult' ? '궁극기' : n.kind === 'active' ? (n.id === WEAVE_NODE ? '새 기술 · 조화' : '새 기술') : n.kind === 'harmony' ? '조화' : `강화${n.max > 1 ? ` ${r} → ${r + 1}` : ''}`;
       let icon;
-      if (n.kind === 'harmony') icon = `<span class="pair">${n.els.map((e) => (e === '*' ? '<span style="color:#f1d48a">✦</span>' : `<span style="color:${EL_INFO[e].css}">${EL_SVG[e]}</span>`)).join('')}</span>`;
+      if (n.kind === 'harmony') icon = `<span class="pair">${n.els.map((e) => (e === '*' ? `<span style="color:#f1d48a">${ICON.spark}</span>` : `<span style="color:${EL_INFO[e].css}">${EL_SVG[e]}</span>`)).join('')}</span>`;
       else icon = n.tree === 'harmony' ? harmIcon : EL_SVG[n.tree];
       const pips = n.max > 1 ? `<span class="cr-pips">${Array.from({ length: n.max }, (_, k) => `<i class="${k < r ? 'on' : k === r ? 'next' : ''}"></i>`).join('')}</span>` : '';
       const tree = n.tree === 'harmony' ? '조화의 나무' : `${TREES[n.tree].name}의 나무`;
       return `<button class="cr-card k-${n.kind}${isTechnique(n) ? ' tech' : ''}" data-i="${i}" style="--c:${col};--d:${120 + i * 110}ms">
         <span class="cr-glow"></span>
-        <span class="cr-top"><span class="cr-key">${i + 1}</span><span class="cr-tag">${tag}</span></span>
+        <span class="cr-top"><kbd class="cr-key">${i + 1}</kbd><span class="cr-tag">${tag}</span></span>
         <span class="cr-icon" style="color:${col}">${icon}</span>
         <span class="cr-tree">${tree}</span>
         <span class="cr-name">${n.name}</span>${pips}
@@ -1056,7 +1198,7 @@ export class HUD {
     K.learn(c.id, { sound: tech ? 'skill_unlock_active' : 'skill_pick', quiet: true });
     K.cross = Math.max(0, K.cross - 1);
     document.querySelectorAll('#crossroads .cr-card').forEach((b) => b.classList.add(b === card ? 'picked' : 'gone'));
-    $('#crossroads .cr-pts').innerHTML = `울림점 <b>${K.points}</b>`;
+    $('#crossroads .cr-pts').innerHTML = `<i data-ico>${ICON.point}</i><span>울림점</span><b>${K.points}</b>`;
     if (tech) (this.crBanners = this.crBanners || []).push(c.n);
     setTimeout(() => {
       if (G.game.menu !== 'crossroads') return;

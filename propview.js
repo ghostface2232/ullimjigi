@@ -1,6 +1,7 @@
 // Local prop viewer (dev only, not part of the game build): the real renderer, sky and toon
 // materials over a flat lawn, for checking props and rocks in the game's lighting.
-//   ?p=dummy,fence:9,bench  builders from buildings.js (":" passes numeric arguments), "rock:<name>:<lod>" (names in ref/blender/props/rocks.py)
+//   ?p=dummy,fence:9,bench  builders from buildings.js (":" passes numeric arguments), "rock:<name>:<lod>" (names in ref/blender/props/rocks.py),
+//                           "house:<id>" (authored houses, ids in src/world/world.js), "shrine:<element>[:r]", bellTower, moraTower, windmill, riftGate
 //   h hour · yaw / pitch degrees · dist · ty look-at height · tx · q quality tier · gap spacing
 import * as THREE from 'three';
 import { G } from './src/core/context.js';
@@ -46,6 +47,8 @@ for (const spec of (q.get('p') || 'dummy').split(',')) {
     else if (name === 'woodpile') { o = new THREE.Group(); B.woodpile(o, 0, 0); }
     else if (name === 'planter') { o = new THREE.Group(); B.planter(o, 0, 0, Math.random, { stone: !!a[0] }); }
     else if (name === 'stall') o = B.stall(a[0] ? B.MAT.clothBlue : B.MAT.clothRed);
+    else if (name === 'house') { o = B.house({ id: args[0], planter: false, woodpile: false }); o.position.y = -0.2; }   // authored house by id ("house:inn")
+    else if (name === 'shrine') o = B.shrine(args[0] || 'frost', new THREE.Texture(), { ruined: args[1] === 'r' });
     else o = B[name](...a);
   }
   const box = new THREE.Box3().setFromObject(o);

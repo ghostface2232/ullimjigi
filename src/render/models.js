@@ -5,7 +5,7 @@
 // (public/models/<group>.json: an array of names without ".glb").
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-const GROUPS = ['chars', 'monsters', 'props'];
+const GROUPS = ['chars', 'monsters', 'props', 'buildings'];
 const cache = new Map();
 
 export async function preloadModels() {

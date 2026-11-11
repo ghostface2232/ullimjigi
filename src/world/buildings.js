@@ -286,6 +286,99 @@ export function authoredTex(name) {
   return out;
 }
 
+// ------------------------------------------------------------------
+// Authored buildings: public/models/bd_<name>.glb, built by ref/blender/bd_lib.py and bd/*.py.
+// As with the props, the vertices carry the colour (tone, baked occlusion, wear, damp); the trim
+// sheet (bd_tex.glb, ref/blender/bd_atlas.py) multiplies stone, render, timber and roofing into
+// it. Scene extras hold what the game needs to know (roof line, chimney, extra colliders).
+const BD_NEUTRAL = 0.5, BD_UV_RANGE = 8, BD_SINK = 0.2;
+let BMAT = null;
+function bmat() {
+  if (BMAT) return BMAT;
+  const src = model('bd_tex');
+  let t = null;
+  if (src) src.scene.traverse((m) => { if (m.isMesh && m.material.map) t = m.material; });
+  const mk = (o) => {
+    const m = toon(0xffffff, { vertexColors: true, nocache: true, ...o });
+    if (t) {
+      for (const x of [t.map, t.normalMap]) if (x) x.anisotropy = 8;
+      m.map = t.map; m.normalMap = t.normalMap;
+      m.normalScale.set(1, -1);   // glTF UVs without tangents (what GLTFLoader does)
+      m.color.setScalar(1 / BD_NEUTRAL);
+    }
+    return m;
+  };
+  BMAT = {
+    wall: mk({ rim: 0.2 }),
+    metal: mk({ rim: 0.9, emissive: 0x1c1204 }),
+    cloth: mk({ rim: 0.15, side: THREE.DoubleSide }),
+    glass: windowMat,
+  };
+  return BMAT;
+}
+const bdCache = new Map();
+// { meta, groups: { group: [{ geo, key }] } } of an authored building, or null when the file is missing.
+function bdParts(name) {
+  if (bdCache.has(name)) return bdCache.get(name);
+  const src = model('bd_' + name);
+  let out = null;
+  if (src) {
+    out = { meta: src.scene.userData || {}, groups: {} };
+    src.scene.updateMatrixWorld(true);
+    const v = new THREE.Vector3();
+    src.scene.traverse((m) => {
+      if (!m.isMesh) return;
+      const n = m.parent && m.parent.name.includes('__') ? m.parent : m;
+      const A = m.geometry.attributes, cnt = A.position.count;
+      const pos = new Float32Array(cnt * 3), nrm = new Float32Array(cnt * 3), col = new Float32Array(cnt * 4), uv = new Float32Array(cnt * 2);
+      for (let i = 0; i < cnt; i++) {   // quantised attributes -> the game's float layout
+        v.fromBufferAttribute(A.position, i).applyMatrix4(m.matrixWorld); pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+        v.fromBufferAttribute(A.normal, i).normalize(); nrm[i * 3] = v.x; nrm[i * 3 + 1] = v.y; nrm[i * 3 + 2] = v.z;
+        // packed by bd_lib: rgb as square roots, u over BD_UV_RANGE repeats of the sheet starting at -1
+        col[i * 4] = A.color.getX(i) ** 2; col[i * 4 + 1] = A.color.getY(i) ** 2; col[i * 4 + 2] = A.color.getZ(i) ** 2; col[i * 4 + 3] = A.color.getW(i);
+        uv[i * 2] = A.uv.getX(i) * BD_UV_RANGE - 1; uv[i * 2 + 1] = A.uv.getY(i);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setIndex(m.geometry.index);
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+      g.setAttribute('color', new THREE.BufferAttribute(col, 4));
+      g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      g.computeBoundingSphere(); g.computeBoundingBox();
+      (out.groups[n.name.split('__')[1] || 'body'] ||= []).push({ geo: g, key: m.material.name.replace(/^BD_/, '') });
+    });
+  }
+  bdCache.set(name, out);
+  return out;
+}
+// Add one group of an authored building to `parent`. o: { mats: { key: material } to override, cast }
+function bdAdd(P, grp, parent, o = {}) {
+  if (!P || !P.groups[grp]) return null;
+  return P.groups[grp].map(({ geo, key }) => {
+    const m = new THREE.Mesh(geo, (o.mats && o.mats[key]) || bmat()[key] || bmat().wall);
+    m.castShadow = o.cast ?? key !== 'glass'; m.receiveShadow = true;
+    if (parent) parent.add(m);
+    return m;
+  });
+}
+
+// Plant the window boxes of an authored building (meta.boxes: [x, y, z, ry, length]) with the
+// planter prop's leaves and flowers; without that prop the boxes stay bare.
+function bdPlants(P, parent, rnd) {
+  if (!has('planter')) return;
+  for (const [x, y, z, ry, len] of P.meta.boxes || []) {
+    const g = new THREE.Group(); g.position.set(x, y, z); g.rotation.y = ry; parent.add(g);
+    // the prop's tufts are made for a 0.6 m trough: scaled to the box (0.24 m deep) and rooted on its
+    // soil, along its middle, so the foliage only just leans over the front board
+    const fi = Math.floor(rnd() * FLOWER_COLS.length), n = Math.max(2, Math.round(len / 0.19));
+    for (let i = 0; i < n; i++) {
+      const lx = -(len - 0.2) / 2 + (i + 0.5) * (len - 0.2) / n + (rnd() - 0.5) * 0.03, lz = 0.02 + (rnd() - 0.5) * 0.03, sc = 0.64 + rnd() * 0.16;
+      put(authored('planter', 'leaf' + (i % 3), g), lx, 0.012, lz, { ry: i * 2.4, sx: sc, sy: sc * 1.15, sz: sc });
+      if (rnd() < 0.85) put(authored('planter', 'flower' + (rnd() < 0.75 ? fi : 2), g), lx + (rnd() - 0.5) * 0.05, 0.03 + rnd() * 0.04, lz + (rnd() - 0.5) * 0.04, { ry: i * 1.7, rx: (i % 3 - 1) * 0.15, sx: 1.35, sy: 1.35, sz: 1.35 });
+    }
+  }
+}
+
 // Paving stone (vertex-coloured, stone surface), rotated about y
 export function pstone(p, w, h, d, color, x, y, z, ry = 0) { return pbox(w, h, d, color, x, y, z, p, { mat: MAT.paintStone, ry, cast: false }); }
 function lathe(profile, seg, mat, x, y, z, p, o) { return mesh(new THREE.LatheGeometry(profile.map(([a, b]) => new THREE.Vector2(a, b)), seg), mat, x, y, z, p, o); }
@@ -478,7 +571,38 @@ function wallFace(fg, L, h, rnd, spec) {
 // roofTop(lx, lz) (same, as a function; local height above the origin).
 const WALLS = () => [MAT.plaster, MAT.plasterWarm, MAT.plasterRose, MAT.plasterSage];
 const SHUTTERS = [0x3f8088, 0x4f68a8, 0x8a4a3a, 0x5a7a3a, 0x7a5a8a];
+// Authored house (bd_house_<id>.glb): the model, set dressing by the door, and the same userData.
+function authoredHouse(P, opts) {
+  const rnd = mulberry32((opts.seed ?? 1) + 400);
+  const g = new THREE.Group();
+  bdAdd(P, 'body', g);
+  bdPlants(P, g, rnd);
+  const u = P.meta, W = u.w - 0.4, D = u.d - 0.4, w = opts.w ?? 6, d = opts.d ?? 5, doorX = u.doorX ?? 0;
+  // set dressing stands on the ground, which is BD_SINK above the model's origin (the game sinks houses that much)
+  if (opts.planter ?? rnd() < 0.7) planter(g, doorX - 1.45 * (rnd() < 0.5 ? -1 : 1), d / 2 + 0.55, rnd).position.y = BD_SINK;
+  // (a side with a lean-to against it stays clear: meta.clear lists -1 left, 1 right)
+  const free = (s) => !(u.clear || []).includes(s);
+  if (rnd() < 0.7 && free(1)) barrel(g, w / 2 + 0.6, BD_SINK, d / 2 - 0.5, rnd);
+  if (rnd() < 0.5 && free(-1)) crate(g, -w / 2 - 0.6, 0.36 + BD_SINK, d / 2 - 0.6, 0.7, rnd() * 0.5, rnd);
+  if ((opts.woodpile ?? rnd() < 0.55) && free(-1)) woodpile(g, -w / 2 - 0.55, -d / 2 + 1.3, 2.2, Math.PI / 2, rnd).position.y = BD_SINK;
+  const hips = u.hips || {};
+  g.userData = {
+    w: u.w, d: u.d, height: u.height, eave: u.eave, roofH: u.roofH, roofHW: u.roofHW, solids: u.solids || [],
+    chimney: u.chimney ? new THREE.Vector3(...u.chimney) : null,
+    // gable along z; a hipped end is a second plane leaning in from that end: [z of its foot, height there, rise per metre]
+    roofTop: (lx, lz = 0) => {
+      let y = u.eave + u.roofH * Math.max(0, 1 - Math.abs(lx) / u.roofHW);
+      if (hips.F) y = Math.min(y, hips.F[1] + (hips.F[0] - lz) * hips.F[2]);
+      if (hips.B) y = Math.min(y, hips.B[1] + (lz - hips.B[0]) * hips.B[2]);
+      return y;
+    },
+  };
+  void W; void D;
+  return g;
+}
 export function house(opts = {}) {
+  const A = opts.id && bdParts('house_' + opts.id);
+  if (A) return authoredHouse(A, opts);
   const rnd = mulberry32(opts.seed ?? 1);
   const g = new THREE.Group();
   const w = opts.w ?? 6, d = opts.d ?? 5, wallH = opts.h ?? 3.2;
@@ -942,7 +1066,36 @@ export function stoneWall(len = 4, rnd = Math.random, o = {}) {
 }
 
 // ------------------------------------------------------------------
+// Authored tower (bd_moratower.glb): the model, then what moves or glows (star, chimes) and the annex.
+function authoredMoraTower(P) {
+  const g = new THREE.Group(), H = 15;
+  bdAdd(P, 'body', g);
+  bdPlants(P, g, mulberry32(99));
+  const star = new THREE.Mesh(crystalGeometry('prism', { double: true, sides: 5, radius: 0.5, seed: 41 }), crystalMaterial({ color: 0xffe2a0, glow: 0xffc860, intensity: 1.5 }));
+  star.scale.setScalar(0.5); star.position.set(2.4, H + 1 + 8.3, 0); g.add(star);
+  star.add(crystalGlowSprite(0xffc860, 5, { intensity: 0.35 }));
+  const an = house({ id: 'annex', w: 5, d: 4.2, h: 2.8, roof: MAT.roofMora, wall: MAT.plaster, seed: 5, chimney: true, porch: false, woodpile: true, dormer: false, shutterCol: 0x3a3f86 });
+  an.position.set(-2, an.userData.solids ? -BD_SINK : 0, -6.2); an.rotation.y = Math.PI; g.add(an);
+  if (an.userData.solids) {   // the authored annex stands BD_SINK lower than the tower's origin: its roof line with it
+    const top = an.userData.roofTop;
+    an.userData.roofTop = (lx, lz) => top(lx, lz) - BD_SINK;
+    an.userData.height -= BD_SINK;
+  }
+  const chimes = [];
+  for (let i = 0; i < 5; i++) {
+    const a = i * 1.25, col = [0xb894ff, 0xff8a3a, 0x7dffc3, 0x8fe3ff, 0xffd84a][i];
+    const c = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 20 + i }), crystalMaterial({ color: col, intensity: 1.3 }));
+    c.scale.setScalar(0.2);
+    c.add(crystalGlowSprite(col, 6, { intensity: 0.35 }));
+    c.position.set(Math.cos(a) * 5.2, H + 0.4 - (i % 2) * 0.4, Math.sin(a) * 5.2);
+    g.add(c); chimes.push(c);
+  }
+  g.userData = { chimes, chimney: an.userData.chimney ? an.userData.chimney.clone().applyEuler(an.rotation).add(an.position) : null };
+  return g;
+}
 export function moraTower() {
+  const A = bdParts('moratower');
+  if (A) return authoredMoraTower(A);
   const g = new THREE.Group();
   const rnd = mulberry32(99);
   const H = 15;
@@ -1057,9 +1210,34 @@ export function moraTower() {
 }
 
 // ------------------------------------------------------------------
+// A swinging group of an authored building (its bell, its sails), hung at the pivot the model names.
+function bdPivot(P, grp, parent, o) {
+  const pv = (P.meta.pivots || {})[grp] || [0, 0, 0];
+  const pivot = new THREE.Group(); pivot.position.set(pv[0], pv[1], pv[2]); parent.add(pivot);
+  bdAdd(P, grp, pivot, o);
+  return pivot;
+}
 export function bellTower() {
   const g = new THREE.Group();
   const rnd = mulberry32(7);
+  const P = bdParts('belltower');
+  if (P) {
+    bdAdd(P, 'body', g);
+    const pivot = bdPivot(P, 'bell', g);
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(1.4, 16, 12), fresnelMat(0xfff0c0, 0xffc860, { intensity: 1.5, alpha: 0 }));
+    glow.position.y = -1.2; pivot.add(glow);
+    for (const s of [-1, 1]) planter(g, s * 1.9, 3.5, rnd, { len: 1.0, wid: 0.6, stone: true });
+    // bell-cast pyramid over the belfry: a shallow kick above the eaves, then the steep spire
+    const R = P.meta.roof;
+    g.userData = {
+      bell: pivot, glow, top: R.apex,
+      roofTop: (lx, lz) => {
+        const m = Math.max(Math.abs(lx), Math.abs(lz)), k = R.half - R.kick;
+        return m > k ? R.eave + (R.half - m) * (R.zk - R.eave) / R.kick : R.zk + (k - m) * (R.apex - R.zk) / k;
+      },
+    };
+    return g;
+  }
   // stepped base
   box(6.2, 0.35, 6.2, MAT.stoneDark, 0, 0.1, 0, g);
   box(5.4, 1.0, 5.4, MAT.stoneDark, 0, 0.7, 0, g);
@@ -1140,7 +1318,45 @@ export function bellTower() {
 // Collider contract (world.js): discs r10.6 top +0.35 & r9.3 top +0.8,
 // altar box 1.3, pillars r0.7 at radius 8.2, bell posts at (±2, -5).
 const EL_HEX = { fire: 0xff7a2a, frost: 0x6cd0ff, storm: 0xffd84a, wind: 0x6effc0, arcane: 0xa070ff };
+// Authored shrine (bd_shrine_<element>.glb): the stonework and the bell from the model; the rune
+// floor, the crystals and the seal are the game's (story.js moves and hides them).
+function authoredShrine(P, el, runeTex) {
+  const g = new THREE.Group();
+  const rnd = mulberry32(el.length * 31);
+  const bodyCol = new THREE.Color(EL_HEX[el]).lerp(new THREE.Color(0xffffff), 0.25);
+  bdAdd(P, 'body', g);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(16, 16), new THREE.MeshBasicMaterial({ map: runeTex, color: new THREE.Color(EL_HEX[el]).multiplyScalar(0.5), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = 0.87; g.add(floor);
+  const orbMat = crystalMaterial({ color: bodyCol, glow: EL_HEX[el], intensity: 1.1 });
+  (P.meta.tops || []).forEach(([x, y, z], i) => {   // a crystal on every whole column
+    const orb = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 60 + i }), orbMat);
+    orb.scale.setScalar(0.3); orb.rotation.y = rnd() * 3;
+    orb.position.set(x, y + 0.5, z); g.add(orb);
+    orb.add(crystalGlowSprite(EL_HEX[el], 7, { intensity: 0.28 }));
+  });
+  const crystal = new THREE.Group();
+  crystal.position.y = 4.2; g.add(crystal);
+  const cMat = crystalMaterial({ color: bodyCol, glow: EL_HEX[el], intensity: 1.35, seed: el.length });
+  const core = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 5, radius: 0.46 }), cMat);
+  core.scale.setScalar(1.05); crystal.add(core);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + 0.4;
+    const sh = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 80 + i, radius: 0.34 }), cMat);
+    sh.scale.setScalar(0.2 + (i % 2) * 0.06);
+    sh.position.set(Math.cos(a) * 1.25, (i % 2 ? 0.35 : -0.3), Math.sin(a) * 1.25);
+    sh.rotation.set((i % 2 ? 0.3 : -0.25), a, (i % 2 ? -0.2 : 0.25));
+    crystal.add(sh);
+  }
+  crystal.add(crystalGlowSprite(EL_HEX[el], 5.5, { intensity: 0.32 }));
+  const pivot = bdPivot(P, 'bell', g);
+  const seal = new THREE.Mesh(new THREE.SphereGeometry(11, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), fresnelMat(0x2a1640, 0x9a6aff, { intensity: 1.1, power: 2.2, side: THREE.DoubleSide }));
+  seal.position.y = 0.2; g.add(seal);
+  g.userData = { crystal, bell: pivot, seal, floor };
+  return g;
+}
 export function shrine(el, runeTex, opts = {}) {
+  const A = bdParts('shrine_' + el);
+  if (A) return authoredShrine(A, el, runeTex);
   const g = new THREE.Group();
   const rnd = mulberry32(el.length * 31);
   const frost = el === 'frost';
@@ -1397,6 +1613,13 @@ export function windWheel() {
 export function windmill() {
   const g = new THREE.Group();
   const rnd = mulberry32(3);
+  const A = bdParts('windmill');
+  if (A) {   // authored mill: the sails are a group of their own, turning about the hub
+    bdAdd(A, 'body', g);
+    for (let i = 0; i < 3; i++) sack(g, 1.4 + i * 0.35, 0, 3.6 - i * 0.2, rnd);
+    g.userData = { rotor: bdPivot(A, 'rotor', g) };
+    return g;
+  }
   const body = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 3.2, 9, 8), MAT.plaster);
   body.position.y = 4.5; body.castShadow = true; body.receiveShadow = true; g.add(body);
   cyl(3.35, 3.5, 1.1, 8, MAT.stone, 0, 0.35, 0, g);

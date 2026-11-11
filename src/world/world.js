@@ -178,6 +178,17 @@ export class World {
     c.base = base;
     return c;
   }
+  // Extra boxes of an authored building (chimney stacks, lean-tos, dormers), in its local frame:
+  // { x, z, hw, hd, y0, y1, tilt?: [per metre of local x, of local z] (a sloping top; y1 at the centre) }
+  solidParts(obj, list) {
+    const by = obj.getWorldPosition(new THREE.Vector3()).y;
+    for (const s of list || []) {
+      const p = obj.localToWorld(new THREE.Vector3(s.x, 0, s.z));
+      const c = this.col.addBox(p.x, p.z, s.hw, s.hd, obj.rotation.y, by + s.y0, by + s.y1 + (s.tilt ? Math.abs(s.tilt[0]) * s.hw + Math.abs(s.tilt[1]) * s.hd : 0));
+      if (s.tilt) c.topFn = (lx, lz) => by + s.y1 + s.tilt[0] * lx + s.tilt[1] * lz;
+      c.base = by;
+    }
+  }
   // shapes it would look odd to scale or stand on (lanterns, columns, braziers, altars)
   noClimb(c) { c.climb = false; c.noTop = true; return c; }
   place(obj, x, z, ry = 0, dy = 0) {
@@ -242,6 +253,7 @@ export class World {
       this.place(g, hd.x, hd.z, ry, -0.2);
       const u = g.userData, by = g.position.y;
       this.solid(g, { hw: u.w / 2, hd: u.d / 2, top: by + u.height, topFn: (lx, lz) => by + u.roofTop(lx, lz) });
+      this.solidParts(g, u.solids);
       if (g.userData.chimney) this.chimneys.push(g.localToWorld(g.userData.chimney.clone()));
       this.houses[hd.id] = g;
     });
@@ -269,7 +281,10 @@ export class World {
     // bell tower
     const bt = B.bellTower();
     this.place(bt, POI.bellTower.x, POI.bellTower.z, 0.1);
-    this.solid(bt, { hw: 2.7, hd: 2.7, rot: 0.1 });
+    { // the authored tower gives its roof line; the code-built one keeps a flat top
+      const u = bt.userData, by = bt.position.y;
+      this.solid(bt, u.roofTop ? { hw: 2.7, hd: 2.7, rot: 0.1, top: by + u.top, topFn: (lx, lz) => by + u.roofTop(lx, lz) } : { hw: 2.7, hd: 2.7, rot: 0.1 });
+    }
     this.bellTower = bt;
     this.bellSwing = 0;
     this.anims.push((dt) => {
@@ -378,6 +393,7 @@ export class World {
     const ty = t.position.y;
     this.annexCol = this.col.addBox(POI.tower.x - 2, POI.tower.z - 6.2, an ? an.userData.w / 2 : 2.9, an ? an.userData.d / 2 : 2.5, 0, -10, ty + (an ? an.userData.height : 6));
     if (an) this.annexCol.topFn = (lx, lz) => ty + an.userData.roofTop(lx, lz);
+    if (an) this.solidParts(an, an.userData.solids);
     this.tower = t;
     this.anims.push(() => {
       t.userData.chimes.forEach((c, i) => { c.position.y = 16 + Math.sin(G.time * 1.5 + i) * 0.15 - (i % 2) * 0.4; c.rotation.y += 0.02; });

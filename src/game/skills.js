@@ -48,8 +48,8 @@ export const TREES = {
       { id: 'a_focus', name: '비전 집중', tier: 1, col: 1, max: 3, cost: 1, req: ['a_sig'], desc: (r) => `울림을 한 점으로 모은다. 비전 화살 피해 +${12 * r}%.${r >= 3 ? ' 같은 적을 연달아 세 번 맞히면 세 번째 화살이 되울려 0.5P를 더한다.' : ''}` },
       { id: 'a_pierce', name: '꿰뚫는 화살', tier: 2, col: 0, max: 1, cost: 1, req: ['a_focus'], desc: () => '화살이 별빛처럼 가늘어져, 적 하나를 꿰뚫고 그 뒤의 적까지 닿는다.' },
       { id: 'a_flow', name: '울림 순환', tier: 2, col: 2, max: 2, cost: 1, req: ['a_focus'], desc: (r) => `숨을 고르듯 울림이 되돌아온다. 전투 중 마나 회복 속도 +${25 * r}%.` },
-      { id: 'a_wave', name: '밀물 파동', tier: 3, col: 0, max: 1, cost: 2, req: ['a_pierce'], desc: () => '파동이 밀물처럼 멀리 번진다. 비전 파동의 범위 +35%, 휩쓸린 적은 1.2초 동안 기절한다 (보스 제외).' },
-      { id: 'a_echo', name: '공명 증폭', tier: 3, col: 1, max: 2, cost: 2, req: ['a_pierce', 'a_flow'], desc: ranked(['적에게 남은 노래를 비전이 되울린다. 공명 반응 배율 1.3 → 1.55, 공명한 상태 이상이 1초 길어진다.', '적에게 남은 노래를 비전이 되울린다. 공명 반응 배율 1.3 → 1.8, 공명한 상태 이상이 2초 길어진다.']) },
+      { id: 'a_wave', name: '밀물 파동', tier: 3, col: 0, max: 1, cost: 2, req: ['a_pierce'], desc: () => '파동이 밀물처럼 넓게 번진다. 비전 파동의 범위 +35%, 휩쓸린 적은 1.2초 동안 기절한다 (보스 제외).' },
+      { id: 'a_echo', name: '공명 증폭', tier: 3, col: 1, max: 2, cost: 2, req: ['a_pierce', 'a_flow'], desc: ranked(['적에게 걸린 속성을 비전의 힘으로 크게 울린다. 공명 반응 배율 1.3 → 1.55, 공명한 상태 이상이 1초 길어진다.', '적에게 걸린 속성을 비전의 힘으로 크게 울린다. 공명 반응 배율 1.3 → 1.8, 공명한 상태 이상이 2초 길어진다.']) },
       { id: 'a_afterimage', name: '잔상', tier: 3, col: 2, max: 1, cost: 2, req: ['a_flow'], desc: () => '떠난 자리에 울림이 남는다. 순간이동한 자리에서 비전 폭발(0.9P, 반경 2.6)이 일고, 완벽 회피의 울림 가속이 1.5초 길어진다.' },
       { id: 'a_ult', name: '별의 노래', tier: 4, col: 1, max: 1, cost: 3, kind: 'ult', req: ['a_wave', 'a_echo', 'a_afterimage'], desc: () => '궁극기 (F). 하늘에 별자리를 그려, 조준한 곳으로 별똥별 14발을 불러 내린다. 한 발에 1.4P, 가까운 적을 쫓는다.' },
     ],
@@ -74,8 +74,8 @@ export const TREES = {
       { id: 'w_edge', name: '날 선 바람', tier: 1, col: 1, max: 3, cost: 1, req: ['w_sig'], desc: (r) => `바람의 날을 세운다. 바람 칼날 피해 +${12 * r}%.${r >= 3 ? ' 두 명을 더 꿰뚫는다.' : ''}` },
       { id: 'w_tailwind', name: '순풍', tier: 2, col: 0, max: 1, cost: 1, req: ['w_edge'], desc: () => '등 뒤에서 바람이 민다. 활공할 때 기력 소모 −40%, 활공 속도 +25%.' },
       { id: 'w_gale', name: '드센 돌풍', tier: 2, col: 2, max: 2, cost: 1, req: ['w_edge'], desc: (r) => `돌풍이 더 멀리, 더 높이 분다. 돌풍 범위 +${25 * r}%, 띄우는 힘 +${20 * r}%.` },
-      { id: 'w_dash', name: '질풍 걸음', tier: 3, col: 0, max: 1, cost: 2, req: ['w_tailwind'], desc: () => '바람보다 먼저 닿는다. 순간이동 거리 +40%, 기력 소모 −30%. 공중에서 두 번 순간이동할 수 있다.' },
-      { id: 'w_carrier', name: '바람의 전령', tier: 3, col: 1, max: 2, cost: 2, req: ['w_tailwind', 'w_gale'], desc: (r) => `바람이 남의 노래를 실어 나른다. 화염 확산·눈보라·뇌전 확산의 범위 +${30 * r}%, 옮기는 상태가 ${r >= 2 ? '훨씬 ' : ''}강해진다.` },
+      { id: 'w_dash', name: '질풍 걸음', tier: 3, col: 0, max: 1, cost: 2, req: ['w_tailwind'], desc: () => '바람을 타고 재빠르게 몸을 날린다. 순간이동 거리 +40%, 기력 소모 −30%. 공중에서 두 번 순간이동할 수 있다.' },
+      { id: 'w_carrier', name: '바람의 전령', tier: 3, col: 1, max: 2, cost: 2, req: ['w_tailwind', 'w_gale'], desc: (r) => `바람이 다른 속성을 더 멀리 실어 나른다. 화염 확산·눈보라·뇌전 확산의 범위 +${30 * r}%, 퍼뜨리는 상태 이상이 ${r >= 2 ? '훨씬 ' : ''}강해진다.` },
       { id: 'w_vortex', name: '소용돌이', tier: 3, col: 2, max: 1, cost: 2, req: ['w_gale'], desc: () => '돌풍이 지나간 자리에 바람이 맴돈다. 2.5초 동안 적을 끌어당기는 소용돌이가 남는다.' },
       { id: 'w_ult', name: '폭풍의 눈', tier: 4, col: 1, max: 1, cost: 3, kind: 'ult', req: ['w_dash', 'w_carrier', 'w_vortex'], desc: () => '궁극기 (F). 폭풍의 한가운데에 선다. 5초 동안 거대한 회오리를 두르고, 주위의 적을 끊임없이 띄우며 할퀸다 (0.3초마다 0.45P).' },
     ],
@@ -97,26 +97,26 @@ export const TREES = {
     name: '번개', motto: '외치고, 잇고, 터뜨리는 길',
     nodes: [
       sigNode('storm'),
-      { id: 's_charge', name: '충전', tier: 1, col: 1, max: 3, cost: 1, req: ['s_sig'], desc: (r) => `지팡이에 더 큰 외침을 머금는다. 전격 피해 +${12 * r}%.${r >= 3 ? ' 이미 감전된 적을 맞히면 번개가 한 번 더 튄다.' : ''}` },
-      { id: 's_chain', name: '연쇄 번개', tier: 2, col: 0, max: 2, cost: 1, req: ['s_charge'], desc: (r) => `번개가 길을 찾아 건너뛴다. 전격이 튀는 적 +${r}, 튄 번개의 피해 60% → ${60 + 10 * r}%.` },
-      { id: 's_static', name: '정전기', tier: 2, col: 2, max: 1, cost: 1, req: ['s_charge'], desc: () => '털끝이 곤두선다. 감전 지속 +1.5초, 감전된 적이 받는 모든 피해 +12%.' },
-      { id: 's_aftershock', name: '여진', tier: 3, col: 0, max: 1, cost: 2, req: ['s_chain'], desc: () => '천둥은 한 번으로 끝나지 않는다. 낙뢰가 떨어진 뒤 주변 적 둘에게 작은 벼락(1.2P)이 뒤따른다.' },
-      { id: 's_overload', name: '과충전', tier: 3, col: 1, max: 2, cost: 2, req: ['s_chain', 's_static'], desc: (r) => `불과 번개가 만나면 터진다. 과부하 반응 피해 +${25 * r}%, 폭발 범위 +${20 * r}%.` },
-      { id: 's_conduct', name: '전도', tier: 3, col: 2, max: 2, cost: 2, req: ['s_static'], desc: (r) => `전기가 적에서 적으로 흐른다. 감전 연쇄의 사거리 +${30 * r}%, 감전 지속 피해 +${40 * r}%.` },
-      { id: 's_ult', name: '천둥의 노래', tier: 4, col: 1, max: 1, cost: 3, kind: 'ult', req: ['s_aftershock', 's_overload', 's_conduct'], desc: () => '궁극기 (F). 하늘이 대답한다. 3초 동안 반경 20 안의 적에게 벼락 10발이 떨어진다 (한 발에 2P, 감전).' },
+      { id: 's_charge', name: '충전', tier: 1, col: 1, max: 3, cost: 1, req: ['s_sig'], desc: (r) => `지팡이 끝에 더 강한 전류를 모은다. 전격 피해 +${12 * r}%.${r >= 3 ? ' 이미 감전된 적을 맞히면 번개가 한 번 더 튄다.' : ''}` },
+      { id: 's_chain', name: '연쇄 번개', tier: 2, col: 0, max: 2, cost: 1, req: ['s_charge'], desc: (r) => `번개가 가까운 적을 찾아 건너뛴다. 전격이 튀는 대상 +${r}, 튄 번개의 피해 60% → ${60 + 10 * r}%.` },
+      { id: 's_static', name: '정전기', tier: 2, col: 2, max: 1, cost: 1, req: ['s_charge'], desc: () => '몸에 남은 전류가 적을 옥죈다. 감전 지속 +1.5초, 감전된 적이 받는 모든 피해 +12%.' },
+      { id: 's_aftershock', name: '여진', tier: 3, col: 0, max: 1, cost: 2, req: ['s_chain'], desc: () => '벼락은 한 번으로 끝나지 않는다. 낙뢰가 떨어진 뒤 주변 적 둘에게 작은 벼락(1.2P)이 연달아 내리꽂힌다.' },
+      { id: 's_overload', name: '과충전', tier: 3, col: 1, max: 2, cost: 2, req: ['s_chain', 's_static'], desc: (r) => `불길과 번개가 만나 더 크게 폭발한다. 과부하 반응 피해 +${25 * r}%, 폭발 범위 +${20 * r}%.` },
+      { id: 's_conduct', name: '전도', tier: 3, col: 2, max: 2, cost: 2, req: ['s_static'], desc: (r) => `전기가 물기를 타고 더 멀리 흐른다. 감전 연쇄의 사거리 +${30 * r}%, 감전 지속 피해 +${40 * r}%.` },
+      { id: 's_ult', name: '천둥의 노래', tier: 4, col: 1, max: 1, cost: 3, kind: 'ult', req: ['s_aftershock', 's_overload', 's_conduct'], desc: () => '궁극기 (F). 먹구름이 부름에 답한다. 3초 동안 반경 20 안의 적에게 벼락 10발이 내리꽂힌다 (한 발에 2P, 감전).' },
     ],
   },
   water: {
-    name: '물', motto: '적시고, 되비추고, 품는 길',
+    name: '물', motto: '적시고, 흘려보내고, 품는 길',
     nodes: [
       sigNode('water'),
-      { id: 'wa_pressure', name: '수압', tier: 1, col: 1, max: 3, cost: 1, req: ['wa_sig'], desc: (r) => `물방울을 단단히 쥐어짠다. 물방울 탄 피해 +${12 * r}%.${r >= 3 ? ' 맞은 자리가 터지며 반경 2의 적을 적신다 (0.25P).' : ''}` },
-      { id: 'wa_soak', name: '흠뻑', tier: 2, col: 0, max: 1, cost: 1, req: ['wa_pressure'], desc: () => '속속들이 젖는다. 젖음이 7초에서 12초로 늘고, 젖은 적은 15% 느려진다.' },
-      { id: 'wa_spring', name: '맑은 샘', tier: 2, col: 2, max: 2, cost: 1, req: ['wa_pressure'], desc: (r) => `물결이 상처를 씻는다. 해일을 쓰면 생명력을 하트 ${r === 1 ? '¼' : '½'}칸 되찾는다.` },
-      { id: 'wa_bubble', name: '물방울 감옥', tier: 3, col: 0, max: 1, cost: 2, req: ['wa_soak'], desc: () => '해일이 처음 삼킨 적을 2.5초 동안 물방울에 가둔다 (행동 불가, 떠오름).' },
-      { id: 'wa_mirror', name: '되비추는 물결', tier: 3, col: 1, max: 1, cost: 2, req: ['wa_soak', 'wa_spring'], desc: () => '물은 받은 것을 돌려준다. 해일이 삼킨 적의 투사체가 주인에게 되돌아간다.' },
-      { id: 'wa_steam', name: '김서림', tier: 3, col: 2, max: 2, cost: 2, req: ['wa_spring'], desc: (r) => `불을 끈 자리에 김이 서린다. 소화가 일어나면 짙은 김 구름(땅의 흔적)이 피어올라 반경 ${3 + r}의 적이 ${2 + r}초 동안 40% 느려지고 젖는다.` },
-      { id: 'wa_ult', name: '바다의 노래', tier: 4, col: 1, max: 1, cost: 3, kind: 'ult', req: ['wa_bubble', 'wa_mirror', 'wa_steam'], desc: () => '궁극기 (F). 바다를 한 자리에 불러 모은다. 4초 동안 소용돌이가 적을 빨아들이고 적신 뒤, 무너지며 5P.' },
+      { id: 'wa_pressure', name: '수압', tier: 1, col: 1, max: 3, cost: 1, req: ['wa_sig'], desc: (r) => `물줄기를 단단하게 압축해 쏜다. 물방울 탄 피해 +${12 * r}%.${r >= 3 ? ' 맞은 자리가 터지며 반경 2의 적을 적신다 (0.25P).' : ''}` },
+      { id: 'wa_soak', name: '흠뻑', tier: 2, col: 0, max: 1, cost: 1, req: ['wa_pressure'], desc: () => '물기가 깊숙이 스며든다. 젖음 지속 시간이 7초에서 12초로 늘고, 젖은 적은 15% 느려진다.' },
+      { id: 'wa_spring', name: '맑은 샘', tier: 2, col: 2, max: 2, cost: 1, req: ['wa_pressure'], desc: (r) => `맑은 물결이 상처를 씻어 낸다. 해일을 쓰면 체력을 하트 ${r === 1 ? '¼' : '½'}칸 회복한다.` },
+      { id: 'wa_bubble', name: '물방울 감옥', tier: 3, col: 0, max: 1, cost: 2, req: ['wa_soak'], desc: () => '해일이 처음 휩쓴 적을 2.5초 동안 물방울에 가둔다 (행동 불가, 공중에 떠오름).' },
+      { id: 'wa_mirror', name: '되비추는 물결', tier: 3, col: 1, max: 1, cost: 2, req: ['wa_soak', 'wa_spring'], desc: () => '물결이 적의 공격을 그대로 되돌려 보낸다. 해일이 삼킨 적의 투사체가 주인에게 날아간다.' },
+      { id: 'wa_steam', name: '김서림', tier: 3, col: 2, max: 2, cost: 2, req: ['wa_spring'], desc: (r) => `불을 끈 자리에 뜨거운 김이 피어오른다. 소화가 일어나면 짙은 김 구름(땅의 흔적)이 남아 반경 ${3 + r}의 적이 ${2 + r}초 동안 40% 느려지고 젖는다.` },
+      { id: 'wa_ult', name: '바다의 노래', tier: 4, col: 1, max: 1, cost: 3, kind: 'ult', req: ['wa_bubble', 'wa_mirror', 'wa_steam'], desc: () => '궁극기 (F). 거대한 물소용돌이를 불러낸다. 4초 동안 주변 적을 빨아들이고 흠뻑 적신 뒤, 물기둥이 터지며 5P 피해.' },
     ],
   },
   harmony: {
@@ -252,7 +252,7 @@ export class Skills {
     this.points += n; this.earned += n;
     if (G.hud && why) G.hud.toast(`울림점 <b>+${n}</b> · ${why} — <kbd>K</kbd> 울림 나무`, 4200);
     if (G.hud && G.hud.updateSP) G.hud.updateSP(true);
-    if (why && G.story && G.story.once('sp_first')) setTimeout(() => G.hud.hint('<kbd>K</kbd> <b>울림 나무</b> — 울림점을 써서 속성마다 새로운 기술과 노래를 익힐 수 있습니다<br><small>뿌리의 고유 마법부터 익히면 더 깊은 갈래가 열리고, 끝에는 궁극기가 있습니다</small>', 9), 1500);
+    if (why && G.story && G.story.once('sp_first')) setTimeout(() => G.hud.hint('<kbd>K</kbd> <b>울림 나무</b> — 울림점을 써서 속성마다 새로운 기술과 능력을 익힐 수 있다<br><small>뿌리의 고유 마법부터 익히면 더 깊은 가지가 열리고, 끝에는 궁극기가 있다</small>', 9), 1500);
   }
 
   // Ultimate gauge

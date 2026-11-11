@@ -30,11 +30,11 @@ export const CHESTS = [
 // Borum's nudge when the player lingers by a sleeping seed without waking it
 const LINGER = {
   braziers: '식은 화로가 둘, 그 사이에 오므린 봉오리라. …추워서 못 피는 게지, 저건.',
-  ice: '얼음 속에서 자는구나. 언 것을 깨우는 노래야, 할멈한테 맨 먼저 배웠을 텐데.',
+  ice: '얼음 속에 갇혀 자는구나. 얼어붙은 걸 녹이는 노래야 할멈한테 맨 먼저 배웠을 텐데.',
   wheels: '바람개비가 셋. 죄다 멈춰 섰구나. 바람을 기다리는 눈치다. 누구 바람인지는 알겠지?',
-  buoy: '저 유리 부표 속에서 뭐가 반짝인다. 물결 따라 떠도니, 가는 길을 보고 겨누거라.',
+  buoy: '저 유리 부표 속에서 씨앗이 반짝이는구나. 물결 따라 떠도니, 가는 길을 잘 보고 겨누거라.',
   thorns: '가시덤불이 씨앗을 칭칭 감았구나. 바싹 말랐다, 저건. 마른 가시가 뭘 무서워하겠느냐.',
-  sky: '씨앗이 허공에 걸렸구나. 걸어서는 못 간다. 높은 데서 뛰어— 이 몸의 바람을 타거라.',
+  sky: '씨앗이 허공에 떠 있구나. 걸어서는 못 간다. 높은 데서 뛰어내려 이 몸의 바람을 타거라.',
 };
 const LINGER_T = 20; // seconds nearby before Borum speaks
 const HOLD_SPIN = 4;  // a puzzle wind wheel keeps turning this long after a gust

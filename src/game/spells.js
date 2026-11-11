@@ -31,21 +31,21 @@ function sndLoop(name, pos, o = {}) {
 
 export const BOLT = {
   arcane: { name: '비전 화살', cost: 0, cd: 0.26, desc: '빠르고 정확한 기본 마법. 마나를 쓰지 않는다.' },
-  fire: { name: '불씨 탄', cost: 4, cd: 0.34, desc: '적을 불태운다. 한기 서린 적을 녹여 큰 피해(융해).' },
-  wind: { name: '바람 칼날', cost: 4, cd: 0.36, desc: '여러 적을 꿰뚫고 밀어낸다. 불·한기·전기를 퍼뜨린다.' },
-  frost: { name: '서리 파편', cost: 5, cd: 0.4, desc: '세 갈래 얼음 파편. 한기가 세 번 쌓이면 얼어붙는다. 물을 얼린다.' },
-  storm: { name: '전격', cost: 5, cd: 0.42, desc: '즉시 적중하고 옆의 적에게 튄다. 젖은 적·언 적에게 치명적.' },
-  water: { name: '물방울 탄', cost: 4, cd: 0.32, desc: '적을 적신다. 젖은 적은 번개에 감전되고 서리에 얼어붙는다. 불타는 적에게는 불을 끄는 대신 피해가 준다.' },
+  fire: { name: '불씨 탄', cost: 4, cd: 0.34, desc: '적을 불태운다. 한기 서린 적을 녹여 큰 피해(융해)를 입힌다.' },
+  wind: { name: '바람 칼날', cost: 4, cd: 0.36, desc: '여러 적을 꿰뚫고 밀어낸다. 불·한기·전기를 주변으로 퍼뜨린다.' },
+  frost: { name: '서리 파편', cost: 5, cd: 0.4, desc: '세 갈래 얼음 파편. 한기가 세 번 쌓이면 얼어붙고, 수면을 얼린다.' },
+  storm: { name: '전격', cost: 5, cd: 0.42, desc: '즉시 적중하고 옆의 적에게 튄다. 젖은 적·언 적에게 치명적이다.' },
+  water: { name: '물방울 탄', cost: 4, cd: 0.32, desc: '적을 적신다. 젖은 적은 번개에 감전되고 서리에 얼어붙는다. 불타는 적에게 쓰면 불을 끄는 대신 피해가 줄어든다.' },
 };
 // Charged basic spell (hold left mouse, release when full). Mana comes only from here.
 export const CHARGE_T = 0.75;
 export const CHARGED = {
-  arcane: { name: '별빛 창', cost: 8, desc: '모든 적을 꿰뚫는 빠른 창. 지나가는 땅의 흔적을 터뜨린다 (공명 폭발).' },
+  arcane: { name: '별빛 창', cost: 8, desc: '일직선상의 모든 적을 꿰뚫는 창. 스쳐 지나가는 땅의 흔적을 폭발시킨다 (공명 폭발).' },
   fire: { name: '불씨 폭탄', cost: 14, desc: '포물선을 그리며 날아가 터지고, 떨어진 자리에 불길을 남긴다.' },
-  wind: { name: '큰 바람 칼날', cost: 12, desc: '모든 적을 꿰뚫고 띄우는 커다란 칼날. 지나가는 땅의 흔적의 속성을 머금는다.' },
-  frost: { name: '얼음 창', cost: 14, desc: '무거운 얼음 창이 한기를 크게 쌓고, 꽂힌 자리에 서리밭을 남긴다.' },
+  wind: { name: '큰 바람 칼날', cost: 12, desc: '적을 꿰뚫고 공중으로 띄우는 커다란 칼날. 땅의 흔적을 스치면 그 속성을 머금고 날아간다.' },
+  frost: { name: '얼음 창', cost: 14, desc: '묵직한 얼음 창이 한기를 크게 쌓고, 꽂힌 자리에 서리밭을 남긴다.' },
   storm: { name: '뇌창', cost: 15, desc: '겨눈 적에게 곧바로 내리꽂혀 주변 적 넷에게 튀고, 대전된 땅을 남긴다.' },
-  water: { name: '물폭탄', cost: 12, desc: '포물선을 그리며 날아가 넓게 터져 모두 적시고, 물웅덩이를 남긴다.' },
+  water: { name: '물폭탄', cost: 12, desc: '포물선을 그리며 날아가 넓게 터져 주변 적을 모두 적시고, 물웅덩이를 남긴다.' },
 };
 export const HEAVY = {
   arcane: { name: '비전 파동', cost: 22, cd: 3.5, desc: '주위를 밀쳐내는 충격파. 적의 투사체를 지우고, 닿은 땅의 흔적을 한꺼번에 터뜨린다.' },

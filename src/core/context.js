@@ -22,10 +22,10 @@ export const ELEMENTS = ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'];
 export const EL_INFO = {
   arcane: { name: '비전', color: 0xb894ff, core: 0xf1e6ff, css: '#b894ff', desc: '자신의 울림을 그대로 쏘아 보내는 기본 마법.' },
   fire: { name: '화염', color: 0xff7a1a, core: 0xfff0b0, css: '#ff8a3a', desc: '타오르는 노래. 적을 불태워 지속 피해를 입힌다.' },
-  wind: { name: '바람', color: 0x5dffb0, core: 0xeafff4, css: '#7dffc3', desc: '흐르는 노래. 적을 밀어내고 띄워 올리며, 상태를 퍼뜨린다.' },
-  frost: { name: '서리', color: 0x5ccfff, core: 0xffffff, css: '#8fe3ff', desc: '고요한 노래. 한기를 쌓아 적을 얼린다. 물 위에 얼음을 만든다.' },
+  wind: { name: '바람', color: 0x5dffb0, core: 0xeafff4, css: '#7dffc3', desc: '흐르는 노래. 적을 밀어내고 띄워 올리며, 주변으로 속성을 퍼뜨린다.' },
+  frost: { name: '서리', color: 0x5ccfff, core: 0xffffff, css: '#8fe3ff', desc: '고요한 노래. 한기를 쌓아 적을 얼리고, 수면 위에 얼음 발판을 만든다.' },
   storm: { name: '번개', color: 0xffcf2a, core: 0xfffbe0, css: '#ffd84a', desc: '외치는 노래. 순식간에 적중하며, 젖거나 언 적에게 치명적이다.' },
-  water: { name: '물', color: 0x3d8bff, core: 0xd8f0ff, css: '#5aa2ff', desc: '되비추는 노래. 적을 적셔 번개와 서리를 부르고, 불을 꺼뜨린다.' },
+  water: { name: '물', color: 0x3d8bff, core: 0xd8f0ff, css: '#5aa2ff', desc: '맑게 흐르는 노래. 적을 적셔 번개와 서리에 취약하게 만들고, 불길을 잠재운다.' },
 };
 
 // One icon family for the whole interface: a 24-unit grid, single colour (currentColor),

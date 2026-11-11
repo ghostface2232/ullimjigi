@@ -30,7 +30,7 @@ function finishTrial(id, name, pos) {
   G.audio.play('quest_done');
   G.vfx.burst(pos, 'soul', 40, { el: 'fire' });
   G.vfx.ring(pos, new THREE.Color(2.2, 1.7, 0.7), 6, 0.8, { thick: 0.18 });
-  G.later(() => G.hud.banner('시련', `${name} — 마침`, '울림이 한 뼘 깊어졌다', '#f1d48a', 4200, { minor: true }), 700);
+  G.later(() => G.hud.banner('시련', `${name} — 마침`, '울림이 한결 깊어졌다', '#f1d48a', 4200, { minor: true }), 700);
 }
 
 // ---------------------------------------------------------------- singing stones
@@ -173,7 +173,7 @@ class SingingStones {
     const d = Math.hypot(P.x - this.x, P.z - this.z);
     if (!this.started && d < 13 && G.mode === 'free') {
       this.started = true;
-      banner(this.name, '돌이 먼저 부른다. 마법으로 두드려 따라 부르자');
+      banner(this.name, '돌이 들려주는 가락을 듣고, 마법으로 차례대로 두드려 따라 부르자');
       this.sing(1.2);
     }
     if (this.started && !this.done) {
@@ -214,7 +214,7 @@ const POSTS = [
 const EMBER_HINT = [
   '발톱 걸 데도 없이 매끈하구나. …그러고 보니, 불길 위로는 더운 바람이 솟지.',
   '더운 바람만으론 한 뼘이 모자라는구나. 제일 높이 떴을 때, 바람을 한 번 더 부려 보거라.',
-  '마지막 것은 땅에서 재 봐야 소용없겠다. 방금 오른 기둥 꼭대기, 거기서부터 바람을 타 보거라.',
+  '마지막 기둥은 땅에서는 아무리 애써도 못 오른다. 방금 오른 기둥 꼭대기에서 바람을 타고 건너가 보거라.',
 ];
 
 class EmberClimb {

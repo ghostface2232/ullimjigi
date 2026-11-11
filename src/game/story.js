@@ -9,8 +9,9 @@ import { MEMORIES } from '../world/world.js';
 import { THEME_NOTES } from '../core/music.js';
 import { Sketchbook } from './sketches.js';
 import { PAL } from '../render/vfx.js';
-import { HEAVY } from './spells.js';
-import { SIG, WEAVE_NODE } from './skills.js';
+import { HEAVY, weaveInfo } from './spells.js';
+import { SIG, WEAVE_NODE, NODES } from './skills.js';
+import { REACTIONS } from './combat.js';
 import { pick, randRange, rand, fillName, clamp, lerp, josa } from '../core/util.js';
 
 // grade saturation for the number of bells rung: muted in the silent vale, full at four
@@ -19,6 +20,9 @@ const satFor = (bells) => 1.12 - (4 - bells) * 0.08;
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const GV = (x, dy, z) => new THREE.Vector3(x, G.world.h(x, z) + dy, z); // ground-relative
 const KBD = (k) => `<kbd>${k}</kbd>`;
+// A name owned by another table (reaction, spell) inside a line: *name* plus the particle that fits it
+const EM = (name, k) => `*${name}*${k ? josa(name, k).slice(name.length) : ''}`;
+const RX = (id, k) => EM(REACTIONS[id]?.name ?? id, k);
 
 export class Story {
   constructor(data = null) {
@@ -178,21 +182,33 @@ export class Story {
   }
 
   refreshBarks() {
-    const B = (id, arr) => { const n = this.npc(id); if (n) n.barks = arr; };
-    const ch = this.chapter;
-    if (ch === 'prologue') {
-      B('mora', ['천천히 해도 된단다.', '후후, 발이 가볍구나.']);
-    } else if (ch === 'post') {
-      B('mora', ['라— 라라…', '바람이 좋네요.', '누가 종을 치나 봐요. 듣기 좋아라.']);
-    } else B('mora', ch === 'mora' ? ['…세하야, 추운데 어디 가니.', '라라… 이 다음이 뭐였더라.'] : ['조심해서 다니거라.', '…종소리가 좋구나.', '할미는 여기서 기다리마.']);
-    B('bau', ch === 'village' && !this.flag('v_defend') ? ['종이 안 울어… 쇠가 입을 다물었어.', '이놈의 종, 사십 년 동안 한 번도 이런 적 없었는디.'] : ['종은 세게 치는 게 아니라 오래 치는 겨.', '오늘도 종이 잘 울었구먼.', '허리가 쑤시는 거 보니 비 오겄네.']);
-    B('dodam', ['누룽지야~! 어디 있어~!', '마법사님 멋있다아…', '저도 크면 울림지기 될 거예요!']);
-    if (this.flag('catSaved')) B('dodam', ['누룽지가 요즘 저만 따라다녀요!', '마법사님! 오늘은 뭐 물리치러 가요?', '저 물수제비 열세 번 떴어요! 진짜로요!']);
-    B('isol', ['흥미롭군… 아주 흥미로워.', '가설 17번도 기각인가…', '잉크가 또 떨어졌군.']);
-    B('danbi', ['꿀빵 나왔어요~ 따끈따끈한 꿀빵!', '아이고 허리야.', '밥은 먹고 다니는 거지?']);
-    B('farmer', ['올해 무는 잘 들었는디… 잿빛 것들이 밭을 밟고 다녀.', '에잉, 두더지 녀석들.']);
-    B('fisher', ['오늘은 입질이 좋네요~', '호수 한가운데 섬에 뭔가 있던데… 고양이 같았어요.']);
-    B('elder', ['장이야!', '에헴, 요즘 젊은이들은 장기를 몰라.', '멍군이다, 멍군!']);
+    // Passing remarks are picked when spoken, so they follow the story, the weather and the hour.
+    const B = (id, fn) => { const n = this.npc(id); if (n) n.barks = () => pick(fn()); };
+    const f = (k) => this.flag(k);
+    const rain = () => G.world.weather && G.world.weather.rain > 0.3;
+    const night = () => G.world.sky.night > 0.5;
+    B('mora', () => {
+      const ch = this.chapter;
+      if (ch === 'prologue') return ['서두를 것 없단다.', '옳지, 옳지.', '후후, 발이 가볍구나.'];
+      if (ch === 'post') return ['라— 라라…', '바람이 좋네요.', '누가 종을 치나 봐요. 듣기 좋아라.'];
+      if (ch === 'mora' || ch === 'rift') return ['…세하야, 추운데 어디 가니.', '라라… 이다음이 뭐였더라.', '수제비 다 불겠네…'];
+      return ['발밑 조심하고.', '할미는 여기 앉아 있으마.', this.bellsRung() ? '…종소리가 곱기도 하지.' : '…오늘은 아침이 참 길구나.'];
+    });
+    B('bau', () => {
+      if (this.chapter === 'village' && !f('v_defend')) return ['쇠가 입을 다물었어…', '사십 년에 이런 일은 처음이여.'];
+      if (rain()) return ['거 봐. 무릎이 온다 했잖여.', '줄이 젖으면 무거운디…'];
+      return ['종은 세게 치는 게 아니라 오래 치는 겨.', '오늘도 종이 잘 울었구먼.', '무릎이 쑤셔. 비 오겄네.', ...(this.chapter === 'post' ? ['새벽 종? 내일은 도담이 차례여.'] : [])];
+    });
+    B('dodam', () => {
+      if (night()) return ['하아암… 안 졸려요. 진짜로요.', '별이 엄청 많아요! 백 개? 천 개?'];
+      if (f('catSaved')) return ['누룽지가 요즘 저만 따라다녀요!', '마법사님! 오늘은 뭐 물리치러 가요?', '저 물수제비 열세 번 떴어요! 진짜로요!'];
+      return ['누룽지야~! 밥 먹자~!', '마법사님 멋있다아…', '저도 크면 울림지기 될 거예요!'];
+    });
+    B('isol', () => ['흥미롭군… 아주 흥미로워.', f('name_isol') ? '가설 17번, 채택. …좋은 울림이군.' : '가설 17번… 아직 백지로군.', rain() ? '이런, 각주가 번지는군.' : '잉크가 또 떨어졌군. 연구비처럼.']);
+    B('danbi', () => ['꿀빵 나왔어요~ 따끈따끈한 꿀빵!', '아이고 허리야.', '밥은 먹고 다니는 거지?', rain() ? '비 오는 날엔 빵 냄새가 멀리 가.' : '두 개 싸 줄까?']);
+    B('farmer', () => (this.bellsRung() ? ['종이 우니께 밭이 조용허네.', '무야, 무야, 잘 크거라.', '에잉, 두더지 녀석들.'] : ['잿빛 것들이 또 밭을 밟았어…', '에잉, 두더지 녀석들.']));
+    B('fisher', () => ['오늘은 입질이 좋네요~', f('catSaved') ? '누룽지, 그건 미끼야! 내 미끼!' : '섬에 주황색 뭐가 있던데…', night() ? '별이 호수에 다 내려왔네요.' : '물이 맑으니 마음도 맑네요.']);
+    B('elder', () => (f('m_choir') || this.chapter === 'post' ? ['장이야! …받아 봐, 카엘 양반.', '멍군이다, 멍군!', '에헴, 요즘 젊은이들은 장기를 몰라.'] : ['장이야!', '에헴, 요즘 젊은이들은 장기를 몰라.', '…자네 차례여. 어이.']));
   }
 
   interacts() {
@@ -230,6 +246,9 @@ export class Story {
     if (this.quests.q_memory && !this.flag('sketchbook')) this.flags.sketchbook = true;
     // saves from before gliding was Borum's gift: anyone past the first bell already has it
     if (this.flag('v_wind') && !this.flag('glide')) this.flags.glide = true;
+    // a shrine whose bell already rang stays open on any later save: frostShrine / stormShrine,
+    // which reopen it, only run during chapter 2 (the music box and the badge lie inside)
+    for (const el of ['frost', 'storm']) if (this.flag(el + 'Bell')) this.openSealInstant(G.world.shrines[el]);
     // restore lantern states handled by game
     this.run().catch((e) => console.error('story', e));
     this.lakeSong().catch((e) => console.error('lake', e));
@@ -304,7 +323,7 @@ export class Story {
     // carried cat delivery
     if (this.flag('catCarried') && !this.flag('catSaved') && this.near(this.npc('dodam').pos.x, this.npc('dodam').pos.z, 3) && G.mode === 'free' && !this.catBusy) { this.catBusy = true; this.deliverCat(); }
     // glide hint
-    if (!P.grounded && P.vel.y < -6 && this.flag('glide') && this.once('hint_glide')) this.hint(`공중에서 ${KBD('Space')} 누르고 있기: 활공 — 기력을 소모합니다`, 5);
+    if (!P.grounded && P.vel.y < -6 && this.flag('glide') && this.once('hint_glide')) this.hint(`공중에서 ${KBD('Space')} 누르고 있기: 활공 — 기력을 쓴다`, 5);
   }
 
   // ------------------------------------------------------------ prologue
@@ -317,26 +336,26 @@ export class Story {
       await this.sleep(0.6);
       await this.fade(false, 1.6);
       await this.conv(async () => {
-        await this.say('mora', '…세하야, 일어났니? 벌써 해가 등성이를 넘었구나.', { expr: 'tender' });
-        await this.say('mora', '…아니지. 아니야. {n:아}. 이 할미 정신 좀 보렴. 네 어미 이름이 왜 자꾸 입에 붙는지.', { expr: 'worried', gesture: 'sigh' });
+        await this.say('mora', '…세하야, 해가 등성이를 다 넘었다. 얼른 일어나렴.', { expr: 'tender' });
+        await this.say('mora', '…아이고, 또 이런다. {n:아}. 네 어미 이름이 요새 혀끝에 살림을 차렸구나.', { expr: 'worried', gesture: 'sigh' });
         const c = await this.choose(['괜찮아요, 할머니.', '…엄마 얘기 해 주세요.']);
-        if (c === 0) await this.say('mora', '그래, 그래. 넌 늘 괜찮다고 하지. 그 말버릇도 제 어미를 꼭 닮았구나.', { expr: 'smile' });
-        else { this.set('askedMother'); await this.say('mora', '후후, 아침부터 옛날이야기를 조르는 게냐. …나중에. 오늘 일을 다 마치면 들려주마. 약속하지.', { expr: 'smile', gesture: 'laugh' }); }
-        await this.say('mora', '자, 오늘이 무슨 날인지는 잊지 않았겠지? *첫 울림*을 시험하는 날이란다.', { expr: 'smile', gesture: 'nod' });
-        await this.say('mora', '이 할미가 네 나이 땐 벌써 참새 떼를 불꽃으로 몰고 다녔지. …흠흠, 그건 자랑할 일이 아니었구나.', { expr: 'laugh' });
-        await this.say('mora', '우선 몸부터 풀자꾸나. 저기 빛나는 표식 세 개를 차례로 밟고 오너라.', { gesture: 'point' });
+        if (c === 0) await this.say('mora', '그래, 그래. 넌 늘 괜찮다지. 그 말버릇까지 제 어미를 빼닮았어.', { expr: 'smile' });
+        else { this.set('askedMother'); await this.say('mora', '후후, 아침 댓바람부터 옛날얘기를 조르니? …나중에. 오늘 일 다 마치면 해 주마. 약속이다.', { expr: 'smile', gesture: 'laugh' }); }
+        await this.say('mora', '자, 오늘이 무슨 날인지는 안 잊었겠지. *첫 울림*을 시험하는 날이란다.', { expr: 'smile', gesture: 'nod' });
+        await this.say('mora', '이 할미는 네 나이 때 불꽃으로 참새 떼를 몰고 다녔지. …흠흠. 그건 본받지 말고.', { expr: 'laugh' });
+        await this.say('mora', '몸부터 풀자꾸나. 마당에 빛나는 자리 셋, 차례로 밟고 오너라.', { gesture: 'point' });
       });
       this.set('p_intro');
     }
-    this.quest('q_morning', '종이 울리지 않는 아침', '모라 할머니와 함께 첫 울림을 시험하는 날. 할머니는 요즘 자꾸 엄마 이름으로 나를 부른다.');
+    this.quest('q_morning', '종이 울리지 않는 아침', '첫 울림을 시험하는 날. 할머니는 요즘 자꾸 나를 엄마 이름으로 부른다.');
     if (!this.flag('p_run')) {
       const mk = W.runMarkers;
       let n = 0;
-      this.hint(`${KBD('W')}${KBD('A')}${KBD('S')}${KBD('D')} 이동 · ${KBD('Shift')} 누르고 있기: 달리기 · ${KBD('Space')} 점프<br><small>화면을 클릭하면 마우스로 시점을 돌릴 수 있습니다</small>`, 12);
+      this.hint(`${KBD('W')}${KBD('A')}${KBD('S')}${KBD('D')} 이동 · ${KBD('Shift')} 누르고 있기: 달리기 · ${KBD('Space')} 점프<br><small>화면을 클릭하면 마우스로 시점을 돌린다</small>`, 12);
       for (const m of mk) m.mesh.material.opacity = 0.7;
       while (n < 3) {
         const next = mk.find((m) => !m.done);
-        this.obj('q_morning', `빛나는 표식 밟기 (${n}/3)`, mk.filter((m) => !m.done).map((m) => ({ x: m.x, z: m.z, h: 1.5 })));
+        this.obj('q_morning', `빛나는 자리 밟기 (${n}/3)`, mk.filter((m) => !m.done).map((m) => ({ x: m.x, z: m.z, h: 1.5 })));
         await this.wait(() => mk.some((m) => !m.done && this.near(m.x, m.z, 1.5)));
         const m = mk.find((m) => !m.done && this.near(m.x, m.z, 1.5));
         m.done = true; n++;
@@ -348,12 +367,12 @@ export class Story {
       this.set('p_run');
     }
     if (!this.flag('p_bolt')) {
-      this.obj('q_morning', '모라에게 돌아가기', [{ x: mora.pos.x, z: mora.pos.z, h: 2.5 }]);
+      this.obj('q_morning', '할머니에게 돌아가기', [{ x: mora.pos.x, z: mora.pos.z, h: 2.5 }]);
       await this.wait(() => this.near(mora.pos.x, mora.pos.z, 4.5));
       await this.conv(async () => {
-        await this.say('mora', '후후, 발은 빠르구나. 넘어지지도 않고. 좋아, 좋아.', { expr: 'smile' });
-        await this.say('mora', '그럼 지팡이를 들어 보렴. 마음속으로 조용히… 네 안에서 울리는 소리를 느껴 보는 거야.');
-        await this.say('mora', '그 소리를 저 *떠 있는 수정*들에게 보내 주렴. 세 개 모두.');
+        await this.say('mora', '후후, 발이 가볍구나. 넘어지지도 않고. 좋아, 좋아.', { expr: 'smile' });
+        await this.say('mora', '이제 지팡이를 들어 보렴. 가만히… 네 안에서 울리는 소리가 있을 게다.', { gesture: 'handToChest' });
+        await this.say('mora', '그 소리를 저 *떠 있는 수정*한테 건네주는 거야. 셋 다.', { gesture: 'point' });
       });
       this.hint(`${KBD('마우스')} 조준 · ${KBD('좌클릭')} 비전 화살 — 누르고 있다가 떼면 모아 쏜다`, 10);
       let n = 0;
@@ -375,12 +394,12 @@ export class Story {
     if (!this.flag('p_fire')) {
       await this.sleep(0.6);
       await this.conv(async () => {
-        await this.say('mora', '그래! 그 소리란다. …네 울림은 맑구나. 꼭 새벽 종소리 같아.', { expr: 'tender', gesture: 'handToChest' });
-        await this.say('mora', '이제 [불의 노래|fire]를 가르쳐 주마. 불은 성급한 녀석이라, 네가 망설이면 먼저 달려 나가 버린단다.', { expr: 'smile' });
-        await this.say('mora', '그러니 망설이지 말고… 그렇다고 서두르지도 말고. 불이란 그런 거야. 사람 마음처럼.');
+        await this.say('mora', '그래, 그 소리란다. 맑기도 하지. …음이 살짝 엇나가는 건, 내림이니 어쩌겠니.', { expr: 'tender', gesture: 'handToChest' });
+        await this.say('mora', '이번엔 [불의 노래|fire]다. 불은 성질이 급해서, 네가 망설이면 저 혼자 먼저 뛰쳐나간단다.', { expr: 'smile' });
+        await this.say('mora', '그러니 망설이지 말고. 그렇다고 서두르지도 말고. …밥 뜸 들이는 거랑 매한가지야.');
       });
-      await this.unlockElement('fire', '타오르는 노래. 적을 불태우고, 불씨를 밝힌다.');
-      this.hint(`${KBD('2')} 또는 ${KBD('휠')} 속성 전환 · 화염으로 화로에 불을 붙이세요`, 10);
+      await this.unlockElement('fire', '타오르는 노래. 닿은 것을 태우고, 꺼진 불씨를 다시 밝힌다.');
+      this.hint(`${KBD('2')} 또는 ${KBD('휠')} 속성 전환 · 화염으로 화로에 불을 붙이자`, 10);
       let n = W.training.braziers.filter((b) => b.lit).length;
       const upd = () => this.obj('q_morning', `화로 세 개에 불 붙이기 (${n}/3)`, W.training.braziers.filter((b) => !b.lit).map((b) => ({ x: b.pos.x, z: b.pos.z, h: 2.5 })));
       for (const b of W.training.braziers) { b.permanent = true; b.onLit = () => { n = W.training.braziers.filter((x) => x.lit).length; upd(); }; }
@@ -391,9 +410,9 @@ export class Story {
     if (!this.flag('p_heavy')) {
       await this.sleep(0.8);
       await this.conv(async () => {
-        await this.say('mora', '따뜻하구나. …이 탑에 불이 이렇게 환하게 켜진 게 얼마 만인지.');
-        await this.say('mora', '마지막이다. 불의 노래는 작게 부르는 법과 *크게* 부르는 법이 따로 있단다. 크게 부르는 건… 이 할미가 네 나이 때 처음 익힌 기술이지.', { expr: 'smile' });
-        await this.say('mora', '오른손에 힘을 모아서— 저 허수아비 영감들에게! 잘 보고 따라 해 보렴.', { gesture: 'point' });
+        await this.say('mora', '따뜻하구나. …이 탑이 이렇게 환한 게 얼마 만인지.', { expr: 'tender' });
+        await this.say('mora', '마지막이다. 불의 노래엔 흥얼거리는 법이 있고, *목청껏* 부르는 법이 있단다.', { expr: 'smile' });
+        await this.say('mora', '오른손에 힘을 모아서— 저 허수아비 영감들한테! 이 할미가 네 나이 때 처음 익힌 재주란다.', { gesture: 'point' });
       });
       if (!G.skills.has('f_sig')) {
         G.skills.grant('f_sig', { quiet: true, sound: 'skill_unlock_active' });
@@ -409,25 +428,26 @@ export class Story {
     }
     if (!this.flag('p_fight')) {
       await this.conv(async () => {
-        await this.say('mora', '아이고, 허수아비 영감이 놀라 자빠졌구나! 호호, 잘했다. 아주 잘했어.', { expr: 'laugh', gesture: 'laugh' });
-        await this.say('mora', '…………');
+        await this.say('mora', '아이고, 허수아비 영감 수염 다 태웠구나! 호호, 잘했다. 아주 잘했어.', { expr: 'laugh', gesture: 'laugh' });
+        await this.say('mora', '……', { expr: 'neutral', gesture: 'lookAround' });
         await this.say('mora', '…이상하구나.', { expr: 'worried' });
-        G.cameraRig.setCine(V(-2, 30, 138), V(4, 12, 60));
-        await this.say('mora', '해가 이만큼 올랐는데… 마을 종이 울리지 않아. 오십 년 동안 하루도 거른 적 없던 종이.', { cam: false });
+        // from the hill, out over the vale toward the bell tower that should have rung by now
+        G.cameraRig.setCine(GV(-2, 6, 138), GV(POI.bellTower.x, 14, POI.bellTower.z));
+        await this.say('mora', '해가 저만큼 올랐는데, 종이 안 울어. 오십 년을 하루도 거른 적 없는 종이.', { cam: false });
         this.hushBase = 0.35;
         G.audio.play('dissolve', { pos: G.player.pos });
-        await this.say('mora', '{n:아}, 내 뒤로— …아니, 아니다.', { expr: 'surprised', cam: true });
-        await this.say('mora', '네가 해 보렴. 이 할미가 뒤에 있으마. 저것들은 *허깨비*. 제 노래를 잃어버린 것들이란다.', { expr: 'determined', gesture: 'nod' });
-        await this.say('mora', '불을 싫어하지. 겁먹지 말거라. 저것들도 한때는 누군가였으니, 미워할 것도 없단다.');
+        await this.say('mora', '{n:아}, 이 할미 뒤로— …아니. 아니다.', { expr: 'surprised', cam: true });
+        await this.say('mora', '네가 해 보렴. 할미가 뒤에 있으마. 저건 *허깨비*란다. 제 노래를 잃어버린 것들이지.', { expr: 'determined', gesture: 'nod' });
+        await this.say('mora', '불을 싫어해. 겁낼 것 없다. …미워할 것도 없고. 저것들도 한때는 누군가였으니.', { expr: 'sad' });
       });
       this.hint(`${KBD('Shift')} 짧게 누르기: 순간이동 — 잠깐 무적 · ${KBD('T')} 대상 고정`, 10);
-      this.obj('q_morning', '허깨비들을 물리치기');
+      this.obj('q_morning', '허깨비 물리치기');
       const lv = 1;
       const wave = (defs) => defs.map(([t, x, z]) => { const e = G.enemies.spawn(t, V(x, 0, z), lv); e.aggro(); G.vfx.burst(e.center(), 'hush', 10, { size: 1 }); return e; });
       const yard = V(8, 0, 126);
       await this.scriptedWave(() => wave([['ashling', 10, 124], ['ashling', 4, 120], ['ashling', 16, 130]]), yard, 45);
       await this.sleep(1.2);
-      G.hud.bark(mora, '또 온다! 이번엔 섞여 있구나!');
+      G.hud.bark(mora, '또 온다! 이번엔 여럿이 섞였구나!');
       G.later(() => this.hint('<b>울음탈</b>은 멀리서 구체를 쏜다 — 마법으로 구체를 맞혀 없앨 수 있다<br><b>잿물</b>은 쓰러뜨리면 둘로 갈라진다', 8), 1500);
       await this.scriptedWave(() => wave([['ooze', 12, 124], ['ashling', 2, 118], ['wailer', 16, 132]]), yard, 45);
       this.set('p_fight');
@@ -436,26 +456,26 @@ export class Story {
     if (!this.flag('p_end')) {
       mora.pose.kneel = true;
       await this.conv(async () => {
-        await this.say('mora', '…후우. 괜찮다, 괜찮아. 조금 어지러울 뿐이란다.', { expr: 'hurt', gesture: 'sigh' });
-        await this.say('mora', '들어 보렴. 이 골짜기에는 종이 세 개 있단다. 종이 울리는 동안, *고요*는 이곳에 내려오지 못해.');
-        await this.say('mora', '첫째 종은 마을에 있고, 둘째 종은… 둘째는…');
+        await this.say('mora', '…후우. 괜찮다, 괜찮아. 좀 어지러울 뿐이야.', { expr: 'hurt', gesture: 'sigh' });
+        await this.say('mora', '잘 들으렴. 이 골짜기엔 종이 셋 있단다. 종이 우는 동안은 *고요*가 내려오지 못해.');
+        await this.say('mora', '첫째는 마을에 있고, 둘째는… 둘째는…', { expr: 'worried' });
         await this.say('mora', '……');
-        await this.say('mora', '이상하지. 수백 번 부른 노래인데, 그다음 구절이 생각나지 않는구나.', { expr: 'sad' });
+        await this.say('mora', '이상하지. 수백 번을 부른 노래인데, 다음 구절이 입에서만 맴도는구나.', { expr: 'sad' });
         const c = await this.choose(['할머니, 쉬셔야 해요.', '제가 마을에 가 볼게요.']);
         mora.pose.kneel = false;
-        if (c === 0) await this.say('mora', '그래, 쉬마. 그러니 네가 이 늙은 발 대신 뛰어 주겠니?');
+        if (c === 0) await this.say('mora', '그래, 쉬마. 대신 네가 이 늙은 다리 노릇 좀 해 주겠니?', { expr: 'smile' });
         else await this.say('mora', '…그래. 그 말을 기다렸는지도 모르겠구나.', { expr: 'tender' });
-        await this.say('mora', '마을에 내려가 *바우 영감*을 찾거라. 종지기 노릇을 한 지 사십 년 된 고집쟁이지만, 종에 대해선 누구보다 잘 안단다.');
-        await this.say('mora', '그리고— 가는 길에 *등석*이 보이면 불을 밝혀 두렴. 불 밝힌 등석은 길 잃은 이를 집으로 데려다준단다.');
+        await this.say('mora', '마을에 내려가 *바우 영감*을 찾거라. 사십 년 묵은 고집쟁이지만, 종 일이라면 그이만 한 사람이 없단다.');
+        await this.say('mora', '가는 길에 *등석*이 보이거든 불을 밝혀 두렴. 불 켜진 등석은 길 잃은 사람을 집에 데려다준단다.');
         await this.say('mora', '…다녀오너라, {n:아}.', { expr: 'tender', gesture: 'wave' });
       });
       this.set('p_end');
     }
     this.done('q_morning');
     this.set('prologueDone');
-    this.quest('q_bell', '침묵한 종', '마을의 종이 울리지 않았다. 모라 할머니는 기억이 흐려지는 듯하다. 하늬 마을의 종지기, 바우 영감을 찾아가자.');
+    this.quest('q_bell', '침묵한 종', '오십 년을 거른 적 없다는 아침 종이 울리지 않았다. 할머니는 노래의 다음 구절을 잊었다. 마을의 종지기 바우 영감을 찾아가자.');
     this.obj('q_bell', '하늬 마을로 내려가 바우 영감 찾기', [{ x: POI.bellTower.x, z: POI.bellTower.z, h: 16 }]);
-    this.hint(`${KBD('Tab')} 여정 · 마법서 — 원소 반응과 조작을 확인할 수 있습니다 · ${KBD('M')} 지도`, 8);
+    this.hint(`${KBD('Tab')} 여정 · 마법서 — 원소 반응과 조작을 다시 볼 수 있다 · ${KBD('M')} 지도`, 8);
     this.chapter = 'village'; this.refreshBarks();
     G.game.save(true);
   }
@@ -485,11 +505,12 @@ export class Story {
       dodam.walkTarget = null; dodam.walkRes = null;
       G.player.frozenInput = false;
       if (met && !this.flag('v_arrive')) await this.conv(async () => {
-        await this.say('dodam', '우와아! 마법사님이다! 모라 할머니네 탑에서 온 마법사님 맞죠? 맞죠?', { expr: 'laugh', gesture: 'wave' });
-        await this.say('dodam', '봤어요? 아침에 종이 안 울렸어요! 우리 아빠가 그러는데 백 년 만에 처음이래요! 아, 아빠가 백 살이라는 건 아니고요, 할아버지의 할아버지의… 아무튼 엄청 오래됐대요!');
+        await this.say('dodam', '우와아! 진짜 마법사님이다! 언덕 위 탑에서 내려온 거 맞죠? 맞죠?', { expr: 'laugh', gesture: 'wave' });
+        await this.say('dodam', '오늘 아침에 종이 안 울렸어요! 아빠가 그러는데 백 년 만에 처음이래요!', { expr: 'surprised' });
+        await this.say('dodam', '아, 아빠가 백 살이라는 건 아니고요. 할아버지의 할아버지의… 아무튼 엄청요!', { gesture: 'shake' });
         const c = await this.choose(['바우 영감님은 어디 계셔?', '종이 왜 안 울린 거야?']);
-        if (c === 1) await this.say('dodam', '몰라요! 그래서 무서워요… 아, 아니에요, 안 무서워요! 저 하나도 안 무서워요. 진짜진짜로요.', { expr: 'worried', gesture: 'shake' });
-        await this.say('dodam', '바우 할아버지는 종탑 앞에서 종 줄 붙잡고 한숨만 푹푹 쉬고 계세요. 저쪽이요, 저쪽! 제일 높은 거!', { gesture: 'point' });
+        if (c === 1) await this.say('dodam', '몰라요! 그래서 좀 무서… 아니, 안 무서워요! 저 하나도 안 무서워요. 진짜진짜로요.', { expr: 'worried', gesture: 'shake' });
+        await this.say('dodam', '바우 할아버지는 종탑 앞에서 종 줄만 붙잡고 계세요. 한숨을 푹— 푹— 쉬면서요. 저기, 제일 높은 거요!', { gesture: 'point' });
       });
       dodam.walkTo(0, 24, 3.5);
       this.set('v_arrive');
@@ -521,7 +542,7 @@ export class Story {
     const C = G.companion;
     await this.conv(async () => {
       G.cameraRig.setCine(GV(12, 3, 24), GV(6, 3.5, 12));
-      await this.say('narr', '손을 대자, 차가운 돌 안쪽에서 희미한 바람 소리가 난다…', { cam: false });
+      await this.say('narr', '손을 대자, 차가운 돌 속에서 가느다란 바람 소리가 샌다…', { cam: false });
       G.audio.play('updraft', { pos: GV(6, 7, 10) });
       C.show(true);
       C.override = GV(6, 7.5, 12.8);
@@ -533,17 +554,17 @@ export class Story {
       await this.sleep(1.2);
       G.audio.play('fox');
       await this.say('boreum', '누가 감히 이 몸의 낮잠을— …흠?');
-      await this.say('boreum', '킁킁. 모라의 냄새가 나는구나. 그 늙은 여우 할멈, 아직 숨은 붙어 있느냐?');
-      const c = await this.choose(['…여우가 말을 해?', '모라 할머니를 아세요?']);
-      if (c === 0) await this.say('boreum', '여우라니! 이 몸은 하늬바람의 정령, *보름*이니라! 무엄하도다. …그래도 뭐, 틀린 말은 아니다만.');
-      else await this.say('boreum', '알다마다. 오십 년 전, 그 할멈이 이 몸을 이 종에 묶었느니라. 좋은 뜻이었지. 그래서 더 괘씸하고.');
-      await this.say('boreum', '들어라, 꼬마 울림지기. 종이 우는 건 쇠가 울어서가 아니다. *기억하는 이*가 노래해야 종이 대답하느니라.');
-      await this.say('boreum', '모라가 매일 새벽 노래했기에 이 종은 오십 년을 울었다. 헌데 그 노래가 흐려지고 있어.');
-      await this.say('boreum', '할멈이… 잊어 가고 있는 게야.');
+      await this.say('boreum', '킁킁. 모라 냄새로구나. 그 늙은 여우 할멈, 아직 숨은 붙어 있느냐?');
+      const c = await this.choose(['…여우가 말을 해?', '우리 할머니를 알아?']);
+      if (c === 0) await this.say('boreum', '여우라니! 이 몸은 하늬바람의 정령, *보름*이니라! …뭐, 생김새가 그리 보이는 것까진 봐주마.');
+      else await this.say('boreum', '알다마다. 오십 년 전 이 몸을 이 종에 묶어 둔 게 그 할멈이니라. 좋은 뜻으로. …그래서 더 괘씸하지.');
+      await this.say('boreum', '오십 년을 새벽마다 그 할멈 노래에 잠을 깼느니라. 시끄러워서 원.');
+      await this.say('boreum', '…헌데 오늘은, 아무도 이 몸을 깨우지 않더구나.');
+      await this.say('boreum', '종은 쇠가 우는 게 아니다, 꼬마. *기억하는 이*가 불러야 대답하는 게지. 할멈이… 잊어 가고 있는 게야.');
       const c2 = await this.choose(['할머니를 도울 방법이 있어?', '…그럴 리 없어.']);
-      if (c2 === 1) await this.say('boreum', '이 몸도 그렇게 믿고 싶느니라. 그러니 종소리가 멈춘 게지.');
-      await this.say('boreum', '…해가 기울면 놈들이 몰려온다. 종이 침묵한 마을은 고요에게 빈집이나 다름없으니.');
-      await this.say('boreum', '네가 이 마을을 지켜 낸다면, 이 몸이 너를 믿어 보마. 그리고 이 몸의 노래를 빌려주지.');
+      if (c2 === 1) await this.say('boreum', '이 몸도 그리 믿고 싶었다. 그래서 여태 자는 척을 한 게고.');
+      await this.say('boreum', '해가 기울면 놈들이 온다. 종이 입 다문 마을은, 고요한테 빈집이나 마찬가지니.');
+      await this.say('boreum', '오늘 저녁, 이 마을을 지켜 보거라. 해내면— 이 몸의 노래를 빌려주마.');
     });
     C.override = null;
     this.set('v_altar');
@@ -558,14 +579,14 @@ export class Story {
     G.player.teleport(6, 22, Math.PI);
     await this.sleep(0.4);
     await this.fade(false, 1.2);
-    this.cSay('온다. 셋… 아니, 더 많구나. 흩어져서 올 게다. 마을 안으로 들이지 마라!');
-    G.hud.bark(this.npc('bau'), '이놈들! 내 창은 아직 안 녹슬었어!');
+    this.cSay('온다. 셋… 아니, 냄새가 더 많다. 한 놈도 마을 안에 들이지 마라!');
+    G.hud.bark(this.npc('bau'), '이놈들! 종은 못 쳐도 창은 쓸 줄 알어!');
     const lv = G.enemies.levelFor(0);
     const spawnAt = (t, x, z) => { const e = G.enemies.spawn(t, V(x + randRange(-2, 2), 0, z + randRange(-2, 2)), lv); e.aggro(); G.vfx.burst(e.center(), 'hush', 10, { size: 1 }); return e; };
     const waves = [
       { say: '북쪽 길이다!', units: [['ashling', 0, -26], ['ashling', 4, -28], ['ashling', -4, -24], ['moth', 0, -30], ['moth', 2, -30]] },
-      { say: '서쪽에서도 온다!', units: [['ashling', -44, 16], ['ooze', -46, 20], ['ashling', -44, 22], ['wailer', -48, 12]] },
-      { say: '동쪽이다, 꼬마! 마지막이다, 버텨라!', units: [['ashling', 44, 12], ['ashling', 46, 16], ['wailer', 48, 8], ['wailer', 44, 22], ['oozeFire', 42, 18]] },
+      { say: '서쪽! 호수 쪽에서도 기어 온다!', units: [['ashling', -44, 16], ['ooze', -46, 20], ['ashling', -44, 22], ['wailer', -48, 12]] },
+      { say: '동쪽이다, 꼬마! 이게 마지막 떼다!', units: [['ashling', 44, 12], ['ashling', 46, 16], ['wailer', 48, 8], ['wailer', 44, 22], ['oozeFire', 42, 18]] },
     ];
     let i = 0;
     for (const w of waves) {
@@ -573,10 +594,10 @@ export class Story {
       this.obj('q_bell', `해 질 녘, 마을을 지키기 (${i}/3)`);
       this.cSay(w.say);
       if (i === 1 && this.once('dodge_tut')) G.later(() => {
-        this.cSay('잘 보거라, 꼬마. 놈이 덤벼드는 바로 그 순간 몸을 비키면— 세상이 잠시 느려지느니라. 이 몸의 바람이 네 편이니라.', null, 7);
+        this.cSay('꼬마, 하나 일러 주마. 놈이 덮치는 바로 그 찰나에 비켜 보거라. 세상이 잠깐 느려질 게다. 이 몸의 바람이 네 편이니.', null, 7);
         this.hint(`적의 공격이 닿기 직전 ${KBD('Shift')} 짧게: 순간이동 — 딱 맞추면 <b>완벽 회피</b><br><small>잠시 적이 느려지고, 기본 마법에 마나가 들지 않는다</small>`, 10);
       }, 2500);
-      if (i === 3) this.hint('<b>불잿물</b>은 쓰러질 때 폭발한다 — 적들 가까이에서 터뜨려라', 7);
+      if (i === 3) this.hint('<b>불잿물</b>은 쓰러질 때 폭발한다 — 적들 한가운데서 터뜨리자', 7);
       await this.scriptedWave(() => w.units.map(([t, x, z]) => spawnAt(t, x, z)), V(4, 0, 16), 80);
       await this.sleep(1.5);
     }
@@ -585,39 +606,42 @@ export class Story {
   async windAndBell() {
     const C = G.companion;
     await this.conv(async () => {
-      await this.say('boreum', '…흥. 제법이구나. 모라 할멈, 사람 보는 눈은 여전하구나.');
-      await this.say('boreum', '약속대로다. 이 몸의 노래를 빌려주마. *하늬바람*이니라. 흐르는 것은 막을 수 없느니.');
+      await this.say('boreum', '…흥. 제법이구나. 그 할멈, 사람 보는 눈 하나는 안 늙었어.');
+      await this.say('boreum', '약속은 약속이다. 이 몸의 노래를 빌려주마. *하늬바람*이니라. 흐르는 건 아무도 못 막지.');
     });
-    await this.unlockElement('wind', '흐르는 노래. 적을 띄우고 밀어내며, 불과 한기를 퍼뜨린다.');
+    await this.unlockElement('wind', '흐르는 노래. 띄우고 밀어내며, 불과 한기를 멀리 실어 나른다.');
     // Borum lends the wind itself too: gliding starts here, at the end of the first act
     await this.conv(async () => {
-      await this.say('boreum', '덤으로 하나 더. 바람은 부리기만 해서는 반쪽이니라. *올라탈 줄*도 알아야지.');
-      await this.say('boreum', '높은 데서 뛰어내려 보거라. 이 몸이 받쳐 주마. 불길 위의 더운 바람이라면 더 높이 띄워 줄 게다.');
+      await this.say('boreum', '덤도 있다. 바람은 부리기만 해선 반쪽이야. *올라탈 줄*도 알아야지.');
+      await this.say('boreum', '높은 데서 뛰어내려 보거라. 이 몸이 받쳐 주마. 불길 위 더운 바람이면 더 높이 띄워 주고.');
     });
     this.set('glide');
-    G.hud.banner('바람 타기', '하늬바람의 선물', `공중에서 ${KBD('Space')} 누르고 있기: <b>활공</b> — 기력을 소모합니다`, '#9ff0d0', 5000);
-    if (G.skills.has(WEAVE_NODE)) this.hint(`${KBD('3')} 바람 · ${KBD('Q')} <b>엮기</b> — 직전에 쓰던 속성과 지금 속성을 엮어 강력한 마법을 쓴다<br><small>예: 화염 → 바람으로 바꾼 뒤 Q = 화염 회오리 · 고유 마법 <b>${HEAVY.wind.name}</b>은 울림 나무에서 익힌다</small>`, 12);
-    else this.hint(`${KBD('3')} 바람 · 고유 마법 <b>${HEAVY.wind.name}</b>${josa(HEAVY.wind.name, '와').slice(HEAVY.wind.name.length)} <b>엮기</b>는 울림 나무(${KBD('K')})나 울림의 갈림길에서 익힌다<br><small>조화의 뿌리 「두 노래 엮기」를 익히면 ${KBD('Q')}로 두 속성을 엮는다 — 예: 화염 → 바람 = 화염 회오리</small>`, 12);
+    G.hud.banner('바람 타기', '하늬바람의 선물', `공중에서 ${KBD('Space')} 누르고 있기: <b>활공</b> — 기력을 쓴다`, '#9ff0d0', 5000);
+    const weaveName = NODES[WEAVE_NODE].name, whirl = weaveInfo('fire', 'wind').name;
+    if (G.skills.has(WEAVE_NODE)) this.hint(`${KBD('3')} 바람 · ${KBD('Q')} <b>엮기</b> — 직전에 쓰던 속성과 지금 속성을 엮어 강력한 마법을 쓴다<br><small>예: 화염 → 바람으로 바꾼 뒤 Q = ${whirl} · 고유 마법 <b>${HEAVY.wind.name}</b>${josa(HEAVY.wind.name, '은').slice(HEAVY.wind.name.length)} 울림 나무에서 익힌다</small>`, 12);
+    else this.hint(`${KBD('3')} 바람 · 고유 마법 <b>${HEAVY.wind.name}</b>${josa(HEAVY.wind.name, '와').slice(HEAVY.wind.name.length)} <b>엮기</b>는 울림 나무(${KBD('K')})나 울림의 갈림길에서 익힌다<br><small>조화의 뿌리 「${weaveName}」를 익히면 ${KBD('Q')}로 두 속성을 엮는다 — 예: 화염 → 바람 = ${whirl}</small>`, 12);
     await this.sleep(1);
     await this.conv(async () => {
-      await this.say('boreum', '자, 이제 종을 울려 보자꾸나. 네 울림과 이 몸의 바람을 실어서.');
+      await this.say('boreum', '자, 종을 깨우자꾸나. 네 울림에 이 몸의 바람을 실어서.');
       await this.ringVillageBell();
       for (const id of ['dodam', 'isol', 'danbi', 'farmer', 'elder']) this.npc(id).show(true);
       this.npc('dodam').setPos(3, 20, Math.PI);
       this.npc('isol').setPos(10, 21, Math.PI * 0.8);
-      await this.say('bau', '…울었어. 울었다고! 허허, 사십 년 들은 소리인디, 오늘은 왜 이리 눈물이 나는겨.');
-      await this.say('dodam', '우와아아! 들었어요? 들었어요?! 종이 울었어요! 마법사님이 울렸어요!');
-      await this.say('isol', '보셨습니까? 방금 골짜기 전체의 *울림 밀도*가— 아, 죄송합니다. 흥분하면 전문 용어가 튀어나와서요.');
-      await this.say('isol', '정령님 말씀대로라면, 나머지 두 종은 *서리봉 성소*와 *천둥 고원*에 있습니다. 북쪽 설산과, 서쪽의 옛 성소 터지요.');
-      await this.say('boreum', '그래. 두 성소 모두 고요의 장막에 덮여 있을 게다. 성소를 깨워야 종에 닿을 수 있느니라.');
-      await this.say('isol', '지도에 표시해 두었습니다. 그리고… 이건 사적인 부탁인데요.');
-      await this.say('isol', '골짜기 곳곳에 유난히 강한 개체들이 있다고 합니다. 이름까지 붙은 것들이요. 혹시 쓰러뜨리시면 알려 주세요. 연구에… 네, 꼭 필요합니다.');
-      await this.say('boreum', '순서는 네 마음대로 하거라. 다만 서두르는 게 좋을 게야. 모라의 노래는 기다려 주지 않으니.');
+      // the village from above the south road, for the line about its colour coming back
+      G.cameraRig.setCine(GV(20, 15, 62), GV(4, 9, 8));
+      await this.say('boreum', '보거라, 꼬마. 골짜기가 숨을 들이쉰다. 날이 밝으면 알 게다. 종 하나에, 색이 한 겹씩 돌아온다.', { cam: false });
+      await this.say('bau', '…울었어. 울었다니께! 허허, 사십 년 들은 소린디… 오늘은 왜 이리 눈이 매운겨.', { expr: 'laugh', gesture: 'handToChest' });
+      await this.say('dodam', '들었어요? 들었어요?! 종이 울었어요! 마법사님이 울렸어요!', { expr: 'laugh', gesture: 'wave' });
+      await this.say('isol', '보셨습니까? 방금 골짜기 전체의 *울림 밀도*가— …죄송합니다. 흥분하면 용어가 튀어나와서.', { expr: 'surprised' });
+      await this.say('isol', '남은 종은 둘입니다. 북쪽 *서리봉 성소*, 서쪽 *천둥 고원*. 지도에 표시해 뒀습니다.', { gesture: 'point' });
+      await this.say('boreum', '둘 다 고요의 장막을 덮어쓰고 있을 게다. 성소부터 깨워야 종에 손이 닿느니라.');
+      await this.say('isol', '그리고 사적인 부탁이 하나. 골짜기에 *이름까지 붙은* 개체들이 있답니다. 쓰러뜨리시면 알려 주십시오. 연구에… 네, 절실합니다.', { expr: 'worried', gesture: 'bow' });
+      await this.say('boreum', '순서는 네 마음이다. 다만 꾸물대진 말거라. …할멈의 노래는, 기다려 주질 않으니.');
     });
     this.npc('dodam').setPos(0, 24, 0.5); this.npc('isol').setPos(18, 26.5, -0.6); this.npc('bau').setPos(9, 16.5, 0.2);
     this.done('q_bell', '하늬바람의 노래를 얻었다.');
     this.set('v_wind'); this.set('worldOpen'); this.set('bountyActive');
-    this.quest('q_bounty', '이름 붙은 것들', '이솔은 이름까지 붙은 강한 개체들을 조사하고 있다. 뿌리 삼킨 돌무덤(속삭이는 숲), 세 자매 울음탈(동쪽 벼랑), 눈먼 파수꾼(북쪽 설원)을 쓰러뜨리자.', 'side');
+    this.quest('q_bounty', '이름 붙은 것들', '이름이 붙었다는 건, 누군가 아직 기억한다는 뜻. 이솔은 그런 개체 셋을 궁금해한다. 뿌리 삼킨 돌무덤(속삭이는 숲), 세 자매 울음탈(동쪽 벼랑), 눈먼 파수꾼(북쪽 설원).', 'side');
     this.updateBounty();
     this.track = null;
   }
@@ -650,15 +674,15 @@ export class Story {
     this.obj('q_bells', `${f ? '✓' : '·'} 서리봉 성소의 종 울리기<br>${s ? '✓' : '·'} 천둥 고원의 종 울리기`, mk);
   }
   async bells() {
-    this.quest('q_bells', '두 개의 종', '보름에 따르면 남은 두 종은 북쪽 서리봉 성소와 서쪽 천둥 고원에 있다. 성소를 덮은 고요의 장막을 걷어 내고 종을 울려야 한다.');
+    this.quest('q_bells', '두 개의 종', '남은 종은 둘. 북쪽 서리봉 성소와 서쪽 천둥 고원. 성소를 덮은 고요의 장막부터 걷어야 종에 손이 닿는다. 어느 쪽부터 갈지는 내 마음이다.');
     this.updateBells();
     await Promise.all([this.frostShrine(), this.stormShrine()]);
     if (this.dead) return;
     this.done('q_bells');
     await this.sleep(2);
-    this.cSay('두 종이 울렸다. …이제 모라에게 돌아가자꾸나. 마지막 구절을 들어야 한다.', null, 6);
-    this.quest('q_song', '모라의 노래', '두 종이 울렸다. 모라 할머니에게 돌아가 마지막 구절을 들어야 한다.');
-    this.obj('q_song', '모라의 탑으로 돌아가기', [{ x: -20, z: 132, h: 2.4 }]);
+    this.cSay('종 둘이 다 울었다. …할멈에게 가자꾸나. 다음 구절을 아는 건 그 할멈뿐이니.', null, 6);
+    this.quest('q_song', '모라의 노래', '두 종이 울렸다. 셋째 종이 어디 있는지는 할머니만 안다. 할머니가 아직 기억하고 있다면.');
+    this.obj('q_song', '할머니의 탑으로 돌아가기', [{ x: -20, z: 132, h: 2.4 }]);
     this.setChapter('mora');
   }
 
@@ -678,7 +702,7 @@ export class Story {
     if (this.flag('frostBell')) { if (S.sealed) this.openSealInstant(S); return; }
     if (!this.flag('f_open')) {
       await this.wait(() => this.near(S.pos.x, S.pos.z, 42));
-      this.cSay('에취! …정령은 감기 따위 안 걸린다. 방금 건 바람 소리니라. 흠흠, 저기 장막이 보이느냐? 주위 화로 셋에 불을 지피면 성소가 깨어날 게다.', 'frost_arrive', 8);
+      this.cSay('에취! …방금 건 바람 소리니라. 저 장막 보이느냐? 둘레의 화로 셋에 불을 넣으면 걷힐 게다.', 'frost_arrive', 8);
       if (!this.flag('f_guard')) {
         this.set('f_guard');
         const lv = G.enemies.levelFor(1);
@@ -693,7 +717,7 @@ export class Story {
       await this.sleep(0.5);
       await this.openSeal(S);
       this.set('f_open');
-      this.cSay('장막이 걷혔다! 안으로 들어가 보자꾸나.', null, 4);
+      this.cSay('걷혔다. …안이 너무 조용하구나. 들어가 보자.', null, 4);
     } else this.openSealInstant(S);
     if (!this.flag('f_echo')) {
       await this.wait(() => this.near(S.pos.x, S.pos.z, 6.5) && G.mode === 'free');
@@ -707,14 +731,14 @@ export class Story {
         b.aggro();
         G.vfx.burst(b.center(), 'frostmist', 30, { size: 2 }); G.vfx.burst(b.center(), 'hush', 20, { size: 1.5 });
         G.audio.play('boss_roar', { pos: b.pos });
-        G.hud.bossBar(b, '서리무덤 파수꾼 — 잊힌 성소의 파수꾼');
+        G.hud.bossBar(b, '서리무덤 파수꾼 — 무엇을 지키는지 잊은 것');
         const adds = [G.enemies.spawn('ashlingFrost', V(S.pos.x + 5, 0, S.pos.z - 2), lv - 1), G.enemies.spawn('ashlingFrost', V(S.pos.x - 5, 0, S.pos.z - 2), lv - 1)];
         adds.forEach((e) => e.aggro());
-        this.cSay('서리무덤이다! 저놈의 얼음 갑옷엔 서리가 통하지 않는다. 불로 태워서 갑옷을 녹이거라!', null, 6);
+        this.cSay('서리무덤이다! 저 얼음 갑옷에 서리는 안 먹힌다. 불을 붙여라— 타는 동안엔 갑옷이 녹느니라!', null, 6);
         return b;
-      }, S.pos, 30, '서리무덤은 불타는 동안만 갑옷이 녹느니라. 불을 먼저 붙이고, 그다음에 쏟아부어라. 내려찍기는 붉은 원을 보고 피하거라.');
+      }, S.pos, 30, '숨은 돌렸느냐. 저놈 갑옷은 타는 동안에만 녹는다. 불부터 붙이고, 그다음에 쏟아붓거라. 붉은 원이 뜨면 내려찍기다.');
       this.set('f_boss');
-      G.skills.gain(2, '서리무덤 파수꾼을 쓰러뜨렸다');
+      G.skills.gain(2, '서리무덤 파수꾼을 잠재웠다');
     }
     if (!this.flag('f_learn')) {
       await this.sleep(1);
@@ -722,7 +746,7 @@ export class Story {
       this.set('f_learn');
     }
     if (!this.flag('frostBell')) {
-      this.cSay('종이 기다리고 있다. 가서 울려 주거라.', 'frost_bellhint');
+      this.cSay('종이 기다린다. 가서 깨워 주거라.', 'frost_bellhint');
       await this.wait(() => this.flag('frostBell'));
     }
   }
@@ -741,21 +765,21 @@ export class Story {
     G.vfx.burst(ghost.headPos(), 'soul', 40, { el: 'frost' });
     G.game.musicOverride = 'memory';
     await this.conv(async () => {
-      await this.say('narr', '성소 한가운데, 희미한 빛이 사람의 모습을 빚는다. …오래전 이곳에 남겨진 *메아리*다.');
-      await this.say('seha', '엄마. 이 노래를 여기 두고 갈게.', { expr: 'tender' });
-      await this.say('seha', '엄마는 매일 새벽 노래하느라 한 번도 늦잠을 못 잤잖아. 그러니까 이번엔 내가 조금 나눠 들게.', { expr: 'smile' });
-      await this.say('seha', '…우리 {n}, 요즘 밤마다 울어서 엄마 고생시키지? 그 애한테 이 노래 불러 줘. 내가 부르던 것처럼, 조금 틀리게.', { expr: 'laugh' });
-      await this.say('seha', '금방 갔다 올게. 고요의 틈 너머에 카엘 아저씨가 아직 있다면… 데려올게.', { expr: 'determined' });
+      await this.say('narr', '성소 한가운데, 희미한 빛이 사람의 모습을 빚는다. 오래전 여기 두고 간 *메아리*다.');
+      await this.say('seha', '엄마. 이 노래, 여기 두고 갈게.', { expr: 'tender' });
+      await this.say('seha', '엄마는 새벽마다 노래하느라 늦잠 한 번 못 잤잖아. 그러니까 이번엔 내가 좀 나눠 들게.', { expr: 'smile' });
+      await this.say('seha', '우리 {n}, 요즘 밤마다 울지? 이 노래 불러 줘. 내가 부르던 것처럼— 조금 틀리게.', { expr: 'laugh' });
+      await this.say('seha', '금방 갔다 올게. 틈 너머에 카엘 아저씨가 아직 있으면… 손 잡고 끌고 올게.', { expr: 'determined' });
       ghost.pose.kneel = false;
       await this.sleep(0.6);
       G.vfx.burst(ghost.headPos(), 'soul', 40, { el: 'frost' });
       ghost.show(false);
       await this.say('boreum', '……');
-      await this.say('boreum', '…세하. 그 아이였구나. 이 몸의 꼬리를 잡아당기며 놀던 꼬맹이가.');
+      await this.say('boreum', '…세하. 그 꼬맹이였구나. 이 몸의 꼬리를 잡아당기고 도망치던.');
       const c = await this.choose(['…엄마.', '(말없이 서 있는다)']);
-      if (c === 0) await this.say('boreum', '그래. 네 어미다. 네 목도리, 그 아이 것과 똑같은 색이로구나. 모라가 떠 준 게지.');
-      else await this.say('boreum', '…말하지 않아도 된다. 이 몸도 가끔은 말이 없을 때가 있느니라. 아주 가끔.');
-      await this.say('boreum', '…꼬마. 성소가 떨고 있다. 뭔가 깨어난다!');
+      if (c === 0) await this.say('boreum', '그래. 네 어미다. …네 목도리가 그 아이 것과 한 색이로구나. 할멈이 같은 실로 떴겠지.');
+      else await this.say('boreum', '…말 안 해도 된다. 이 몸도 가끔은 입을 다물 줄 아느니라. 아주 가끔.');
+      await this.say('boreum', '…꼬마. 바닥이 떤다. 뭔가 깬다!');
     });
     G.game.musicOverride = null;
     G.scene.remove(ghost.root);
@@ -771,13 +795,14 @@ export class Story {
       await this.sleep(0.5);
       G.vfx.timer(1.6, (dt, k) => { crystal.position.lerp(S.group.worldToLocal(G.player.center()), k * 0.08); crystal.scale.multiplyScalar(1 - k * 0.03); }, () => { crystal.visible = false; });
       await this.sleep(1.7);
-      if (el === 'frost') await this.say('seha', '고요한 노래야. 차갑지만… 모든 걸 멈춰 세워서, 지켜 주는 노래.', { cam: false, name: '세하의 메아리' });
-      else await this.say('kael', '외치는 노래다. 잊히지 않으려는 자들의, 마지막 외침.', { cam: false, name: '카엘의 메아리' });
+      if (el === 'frost') await this.say('seha', '고요한 노래야. 차갑지? 근데 다 멈춰 세워 놓고— 그 안에서 지켜 주는 노래야.', { cam: false, name: '세하의 메아리' });
+      else await this.say('kael', '외치는 노래다. 잊히지 않으려는 것들이, 마지막에 지르는 소리지.', { cam: false, name: '카엘의 메아리' });
     });
     G.game.musicOverride = null;
-    await this.unlockElement(el, el === 'frost' ? '고요한 노래. 한기를 쌓아 얼리고, 물 위에 얼음 발판을 만든다.' : '외치는 노래. 순식간에 적중하며, 젖거나 언 적에게 치명적이다.');
-    if (el === 'frost') this.hint(`서리로 <b>얼린</b> 적을 번개나 강한 마법으로 치면 <b>파쇄</b> · 불로 녹이면 <b>융해</b><br><small>서리 마법은 물 위에 얼음 발판을 만든다</small>`, 10);
-    else this.hint(`<b>젖은</b> 적에게 번개 → <b>감전 연쇄</b> · <b>불타는</b> 적에게 번개 → <b>과부하</b><br><small>불 + 서리 엮기(증기 폭발)는 적을 모두 적신다</small>`, 10);
+    await this.unlockElement(el, el === 'frost' ? '고요한 노래. 한기를 쌓아 얼리고, 물 위에 얼음 발판을 놓는다.' : '외치는 노래. 눈 깜짝할 새 닿으며, 젖거나 언 적에게 매섭다.');
+    const rn = (id) => REACTIONS[id].name;
+    if (el === 'frost') this.hint(`서리로 <b>얼린</b> 적을 ${G.player.unlocked.has('storm') ? '번개나 ' : ''}강한 마법으로 치면 <b>${rn('shatter')}</b> · 불로 녹이면 <b>${rn('melt')}</b><br><small>서리 마법은 물 위에 얼음 발판을 만든다</small>`, 10);
+    else this.hint(`<b>젖은</b> 적에게 번개 → <b>${rn('conduct')}</b> · <b>불타는</b> 적에게 번개 → <b>${rn('overload')}</b><br><small>${G.player.unlocked.has('frost') ? `불 + 서리 엮기(${weaveInfo('fire', 'frost').name})는 적을 모두 적신다` : '비를 맞은 적은 이미 젖어 있다'}</small>`, 10);
   }
 
   async ringShrineBell(el) {
@@ -795,7 +820,7 @@ export class Story {
         await this.sleep(2);
       }
       this.hushBase = Math.max(0.06, this.hushBase - 0.05);
-      await this.say('boreum', el === 'frost' ? '…울렸다. 멀리서도 들렸을 게다. 모라에게도.' : '두 번째든 세 번째든, 종소리는 언제 들어도 좋구나. …흥, 방금 건 못 들은 걸로 하거라.');
+      await this.say('boreum', el === 'frost' ? '…울었다. 언덕까지 닿았을 게다. 할멈 귀에도.' : '몇 번을 들어도, 종소리란 건 참… …흥. 방금 건 바람 소리니라.');
     });
     this.set(el + 'Bell');
     const mem = el === 'frost' ? 'musicbox' : 'badge';
@@ -811,13 +836,13 @@ export class Story {
     if (this.flag('stormBell')) { if (S.sealed) this.openSealInstant(S); return; }
     if (!this.flag('s_open')) {
       await this.wait(() => this.near(S.pos.x, S.pos.z, 46));
-      this.cSay('번개 냄새… 여긴 늘 화가 나 있는 곳이었지. 저 바람개비들이 보이느냐? 이 몸의 바람으로 돌려 보거라.', 'storm_arrive', 8);
+      this.cSay('킁. 번개 냄새… 여긴 예나 지금이나 성이 나 있구나. 저 바람개비 셋, 이 몸의 바람으로 돌려 보거라.', 'storm_arrive', 8);
       for (const w of S.wheels) w.onActive = () => { const n = S.wheels.filter((x) => x.active).length; G.hud.toast(`바람개비 ${n} / 3`); };
       await this.wait(() => S.wheels.every((w) => w.active));
       await this.sleep(0.5);
       await this.openSeal(S);
       this.set('s_open');
-      this.cSay('장막이 걷혔다. …조심하거라. 안에 뭔가 있다.', null, 4);
+      this.cSay('걷혔다. …털이 선다. 안에 누가 서 있구나.', null, 4);
     } else this.openSealInstant(S);
     if (!this.flag('s_boss')) {
       await this.wait(() => this.near(S.pos.x, S.pos.z, 7) && G.mode === 'free');
@@ -834,18 +859,18 @@ export class Story {
             G.audio.play('dissolve', { pos: k.pos });
             G.vfx.burst(k.center(), 'hush', 30, { size: 1.5 });
             await this.say('kaelShadow', '…돌아… 가라…', { cam: false });
-            await this.say('kaelShadow', '이곳은… 잊힌 자의… 자리…', { cam: false });
-            await this.say('boreum', '저건— 설마?! 아니, 고요에 삼켜진 기사의 껍데기로구나. 이름마저 빼앗긴…', { cam: false });
+            await this.say('kaelShadow', '여긴… 잊힌 자가… 서는 자리…', { cam: false });
+            await this.say('boreum', '저 칼 쥐는 버릇은— …아니다. 이름까지 삼켜진 껍데기일 뿐이야. 정신 차려라, 꼬마!', { cam: false });
           });
         }
         k.setState('idle'); k.aggroed = true;
         G.audio.play('boss_roar', { pos: k.pos });
-        G.hud.bossBar(k, '무명의 기사 — 이름을 빼앗긴 자');
-        this.cSay('녀석은 번개를 먹고 자랐다, 번개는 잘 안 통한다! 불태우거나 얼려라!', null, 5);
+        G.hud.bossBar(k, '무명의 기사 — 이름을 내어 준 자');
+        this.cSay(`껍데기 주제에 칼은 살아 있구나! 한 가지 노래만 부르지 마라— ${G.player.unlocked.has('frost') ? '태우고 얼리고, 섞어 쳐라!' : '불과 바람을 섞어 쳐라!'}`, null, 5);
         return k;
-      }, S.pos, 34, '기사의 세 번째 베기는 땅을 울린다. 충격파는 뛰어넘거나 순간이동으로 빠져나가거라. 얼려 두면 한동안 꼼짝 못 하느니라.');
+      }, S.pos, 34, G.player.unlocked.has('frost') ? '칼은 셋까지 세거라. 세 번째가 땅을 울린다. 충격파는 뛰어넘거나 순간이동으로 빠지고— 얼려 두면 한동안 꼼짝 못 한다.' : '칼은 셋까지 세거라. 세 번째가 땅을 울린다. 충격파는 뛰어넘거나 순간이동으로 빠지거라.');
       this.set('s_boss');
-      G.skills.gain(2, '무명의 기사를 쓰러뜨렸다');
+      G.skills.gain(2, '무명의 기사가 이름을 되찾았다');
       await this.kaelScene(S, knight);
     }
     if (!this.flag('s_learn')) {
@@ -853,7 +878,7 @@ export class Story {
       this.set('s_learn');
     }
     if (!this.flag('stormBell')) {
-      this.cSay('자, 종을 울리자꾸나.', 'storm_bellhint');
+      this.cSay('자, 종 차례다. 이 고원이 조용해서야 쓰겠느냐.', 'storm_bellhint');
       await this.wait(() => this.flag('stormBell'));
     }
   }
@@ -867,25 +892,25 @@ export class Story {
     G.audio.play('echo', { pos: kp });
     G.vfx.burst(kael.headPos(), 'soul', 50, { el: 'storm' });
     await this.conv(async () => {
-      await this.say('kael', '…그대의 노래가 들렸다. 따뜻하고… 성급한. 모라의 불을 닮았군.', { expr: 'tender' });
+      await this.say('kael', '…그대의 노래가 들렸다. 따뜻하고… 성급하더군. 모라의 불을 닮았어.', { expr: 'tender' });
       kael.pose.kneel = false;
-      await this.say('kael', '나는 카엘. 오십 년 전, 모라와 함께 고요를 봉인했던 기사다.', { gesture: 'handToChest' });
-      await this.say('kael', '봉인에는 문지기가 필요했다. 고요의 틈 안에서 문을 붙드는 자. 그자는 세상에서 잊힌다. 그게 대가였지.');
-      await this.say('kael', '나는 자원했다. 모라는 반대했고. 나는 웃으며 말했지. "괜찮아. 네가 기억해 주면 돼."', { expr: 'smile' });
-      await this.say('kael', '…잔인한 말이었다. 그녀는 정말로 오십 년을, 매일 새벽, 나를 기억하며 노래했으니까.', { expr: 'sad', gesture: 'sigh' });
-      await this.say('kael', '그 노래가 종을 울렸고, 종이 봉인을 지탱했다. 모라의 기억이 곧 이 골짜기의 자물쇠였던 거다.');
+      await this.say('kael', '카엘이다. 오십 년 전, 모라와 함께 고요를 틈에 가둔 기사.', { gesture: 'handToChest' });
+      await this.say('kael', '틈에는 문이 있고, 문은 누가 안에서 붙들어야 했다. 붙드는 자는 세상에서 잊힌다. 그게 값이었지.');
+      await this.say('kael', '내가 손을 들었다. 모라는 길길이 뛰었고. 나는 웃으면서 그랬지. "괜찮아. 네가 기억해 주면 돼."', { expr: 'smile' });
+      await this.say('kael', '…잔인한 말이었다. 그 사람은 정말로 기억했으니까. 오십 년을, 새벽마다.', { expr: 'sad', gesture: 'sigh' });
+      await this.say('kael', '종을 울린 건 그 노래다. 문을 버티게 한 것도. …이 골짜기의 자물쇠는 처음부터 쇠가 아니었어.');
       const c = await this.choose(['할머니는 지금 모든 걸 잊어 가고 있어요.', '당신 이름을 할머니께 전할게요.']);
       if (c === 0) {
-        await this.say('kael', '…알고 있다. 문 너머에서도 느껴졌지. 노래가 가늘어지는 게.', { expr: 'sad' });
-        await this.say('kael', '사람은 잊는다. 그건 죄가 아니야. 오십 년을 붙들고 있던 게 기적이었지.', { expr: 'tender', gesture: 'shake' });
+        await this.say('kael', '…안다. 문 너머에서도 느꼈지. 노래가 실처럼 가늘어지는 걸.', { expr: 'sad' });
+        await this.say('kael', '사람은 잊는다. 그건 죄가 아니야. 오십 년을 붙든 쪽이 기적이었지.', { expr: 'tender', gesture: 'shake' });
       } else {
-        await this.say('kael', '……');
-        await this.say('kael', '…아니. 그대 마음대로 해라. 나는 이제 그 말을 부탁할 자격이 없으니.', { expr: 'sad' });
+        await this.say('kael', '……', { expr: 'surprised' });
+        await this.say('kael', '…아니. 그대 마음 가는 대로 해라. 그 부탁을 할 자격은, 오십 년 전에 다 써 버렸으니.', { expr: 'sad' });
         this.set('promiseKael');
       }
-      await this.say('kael', '그리고 들어라. 세하가 왔었다. 십오 년 전, 문 너머로.');
-      await this.say('kael', '그 아이는 나를 데리러 왔다가… 문을 함께 붙들어 주었다. 그 아이도 지금 거기 있다. 잊힌 채로.', { expr: 'sad' });
-      await this.say('kael', '번개의 노래를 받아라, 울림지기. 그리고 틈으로 와라. 이번엔— 아무도 혼자 문을 붙들지 않게.', { expr: 'determined', gesture: 'nod' });
+      await this.say('kael', '하나 더. 세하가 왔었다. 십오 년 전, 문 너머로.');
+      await this.say('kael', '나를 데리러 와 놓고는… 문을 같이 붙들더군. 고집이 꼭 제 어미야. 그 애도 아직 거기 있다. 잊힌 채로.', { expr: 'sad' });
+      await this.say('kael', '번개의 노래를 가져가라, 울림지기. 그리고 틈으로 와라. 이번엔— 아무도 혼자 문을 붙들지 않게.', { expr: 'determined', gesture: 'nod' });
       G.vfx.burst(kael.headPos(), 'soul', 50, { el: 'storm' });
       kael.show(false);
     });
@@ -905,7 +930,7 @@ export class Story {
       for (const e of [...G.enemies.list]) if (e.alive && !e.boss && e.pos && Math.hypot(e.pos.x - center.x, e.pos.z - center.z) < radius && e.remove) e.remove();
       await this.wait(() => !G.player.dead && G.mode === 'free');
       await this.sleep(1.5);
-      this.cSay(pick(['다시 오는구나. 이번엔 숨 고르고 하거라.', '괜찮다, 꼬마. 한 번 넘어졌다고 노래가 끝나는 건 아니니라.', '놈들이 다시 몰려온다! 이번엔 이 몸 말을 잘 듣거라.']));
+      this.cSay(pick(['또 온다. 이번엔 숨부터 고르거라.', '괜찮다, 꼬마. 한 번 넘어졌다고 노래가 끝나진 않느니라.', '놈들이 다시 온다. 아까 맞은 자리, 이번엔 비켜 서거라.']));
     }
   }
 
@@ -928,9 +953,9 @@ export class Story {
 
   // ------------------------------------------------------------ chapter 3: Mora's song
   async moraChapter() {
-    this.quest('q_song', '모라의 노래', '두 종이 울렸다. 모라 할머니에게 돌아가 마지막 구절을 들어야 한다.');
+    this.quest('q_song', '모라의 노래', '두 종이 울렸다. 셋째 종이 어디 있는지는 할머니만 안다. 할머니가 아직 기억하고 있다면.');
     if (!this.flag('m_talk')) {
-      this.obj('q_song', '모라의 탑으로 돌아가기', [{ x: -20, z: 132, h: 2.4 }]);
+      this.obj('q_song', '할머니의 탑으로 돌아가기', [{ x: -20, z: 132, h: 2.4 }]);
       await this.wait(() => this.flag('m_talk'));
     }
     if (!this.flag('m_names')) {
@@ -946,7 +971,7 @@ export class Story {
       this.set('m_choir');
     }
     this.done('q_song');
-    this.quest('q_rift', '고요의 틈', '골짜기가 스스로를 기억하기 시작했다. 이제 고요의 틈으로 가서, 문을 붙들고 있는 이들을 만나야 한다.');
+    this.quest('q_rift', '고요의 틈', '골짜기가 스스로를 기억하기 시작했다. 이제 틈으로 간다. 오십 년, 그리고 십오 년째 문을 붙들고 있는 두 사람에게.');
     this.obj('q_rift', '고요의 틈으로', [{ x: POI.rift.x, z: POI.rift.z, h: 10 }]);
     this.setChapter('rift');
   }
@@ -957,32 +982,32 @@ export class Story {
     await this.conv(async () => {
       await this.say('mora', '…어머, 손님이 오셨네. 이 늙은이한테 무슨 볼일이시우?', { expr: 'smile' });
       await this.say('boreum', '…모라.');
-      await this.say('mora', '세하니? 세하야, 이제 왔구나. 저녁은 먹었니? 엄마가 수제비 끓여 놨는데.', { expr: 'tender' });
+      await this.say('mora', '세하니? 이제 오니. 저녁은 먹었고? 엄마가 수제비 끓여 놨는데.', { expr: 'tender' });
       const c = await this.choose(['…응, 엄마. 나 왔어.', '할머니, 저예요. {n}.']);
       if (c === 0) {
-        await this.say('mora', '그래, 그래. 우리 세하. 어디 갔다 이제 와. 엄마가 얼마나 기다렸는데.', { expr: 'tender', gesture: 'handToChest' });
+        await this.say('mora', '그래, 그래. 우리 세하. 금방 온다더니, 해가 다 졌잖니.', { expr: 'tender', gesture: 'handToChest' });
         await this.say('mora', '…많이 컸구나. 꼭 딴사람 같아.');
       } else {
         await this.say('mora', '{n}…?', { expr: 'surprised' });
-        await this.say('mora', '…{n}. 그래. 우리 {n}. 아이고, 내가 또. 미안하구나. 할미가 요새 자꾸 이래.', { expr: 'sad', gesture: 'sigh' });
+        await this.say('mora', '…{n}. 그래, 우리 {n}. 아이고, 내가 또. 할미가 요새 자꾸 이런다.', { expr: 'sad', gesture: 'sigh' });
       }
-      await this.say('narr', '할머니의 눈빛이, 잠시 맑아진다.');
-      await this.say('mora', '얘야. 할미가 정신이 맑을 때 말해 둘 게 있다. 잘 들으렴.', { expr: 'determined' });
-      await this.say('mora', '세 번째 종 말이다. …그건 성소에 있는 게 아니란다.');
-      await this.say('mora', '셋째 종은 *사람*이야. 골짜기의 노래를 기억하는 모든 사람. 오십 년 전엔 그게 나 하나뿐이었지. 그래서 그렇게 무거웠던 게야.', { expr: 'tender', gesture: 'handToChest' });
-      await this.say('mora', '고요는 잊힌 것들이 모여 생긴 슬픔이란다. 싸워서 없앨 수 있는 게 아니야. 기억해 줘야 해. …함께.');
-      await this.say('mora', '*노래는 한 사람만 기억하는 게 아니란다.* 네 어미가 떠나던 날 밤, 이 할미가 해 준 말이지. …정작 나는 그 말을 잊고, 오십 년을 혼자 짊어졌구나.', { expr: 'sad' });
-      await this.say('mora', '마을 사람들에게 가서 잊힌 이름들을 들려주렴. 카엘. 세하. 그리고 이 할미 이름도— 언젠가 내가 나를 잊거든.');
-      await this.say('mora', '그러고 나서 틈으로 가거라. 이번엔 혼자 문을 붙들지 말고. …약속해 주겠니?', { expr: 'worried' });
+      await this.say('narr', '할머니의 눈이, 잠깐 맑아진다.');
+      await this.say('mora', '얘야. 할미 정신이 맑을 때 일러둘 게 있다. 잘 들으렴.', { expr: 'determined' });
+      await this.say('mora', '셋째 종 말이다. 그건 성소에 있는 게 아니란다.');
+      await this.say('mora', '셋째 종은 *사람*이야. 골짜기의 노래를 기억하는 사람 모두. 오십 년 전엔 그게 나 하나였지. …그러니 무거울 수밖에.', { expr: 'tender', gesture: 'handToChest' });
+      await this.say('mora', '고요는 미워서 내려오는 게 아니란다. 추워서 오는 게야. 아무도 불러 주질 않으니까.', { expr: 'sad' });
+      await this.say('mora', '*노래는 한 사람만 기억하는 게 아니란다.* 네 어미 떠나던 밤에 내가 해 준 말인데… 정작 나는 그걸 잊고, 오십 년을 혼자 졌구나.', { expr: 'sad', gesture: 'shake' });
+      await this.say('mora', '마을에 가서 잊힌 이름들을 들려주렴. 카엘. 세하. …언젠가 내가 나를 잊거든, 이 할미 이름도.');
+      await this.say('mora', '그러고 나서 틈으로 가거라. 이번엔 누구도 혼자 문을 붙들지 않게. …약속해 주겠니?', { expr: 'worried' });
       await this.choose(['약속할게요.']);
       if (!G.player.hasHat) {
-        await this.say('mora', '…고맙다. 이 모자 받으렴. 좀 크겠지만, 너도 금방 자랄 게다.', { expr: 'smile' });
+        await this.say('mora', '…고맙다. 이 모자 받으렴. 좀 클 게다. 괜찮아, 넌 금방 자라니까.', { expr: 'smile' });
         G.player.setHat(true); this.set('hat');
         G.audio.play('unlock');
-        G.hud.banner('모라의 선물', '모라의 모자', '오래된 보랏빛 모자. 챙이 조금 휘어 있다.', '#c9a8ff');
-      } else await this.say('mora', '…그 모자, 잘 어울리는구나. 내 것보다 훨씬.');
-      await this.say('mora', '……');
-      await this.say('mora', '…세하야, 추운데 들어가자꾸나. 바람이 차다.', { expr: 'tender' });
+        G.hud.banner('모라의 선물', '모라의 모자', '빛바랜 보랏빛 모자. 챙이 한쪽으로 휘었다. 오십 번의 겨울을 난 모양으로.', '#c9a8ff');
+      } else await this.say('mora', '…그 모자, 잘 어울리는구나. 이 할미가 쓸 때보다 훨씬.', { expr: 'smile' });
+      await this.say('mora', '……', { expr: 'neutral' });
+      await this.say('mora', '…세하야, 바람이 차다. 그만 들어가자꾸나.', { expr: 'tender' });
     });
     G.game.musicOverride = null;
     this.set('m_talk');
@@ -999,11 +1024,11 @@ export class Story {
     G.game.musicOverride = 'ending';
     await this.conv(async () => {
       G.cameraRig.setCine(GV(6, 3.2, 31), GV(6, 3, 14));
-      await this.say('bau', '자, 다들 모였는감? 어… 그러니께, 노래를 부르면 된다는 거여?', { cam: false });
-      await this.say('isol', '네. 기록에 따르면, 가사는 중요하지 않습니다. 기억하는 마음이 중요하지요. …아마도요.', { cam: false });
-      await this.say('dodam', '누룽지도 같이 불러요! 누룽지는 음치지만요!', { cam: false });
-      await this.say('danbi', '아이고, 이 나이에 노래라니. 그래도… 세하 그 애가 좋아하던 노래니까.', { cam: false });
-      await this.say('narr', '골짜기 사람들이, 하나둘 노래를 시작한다. 서툴고, 조금씩 틀린 음으로.', { cam: false });
+      await this.say('bau', '다들 모였는감. …그러니께, 종 줄 대신 목청을 쓰라는 거여?', { cam: false, gesture: 'think' });
+      await this.say('isol', '네. 기록에 따르면 가사는 중요하지 않습니다. 틀려도 됩니다. …아마도요.', { cam: false, gesture: 'nod' });
+      await this.say('dodam', this.flag('catSaved') ? '누룽지도 같이 불러요! 누룽지는 음치지만요!' : '저 제일 크게 부를게요! 누룽지가 어디 있든 들리게요!', { cam: false, expr: 'laugh' });
+      await this.say('danbi', '아이고, 이 나이에 노래라니. …그래도 세하 그 애가 흥얼대던 거니까. 조금 틀려도 흉보기 없기다.', { cam: false, expr: 'tender' });
+      await this.say('narr', '한 사람, 또 한 사람. 골짜기가 노래를 시작한다. 서툴게, 저마다 조금씩 틀린 음으로.', { cam: false });
       const W = G.world;
       const bp = V(6, W.h(6, 10) + 13, 10);
       for (let k = 0; k < 4; k++) {
@@ -1015,8 +1040,8 @@ export class Story {
         await this.sleep(1.6);
       }
       this.hushBase = 0.04;
-      await this.say('boreum', '…들리느냐, 꼬마. 이것이 셋째 종이다.', { cam: false });
-      await this.say('boreum', '모라가 오십 년 동안 혼자 짊어진 걸, 이제 모두가 나눠 들었느니라. 가자. 틈이 기다린다.', { cam: false });
+      await this.say('boreum', '…들리느냐, 꼬마. 이게 셋째 종이다.', { cam: false });
+      await this.say('boreum', '할멈이 오십 년을 혼자 진 걸, 이제 온 마을이 나눠 들었구나. …가자. 문 앞에 기다리는 이들이 있다.', { cam: false });
     });
     G.game.musicOverride = null;
     await this.fade(true, 1);
@@ -1028,11 +1053,11 @@ export class Story {
 
   // ------------------------------------------------------------ chapter 4: the rift
   async riftChapter() {
-    this.quest('q_rift', '고요의 틈', '골짜기가 스스로를 기억하기 시작했다. 이제 고요의 틈으로 가서, 문을 붙들고 있는 이들을 만나야 한다.');
+    this.quest('q_rift', '고요의 틈', '골짜기가 스스로를 기억하기 시작했다. 이제 틈으로 간다. 오십 년, 그리고 십오 년째 문을 붙들고 있는 두 사람에게.');
     this.obj('q_rift', '고요의 틈으로', [{ x: POI.rift.x, z: POI.rift.z, h: 10 }]);
     const R = G.world.rift;
     await this.wait(() => this.near(POI.rift.x, POI.rift.z, 70));
-    this.cSay('…저 너머는 소리가 없다. 이 몸의 바람조차 거기선 숨을 죽이지.', 'rift_near', 6);
+    this.cSay('…저 너머엔 소리가 없다. 이 몸의 바람도 거기선 숨을 죽이지.', 'rift_near', 6);
     await this.wait(() => this.near(POI.rift.x, POI.rift.z, 24) && G.mode === 'free');
     let first = true;
     const heart = await this.bossFight(async () => {
@@ -1043,7 +1068,7 @@ export class Story {
       G.hud.bossBar(h, '이름 삼킨 자 — 고요의 심장');
       G.audio.play('boss_roar', { pos: h.core.position });
       return h;
-    }, R.center, 40, '서두르지 마라. 결계의 색부터 보거라. 불에는 서리, 서리에는 불, 번개에는 바람, 바람에는 번개. 광선은 뛰어넘을 수 있느니라.');
+    }, R.center, 40, '서두를 것 없다. 결계의 색부터 보거라. 불엔 서리, 서리엔 불. 번개엔 바람, 바람엔 번개. 광선은 뛰어넘으면 그만이다.');
     await this.endingScene(heart);
   }
 
@@ -1057,19 +1082,22 @@ export class Story {
     G.audio.play('echo', { pos: c });
     await this.conv(async () => {
       await this.say('kael', '왔군. …모라의 불을 닮은 녀석.', { expr: 'smile' });
-      await this.say('seha', '{n}…? {n} 맞지? 세상에. 이렇게 컸구나.', { expr: 'surprised', gesture: 'handToChest' });
-      await this.say('seha', '미안해. 금방 온다고 해 놓고. 엄마가— 할머니가 많이 힘들었지?', { expr: 'sad' });
+      await this.say('seha', '{n}…? {n} 맞지? 세상에. 언제 이렇게 컸어.', { expr: 'surprised', gesture: 'handToChest' });
+      await this.say('seha', '미안해. 금방 온다 해 놓고— 금방이 좀 길었지. 할머니가 애 많이 먹었겠다.', { expr: 'sad' });
       const ch = await this.choose(['보고 싶었어요.', '같이 돌아가요.']);
-      if (ch === 0) await this.say('seha', '나도. 매일. 잊혀 있는 동안에도, 그건 안 잊혔어.', { expr: 'tender' });
-      else await this.say('seha', '…그럴 수 있다면 좋을 텐데. 우린 너무 오래 잊혀 있었어. 하지만 괜찮아. 네가 우리를 기억해 주면, 그걸로 충분해.', { expr: 'sad', gesture: 'shake' });
-      await this.say('kael', '문이 버티지 못한다. 심장이 깨어난다.', { expr: 'determined' });
-      await this.say('seha', '들어, {n}. 심장은 결계로 스스로를 감싸. 결계마다 다른 노래가 필요해.', { expr: 'determined', gesture: 'point' });
-      await this.say('seha', '[불|fire]에는 [서리|frost]를, [서리|frost]에는 [불|fire]을, [번개|storm]에는 [바람|wind]을, [바람|wind]에는 [번개|storm]를.');
-      if (G.player.unlocked.has('water')) await this.say('seha', '…어? 너, 물의 노래도 아는구나. 호숫가에서 내가 부르던 거. 그럼 [불|fire]의 결계엔 [물|water]도 통할 거야.');
-      await this.say('kael', '결계가 모두 깨지면 심장이 드러난다. 그때가 기회다. 가진 노래를 모두 쏟아부어라.');
-      await this.say('boreum', '…드디어 때가 왔구나. 꼬마, 이 몸의 꼬리를 걸고 말하건대— 넌 혼자가 아니니라.');
+      if (ch === 0) await this.say('seha', '나도. 매일. 잊혀 있는 동안에도, 그건 안 잊히더라.', { expr: 'tender' });
+      else {
+        await this.say('seha', '…그럴 수 있으면 좋겠다. 근데 우린 너무 오래 잊혀 있었어. 괜찮아, 네가 기억해 주면—', { expr: 'sad', gesture: 'shake' });
+        await this.say('kael', '세하. …그 말은 내가 오십 년 전에 다 썼다.', { expr: 'sad', gesture: 'shake' });
+      }
+      await this.say('kael', '문이 더는 못 버틴다. 오래 버티는 것 하나는 자신 있었는데. …심장이 깬다.', { expr: 'determined' });
+      await this.say('seha', '들어, {n}. 심장은 결계를 두르고 있어. 결계마다 듣는 노래가 달라.', { expr: 'determined', gesture: 'point' });
+      await this.say('seha', '[불|fire]엔 [서리|frost], [서리|frost]엔 [불|fire]. [번개|storm]엔 [바람|wind], [바람|wind]엔 [번개|storm]. 짝끼리 맞바꿔 부르면 돼.');
+      if (G.player.unlocked.has('water')) await this.say('seha', '…어? 너, 물의 노래도 아네. 내가 호숫가에서 흥얼대던 거. 그럼 [불|fire] 결계엔 [물|water]도 먹혀.', { expr: 'surprised' });
+      await this.say('kael', '결계가 다 깨지면 심장이 드러난다. 그때다. 아낄 것 없다, 가진 노래를 전부 쏟아라.', { gesture: 'nod' });
+      await this.say('boreum', '…꼬마. 아니, *{n}*. 이 몸의 꼬리를 걸고 말하마. 넌 혼자가 아니다.');
     });
-    this.hint('결계의 색을 보고 <b>약점 속성</b>으로 공격하세요 · 충격파는 점프나 순간이동으로 피할 수 있습니다', 9);
+    this.hint('결계의 색을 보고 <b>약점 속성</b>으로 치자 · 충격파는 점프나 순간이동으로 피한다', 9);
   }
 
   async endingScene(heart) {
@@ -1087,12 +1115,12 @@ export class Story {
     G.game.musicOverride = 'ending';
     const [kael, seha] = this.ghosts || [];
     await this.conv(async () => {
-      if (kael) await this.say('kael', '문이 닫힌다. 이번엔 붙들 필요가 없군. 골짜기가 스스로를 기억하니까.', { expr: 'smile' });
+      if (kael) await this.say('kael', '문이 닫힌다. …이번엔 붙드는 사람이 없어도 되겠군. 골짜기가 스스로를 기억하니.', { expr: 'smile' });
       if (seha) {
-        await this.say('seha', '{n}. 엄마한테 전해 줘. …아니, 전하지 않아도 돼. 엄마가 잊어도, 우린 엄마를 기억할게.', { expr: 'tender' });
-        await this.say('seha', '그러니까 너도, 할머니를 잘 기억해 줘. 할머니가 너를 잊는 날이 와도.', { expr: 'tender', gesture: 'nod' });
+        await this.say('seha', '{n}. 엄마한테 전해 줘. …아니다, 안 전해도 돼. 엄마가 잊어도, 우리가 엄마를 기억하면 되니까.', { expr: 'tender' });
+        await this.say('seha', '그러니까 너도 할머니를 기억해 줘. 할머니가 너를 잊는 날이 와도. …노래는, 조금 틀려도 되니까.', { expr: 'tender', gesture: 'nod' });
       }
-      if (kael && this.flag('promiseKael')) await this.say('kael', '…그리고 울림지기. 모라에게— 아니다. 그대가 약속했었지. 믿겠다.', { expr: 'smile', gesture: 'nod' });
+      if (kael && this.flag('promiseKael')) await this.say('kael', '…그리고 울림지기. 모라에게— …아니다. 그대가 약속했지. 믿겠다.', { expr: 'smile', gesture: 'nod' });
     });
     for (const g of this.ghosts || []) { G.vfx.burst(g.headPos(), 'soul', 40, { el: 'gold' }); g.show(false); }
     await this.fade(true, 2.5, true);
@@ -1112,29 +1140,31 @@ export class Story {
       const mora = this.npc('mora');
       await this.say('narr', '새벽. 모라의 언덕.');
       await this.say('mora', '…어머, 누구시더라.', { expr: 'surprised' });
-      await this.say('mora', '이상하지. 처음 보는 얼굴인데, 댁을 보니까 노래 하나가 떠오르네.', { expr: 'tender' });
-      await this.say('mora', '라— 라라… 이 다음이 뭐였더라.', { gesture: 'think' });
+      await this.say('mora', '이상하지. 처음 뵙는 얼굴인데, 댁을 보니 노래 하나가 떠오르네.', { expr: 'tender' });
+      await this.say('mora', '라— 라라… 이다음이 뭐였더라.', { gesture: 'think' });
       await this.choose(['(이어서 노래한다)']);
       G.game.musicOverride = 'memory';
+      // from behind the two of them, out over the dawn vale while the bells answer
+      G.cameraRig.setCine(GV(-21.5, 4.6, 147), GV(POI.bellTower.x, 12, POI.bellTower.z));
       await this.sleep(1.5);
       const tps = [V(6, 20, 10), V(POI.frost.x, 62, POI.frost.z), V(POI.storm.x, 40, POI.storm.z)];
       for (let k = 0; k < 3; k++) { G.audio.play('bell', { pos: G.player.pos.clone().add(V(0, 0, -30)), f: [146.8, 196, 220][k] }); await this.sleep(1.4); void tps; }
       await this.say('mora', '…그래, 그거야. 그거였어.', { expr: 'laugh' });
-      await this.say('mora', '고마워요. 누군지는 모르겠지만… 꼭, 오래 알던 사람 같네.', { expr: 'tender', gesture: 'bow' });
-      await this.say('mora', '이 노래는요, 우리 딸이 좋아하던 노래예요. 세하라고… 늘 조금씩 틀리게 부르는 버릇이 있었지요.', { expr: 'smile' });
+      await this.say('mora', '고마워요. 뉘신지는 몰라도… 꼭 오래 알던 사람 같네.', { expr: 'tender', gesture: 'bow' });
+      await this.say('mora', '이 노래는요, 우리 딸이 좋아하던 거예요. 세하라고… 꼭 한 군데를 틀리게 부르는 버릇이 있었지요.', { expr: 'smile' });
       await this.say('mora', '우습죠. 그 애 얼굴은 흐릿한데, 그 애가 틀리던 음은 이렇게 또렷해요.', { expr: 'sad' });
-      if (this.flag('askedMother')) await this.say('narr', '오늘 일을 다 마치면 들려주겠다던 이야기. 할머니는 약속을 지켰다. 누구에게 지키는지도 모른 채.');
+      if (this.flag('askedMother')) await this.say('narr', '오늘 일을 다 마치면 들려주겠다던 이야기. 할머니는 약속을 지켰다. 누구에게 지키는지도 모르는 채로.');
       if (this.flag('promiseKael')) {
         const k = await this.choose(['(카엘이라는 이름을 들려준다)', '(말없이 곁에 앉는다)']);
         if (k === 0) {
           this.set('keptPromise');
           await this.say('mora', '카엘…', { expr: 'surprised' });
-          await this.say('mora', '처음 듣는 이름인데, 이상하게 마음이 따뜻해지네요. 좋은 사람이었나 봐요.', { expr: 'tender', gesture: 'handToChest' });
+          await this.say('mora', '처음 듣는 이름인데, 이상하게 가슴께가 따뜻해지네요. 좋은 사람이었나 봐요.', { expr: 'tender', gesture: 'handToChest' });
           await this.say('mora', '…그래요. 좋은 사람이었을 거예요. 끝까지 멋있는 척하는.', { expr: 'laugh' });
         } else await this.say('narr', '말하지 않아도 괜찮을 것 같았다. 노래가 대신 전해 줄 테니까.');
       }
       await this.say('mora', '누가 그러더라고요. 노래는 한 사람만 기억하는 게 아니라고. …누가 그랬더라.', { expr: 'tender' });
-      await this.say('boreum', '…늙은 여우 할멈. 잘 자거라. 내일도 이 몸이 깨워 주마.');
+      await this.say('boreum', '…늙은 여우 할멈. 푹 자 두거라. 새벽엔 이 몸이 깨워 주마. 오십 년 치 빚이 있으니.');
       void mora;
     });
     await this.credits();
@@ -1153,7 +1183,7 @@ export class Story {
       '울림지기 — 하늬 골짜기의 노래',
       '모라 · 보름 · 바우 · 도담 · 이솔 · 단비\n그리고 카엘과 세하',
       '잊힌 모든 이름에게',
-      '— 끝 —\n\n골짜기는 계속됩니다. 남은 노래 씨앗과 기억을 찾아보세요.',
+      '— 끝 —\n\n골짜기의 아침은 계속됩니다.\n아직 잠든 노래 씨앗과, 두고 온 기억들이 기다립니다.',
     ];
     G.mode = 'cutscene';
     let skip = false;
@@ -1189,26 +1219,27 @@ export class Story {
       // talked to Bau first: skip Dodam's greeting instead of blocking the quest
       if (!this.flag('v_arrive')) { this.set('v_arrive'); const d = this.npc('dodam'); d.walkTarget = null; d.walkRes = null; G.player.frozenInput = false; d.walkTo(0, 24, 3.5); }
       await this.say('bau', '…왔는감.', { gesture: 'nod' });
-      await this.say('bau', '모라 할매가 보냈겄지. 언젠가 그 할매 대신 네가 올 줄은 알았어.');
-      await this.say('bau', '멈춰 버린 종에 대해 물어보러 왔구먼. …그려. 안 울어. 줄을 당겨도 쇠가 입을 꾹 다문 것 같어.');
-      await this.say('bau', '사십 년을 매일 새벽 당겼는디, 이런 일은 처음이여.', { expr: 'sad', gesture: 'sigh' });
+      await this.say('bau', '모라 할매가 보냈겄지. 언젠간 그 할매 대신 네가 올 줄 알았어.');
+      await this.say('bau', '종 말이여. 안 울어. 줄을 당겨도 쇠가 입을 꾹 다물었어.');
+      await this.say('bau', '사십 년을 새벽마다 당겼는디. 줄이 이리 가벼운 건 처음이여.', { expr: 'sad', gesture: 'sigh' });
       const c = await this.choose(['모라 할머니가 편찮으세요.', '종을 살펴봐도 될까요?']);
-      if (c === 0) { await this.say('bau', '…그 할매가? 허, 쇠도 녹슨다더니.', { expr: 'sad' }); await this.say('bau', '그러믄 더 서둘러야겄네.'); }
-      else await this.say('bau', '살펴봐. 근디 조심혀.');
-      await this.say('bau', '요새 밤마다 종탑 위에서 뭔가 번쩍혀. 꼬리 같은 게 말여. 나는 늙어서 헛것을 보는 줄 알았는디…', { expr: 'worried', gesture: 'think' });
-      await this.say('bau', '아, 그리고 저기 여관에 묵는 *학자 양반*이 요 며칠 종탑 주변을 자꾸 기웃거리더만. 그 양반도 뭘 아는 눈치여.');
+      if (c === 0) { await this.say('bau', '…그 할매가? 허, 쇠도 녹이 스는디 사람이야.', { expr: 'sad' }); await this.say('bau', '그럼 더 서둘러야겄네.'); }
+      else await this.say('bau', '봐. 근디 줄은 건들지 말어. 그건 내 일이여.', { gesture: 'crossArms' });
+      await this.say('bau', '요새 밤마다 종탑 꼭대기서 뭐가 번쩍혀. 꼬랑지 같은 게. 늙어서 헛것을 보나 했는디…', { expr: 'worried', gesture: 'think' });
+      await this.say('bau', '그리고 저기 여관에 묵는 *학자 양반*. 며칠째 종탑을 기웃거려. 뭘 아는 눈치여.', { gesture: 'point' });
       this.set('v_bau');
     });
     if (id === 'isol' && ch === 'village' && this.flag('v_bau') && !this.flag('v_isol')) return this.conv(async () => {
-      await this.say('isol', '실례합니다만— 바우 영감님과 종 이야기를 나누시는 걸 들었습니다. 아, 먼저 인사를. 저는 이솔. 왕립 학술원 소속… 이었던, 현재는 독립 연구자입니다.', { gesture: 'bow' });
-      await this.say('isol', '제 연구 주제는 *고요*입니다. 네, 그 고요요. 기억에서 떨어져 나간 존재가 울림을 잃고 잿빛이 되는 현상.');
-      await this.say('isol', '참고로 말씀드리자면, 학계에서는 대부분 전설로 취급합니다. 덕분에 제 연구비도 전설이 되었지요. 하하… 하.', { expr: 'laugh', gesture: 'shrug' });
-      await this.say('isol', '제 가설은 이렇습니다. 이 골짜기의 종들은 단순한 종이 아니라 *기억의 닻*이다. 누군가 종을 울릴 때마다, 골짜기 전체가 스스로를 "기억해 내는" 겁니다.');
-      await this.say('isol', '그런데 첫째 종이 침묵했다는 건… 닻을 붙들던 손이 느슨해졌다는 뜻이겠지요.');
+      await this.say('isol', '실례합니다. 엿들으려던 건 아닌데… 종 이야기가 들려서요. 이솔이라고 합니다.', { gesture: 'bow' });
+      await this.say('isol', '왕립 학술원 소속… 이었던, 현재는 독립 연구자지요. 연구 주제는 *고요*입니다.');
+      await this.say('isol', '기억에서 떨어져 나간 것이 울림을 잃고 잿빛이 되는 현상. 네, 그 고요요.');
+      await this.say('isol', '참고로 말씀드리자면, 학계에선 전설 취급입니다. 덕분에 제 연구비도 전설이 되었지요. 하하… 하.', { expr: 'laugh', gesture: 'shrug' });
+      await this.say('isol', '제 가설로는, 이 골짜기의 종은 *기억의 닻*입니다. 울릴 때마다 골짜기가 스스로를 기억해 내는 거지요.', { expr: 'determined' });
+      await this.say('isol', '그 종이 입을 다물었다면… 닻줄을 쥔 손이 느슨해진 겁니다.', { expr: 'worried' });
       const c = await this.choose(['그 손이… 모라 할머니인가요?', '어떻게 하면 다시 울릴 수 있죠?']);
-      if (c === 0) { await this.say('isol', '…!', { expr: 'surprised' }); await this.say('isol', '그렇다면 많은 게 설명됩니다. 이 골짜기엔 매일 새벽, 종보다 먼저 일어나 노래하는 사람이 있다는 소문이 있었거든요.'); }
-      else await this.say('isol', '그걸 알아내는 게 제 일이었는데, 솔직히 말씀드리면 막혀 있었습니다. 가설 16개가 모두 기각됐지요.', { gesture: 'sigh' });
-      await this.say('isol', '종탑 꼭대기에서 무언가 움직인다는 목격담이 있습니다. 종탑 아래 *제단*에 손을 대 보시겠습니까? 마법사라면… 반응이 있을지도요.', { gesture: 'point' });
+      if (c === 0) { await this.say('isol', '…!', { expr: 'surprised' }); await this.say('isol', '그럼 소문이 맞았군요. 새벽마다 종보다 먼저 일어나 노래하는 사람이 있다는.'); }
+      else await this.say('isol', '그걸 알아내는 게 제 일인데… 가설 열여섯 개가 전부 기각됐습니다. 열일곱 번째는 아직 백지고요.', { gesture: 'sigh' });
+      await this.say('isol', '종탑 아래 *제단*에 손을 대 보시겠습니까? 저는 반응이 없더군요. 세 번 해 봤습니다. 마법사라면 혹시.', { gesture: 'point' });
       this.set('v_isol');
     });
     if (id === 'mora' && ch === 'mora' && !this.flag('m_talk')) return this.moraMain();
@@ -1219,41 +1250,124 @@ export class Story {
     if (id === 'isol' && this.quests.q_bounty && this.count('bountyNew') > 0) return this.bountyReport();
     if (id === 'danbi' && this.flag('worldOpen') && !this.quests.q_memory) return this.danbiMemory();
     // --- ambient talk
-    return this.conv(async () => { for (const l of this.ambientTalk(id)) await this.say(l[0], l[1]); });
+    return this.conv(async () => { for (const l of this.ambientTalk(id)) await this.say(l[0], l[1], l[2] || {}); });
   }
 
+  // Daily talk: one line, or a short exchange (an array of lines). The pool follows the story
+  // (chapter, bells rung, what the speaker has been told), the weather and the hour.
   ambientTalk(id) {
-    const ch = this.chapter;
-    const post = ch === 'post';
-    const T = {
-      mora: ch === 'prologue' ? [['mora', '천천히 하렴. 서두르는 불은 금방 꺼진단다.']]
-        : post ? [['mora', '어머, 또 오셨네. 이상하게 댁이 오면 마음이 편해요.'], ['mora', '라— 라라… 이 노래, 누가 가르쳐 줬더라.']]
-          : ch === 'mora' ? [['mora', '세하야, 바람이 차다. 목도리 잘 여미렴.']]
-            : [['mora', '다녀왔니. …할미는 여기 앉아서 골짜기를 보는 게 좋단다. 저기 어디쯤, 옛날 생각이 떨어져 있을 것 같아서.'], ['mora', '무리하지 말거라. 등석에서 쉬어 가는 것도 용기란다.']],
-      bau: post ? [['bau', '요새는 새벽마다 애들이 종 치겠다고 줄을 서. 허허, 내 자리 뺏기게 생겼어.']]
-        : [['bau', '종은 세게 치는 게 아니라 오래 치는 겨. 누가 가르쳐 줬는지는 까먹었는디… 그 말은 안 까먹었어.'], ['bau', '북쪽 길은 눈이 쌓여서 미끄러워. 서쪽 고원은 번개가 잦고. 조심혀.']],
-      dodam: this.flag('catSaved') ? [['dodam', '누룽지가 요즘 저만 졸졸 따라다녀요! 마법사님 덕분이에요!'], ['dodam', '저 나중에 커서 마법사님 같은 울림지기 될 거예요. 불도 쏘고, 번개도 쏘고! …근데 무서운 건 빼고요.']]
-        : [['dodam', '마법사님, 마법 한 번만 보여 주세요! 한 번만요! …아, 지금 바쁘시구나.']],
-      isol: [['isol', '관찰 기록에 따르면, 반응 현상은 상태의 조합에 달려 있습니다. 얼린 뒤 번개, 적신 뒤 번개, 불태운 뒤 바람… 흥미롭지요.'], ['isol', '참고로 말씀드리자면, 울음탈의 구체는 마법으로 상쇄할 수 있습니다. 제가 몸으로 확인했… 아닙니다.']],
-      danbi: [['danbi', '아이고, 밥은 먹고 다니니? 자, 꿀빵 하나 먹고 가.'], ['danbi', '할머니는 요즘 어떠시니? …그래. 가끔 들러서 얼굴 보여 드려.']],
-      farmer: [['farmer', '올해 무는 잘 들었는디, 밤마다 허깨비들이 밭을 밟고 다녀. 종이 다시 우니께 좀 덜하구먼.'], ['farmer', '재나방 놈들, 등불만 켜면 몰려들어. 불로 한 방이면 떨어지긴 허지만.']],
-      fisher: [['fisher', '호수에 얼음을 띄우는 마법사가 있다던데, 혹시 마법사님이세요? 와, 한 번만 보여 줘요!'], ['fisher', '거울 호수는 비친 걸 오래 기억한대요. 그래서 물이 이렇게 맑은가 봐요.']],
-      elder: [['elder', '에헴. 장기는 기다림의 놀이여. 요즘 젊은이들은 그걸 몰라.'], ['elder', '옛날에 파란 깃털 투구를 쓴 기사가 이 마을에 있었는디… 이름이 뭐였더라. 에잉, 장이야!']],
-    };
-    const arr = T[id] || [['villager', '좋은 날이네요.']];
+    const ch = this.chapter, post = ch === 'post';
+    const f = (k) => this.flag(k), bells = this.bellsRung();
+    const rain = G.world.weather && G.world.weather.rain > 0.3, night = G.world.sky.night > 0.5;
+    const fox = G.companion && G.companion.active;
+    const has = (el) => G.player.unlocked.has(el);
+    const L = [];
+    const add = (...e) => L.push(...e);
+    switch (id) {
+      case 'mora':
+        if (ch === 'prologue') add(['mora', '천천히 하렴. 서두르는 불은 금방 꺼진단다.', { expr: 'smile' }], ['mora', '오늘따라 아침이 조용하구나. …아니다, 하던 거 마저 하렴.', { expr: 'worried' }]);
+        else if (post) add(
+          ['mora', '어머, 또 오셨네. 이상하지, 댁이 오면 마음이 놓여요.', { expr: 'smile' }],
+          ['mora', '라— 라라… 이 노래, 누가 가르쳐 줬더라.', { gesture: 'think' }],
+          ['mora', '수제비 좀 들고 가요. 늘 두 그릇을 끓이게 되네. 버릇인가 봐.', { expr: 'tender' }],
+          ['mora', '새벽마다 누가 창을 톡톡 쳐요. 바람이겠지요. 꼬리 달린 바람.', { expr: 'laugh' }]);
+        else if (ch === 'mora' || ch === 'rift') {
+          add(['mora', '세하야, 바람이 차다. 목도리 잘 여미렴.', { expr: 'tender' }], ['mora', '…손님, 우리 딸 못 보셨수? 금방 온다고 나갔는데.', { expr: 'worried' }]);
+          if (f('m_choir')) add(['mora', '아까는 골짜기가 노래를 하더구나. 여럿이서. …듣기 좋더라.', { expr: 'smile' }]);
+        } else {
+          add(['mora', '다녀왔니. 할미는 여기 앉아 골짜기를 본단다. 저기 어디쯤 옛날 생각이 떨어져 있을 것 같아서.', { expr: 'tender' }],
+            ['mora', '무리하지 말거라. 등석에서 쉬어 가는 것도 용기란다.', { expr: 'smile' }]);
+          if (bells >= 1) add(['mora', '종소리가 돌아왔더구나. …네가 깨운 게지? 말 안 해도 안다. 가락에 네 버릇이 묻었어.', { expr: 'smile' }]);
+          if (bells >= 2) add(['mora', '얘야, 할미가 아침은 먹었던가? …그래, 먹었구나. 네가 그렇다면 그런 게지.', { expr: 'worried' }]);
+          if (fox) add([['mora', '거기 털뭉치도 왔구나. 낮잠은 실컷 잤고?', { expr: 'smile' }], ['boreum', '…털뭉치라니. 오십 년 만에 건네는 말이 고작 그거냐, 할멈.']]);
+        }
+        break;
+      case 'bau':
+        if (ch === 'village' && !f('v_defend')) { add(['bau', '종 줄은 내가 쥐고 있을 텨. 너는 네 볼일 봐.'], ['bau', '제단은 종탑 밑이여. 사십 년을 쓸고 닦았는디, 그 돌은 늘 차.', { gesture: 'point' }]); break; }
+        add(f('name_bau') ? ['bau', '종은 세게 치는 게 아니라 오래 치는 겨. 인제는 누가 한 말인지도 알어.', { gesture: 'nod' }]
+          : ['bau', '종은 세게 치는 게 아니라 오래 치는 겨. 누가 가르쳐 줬는지는 까먹었는디… 말은 안 까먹었어.']);
+        if (post) add(['bau', '요샌 새벽마다 애들이 종 치겄다고 줄을 서. 허허, 내 자리 뺏기게 생겼어.', { expr: 'laugh' }],
+          ['bau', '그 양반이 깎아 준 막대기 창, 헛간에서 찾았어. …닦아서 종탑에 세워 놨어.', { expr: 'tender' }]);
+        else add(['bau', '북쪽 길은 눈이 쌓여 미끄럽고, 서쪽 고원은 번개가 잦어. 무릎 쑤시는 날은 가지 말어.']);
+        if (rain) add(['bau', '거 봐. 무릎이 온다 했잖여. 줄이 젖으면 무거운디.', { gesture: 'sigh' }]);
+        if (bells >= 3 && !post) add(['bau', '바람결에 종소리가 둘 더 실려 와. 북쪽 하나, 서쪽 하나. …귀는 아직 안 늙었어.', { expr: 'smile' }]);
+        if (fox) add([['bau', '종탑 꼭대기서 번쩍이던 꼬랑지가 너였구먼.'], ['boreum', '꼬랑지가 아니라 꼬리니라. 사십 년을 밑에서 한숨만 쉬던 게 너였고.'], ['bau', '…다 듣고 있었어?', { expr: 'surprised' }]]);
+        break;
+      case 'dodam':
+        if (night) add(['dodam', '쉿! 저 원래 자야 되는 시간이에요. 마법사님은 저 못 본 거예요.', { gesture: 'lookAround' }]);
+        if (f('catSaved')) add(['dodam', '누룽지가 요즘 저만 졸졸 따라다녀요! 마법사님 덕분이에요!', { expr: 'laugh' }],
+          ['dodam', '저 커서 울림지기 될 거예요. 불도 쏘고, 하늘도 날고! …근데 무서운 건 빼고요.']);
+        else {
+          add(['dodam', '마법사님, 마법 한 번만 보여 주세요! 한 번만요! …아, 지금 바쁘시구나.']);
+          if (this.quests.q_cat) add(['dodam', '누룽지 찾았어요? 아직이에요? …괜찮아요. 저 기다리는 거 잘해요. 진짜로요.', { expr: 'worried' }]);
+        }
+        if (f('v_wind')) add(['dodam', '종이 다시 울어서 좋아요! 안 울 땐 아침이 온 건지 안 온 건지 헷갈렸거든요.']);
+        if (post) add(['dodam', '비석에 글씨 새긴 거 저예요. 삐뚤빼뚤해도요, 안 까먹겠다고 했으니까요.', { expr: 'determined' }]);
+        if (fox) add([['dodam', '여우님! 꼬리 한 번만 만져 봐도 돼요? 한 번만요!', { expr: 'laugh' }], ['boreum', '안 된다. …한 번만이다. 결대로 쓸어라.']]);
+        break;
+      case 'isol':
+        add(['isol', '관찰 기록에 따르면, 반응은 *순서*의 문제입니다. 먼저 물들이고, 다른 노래로 치는 거지요.', { gesture: 'think' }],
+          ['isol', '참고로 말씀드리자면, 울음탈의 구체는 마법으로 맞혀 지울 수 있습니다. 제가 몸으로 확인… 아닙니다.']);
+        if (bells >= 2) add(['isol', '종이 하나 울릴 때마다 새소리가 늘어납니다. 세어 봤습니다. 한가해서가 아니라, 연구입니다.']);
+        if (rain) add(['isol', '비 오는 날엔 잉크가 번집니다. 그래서 요샌 중요한 건 소리 내어 읽어 둡니다. 듣는 사람이 있으면 더 좋고요.']);
+        if (post) add(['isol', '학술원에 논문을 보냈습니다. 제목은 「닻은 사람이다」. 반려되겠지요. 괜찮습니다. 여기선 다들 읽어 줬으니까요.', { expr: 'smile' }]);
+        else if (f('name_isol')) add(['isol', '가설 18번을 세울 차례인데… 서두르지 않으렵니다. 17번을 좀 더 들여다보고 싶어서요.', { expr: 'tender' }]);
+        if (fox) add([['isol', '정령님, 꼬리털 한 올만… 순수하게 연구 목적으로…', { gesture: 'bow' }], ['boreum', '한 올에 꿀빵 열 개니라.'], ['isol', '…연구비가.', { expr: 'sad' }]]);
+        break;
+      case 'danbi':
+        add(['danbi', '아이고, 밥은 먹고 다니니? 자, 꿀빵. 하나는 가다 먹고, 하나는 할머니 드려.', { expr: 'smile' }],
+          ['danbi', '할머니는 좀 어떠시니? …그래. 자주 들러서 얼굴 보여 드려. 얼굴이 약이야.', { expr: 'tender' }]);
+        if (f('name_danbi')) add(['danbi', '꿀빵 두 개. 이젠 왜 두 갠지 알고 싸는 거야. 세하 몫은 네가 먹어.', { expr: 'tender' }]);
+        if (rain) add(['danbi', '비 오는 날은 반죽이 말을 안 들어. 그래도 구웠다. 식기 전에 먹고 가.']);
+        if (night) add(['danbi', '이 시간까지 돌아다니니? 자, 남은 거. 식었어도 꿀빵은 꿀빵이다.']);
+        if (post) add(['danbi', '할머니가 어제 오셨어. 날 못 알아보시면서 "늘 먹던 걸로" 하시는 거 있지. 손은 다 기억하는 거야.', { expr: 'laugh' }]);
+        if (fox) add([['danbi', '거기 여우 손님도 하나 들어. 꿀 듬뿍 발랐어.'], ['boreum', '여우가 아니… …듬뿍이라 했느냐.']]);
+        break;
+      case 'farmer':
+        add(['farmer', '재나방 놈들은 등불만 켜면 몰려와. 불 한 방이면 우수수 떨어지긴 혀.']);
+        if (post) add(['farmer', '올해 무는 달어. 종소리 듣고 큰 무라 그려. …웃지 말어, 먹어 보믄 알어.', { expr: 'laugh' }]);
+        else if (bells >= 1) add(['farmer', '종이 우니께 밭이 조용혀. 무도 발 뻗고 자는 것 같어.', { expr: 'smile' }]);
+        else add(['farmer', '무는 잘 들었는디, 밤마다 허깨비가 밭을 밟고 다녀. 무가 놀라서 바람 들겄어.', { expr: 'worried' }]);
+        if (rain) add(['farmer', '비 오네. 무한테는 보약이여. 나한테는 신경통이고.']);
+        break;
+      case 'fisher':
+        add(['fisher', '거울 호수는 비친 걸 오래 기억한대요. 그래서 전 낚시할 때 표정 관리해요.', { expr: 'smile' }]);
+        if (has('frost')) add(['fisher', '호수에 얼음 띄우는 마법사가 있다던데… 혹시? 와! 근데 물고기 놀라니까 저쪽 가서 해 주세요!', { expr: 'surprised' }]);
+        add(f('catSaved') ? ['fisher', '그 귤… 아니 고양이요, 요샌 제 고기 바구니 옆에 딱 붙어 있어요. 은혜를 생선으로 받겠대요.', { expr: 'laugh' }]
+          : ['fisher', '섬에 주황색 뭐가 있어요. 처음엔 큰 귤인 줄 알았는데, 귤은 안 울잖아요.', { gesture: 'think' }]);
+        if (f('water_learn')) add(['fisher', '요새 호수에서 가끔 노랫소리가 나요. 무섭진 않아요. 물고기들도 가만히 듣더라고요.']);
+        if (rain) add(['fisher', '비 오는 날이 입질은 제일 좋아요. 옷은 제일 안 마르고요.']);
+        if (night) add(['fisher', '밤엔 별이 호수에 다 내려와요. 낚싯대를 던지면 별이 걸릴 것 같다니까요.']);
+        break;
+      case 'elder':
+        if (post) add(['elder', '오십 년 만에 저쪽 수를 내가 대신 뒀어. …졌어. 내가 나한테. 허허.', { expr: 'laugh' }], ['elder', '에헴. 장기는 기다림의 놀이여. 오십 년 기다려 본 내가 알어.']);
+        else if (f('m_choir')) add(['elder', '카엘이여, 카엘! 저쪽에 앉던 양반! 기사 주제에 수 무르자고 떼쓰던 양반이여!', { expr: 'laugh' }],
+          ['elder', '이름이 나오니께 얼굴도 따라 나와. 장기는 참 못 뒀어, 그 양반. 그래도 끝까지 앉아 있었지.', { expr: 'tender' }]);
+        else add(['elder', '에헴. 장기는 기다림의 놀이여. 요즘 젊은이들은 그걸 몰라.'],
+          ['elder', '이 판은 오십 년째 저쪽 차례여. 누구랑 두던 건지는 까먹었는디… 판은 못 치우겄어.', { gesture: 'think' }],
+          ['elder', '옛날에 파란 깃털 투구 쓴 기사가 살았는디… 이름이 뭐였더라. 에잉, 장이야!']);
+        break;
+      default: add(['villager', '좋은 날이네요.']);
+    }
     if (id === 'danbi') G.player.heal(G.player.maxHp);
-    return [pick(arr)];
+    // not the same thing twice in a row
+    this.lastTalk ||= {};
+    let i = Math.floor(rand() * L.length);
+    if (L.length > 1 && i === this.lastTalk[id]) i = (i + 1) % L.length;
+    this.lastTalk[id] = i;
+    const e = L[i];
+    return Array.isArray(e[0]) ? e : [e];
   }
 
   async tellNames(id) {
     const L = {
-      bau: [['bau', '카엘…? 카엘이라… 어이구, 그려! 그 기사 양반! 내가 코흘리개일 적에 막대기로 창 쓰는 법 가르쳐 줬던! 파란 깃털 투구 쓰고!', { expr: 'surprised', gesture: 'laugh' }], ['bau', '그 양반이 종 줄 당기는 법도 가르쳐 줬어. "바우야, 종은 세게 치는 게 아니라 오래 치는 거다." …그려. 그랬지. 내가 그걸 왜 잊고 살았을꼬.']],
-      danbi: [['danbi', '세하? 아이고, 세하! 우리 가게 꿀빵을 제일 좋아하던 그 애! 늘 두 개 사서 하나는 엄마 드리고…', { expr: 'surprised' }], ['danbi', '어째서 여태 그 애 생각을 못 했을까. 이렇게 또렷한데. …얘, 너 눈매가 그 애를 똑 닮았구나.', { expr: 'tender' }]],
-      dodam: [['dodam', '카엘 기사님이랑 세하 누나 이야기요? 저 처음 들어요! …근데 이상해요. 처음 듣는데 왠지 알 것 같아요.', { expr: 'surprised' }], ['dodam', '제가 안 까먹게 매일 누룽지한테 이야기해 줄게요! 누룽지는 까먹어도, 저는 안 까먹어요!']],
-      isol: [['isol', '기록하겠습니다. 카엘, 번개의 기사. 세하, 서리의 울림지기. 모라, 오십 년의 새벽을 노래한 사람.', { gesture: 'nod' }], ['isol', '기록은 잊지 않습니다. 사람보다 느리지만, 사람보다 오래 기억하지요. …이게 학자가 할 수 있는 일입니다.']],
+      bau: [['bau', '카엘…? 카엘이라… 어이구, 그려! 파란 깃털 투구! 코흘리개인 나한테 막대기로 창 쓰는 법 가르쳐 준!', { expr: 'surprised', gesture: 'laugh' }], ['bau', '종 줄 당기는 법도 그 양반이여. "바우야, 종은 세게 치는 게 아니라 오래 치는 거다." …말만 남고, 사람이 빠져 있었구먼.', { expr: 'sad', gesture: 'handToChest' }]],
+      danbi: [['danbi', '세하? 아이고, 세하! 꿀빵을 꼭 두 개씩 사 가던 애! 하나는 제 입에, 하나는 엄마 몫으로.', { expr: 'surprised' }], ['danbi', `${this.quests.q_memory ? '…내가 왜 너만 보면 두 개씩 쥐여 줬나 했더니.' : '…내가 왜 꿀빵을 꼭 두 개씩 짝지어 굽나 했더니.'} 손이 먼저 알고 있었네. 얘, 너 눈매가 그 애를 쏙 뺐다.`, { expr: 'tender', gesture: 'handToChest' }]],
+      dodam: [['dodam', '카엘 기사님이랑 세하 누나요? 처음 들어요! …근데 이상해요. 처음 듣는데 아는 사람 같아요.', { expr: 'surprised' }], ['dodam', this.flag('catSaved') ? '제가 안 까먹게 매일 누룽지한테 얘기해 줄게요! 누룽지는 까먹어도 돼요. 제가 또 해 주면 되니까요!' : '제가 안 까먹게 매일매일 말할게요! 혹시 까먹으면요, 마법사님이 또 해 주면 되잖아요!', { expr: 'determined', gesture: 'nod' }]],
+      isol: [['isol', '받아 적겠습니다. 카엘, 번개의 기사. 세하, 서리의 울림지기. 모라, 오십 년의 새벽을 노래한 사람.', { gesture: 'nod' }], ['isol', '기록은 사람보다 느리지만, 사람보다 오래 갑니다. …가설 17번. 닻은 종이 아니라 사람이다. 채택이군요.', { expr: 'tender' }]],
     }[id];
     await this.conv(async () => {
-      await this.say('narr', '카엘과 세하, 그리고 모라의 이야기를 들려주었다.');
+      await this.say('narr', '카엘. 세하. 그리고 모라. 세 이름을 차례로 들려주었다.');
       for (const l of L) await this.say(l[0], l[1], l[2] || {});
     });
     this.set('name_' + id);
@@ -1266,20 +1380,20 @@ export class Story {
   // ------------------------------------------------------------ side quests
   async catStart() {
     await this.conv(async () => {
-      await this.say('dodam', '마법사님… 저기요, 혹시… 고양이 봤어요? 주황색이고요, 이름은 누룽지예요. 누룽지처럼 생겨서 누룽지예요.');
-      await this.say('dodam', '어제 저녁에 호수 쪽으로 나비 쫓아가더니 안 와요. 누룽지는 수영도 못하는데…');
+      await this.say('dodam', '마법사님… 혹시 고양이 못 봤어요? 주황색이고요, 이름은 누룽지예요. 누룽지처럼 생겨서 누룽지예요.', { expr: 'worried' });
+      await this.say('dodam', '어제 저녁에 나비 쫓아서 호수 쪽으로 갔는데 안 와요. 누룽지는 헤엄도 못 치는데…', { expr: 'sad' });
       const c = await this.choose(['내가 찾아볼게.', '고양이는 원래 잘 돌아와.']);
-      if (c === 1) await this.say('dodam', '누룽지는 바보라서 안 돌아와요! …제발요.');
-      await this.say('dodam', '진짜요? 약속이에요! 새끼손가락 걸어요! …아 맞다, 마법사님 장갑 꼈지.');
+      if (c === 1) await this.say('dodam', '누룽지는 바보라서 못 돌아와요! …제발요.', { expr: 'worried', gesture: 'shake' });
+      await this.say('dodam', '진짜요? 약속이에요! 새끼손가락 걸어요! …아 맞다. 마법사님 장갑.', { expr: 'laugh' });
     });
-    this.quest('q_cat', '누룽지를 찾아서', '도담이의 고양이 누룽지가 거울 호수 쪽으로 가서 돌아오지 않았다. 호숫가 어부 말로는, 호수 가운데 섬에서 고양이를 본 것 같다고 한다.', 'side');
-    this.obj('q_cat', '거울 호수 근처에서 누룽지 찾기 — 울음소리에 귀 기울이기');
-    this.cSay('서리의 노래가 있다면 물 위에 얼음을 띄울 수 있을 텐데. 없다면… 헤엄이라도 치거라.', 'cat_hint');
+    this.quest('q_cat', '누룽지를 찾아서', '도담이의 고양이 누룽지가 나비를 쫓아 거울 호수 쪽으로 가서는 돌아오지 않았다. 주황색이고, 헤엄은 못 친다. 어부 소라는 호수 한가운데 섬에서 주황색 뭔가를 봤다고 한다.', 'side');
+    this.obj('q_cat', '거울 호수에서 누룽지 찾기 — 울음소리에 귀 기울이기');
+    this.cSay(G.player.unlocked.has('frost') ? '고양이가 섬에 있다면— 서리로 물 위에 얼음을 놓아 건너거라. 이 몸은 안 젖는다, 떠서 가니.' : '고양이가 섬에 있다면 헤엄을 쳐야겠구나. 이 몸은 안 젖는다, 떠서 가니.', 'cat_hint');
   }
   async pickCat() {
     await this.conv(async () => {
       G.audio.play('cat', { pos: this.cat.root.position });
-      await this.say('narr', '누룽지는 잠깐 경계하더니, 이내 어깨 위로 폴짝 올라탔다. 따뜻하고 무겁다.');
+      await this.say('narr', '누룽지는 한참 노려보더니, 제 발로 어깨에 올라탔다. 따뜻하고, 생각보다 무겁다.');
     });
     this.set('catCarried');
     G.player.carry = this.cat;
@@ -1296,9 +1410,9 @@ export class Story {
     const d = this.npc('dodam');
     this.cat.root.position.set(d.pos.x + 1.2, G.world.h(d.pos.x + 1.2, d.pos.z), d.pos.z);
     await this.conv(async () => {
-      await this.say('dodam', '누룽지!!! 너 어디 갔었어! 바보! 바보 고양이!', { expr: 'laugh' });
+      await this.say('dodam', '누룽지!!! 어디 갔었어! 바보! 바보 고양이!', { expr: 'laugh' });
       await this.say('dodam', '…고마워요, 마법사님. 진짜진짜로요.', { expr: 'tender', gesture: 'bow' });
-      await this.say('dodam', '이거, 제 보물인데요, 드릴게요. 행운 조약돌이에요. 물수제비 열두 번 뜬 돌이에요! 제 최고 기록이요!');
+      await this.say('dodam', '이거 드릴게요. 제 보물 1호예요. 물수제비 열두 번 뜬 돌이요! 제 최고 기록이에요!', { expr: 'smile' });
     });
     this.set('catSaved');
     G.player.maxStamina += 20; G.player.stamina = G.player.maxStamina;
@@ -1309,29 +1423,29 @@ export class Story {
 
   async danbiMemory() {
     await this.conv(async () => {
-      await this.say('danbi', '아이고, 이게 누구야! 모라 할머니네 손주 아니니? 밥은 먹고 다니니? 얼굴이 반쪽이네, 반쪽.', { expr: 'surprised', gesture: 'wave' });
-      await this.say('danbi', '할머니는 요새 통 빵 사러 안 오시더라. 매일 새벽 종 치기 전에 제일 먼저 오시던 양반이…');
-      await this.say('danbi', '참, 할머니가 예전에 그러시더라. 젊을 적 소중한 걸 골짜기 여기저기에 두고 왔다고.');
-      await this.say('danbi', '"잊어버리지 않으려고 일부러 두고 왔지" 하시면서 웃으시던데. 무슨 말인지 원…');
-      await this.say('danbi', '아, 그리고 이거. 할머니가 예전에 맡겨 두신 스케치북이야. 젊을 적에 골짜기를 그리셨대.', { gesture: 'handToChest' });
-      await this.say('danbi', '그림 속 자리에 가서 한번 서 봐. 그림이랑 겹쳐 보이는 게 있을지도 모르지.');
-      await this.say('danbi', '혹시 찾게 되면 할머니께 가져다드려. 기억이란 게, 물건을 보면 돌아오기도 하거든. 자, 꿀빵이나 하나 먹고 가!');
+      await this.say('danbi', '아이고, 이게 누구야! 모라 할머니네 손주! 밥은 먹고 다니니? 얼굴이 반쪽이네, 반쪽.', { expr: 'surprised', gesture: 'wave' });
+      await this.say('danbi', this.flag('name_danbi') ? '자, 꿀빵. 두 개 가져가. 하나는 가다 먹고, 하나는 세하 몫이니… 그것도 네가 먹어.' : '자, 꿀빵. 두 개 가져가. 하나는 가다 먹고, 하나는… 어머, 나 좀 봐. 왜 자꾸 두 개씩 싸지.', { expr: 'smile' });
+      await this.say('danbi', '할머니가 요샌 통 안 오셔. 새벽 종 치기도 전에 제일 먼저 오시던 양반이.', { expr: 'worried' });
+      await this.say('danbi', '참, 이거. 할머니가 오래전에 맡겨 두신 스케치북이야. 젊을 적에 골짜기를 그리셨대.', { gesture: 'handToChest' });
+      await this.say('danbi', '소중한 걸 골짜기 여기저기 두고 오셨다더라. "안 잊으려고 일부러 두고 왔지" 하고 웃으시는데, 무슨 소린지 원.', { gesture: 'shrug' });
+      await this.say('danbi', '그림 속 그 자리에 가서 서 봐. 그림이랑 겹쳐 보이는 게 있을지 누가 아니.');
+      await this.say('danbi', '뭐라도 찾으면 할머니께 갖다 드리고. 기억이란 게, 손에 쥐여 주면 돌아오기도 하거든.', { expr: 'tender' });
     });
     G.player.heal(G.player.maxHp);
     this.set('sketchbook');
-    G.hud.banner('모라의 스케치북', '옛 그림이 담긴 책', `그림 속 자리에 서서 같은 곳을 바라보자<br><small>${KBD('J')} 여정 → 기억에서 볼 수 있다</small>`, '#c9a8ff', 5200);
+    G.hud.banner('모라의 스케치북', '젊은 모라가 그린 골짜기', `그림 속 자리에 서서 같은 곳을 바라보자<br><small>${KBD('J')} 여정 → 기억에서 볼 수 있다</small>`, '#c9a8ff', 5200);
     this.startMemoryQuest();
   }
   startMemoryQuest() {
     if (this.quests.q_memory) return;
-    this.quest('q_memory', '모라의 기억', '모라 할머니는 젊은 날 소중한 것들을 골짜기 곳곳에 두고 왔다고 한다. 할머니의 옛 스케치북 속 자리에 서서 같은 곳을 바라보면, 두고 온 것이 보일지도 모른다. 찾으면 할머니께 가져다드리자.', 'side');
+    this.quest('q_memory', '모라의 기억', '할머니는 젊은 날 소중한 것들을 골짜기 곳곳에 두고 왔다고 한다. 안 잊으려고, 일부러. 스케치북 속 그 자리에 서서 같은 곳을 바라보면 두고 온 것이 보일지도 모른다. 찾으면 할머니 손에 쥐여 드리자.', 'side');
     this.updateMemoryObj();
   }
   updateMemoryObj() {
     const n = Object.values(this.memories).filter((v) => v === 'given').length;
     const have = Object.values(this.memories).filter((v) => v === 'have').length;
     const sk = G.sketches && this.flag('sketchbook') ? ` · 스케치 ${G.sketches.count()}/6` : '';
-    this.obj('q_memory', have ? `모라에게 기억의 물건 전하기 (${have}개 가지고 있음)` : `스케치 속 자리 찾기 (물건 ${n}/4 전함${sk})`, have ? [{ x: -20, z: 132, h: 2.4 }] : []);
+    this.obj('q_memory', have ? `할머니께 기억의 물건 전하기 (${have}개 가지고 있음)` : `스케치 속 자리 찾기 (물건 ${n}/4 전함${sk})`, have ? [{ x: -20, z: 132, h: 2.4 }] : []);
   }
   takeMemory(m) {
     m.taken = true; m.g.visible = false;
@@ -1342,38 +1456,38 @@ export class Story {
     G.hud.banner('모라의 기억', m.name, m.desc, '#c9a8ff');
     this.startMemoryQuest();
     this.updateMemoryObj();
-    this.cSay('그건… 모라의 물건이로구나. 이 몸도 기억난다. 가져다주거라.', 'mem_found');
+    this.cSay('킁. …할멈 냄새가 밴 물건이로구나. 오래도 기다렸겠다. 가져다주거라.', 'mem_found');
   }
   async deliverMemories() {
     const ids = Object.keys(this.memories).filter((k) => this.memories[k] === 'have');
     G.game.musicOverride = 'memory';
     if (this.chapter === 'mora' || this.chapter === 'post') await this.conv(async () => {
-      await this.say('narr', '물건을 건네자, 흐릿하던 할머니의 눈빛이 잠시 또렷해진다.');
+      await this.say('narr', '물건을 손에 쥐여 드리자, 할머니의 눈이 잠깐 또렷해진다.');
     });
     for (const id of ids) {
       await this.conv(async () => {
         if (id === 'hairpin') {
-          await this.say('mora', '이건… 어머나. 은방울꽃 핀이로구나. 세하가 열 살 때 호숫가에서 잃어버렸다고 울고불고했던…', { expr: 'surprised' });
-          await this.say('mora', '그 애가 얼마나 울었는지 몰라. 그래서 내가 호수를 다 뒤졌지. 결국 못 찾았는데, 네가 찾아왔구나.');
-          await this.say('mora', '세하는 울다 지쳐서 이렇게 말했단다. "엄마, 괜찮아. 핀은 잃어버려도, 예뻤던 건 안 잃어버리잖아."');
+          await this.say('mora', '이건… 어머나. 은방울꽃 핀이구나. 세하가 열 살 때 호수에 빠뜨리고 울고불고하던.', { expr: 'surprised' });
+          await this.say('mora', '어찌나 울던지, 이 할미가 치마 걷고 호수를 다 뒤졌지. 끝내 못 찾았는데… 네가 찾아왔구나.', { expr: 'smile' });
+          await this.say('mora', '그 애가 울다 지쳐서 그러더라. "엄마, 괜찮아. 핀은 잃어버려도, 예뻤던 건 안 잃어버리잖아."', { expr: 'tender' });
           await this.say('mora', '…그 애는 가끔 나보다 어른 같았어.', { expr: 'sad' });
         } else if (id === 'book') {
-          await this.say('mora', '노을 들판의 그 나무 아래서… 이 책에 꽃을 누르던 사람이 있었지.');
-          if (this.memories.badge === 'given') await this.say('mora', '첫 장에 적어 둔 이름은 번졌지만… 괜찮아. 이젠 안단다. 카엘이었지. 휘장을 보고 되찾은 이름을, 이 책이 다시 붙들어 주는구나.');
-          else await this.say('mora', '이름이… 이름이 분명 있었는데. 첫 장에 적어 두었는데, 번졌구나.');
-          await this.say('mora', '우스운 사람이었어. 기사면서 꽃 이름은 나보다 더 많이 알았지. "모라, 이건 물망초야. 나를 잊지 말라는 뜻이래."');
+          await this.say('mora', '노을 들판 그 나무 아래서… 이 책에 꽃을 눌러 넣던 사람이 있었지.', { expr: 'tender' });
+          if (this.memories.badge === 'given') await this.say('mora', '첫 장의 이름은 번졌지만… 괜찮다. 이젠 안단다. 카엘이었지. 휘장이 찾아 준 이름을, 이 책이 한 번 더 붙들어 주는구나.', { expr: 'smile' });
+          else await this.say('mora', '이름이… 분명 있었는데. 첫 장에 적어 뒀는데, 번져 버렸구나.', { expr: 'worried' });
+          await this.say('mora', '우스운 사람이었어. 기사 주제에 꽃 이름은 나보다 잘 알았지. "모라, 이건 물망초야. 나를 잊지 말라는 뜻이래."', { expr: 'smile' });
           await this.say('mora', '…그래 놓고. 그래 놓고 제가 먼저 잊혀 버렸지.', { expr: 'sad', gesture: 'sigh' });
         } else if (id === 'musicbox') {
-          await this.say('mora', '이 오르골은… 세하가 서리봉에 올라갈 때 들고 간 거란다.');
-          await this.say('mora', '그 애는 돌아오지 않았어. 너를 내 품에 맡기고, "금방 올게, 엄마" 하고서.', { expr: 'sad' });
-          await this.say('mora', '떠나기 전날 밤에 그 애가 묻더라. "엄마가 이 노래를 잊으면 어떡해?"');
-          await this.say('mora', '그래서 말해 줬단다. *"노래는 한 사람만 기억하는 게 아니란다."*');
-          if (this.flag('m_talk')) await this.say('mora', '…요전에 너한테도 이 말을 했었지? 후후. 이번엔 이 할미가 잊지 않았구나.');
-          else await this.say('mora', '…그 말을 한 게 나였는데. 정작 나는 혼자 기억하려고만 했구나.');
+          await this.say('mora', '이 오르골은… 세하가 서리봉에 오르던 날 품에 넣고 간 거란다.');
+          await this.say('mora', '그 애는 안 돌아왔어. 너를 내 품에 안겨 놓고, "금방 올게, 엄마" 하고는.', { expr: 'sad' });
+          await this.say('mora', '떠나기 전날 밤에 그 애가 묻더구나. "엄마가 이 노래를 잊으면 어떡해?"');
+          await this.say('mora', '그래서 일러 줬지. *"노래는 한 사람만 기억하는 게 아니란다."*', { expr: 'tender' });
+          if (this.flag('m_talk')) await this.say('mora', '…요전에 너한테도 이 말을 했지? 후후. 이번엔 이 할미가 안 잊었구나.', { expr: 'smile' });
+          else await this.say('mora', '…그 말을 한 게 나였는데. 정작 나는 혼자 기억하려고만 들었구나.', { expr: 'sad' });
         } else if (id === 'badge') {
           await this.say('mora', '…카엘.', { expr: 'surprised' });
-          await this.say('mora', '카엘. 그래, 그 이름이었어. 어떻게 이걸 잊을 수 있었을까. 오십 년을 매일 부르던 이름을.');
-          await this.say('mora', '뒷면에 뭐라고 적혀 있니? …"내가 잊혀도, 너는 노래해."');
+          await this.say('mora', '카엘. 그래, 그 이름이야. 어떻게 이걸 잊니. 오십 년을 새벽마다 부르던 이름을.', { gesture: 'handToChest' });
+          await this.say('mora', '뒤에 뭐라고 긁어 놨니? …"내가 잊혀도, 너는 노래해."');
           await this.say('mora', '바보 같은 사람. 끝까지 멋있는 척은.', { expr: 'laugh' });
         }
       });
@@ -1385,9 +1499,9 @@ export class Story {
     if (n >= 4 && !this.flag('memDone')) {
       this.set('memDone');
       await this.conv(async () => {
-        await this.say('mora', '얘야. 할미가 오늘은 이상하게 머리가 맑구나. 네가 가져다준 것들 덕분이겠지.');
-        await this.say('mora', '이것들은 네가 가지고 있으렴. 할미가 또 잊어버리면, 네가 다시 보여 주면 되잖니. …그렇게 하자꾸나.');
-        if (!G.player.hasHat) await this.say('mora', '그리고 이 모자도. 할미가 젊을 적 쓰던 거란다. 이제 네 차례야.');
+        await this.say('mora', '얘야. 오늘은 이상하게 머리가 맑구나. 네가 주워다 준 것들 덕이겠지.', { expr: 'smile' });
+        await this.say('mora', '이건 네가 갖고 있으렴. 할미가 또 잊거든, 네가 또 보여 주면 되잖니. …그러면 되는 거야.', { expr: 'tender', gesture: 'nod' });
+        if (!G.player.hasHat) await this.say('mora', '그리고 이 모자도. 할미가 젊을 적에 쓰던 거란다. 이제 네 차례야.', { expr: 'smile' });
       });
       if (!G.player.hasHat) { G.player.setHat(true); this.set('hat'); }
       G.player.maxMana += 30; G.player.mana = G.player.maxMana;
@@ -1413,11 +1527,13 @@ export class Story {
   }
   async bountyReport() {
     const n = this.count('bountyNew');
+    const all = [1, 2, 3].every((i) => this.flag('bounty' + i));
     await this.conv(async () => {
-      await this.say('isol', '정말입니까? 이름 붙은 개체를…! 잠시만요, 받아 적겠습니다.');
-      await this.say('isol', '흥미롭군요. 강한 개체일수록 이름을 가지고 있습니다. 누군가 그것들을 기억했다는 뜻이겠지요. 두려움으로라도.');
-      await this.say('isol', '고요는 이름을 먹고 자라지만… 이름은 또 고요를 붙잡아 두기도 한다. 모순이군요. 아주 아름다운 모순.', { expr: 'tender' });
-      await this.say('isol', '약소하지만, 연구비에서 떼어 드리는 사례입니다. …네, 연구비가 거의 없긴 합니다만.');
+      await this.say('isol', '정말입니까? 이름 붙은 개체를…! 잠시만요, 펜이. 펜이 어디…', { expr: 'surprised', gesture: 'lookAround' });
+      await this.say('isol', '흥미롭군요. 강한 개체일수록 이름이 있습니다. 누군가 그것을 기억한다는 뜻이지요. 두려움으로라도.', { gesture: 'think' });
+      await this.say('isol', '고요는 이름을 삼키며 자라는데, 이름은 또 고요를 붙들어 둔다. 모순이군요. …아름다운 모순입니다.', { expr: 'tender' });
+      if (all) await this.say('isol', '이걸로 셋 다군요. 제 노트 사본을 드리겠습니다. 읽는 사람이 둘이면, 이 기록도 두 배는 오래 갈 테니까요.', { expr: 'smile', gesture: 'bow' });
+      else await this.say('isol', '약소하지만 연구비에서 떼어 드리는 사례입니다. …네, 떼어 낼 연구비가 남아 있었다는 게 저도 놀랍습니다.', { gesture: 'shrug' });
     });
     G.player.addXP(80 * n);
     this.counters.bountyNew = 0; this.dirty = true;
@@ -1442,8 +1558,8 @@ export class Story {
     if (!this.quests.q_lake) {
       await this.sleep(this.flag('v_wind') && !this.flag('frostBell') && !this.flag('stormBell') ? 40 : 4);
       await this.wait(() => G.mode === 'free');
-      this.cSay('…이상하구나. 거울 호수 쪽에서 낯익은 노랫소리가 들리는구나. 한번 가 보지 않겠느냐?', null, 6);
-      this.quest('q_lake', '거울 호수의 메아리', '보름이 거울 호수 쪽에서 낯익은 노랫소리를 들었다고 한다. 호숫가에 가서 귀를 기울여 보자.', 'side');
+      this.cSay('…쉿. 거울 호수 쪽이다. 귀에 익은 노래가 실려 오는구나. 가 보지 않겠느냐?', null, 6);
+      this.quest('q_lake', '거울 호수의 메아리', '보름이 거울 호수 쪽에서 귀에 익은 노래를 들었다고 한다. 누구의 노래인지는 말해 주지 않았다. 호숫가에 가서 귀를 기울여 보자.', 'side');
     }
     this.obj('q_lake', '거울 호숫가에서 귀 기울이기', [{ x: spot.x, z: spot.z, h: 2.6 }]);
     await this.wait(() => this.near(spot.x, spot.z, 7) && G.mode === 'free' && !G.enemies.inCombat());
@@ -1460,33 +1576,36 @@ export class Story {
     for (let i = 0; i < 3; i++) G.vfx.ring(V(spot.wx, 0.08, spot.wz), PAL.water.core, 4 + i * 3, 1.6 + i * 0.4, { thick: 0.06 });
     await this.conv(async () => {
       G.cameraRig.setCine(V(spot.x + (spot.x - spot.wx) * 0.9 + 2.5, W.h(spot.x, spot.z) + 2.4, spot.z + (spot.z - spot.wz) * 0.9 + 2), V(spot.wx, 1.1, spot.wz));
-      await this.say('boreum', '…수면을 들여다보거라. 호수가 무언가를 되비추고 있구나.', { cam: false });
-      await this.say('narr', '잔잔한 물 위에 어린 소녀가 비친다. 물가에 쪼그려 앉아, 손바닥으로 물을 떠 올렸다 흘려보내며 노래를 흥얼거린다.', { cam: false });
-      await this.say('seha', '엄마, 봐 봐! 물은 불러 주는 대로 모양이 바뀌어. 내가 웃으면 같이 웃고, 찡그리면 같이 찡그려.', { expr: 'laugh', name: '어린 세하의 메아리' });
-      await this.say('seha', '서리는 물이 잠든 거고, 김은 물이 꿈꾸는 거래. 그러니까 물의 노래를 알면 서리도 김도 다 친구가 되는 거야.', { name: '어린 세하의 메아리' });
-      await this.say('seha', '…엄마 노래는 너무 뜨거워. 나는 이 노래가 좋아. 시원하고, 조금 슬프고. 오래오래 기억해 주거든.', { expr: 'tender', name: '어린 세하의 메아리' });
-      await this.say('boreum', '세하가 어릴 적 여기서 자주 놀았다고 했지. 거울 호수는 비친 것을 오래 기억한다더니… 그 아이의 노래를 네게 되비춰 주는구나.');
+      await this.say('boreum', '…수면을 보거라. 호수가 뭔가를 되비추고 있다.', { cam: false });
+      await this.say('narr', '잔잔한 물 위에 어린 소녀가 비친다. 물가에 쪼그려 앉아, 물을 떠 올렸다 흘려보내며 흥얼거린다.', { cam: false });
+      await this.say('seha', '엄마, 봐 봐! 물은 불러 주는 대로 모양이 바뀌어. 내가 웃으면 웃고, 찡그리면 같이 찡그려.', { expr: 'laugh', name: '어린 세하의 메아리' });
+      await this.say('seha', '서리는 물이 잠든 거고, 김은 물이 꿈꾸는 거래. 그러니까 물의 노래를 알면 다 친구가 되는 거야.', { expr: 'smile', name: '어린 세하의 메아리' });
+      await this.say('seha', '엄마 노래는 너무 뜨거워. 난 이게 좋아. 시원하고, 조금 슬프고… 오래오래 기억해 주거든.', { expr: 'tender', name: '어린 세하의 메아리' });
+      await this.say('boreum', '세하 그 꼬맹이, 어릴 적엔 여기서 살다시피 했지. 호수는 비친 걸 오래 기억한다더니… 네게 되비춰 주는구나.');
       const c = await this.choose(['(수면에 손을 담근다)', '(메아리를 따라 흥얼거린다)']);
-      if (c === 0) await this.say('narr', '차가운 물이 손가락 사이로 스며든다. 물결이 퍼져 나가며, 소녀의 모습이 천천히 흐려진다.');
+      if (c === 0) await this.say('narr', '차가운 물이 손가락 사이로 스민다. 물결이 번지고, 소녀의 모습이 천천히 흐려진다.');
       else await this.say('narr', '조금 틀린 음으로 따라 부르자, 소녀가 고개를 들고 이쪽을 보며 웃은 것 같았다.');
       await this.say('seha', '…헤헤. 틀렸다. 그래도 좋다.', { expr: 'laugh', name: '어린 세하의 메아리' });
     });
     G.vfx.burst(ghost.headPos(), 'soul', 40, { el: 'water' });
     G.scene.remove(ghost.root);
     G.npcs.list.splice(G.npcs.list.indexOf(ghost), 1); delete G.npcs.map.seha;
-    await this.unlockElement('water', '되비추는 노래. 적을 적셔 번개와 서리를 부르고, 불을 꺼뜨린다.');
+    await this.unlockElement('water', '되비추는 노래. 적을 흠뻑 적시고, 불을 재운다. 젖은 것은 다른 노래에 크게 답한다.');
     this.set('water_learn');
-    this.hint(`${KBD('6')} 물 · 젖은 적에게 [번개] → <b>감전 연쇄</b>와 감전 지속 피해 · 젖은 적에게 [서리] → <b>순간 빙결</b><br><small>불타는 적에게 물을 끼얹으면 <b>소화</b> — 불은 꺼지지만 피해가 절반으로 준다</small>`, 12);
+    const rn = (id) => REACTIONS[id].name, has = (el) => G.player.unlocked.has(el);
+    // only pair water with songs the player already has
+    const pairs = [has('storm') && `젖은 적에게 [번개] → <b>${rn('conduct')}</b>와 감전 지속 피해`, has('frost') && `젖은 적에게 [서리] → <b>${rn('flashfreeze')}</b>`].filter(Boolean);
+    this.hint(`${KBD('6')} 물 · ${pairs.length ? pairs.join(' · ') : '적을 적신다 — 젖은 적은 뒤이은 노래에 크게 반응한다'}<br><small>불타는 적에게 물을 끼얹으면 <b>${rn('extinguish')}</b> — 불은 꺼지지만 피해가 절반으로 준다</small>`, 12);
     this.done('q_lake', '물의 노래를 얻었다.');
     await this.sleep(1.5);
-    this.cSay(G.skills.has(SIG.water) ? '물의 노래라… 세하가 두고 간 것이 서리만은 아니었나 보구나. 울림 나무(K)에 물의 갈래가 새로 돋았을 게다.' : '물의 노래라… 세하가 두고 간 것이 서리만은 아니었나 보구나. 울림 나무(K)에 물의 갈래가 새로 돋았을 게다. 뿌리의 *해일*부터 익혀 보거라.', null, 7);
+    this.cSay(`물의 노래라… 그 꼬맹이, 별걸 다 두고 갔구나. 울림 나무(K)에 물의 갈래가 돋았을 게다.${G.skills.has(SIG.water) ? '' : ` 뿌리의 ${EM(HEAVY.water.name)}부터 익혀 보거라.`}`, null, 7);
   }
 
   async readGrave() {
     await this.conv(async () => {
-      await this.say('sign', '이름이 새겨지지 않은 비석. 누군가 매일 들꽃을 놓고 간 흔적이 있다.');
-      if (this.chapter === 'post' || this.flag('m_choir')) await this.say('sign', '비석 아래쪽에, 서툰 글씨가 새로 새겨져 있다. *"세하. 그리고 카엘. 잊지 않을게."*');
-      else if (this.flag('f_echo')) await this.say('sign', '…이 비석은 세하를 위한 것이었을까. 이름을 새기지 못한 건, 돌아올 거라 믿었기 때문일까.');
+      await this.say('sign', '이름 없는 비석. 그 앞에 들꽃이 놓여 있다. 시든 것 위에 새것, 그 위에 또 새것.');
+      if (this.chapter === 'post' || this.flag('m_choir')) await this.say('sign', '비석 아래쪽에 서툰 글씨가 새로 새겨져 있다. *"세하. 카엘. 안 까먹을게요."* …도담이 글씨다.');
+      else if (this.flag('f_echo')) await this.say('sign', '…세하를 위한 비석이었을까. 이름을 새기지 않은 건, 돌아올 거라 믿어서였을까.');
     });
   }
 
@@ -1527,87 +1646,103 @@ export class Story {
       G.hud.updateHearts();
       G.audio.play('levelup');
       G.hud.banner('노래 씨앗', '울림이 깊어졌다', kind === 'heart' ? '생명력의 그릇이 하나 늘었다.' : kind === 'stamina' ? '기력이 늘었다.' : '마나가 늘었다.', '#9fffb0', 3800, { minor: true });
-    } else if (n === 1) this.cSay('오호, 노래 씨앗이로구나! 잊힌 노래의 작은 조각이니라. 넷을 모으면 네 울림이 깊어질 게다. 귀를 기울이면 소리로 찾을 수 있지.', 'seed1', 7);
+    } else if (n === 1) this.cSay('오호, 노래 씨앗이로구나. 잊힌 노래가 떨군 낟알이지. 넷을 모으면 네 울림이 깊어진다. 눈 말고 귀로 찾거라.', 'seed1', 7);
   }
 
   // ------------------------------------------------------------ hooks
-  onKill(e) { this.inc('kills'); if (e.elite && this.once('elite1')) this.cSay('이름까지 붙은 놈을 쓰러뜨리다니. 제법이구나.'); }
+  onKill(e) { this.inc('kills'); if (e.elite && this.once('elite1')) this.cSay('이름 붙은 놈을 눕혔구나. …누가 저걸 그리 오래 기억했을꼬.'); }
   onCast(kind, el) {
     if (kind === 'heavy' && el === 'fire') this.heavyFireT = G.time;
-    if (kind === 'weave' && this.once('weave1')) this.cSay('오호! 두 노래를 엮었구나. 모라도 그걸 익히는 데 삼 년은 걸렸느니라.');
-    if (kind === 'ult' && this.once('ult1')) this.cSay('…허. 방금 그건 이 몸도 처음 보는구나. 네 울림이 제법 깊어졌느니라.');
+    if (kind === 'weave' && this.once('weave1')) this.cSay('오호, 두 노래를 한 숨에 엮었구나! 할멈은 그거 익히는 데 삼 년 걸렸느니라. …이 말은 비밀이다.');
+    if (kind === 'ult' && this.once('ult1')) this.cSay('…허. 털이 다 섰다. 방금 그건 이 몸도 처음 보는구나.');
   }
+  // Borum names each reaction the first time it happens (names come from combat.js)
   onReaction(r) {
     const L = {
-      melt: '오호! 녹여 버렸구나! 그것이 *융해*니라. 불은 얼음을 이긴다.',
-      shatter: '와장창! 언 것은 깨지기 마련이지. *파쇄*로다!',
-      conduct: '젖은 놈들에게 번개라니, 짓궂구나! *감전 연쇄*니라.',
-      overload: '불에 번개를 더하면 터진다. 당연한 이치지. *과부하*!',
-      firestorm: '바람이 불을 옮겼구나. 이 몸의 바람이 쓸모가 있지 않느냐?',
-      thermal: '불타는 놈에게 서리를! *열충격*이로구나.',
-      flashfreeze: '젖은 것은 순식간에 언다. *순간 빙결*!',
-      blizzard: '한기를 바람에 실었구나. *눈보라*로다.',
-      extinguish: '불타는 놈에게 물을 끼얹다니! 불은 꺼졌다만 피해도 줄었느니라. *소화*지. 물은 번개나 서리와 어울리는 법이다.',
-      scald: '물과 불을 한데 끓였구나! *끓는 김*이로다. 이 몸의 꼬리가 다 축축하구나.',
-      shortcircuit: '감전된 놈에게 물이라, *누전*이니라! 전기가 물을 타고 온몸을 도는구나.',
-      superconduct: '한기 서린 몸에 번개가 거침없이 흐르는구나. *초전도*로다!',
-      monsoon: '젖은 놈을 바람으로 쳐서 물보라를 흩뿌렸구나. *장대비*로다.',
+      melt: () => `얼음이 불을 만났으니 버틸 재간이 있나. ${RX('melt', '이다')}. 녹은 놈은 젖기까지 하느니라.`,
+      evaporate: () => `젖은 놈을 불로 지졌구나. ${RX('evaporate', '이다')}. 김이 걷히기 전에 한 대 더 먹이거라.`,
+      shatter: () => `와장창! 속이 다 시원하구나. 언 것은 세게 치면 깨진다. ${RX('shatter')}니라.`,
+      conduct: () => `젖은 놈들한테 번개라니, 짓궂기는. ${RX('conduct', '이다')}. 젖은 놈은 죄다 같이 떤다.`,
+      overload: () => `불붙은 데 번개를 꽂으면 터지지. ${RX('overload')}! …귀가 다 먹먹하구나.`,
+      firestorm: () => `바람이 불을 옆 놈한테 옮겼다. ${RX('firestorm', '이다')}. 이 몸의 바람, 쓸 만하지 않으냐?`,
+      thermal: () => `달궈 놓고 얼리다니, 대장간 솜씨로구나. ${RX('thermal', '이다')}.`,
+      flashfreeze: () => `젖은 건 눈 깜짝할 새 언다. ${RX('flashfreeze')}! 겨울에 빨래 널어 본 놈은 다 아는 이치지.`,
+      blizzard: () => `한기를 바람에 태웠구나. ${RX('blizzard', '이다')}. 둘레 놈들까지 이가 딱딱 부딪칠 게야.`,
+      stormspread: () => `찌릿한 걸 바람에 실어 날랐구나. ${RX('stormspread', '이다')}. 옆에 선 죄로 다 같이 떤다.`,
+      extinguish: () => `아이고, 타는 놈한테 물을. 불만 꺼 줬구나. ${RX('extinguish', '이다')}. 물은 ${G.player.unlocked.has('storm') || G.player.unlocked.has('frost') ? '번개나 서리와' : '다른 노래와'} 짝을 지어 주거라.`,
+      scald: () => `물과 불을 한 솥에 끓였구나! ${RX('scald', '이다')}. …이 몸의 꼬리까지 눅눅해졌느니라.`,
+      shortcircuit: () => `찌릿한 놈한테 물을 끼얹었구나. ${RX('shortcircuit', '이다')}. 전기가 물길 따라 온몸을 돈다.`,
+      superconduct: () => `한기 서린 몸엔 번개가 막힘없이 흐르지. ${RX('superconduct')}! 갑옷이고 뭐고 소용없다.`,
+      monsoon: () => `젖은 놈을 바람으로 털었구나. ${RX('monsoon', '이다')}. 곁에 선 놈들까지 다 젖었다.`,
+      resonance: () => `물든 놈을 맨 울림으로 쳤구나. ${RX('resonance', '이다')}. 무슨 노래에 물들었든 그게 되울린다.`,
     };
-    if (L[r] && this.once('react_' + r)) this.cSay(L[r]);
+    // (kept for when Borum is there to say it: a reaction can happen before he joins)
+    if (L[r] && G.companion && G.companion.active && this.once('react_' + r)) this.cSay(L[r]());
   }
   onBossPhase(b, n) {
+    const shadow = { headPos: () => b.center().add(V(0, 1.5, 0)), speaker: 'kaelShadow' };
     if (b.type === 'bruteFrost') {
-      if (n === 2) this.cSay('놈이 한기를 뿜는다! 발밑이 하얘지면 순간이동으로 빠져나오거라!');
-      if (n === 3) this.cSay('두 겹이다! 첫 고리를 피했다고 방심 말거라. 돌진한 뒤엔 곧장 내려찍는다!');
+      if (n === 2) this.cSay('한기를 뿜는다! 발밑이 하얘지거든 순간이동으로 빠져라!');
+      if (n === 3) this.cSay('고리가 두 겹이다! 첫 고리 피했다고 마음 놓지 마라. 돌진 뒤엔 곧장 내려찍는다!');
     }
-    if (b.type === 'knight' && n === 2) { G.hud.bark({ headPos: () => b.center().add(V(0, 1.5, 0)), speaker: 'kaelShadow' }, '모… 라…'); this.cSay('놈이 번개를 부른다! 발밑을 조심하거라!'); }
-    if (b.type === 'knight' && n === 3) { G.hud.bark({ headPos: () => b.center().add(V(0, 1.5, 0)), speaker: 'kaelShadow' }, '…아직… 지킬 것이…'); this.cSay('칼이 한 번 더 이어진다! 네 번째 베기까지 보고 움직이거라!'); }
+    if (b.type === 'knight' && n === 2) { G.hud.bark(shadow, '모… 라…'); this.cSay('…방금 저놈이 뭐라 했느냐. —번개가 떨어진다! 발밑을 보거라!'); }
+    if (b.type === 'knight' && n === 3) { G.hud.bark(shadow, '…문을… 붙들어야…'); this.cSay('칼이 넷으로 늘었다! 네 번째까지 세고 움직여라!'); }
     if (b.type === 'heart') {
       const S = this.npc('seha'), K = this.npc('kael');
-      if (n === 2) { if (S) G.hud.bark(S, '{n}, 지치지 마! 네 노래는 혼자가 아니야!'); this.cSay('놈이 허깨비들을 부른다! 결계부터 깨라!'); }
+      if (n === 2) { if (S) G.hud.bark(S, '{n:아}, 숨 쉬어! 우리도 같이 부르고 있어!'); this.cSay('허깨비를 부른다! 한눈팔지 말고 결계부터 깨라!'); }
       if (n === 3) {
-        if (K) G.hud.bark(K, '광선이다! 뛰어넘어라!');
-        G.hud.companion('…잊는 건… 아프지 않아… 조용해질 뿐이야… 너도 쉬고 싶지 않니…', 5);
-        setTimeout(() => this.cSay('귀 기울이지 마라! 저건 슬픔이 하는 말이다!'), 5200);
+        if (K) G.hud.bark(K, '광선이다! 넘어라!');
+        // the Hush speaks from the heart itself, not in Borum's line
+        G.hud.bark({ headPos: () => b.core.position.clone().add(V(0, 2.5, 0)), speaker: 'hush' }, '…잊는 건… 아프지 않아… 조용해질 뿐이야… 너도 쉬고 싶지 않니…');
+        setTimeout(() => this.cSay('따라가지 마라, 꼬마! 저건 추워서 하는 소리다!'), 5200);
       }
     }
   }
   // a boss's break meter filled (see BREAK in enemies.js)
   onBossBreak(b) {
-    if (this.once('break1')) this.cSay('무너졌다! 지금이다, 가진 노래를 전부 쏟아붓거라!');
-    else if (Math.random() < 0.4) this.cSay(pick(['또 무너졌구나! 몰아치거라!', '옳지, 반응을 섞으니 버티질 못하는구나!', '지금이다, 꼬마!']));
+    if (this.once('break1')) this.cSay('무너졌다! 지금이다— 가진 노래를 있는 대로 쏟아라!');
+    else if (Math.random() < 0.4) this.cSay(pick(['또 주저앉았다! 몰아쳐라!', '옳지! 노래를 섞으니 배겨 내질 못하는구나!', '무릎 꿇었다— 지금이다, 꼬마!']));
     void b;
   }
-  onHeartExposed() { const S = this.npc('seha'); if (S && this.once('exposed1')) G.hud.bark(S, '지금이야! 가진 노래를 전부!'); else this.cSay('심장이 드러났다! 지금이다!'); }
+  onHeartExposed() { const S = this.npc('seha'); if (S && this.once('exposed1')) G.hud.bark(S, '지금이야! 아끼지 마!'); else this.cSay('심장이 드러났다! 쏟아부어라!'); }
 
   regionComment(id) {
     const L = {
-      lake: '거울 호수는 비친 것을 오래 기억한다더구나. 세하가 여기서 자주 놀았지.',
-      woods: '속삭이는 숲… 재나방이 많은 곳이다. 불을 준비하거라.',
-      meadow: '노을 들판. 해 질 녘이 제일 곱지. 모라가 좋아하던 곳이니라.',
-      bluffs: this.flag('glide') ? '이 벼랑 위에선 골짜기가 한눈에 보이지. 떨어지면 활공하거라.' : '이 벼랑 위에선 골짜기가 한눈에 보이지. 발밑 조심하거라.',
-      rift: '……이 몸의 꼬리털이 곤두서는구나.',
-      frostpass: '에취! 눈이다, 눈. 발밑 조심하거라.',
+      village: '마을이다. 빵 굽는 냄새가… 흠흠. 정령은 배 안 고프다.',
+      tower: '할멈의 언덕이다. …창에 불이 켜졌는지부터 보게 되는구나.',
+      lake: '거울 호수다. 물이 이리 맑으면 꼬리 비춰 보기에 좋지. …뭘 보느냐. 정령도 몸단장은 한다.',
+      woods: '속삭이는 숲이다. 재나방이 끓는 데지. 불 하나면 우수수 떨어지니, 손에 불 쥐고 가거라.',
+      meadow: '노을 들판이다. 할멈이 젊어서 뻔질나게 드나들던 데지. 누구랑 왔는지는… 이 몸 입으론 말 못 한다.',
+      bluffs: this.flag('glide') ? '벼랑 끝이다. 골짜기가 한눈에 드는구나. 떨어지거든 당황 말고 바람을 타거라.' : '벼랑 끝이다. 골짜기가 한눈에 드는구나. 발밑은 네가 챙겨라. 이 몸은 날 줄 아니.',
+      rift: '……꼬리털이 선다. 여긴 바람도 까치발로 지나간다.',
+      frostpass: '눈이다, 눈. 춥냐고? 이 몸은 털이 있다. 걱정은 네 발밑에나 하거라.',
     };
     if (L[id]) this.cSay(L[id], 'reg_' + id);
   }
 
+  // Borum's idle remarks: what he notices right now comes first, the rest is his small talk.
   companionChatter() {
     const P = G.player.pos;
-    const n = G.world.sky.night;
     const reg = regionAt(P.x, P.z).id;
-    const pool = [
-      '바람이 좋구나. 이런 날엔 꼬리털이 반들반들해지지.',
-      '하늬바람은 서쪽에서 분다. 그래서 이 골짜기 이름이 하늬인 게야. 몰랐느냐?',
-      '배가 고프구나. 정령도 배가 고프냐고? …기분 탓이니라.',
-      '모라는 젊을 적 성미가 불같았느니라. 지금도 그렇지만.',
-      '가끔 멈춰서 귀를 기울여 보거라. 노래 씨앗 소리가 들릴지도 모른다.',
-      '서두르는 것도 좋지만, 가끔은 경치도 보거라. 이 골짜기, 제법 곱지 않느냐?',
-    ];
-    if (n > 0.5) pool.push('밤하늘을 보거라. 저 별들도 누군가 기억해 주니까 빛나는 게야.', '반딧불이는 잊힌 이들의 작은 노래라는 옛말이 있느니라. 믿거나 말거나.');
-    if (G.player.hp <= 4) return '너, 숨이 가쁘구나. 등석에서 쉬어 가거라. 용감한 것과 무모한 건 다르니라.';
-    if (reg === 'rift' && this.chapter !== 'post') return '…이곳은 소리가 없구나. 빨리 끝내자.';
+    const post = this.chapter === 'post';
+    if (G.player.hp <= 4) return '숨이 가쁘구나. 등석에서 쉬어 가거라. 용감한 것과 무모한 것은 한 끗 차이니라.';
+    if (reg === 'rift' && !post) return '…소리가 없구나, 여긴. 오래 머물 데가 못 된다.';
     if (!this.flag('worldOpen')) return null;
+    const pool = [
+      '바람이 좋구나. 이런 날엔 꼬리털이 저절로 빗겨지지.',
+      '하늬바람은 서쪽에서 분다. 그래서 여기가 하늬 골짜기인 게야. …몰랐다는 얼굴이로구나.',
+      '배가 고프… 아니다. 정령은 배가 안 고프다. 빵집 굴뚝 쪽은 그냥 본 게다.',
+      '할멈은 젊어서 성미가 불같았느니라. 지금은 불씨 같지. 꺼진 줄 알고 만지면 덴다.',
+      '가끔은 서서 귀를 열어 보거라. 노래 씨앗은 눈보다 귀에 먼저 걸린다.',
+      '그리 뛰기만 하면 골짜기가 서운해한다. 이만하면 볼만한 골짜기 아니냐.',
+      '종에 묶여 오십 년이다. 심심했냐고? …종 속은 낮잠 자기에 그만이니라.',
+    ];
+    const bells = this.bellsRung(), W = G.world.weather;
+    if (G.world.sky.night > 0.5) pool.push('밤하늘 좀 보거라. 저 별들도 누가 기억해 주니 빛나는 게야.', '반딧불이는 잊힌 이들의 작은 노래라더구나. 믿거나 말거나.');
+    if (W && W.rain > 0.3) pool.push(G.player.unlocked.has('storm') ? '비다. 이 몸은 젖는 게 질색이니라. …번개를 부리기엔 좋은 날이다만.' : '비다. 이 몸은 젖는 게 질색이니라. 젖은 풀엔 불도 잘 안 붙으니 알아 두거라.');
+    if (post) pool.push('할멈은 오늘도 흥얼대더구나. 가사는 잊어도 가락은 남는 법이지.', '요샌 새벽이 바쁘다. 할멈 창을 두드려야 하거든. …꼬리로 말이다.');
+    else if (bells >= 2) pool.push('새소리가 늘었구나. 종 하나 깨울 때마다 골짜기가 뭔가를 하나씩 떠올리는 게야.');
+    else pool.push('골짜기 빛깔이 물 빠진 천 같구나. 종이 다 울던 시절엔 이렇지 않았느니라.');
     return pick(pool);
   }
 }

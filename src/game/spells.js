@@ -66,7 +66,7 @@ export const WEAVE = {
   'frost+water': { name: '빙하 해일', desc: '거대한 물결이 밀려가며 휩쓴 적을 모두 얼려 버린다.' },
   'storm+water': { name: '전류 소용돌이', desc: '적을 빨아들이는 소용돌이에 전류가 흐른다. 젖은 적은 계속 감전된다.' },
   'water+wind': { name: '폭풍우', desc: '비바람의 벽이 앞으로 휩쓸며 적을 밀어내고 적신다. 불을 끄고, 물웅덩이를 남긴다.' },
-  arcane: { name: '비전 광선', desc: '짝지은 속성으로 물든 광선을 내뿜는다. 계속 조준할 수 있다.' },
+  arcane: { name: '비전 광선', desc: '짝지은 속성의 힘을 담은 광선을 내뿜는다. 쏘는 동안 방향을 바꿀 수 있다.' },
 };
 export const WEAVE_COST = 45, WEAVE_CD = 9;
 // signature spells gather at the staff for a beat before they are released

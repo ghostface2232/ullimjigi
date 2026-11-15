@@ -24,7 +24,7 @@ export const REACTIONS = {
   superconduct: { name: '초전도', color: '#d9f0ff', els: ['frost', 'storm'], desc: '[조화] 한기만 서린 적에게 번개 → 1.6배 피해, 갑옷 파괴.' },
   monsoon: { name: '장대비', color: '#8ab8ff', els: ['water', 'wind'], desc: '[조화] 젖은 적에게 바람 → 물보라가 주변 적을 모두 적신다.' },
   resonance: { name: '공명', color: '#c9a8ff', els: ['*', 'arcane'], desc: '상태 이상에 걸린 적에게 비전 → 추가 피해.' },
-  airborne: { name: '공중 강타', color: '#9fffd8', els: ['wind', '*'], desc: '바람에 띄워진 적은 더 큰 피해를 받는다.' },
+  airborne: { name: '공중 강타', color: '#9fffd8', els: ['wind', '*'], desc: '바람에 붕 뜬 적은 더 큰 피해를 받는다.' },
 };
 
 export function newStatus() {

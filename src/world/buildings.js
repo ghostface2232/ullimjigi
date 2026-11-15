@@ -11,6 +11,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { toon, fresnelMat, glowMat, U } from '../render/materials.js';
 import { mulberry32 } from '../core/util.js';
 import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
+import { model } from '../render/models.js';
 
 export const MAT = {
   stone: toon(0xb8ad9a, { flat: true, rim: 0.2, tex: 'stone' }),
@@ -157,7 +158,7 @@ export function consolidate(g, keep = []) {
     const mat = list[0].material;
     const geos = list.map((m) => {
       const gg = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
-      for (const a of Object.keys(gg.attributes)) if (a !== 'position' && a !== 'normal' && !(a === 'color' && mat.vertexColors)) gg.deleteAttribute(a);
+      for (const a of Object.keys(gg.attributes)) if (a !== 'position' && a !== 'normal' && !(a === 'color' && mat.vertexColors) && !(a === 'uv' && mat.map)) gg.deleteAttribute(a);
       if (!gg.attributes.normal) gg.computeVertexNormals();
       gg.applyMatrix4(M.multiplyMatrices(inv, m.matrixWorld));
       return gg;
@@ -170,6 +171,212 @@ export function consolidate(g, keep = []) {
     for (const m of list) m.parent.remove(m);
   }
   return g;
+}
+
+// ------------------------------------------------------------------
+// Authored props: public/models/pr_<name>.glb, modelled in Blender (ref/blender/props/*.py).
+// The vertices carry the colour (tone, baked occlusion, edge wear); the shared material atlas
+// (pr_proptex.glb, ref/blender/props_atlas.py) multiplies the material into it (grain, weave,
+// hammer marks: a detail map around ATLAS_NEUTRAL, plus a normal map). The Blender material
+// name picks the game material, the object name ("PR_<name>__<group>") the part.
+const ATLAS_NEUTRAL = 0.75;
+let AMAT = null;
+// built on first use: the atlas is only there once the models have been preloaded
+function amat() {
+  if (AMAT) return AMAT;
+  const t = authoredTex('proptex');
+  const mk = (o) => {
+    if (!t) return toon(0xffffff, { vertexColors: true, ...o });
+    const m = toon(0xffffff, { vertexColors: true, nocache: true, ...o });
+    m.map = t.map; m.normalMap = t.normalMap;
+    m.normalScale.set(1, -1);   // glTF UVs without tangents (what GLTFLoader does)
+    m.color.setScalar(1 / ATLAS_NEUTRAL);
+    return m;
+  };
+  AMAT = {
+    paint: mk({ rim: 0.2 }),
+    cloth: mk({ rim: 0.15, side: THREE.DoubleSide }),
+    stone: mk({ rim: 0.25, tex: 'rock' }),
+    metal: mk({ rim: 0.9, emissive: 0x1c1204 }),
+    iron: mk({ rim: 0.5 }),
+    glass: windowMat,
+  };
+  return AMAT;
+}
+const partCache = new Map();
+// { group: [{ geo, mat, key, extras }] } with geometry in the game's layout (position, normal, RGBA colour,
+// uv when the model has one), or null. extras: the Blender object's custom properties.
+export function authoredParts(name) {
+  if (partCache.has(name)) return partCache.get(name);
+  const src = model('pr_' + name);
+  let out = null;
+  if (src) {
+    out = {};
+    src.scene.updateMatrixWorld(true);
+    src.scene.traverse((m) => {
+      if (!m.isMesh) return;
+      // a part with several materials arrives as a group of meshes under the part's node
+      const n = m.parent && m.parent.name.includes('__') ? m.parent : m;
+      const grp = n.name.split('__')[1] || 'body';
+      const g = new THREE.BufferGeometry();
+      g.setIndex(m.geometry.index);
+      g.setAttribute('position', m.geometry.attributes.position.clone());
+      g.setAttribute('normal', m.geometry.attributes.normal.clone());
+      const c = m.geometry.attributes.color, cnt = g.attributes.position.count, col = new Float32Array(cnt * 4);
+      for (let i = 0; i < cnt; i++) {
+        col[i * 4] = c ? c.getX(i) : 1; col[i * 4 + 1] = c ? c.getY(i) : 1; col[i * 4 + 2] = c ? c.getZ(i) : 1;
+        col[i * 4 + 3] = c && c.itemSize > 3 ? c.getW(i) : 0;
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(col, 4));
+      if (m.geometry.attributes.uv) g.setAttribute('uv', m.geometry.attributes.uv.clone());
+      g.applyMatrix4(m.matrixWorld);
+      g.computeBoundingSphere(); g.computeBoundingBox();
+      (out[grp] ||= []).push({ geo: g, mat: amat()[m.material.name.replace(/^PR_/, '')] || MAT.paint, key: m.material.name.replace(/^PR_/, ''), extras: n.userData });
+    });
+  }
+  partCache.set(name, out);
+  return out;
+}
+// Add one group of an authored model to `parent`; null when the model is not there.
+// o: { mats: { key: material } to override, cast }
+function authored(name, grp, parent, o = {}) {
+  const P = authoredParts(name);
+  if (!P || !P[grp]) return null;
+  const meshes = P[grp].map(({ geo, mat, key }) => {
+    const m = new THREE.Mesh(geo, (o.mats && o.mats[key]) || mat);
+    m.castShadow = o.cast ?? true; m.receiveShadow = true;
+    if (parent) parent.add(m);
+    return m;
+  });
+  return meshes;
+}
+const has = (name) => !!authoredParts(name);
+// place the meshes of one authored group: t = { ry, rx, rz, sx, sy, sz }
+function put(meshes, x, y, z, t = {}) {
+  for (const m of meshes) {
+    m.position.set(x, y, z);
+    m.rotation.set(t.rx ?? 0, t.ry ?? 0, t.rz ?? 0);
+    m.scale.set(t.sx ?? 1, t.sy ?? 1, t.sz ?? 1);
+  }
+  return meshes;
+}
+// copy of an authored geometry with its vertex colours multiplied by `color` (cached)
+const tintCache = new Map();
+function tintedPart(geo, color) {
+  const k = geo.uuid + '|' + color;
+  if (tintCache.has(k)) return tintCache.get(k);
+  const g = geo.clone(), c = g.attributes.color, t = hc(color);
+  for (let i = 0; i < c.count; i++) c.setXYZ(i, c.getX(i) * t.r, c.getY(i) * t.g, c.getZ(i) * t.b);
+  tintCache.set(k, g);
+  return g;
+}
+// Textures of an authored atlas (public/models/pr_<name>.glb holds one material with a base
+// colour and a normal texture): { map, normalMap } or null when the file is missing.
+const texCache = new Map();
+export function authoredTex(name) {
+  if (texCache.has(name)) return texCache.get(name);
+  const src = model('pr_' + name);
+  let out = null;
+  if (src) src.scene.traverse((m) => {
+    if (!m.isMesh || !m.material.map) return;
+    out = { map: m.material.map, normalMap: m.material.normalMap };
+    for (const t of [out.map, out.normalMap]) if (t) t.anisotropy = 8;
+  });
+  texCache.set(name, out);
+  return out;
+}
+
+// ------------------------------------------------------------------
+// Authored buildings: public/models/bd_<name>.glb, built by ref/blender/bd_lib.py and bd/*.py.
+// As with the props, the vertices carry the colour (tone, baked occlusion, wear, damp); the trim
+// sheet (bd_tex.glb, ref/blender/bd_atlas.py) multiplies stone, render, timber and roofing into
+// it. Scene extras hold what the game needs to know (roof line, chimney, extra colliders).
+const BD_NEUTRAL = 0.5, BD_UV_RANGE = 8, BD_SINK = 0.2;
+let BMAT = null;
+function bmat() {
+  if (BMAT) return BMAT;
+  const src = model('bd_tex');
+  let t = null;
+  if (src) src.scene.traverse((m) => { if (m.isMesh && m.material.map) t = m.material; });
+  const mk = (o) => {
+    const m = toon(0xffffff, { vertexColors: true, nocache: true, ...o });
+    if (t) {
+      for (const x of [t.map, t.normalMap]) if (x) x.anisotropy = 8;
+      m.map = t.map; m.normalMap = t.normalMap;
+      m.normalScale.set(1, -1);   // glTF UVs without tangents (what GLTFLoader does)
+      m.color.setScalar(1 / BD_NEUTRAL);
+    }
+    return m;
+  };
+  BMAT = {
+    wall: mk({ rim: 0.2 }),
+    metal: mk({ rim: 0.9, emissive: 0x1c1204 }),
+    cloth: mk({ rim: 0.15, side: THREE.DoubleSide }),
+    glass: windowMat,
+  };
+  return BMAT;
+}
+const bdCache = new Map();
+// { meta, groups: { group: [{ geo, key }] } } of an authored building, or null when the file is missing.
+function bdParts(name) {
+  if (bdCache.has(name)) return bdCache.get(name);
+  const src = model('bd_' + name);
+  let out = null;
+  if (src) {
+    out = { meta: src.scene.userData || {}, groups: {} };
+    src.scene.updateMatrixWorld(true);
+    const v = new THREE.Vector3();
+    src.scene.traverse((m) => {
+      if (!m.isMesh) return;
+      const n = m.parent && m.parent.name.includes('__') ? m.parent : m;
+      const A = m.geometry.attributes, cnt = A.position.count;
+      const pos = new Float32Array(cnt * 3), nrm = new Float32Array(cnt * 3), col = new Float32Array(cnt * 4), uv = new Float32Array(cnt * 2);
+      for (let i = 0; i < cnt; i++) {   // quantised attributes -> the game's float layout
+        v.fromBufferAttribute(A.position, i).applyMatrix4(m.matrixWorld); pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+        v.fromBufferAttribute(A.normal, i).normalize(); nrm[i * 3] = v.x; nrm[i * 3 + 1] = v.y; nrm[i * 3 + 2] = v.z;
+        // packed by bd_lib: rgb as square roots, u over BD_UV_RANGE repeats of the sheet starting at -1
+        col[i * 4] = A.color.getX(i) ** 2; col[i * 4 + 1] = A.color.getY(i) ** 2; col[i * 4 + 2] = A.color.getZ(i) ** 2; col[i * 4 + 3] = A.color.getW(i);
+        uv[i * 2] = A.uv.getX(i) * BD_UV_RANGE - 1; uv[i * 2 + 1] = A.uv.getY(i);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setIndex(m.geometry.index);
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+      g.setAttribute('color', new THREE.BufferAttribute(col, 4));
+      g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      g.computeBoundingSphere(); g.computeBoundingBox();
+      (out.groups[n.name.split('__')[1] || 'body'] ||= []).push({ geo: g, key: m.material.name.replace(/^BD_/, '') });
+    });
+  }
+  bdCache.set(name, out);
+  return out;
+}
+// Add one group of an authored building to `parent`. o: { mats: { key: material } to override, cast }
+function bdAdd(P, grp, parent, o = {}) {
+  if (!P || !P.groups[grp]) return null;
+  return P.groups[grp].map(({ geo, key }) => {
+    const m = new THREE.Mesh(geo, (o.mats && o.mats[key]) || bmat()[key] || bmat().wall);
+    m.castShadow = o.cast ?? key !== 'glass'; m.receiveShadow = true;
+    if (parent) parent.add(m);
+    return m;
+  });
+}
+
+// Plant the window boxes of an authored building (meta.boxes: [x, y, z, ry, length]) with the
+// planter prop's leaves and flowers; without that prop the boxes stay bare.
+function bdPlants(P, parent, rnd) {
+  if (!has('planter')) return;
+  for (const [x, y, z, ry, len] of P.meta.boxes || []) {
+    const g = new THREE.Group(); g.position.set(x, y, z); g.rotation.y = ry; parent.add(g);
+    // the prop's tufts are made for a 0.6 m trough: scaled to the box (0.24 m deep) and rooted on its
+    // soil, along its middle, so the foliage only just leans over the front board
+    const fi = Math.floor(rnd() * FLOWER_COLS.length), n = Math.max(2, Math.round(len / 0.19));
+    for (let i = 0; i < n; i++) {
+      const lx = -(len - 0.2) / 2 + (i + 0.5) * (len - 0.2) / n + (rnd() - 0.5) * 0.03, lz = 0.02 + (rnd() - 0.5) * 0.03, sc = 0.64 + rnd() * 0.16;
+      put(authored('planter', 'leaf' + (i % 3), g), lx, 0.012, lz, { ry: i * 2.4, sx: sc, sy: sc * 1.15, sz: sc });
+      if (rnd() < 0.85) put(authored('planter', 'flower' + (rnd() < 0.75 ? fi : 2), g), lx + (rnd() - 0.5) * 0.05, 0.03 + rnd() * 0.04, lz + (rnd() - 0.5) * 0.04, { ry: i * 1.7, rx: (i % 3 - 1) * 0.15, sx: 1.35, sy: 1.35, sz: 1.35 });
+    }
+  }
 }
 
 // Paving stone (vertex-coloured, stone surface), rotated about y
@@ -364,7 +571,38 @@ function wallFace(fg, L, h, rnd, spec) {
 // roofTop(lx, lz) (same, as a function; local height above the origin).
 const WALLS = () => [MAT.plaster, MAT.plasterWarm, MAT.plasterRose, MAT.plasterSage];
 const SHUTTERS = [0x3f8088, 0x4f68a8, 0x8a4a3a, 0x5a7a3a, 0x7a5a8a];
+// Authored house (bd_house_<id>.glb): the model, set dressing by the door, and the same userData.
+function authoredHouse(P, opts) {
+  const rnd = mulberry32((opts.seed ?? 1) + 400);
+  const g = new THREE.Group();
+  bdAdd(P, 'body', g);
+  bdPlants(P, g, rnd);
+  const u = P.meta, W = u.w - 0.4, D = u.d - 0.4, w = opts.w ?? 6, d = opts.d ?? 5, doorX = u.doorX ?? 0;
+  // set dressing stands on the ground, which is BD_SINK above the model's origin (the game sinks houses that much)
+  if (opts.planter ?? rnd() < 0.7) planter(g, doorX - 1.45 * (rnd() < 0.5 ? -1 : 1), d / 2 + 0.55, rnd).position.y = BD_SINK;
+  // (a side with a lean-to against it stays clear: meta.clear lists -1 left, 1 right)
+  const free = (s) => !(u.clear || []).includes(s);
+  if (rnd() < 0.7 && free(1)) barrel(g, w / 2 + 0.6, BD_SINK, d / 2 - 0.5, rnd);
+  if (rnd() < 0.5 && free(-1)) crate(g, -w / 2 - 0.6, 0.36 + BD_SINK, d / 2 - 0.6, 0.7, rnd() * 0.5, rnd);
+  if ((opts.woodpile ?? rnd() < 0.55) && free(-1)) woodpile(g, -w / 2 - 0.55, -d / 2 + 1.3, 2.2, Math.PI / 2, rnd).position.y = BD_SINK;
+  const hips = u.hips || {};
+  g.userData = {
+    w: u.w, d: u.d, height: u.height, eave: u.eave, roofH: u.roofH, roofHW: u.roofHW, solids: u.solids || [],
+    chimney: u.chimney ? new THREE.Vector3(...u.chimney) : null,
+    // gable along z; a hipped end is a second plane leaning in from that end: [z of its foot, height there, rise per metre]
+    roofTop: (lx, lz = 0) => {
+      let y = u.eave + u.roofH * Math.max(0, 1 - Math.abs(lx) / u.roofHW);
+      if (hips.F) y = Math.min(y, hips.F[1] + (hips.F[0] - lz) * hips.F[2]);
+      if (hips.B) y = Math.min(y, hips.B[1] + (lz - hips.B[0]) * hips.B[2]);
+      return y;
+    },
+  };
+  void W; void D;
+  return g;
+}
 export function house(opts = {}) {
+  const A = opts.id && bdParts('house_' + opts.id);
+  if (A) return authoredHouse(A, opts);
   const rnd = mulberry32(opts.seed ?? 1);
   const g = new THREE.Group();
   const w = opts.w ?? 6, d = opts.d ?? 5, wallH = opts.h ?? 3.2;
@@ -518,6 +756,11 @@ export function house(opts = {}) {
 // Set dressing pieces (added into a parent group at local x, y, z)
 export function barrel(p, x, y, z, rnd = Math.random, o = {}) {
   const g = new THREE.Group(); g.position.set(x, y, z); g.rotation.y = rnd() * TAU; p.add(g);
+  if (authored('barrel', 'body', g)) {
+    // random draws match the code-built barrel, so the caller's sequence is unchanged
+    if (o.apples ?? rnd() < 0.35) { authored('barrel', 'apples', g); for (let i = 0; i < 12; i++) rnd(); }
+    return g;
+  }
   lathe([[0, 0], [0.3, 0], [0.36, 0.2], [0.38, 0.42], [0.36, 0.64], [0.3, 0.84], [0, 0.84]], 12, MAT.wood, 0, 0, 0, g);
   for (const hy of [0.12, 0.72]) mesh(new THREE.TorusGeometry(0.345, 0.025, 4, 14), MAT.iron, 0, hy, 0, g, { rx: Math.PI / 2 });
   mesh(new THREE.TorusGeometry(0.38, 0.025, 4, 14), MAT.iron, 0, 0.42, 0, g, { rx: Math.PI / 2 });
@@ -526,6 +769,11 @@ export function barrel(p, x, y, z, rnd = Math.random, o = {}) {
 }
 export function crate(p, x, y, z, s = 0.7, ry = 0, rnd = Math.random) {
   const g = new THREE.Group(); g.position.set(x, y, z); g.rotation.y = ry; p.add(g);
+  if (authored('crate', 'body', g)) {
+    g.scale.setScalar(s);   // the model is a unit crate centred on its origin
+    if (rnd() < 0.4) { authored('crate', 'produce', g); for (let i = 0; i < 15; i++) rnd(); }
+    return g;
+  }
   box(s, s, s, MAT.woodLight, 0, 0, 0, g);
   for (const sz of [-1, 1]) {
     box(s + 0.02, 0.08, 0.05, MAT.timber, 0, s / 2 - 0.05, sz * s / 2, g); box(s + 0.02, 0.08, 0.05, MAT.timber, 0, -s / 2 + 0.05, sz * s / 2, g);
@@ -535,6 +783,12 @@ export function crate(p, x, y, z, s = 0.7, ry = 0, rnd = Math.random) {
   return g;
 }
 function sack(p, x, y, z, rnd, col = 0xcbb08a) {
+  if (has('sack')) {
+    const g = new THREE.Group(); g.position.set(x, y, z); p.add(g);
+    g.rotation.set((rnd() - 0.5) * 0.12, rnd() * TAU, (rnd() - 0.5) * 0.12);
+    authored('sack', 'body', g);
+    return;
+  }
   const s = pball(0.3, col, x, y + 0.26, z, p, { detail: 1, sx: 0.9, sy: 0.95, sz: 0.75 });
   s.rotation.set((rnd() - 0.5) * 0.3, rnd() * TAU, (rnd() - 0.5) * 0.3);
   pcyl(0.07, 0.12, 0.14, 6, col, x, y + 0.56, z, p);
@@ -543,6 +797,18 @@ function sack(p, x, y, z, rnd, col = 0xcbb08a) {
 export function woodpile(p, x, z, len = 2.2, ry = 0, rnd = Math.random) {
   const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = ry; p.add(g);
   const r = 0.12, rows = 4;
+  if (has('woodpile')) {
+    for (let row = 0; row < rows; row++) {
+      const n = Math.floor(len / (r * 2.05)) - row;
+      for (let i = 0; i < n; i++) {
+        const k = (i * 3 + row * 5) % 7;   // which log, and how it lies
+        put(authored('woodpile', 'log' + (k % 4), g), -len / 2 + r + row * r + i * r * 2.05, r + row * r * 1.75, ((k % 3) - 1) * 0.03, { rz: k * 0.9, ry: k % 2 ? Math.PI : 0 });
+      }
+    }
+    for (const sx of [-1, 1]) put(authored('woodpile', 'post', g), sx * (len / 2 + 0.05), 0.52, -0.35);
+    put(authored('woodpile', 'roof', g), 0, 1.1, 0, { rx: -0.25, sx: len + 0.5 });
+    return g;
+  }
   for (let row = 0; row < rows; row++) {
     const n = Math.floor(len / (r * 2.05)) - row;
     for (let i = 0; i < n; i++) {
@@ -560,6 +826,23 @@ export function woodpile(p, x, z, len = 2.2, ry = 0, rnd = Math.random) {
 export function planter(p, x, z, rnd = Math.random, o = {}) {
   const g = new THREE.Group(); g.position.set(x, 0, z); p.add(g);
   const L = o.len ?? 0.9, Wd = o.wid ?? 0.55;
+  if (has('planter')) {
+    // the models are a 0.9 x 0.55 timber trough and a 1.0 x 0.6 stone one, stretched to size
+    if (o.stone) put(authored('planter', 'stone', g), 0, 0, 0, { sx: L / 1.0, sz: Wd / 0.6 });
+    else put(authored('planter', 'wood', g), 0, 0, 0, { sx: L / 0.9, sz: Wd / 0.55 });
+    put(authored('planter', 'soil', g, { cast: false }), 0, 0.42, 0, { sx: L - 0.12, sz: Wd - 0.12 });
+    const fi = Math.floor(rnd() * FLOWER_COLS.length);
+    const n = Math.round(L * 7);
+    for (let i = 0; i < n; i++) {   // the same draws as the code-built plants
+      const lx = (rnd() - 0.5) * (L - 0.2), lz = (rnd() - 0.5) * (Wd - 0.2), sc = (0.13 + rnd() * 0.05) / 0.15;
+      put(authored('planter', 'leaf' + (i % 3), g), lx, 0.44, lz, { ry: i * 2.4, sx: sc, sy: sc, sz: sc });
+      if (rnd() < 0.7) {
+        const white = !(rnd() < 0.8), dx = (rnd() - 0.5) * 0.08, dy = rnd() * 0.08;
+        put(authored('planter', 'flower' + (white ? 2 : fi), g), lx + dx, 0.5 + dy, lz, { ry: i * 1.7, rx: (i % 3 - 1) * 0.25, sx: 1.5, sy: 1.5, sz: 1.5 });
+      }
+    }
+    return g;
+  }
   if (o.stone) box(L, 0.45, Wd, MAT.stoneDark, 0, 0.22, 0, g);
   else pbox(L, 0.45, Wd, 0x7a5236, 0, 0.22, 0, g, { mat: MAT.paintWood });
   pbox(L - 0.1, 0.06, Wd - 0.1, 0x4a3424, 0, 0.44, 0, g);
@@ -575,6 +858,7 @@ export function planter(p, x, z, rnd = Math.random, o = {}) {
 // Street lamp: stone foot, timber post with a curled bracket and a hanging lantern
 export function lampPost(rnd = Math.random) {
   const g = new THREE.Group();
+  if (authored('lamppost', 'body', g)) return g;
   box(0.5, 0.3, 0.5, MAT.stoneDark, 0, 0.12, 0, g);
   cyl(0.08, 0.11, 3.1, 8, MAT.timber, 0, 1.7, 0, g);
   box(0.16, 0.12, 1.0, MAT.timber, 0, 3.05, 0.4, g);
@@ -623,6 +907,22 @@ export function bunting(points, rnd = Math.random, o = {}) {
 // Washing line between two T-posts with a few hanging cloths
 export function washingLine(len = 4.5, rnd = Math.random) {
   const g = new THREE.Group();
+  if (has('washline')) {
+    for (const sx of [-1, 1]) put(authored('washline', 'post', g), sx * len / 2, 0, 0, { ry: sx > 0 ? Math.PI : 0 });
+    for (const sz of [-0.25, 0.25]) put(authored('washline', 'line', g, { cast: false }), 0, 2.1, sz, { sx: len });
+    const cols = [0xf2ece0, 0x8ab0d8, 0xd87a6a, 0xe8d08a, 0xa8c890], P = authoredParts('washline');
+    let x = -len / 2 + 0.4, k = 0;
+    while (x < len / 2 - 0.5) {   // the same draws as the code-built cloths
+      const cw = 0.4 + rnd() * 0.5, ch = 0.5 + rnd() * 0.45, sz = rnd() < 0.5 ? -0.25 : 0.25;
+      const col = cols[Math.floor(rnd() * cols.length)], ry = (rnd() - 0.5) * 0.2;
+      for (const { geo, mat, key } of P['cloth' + (k++ % 3)]) {
+        const m = mesh(key === 'cloth' ? tintedPart(geo, col) : geo, mat, x + cw / 2, 2.09, sz, g, { ry });
+        m.scale.set(cw, ch, 1);
+      }
+      x += cw + 0.15 + rnd() * 0.3;
+    }
+    return g;
+  }
   for (const sx of [-1, 1]) {
     cyl(0.06, 0.07, 2.2, 6, MAT.timber, sx * len / 2, 1.1, 0, g);
     box(0.1, 0.08, 0.7, MAT.timber, sx * len / 2, 2.12, 0, g);
@@ -644,6 +944,12 @@ export function washingLine(len = 4.5, rnd = Math.random) {
 // Handcart with spoked wheels and shafts resting on the ground
 export function cart(rnd = Math.random, o = {}) {
   const g = new THREE.Group();
+  if (authored('cart', 'body', g)) {
+    const load = o.load ?? Math.floor(rnd() * 3);
+    authored('cart', 'load' + load, g);
+    for (let i = [12, 14, 0][load]; i > 0; i--) rnd();   // draws the code-built load used
+    return g;
+  }
   const L = 2.0, Wd = 1.2;
   const bed = new THREE.Group(); bed.position.y = 0.72; bed.rotation.z = 0.08; g.add(bed);
   box(L, 0.1, Wd, MAT.wood, 0, 0, 0, bed);
@@ -664,6 +970,11 @@ export function cart(rnd = Math.random, o = {}) {
   return g;
 }
 export function hayBale(p, x, y, z, s = 1, ry = 0) {
+  const made = authored('haybale', 'body', p);
+  if (made) {
+    for (const m of made) { m.position.set(x, y, z); m.rotation.y = ry; m.scale.setScalar(s); }
+    return made[0];
+  }
   const b = box(1.1 * s, 0.55 * s, 0.6 * s, MAT.straw, x, y, z, p, { ry });
   for (const k of [-0.25, 0.25]) box(0.04, 0.57 * s, 0.62 * s, MAT.timber, x + Math.cos(ry) * k * s, y, z - Math.sin(ry) * k * s, p, { ry });
   return b;
@@ -671,6 +982,28 @@ export function hayBale(p, x, y, z, s = 1, ry = 0) {
 // Garden plot: raised soil bed with vegetable rows and a wicker edge
 export function gardenPlot(w = 3, d = 2, rnd = Math.random) {
   const g = new THREE.Group();
+  if (has('gardenplot')) {
+    // wattle all round (1 m lengths, stretched to fit), soil, ridges with a crop each
+    for (const [l, x, z, ry] of [[w, 0, d / 2, 0], [w, 0, -d / 2, Math.PI], [d, w / 2, 0, Math.PI / 2], [d, -w / 2, 0, -Math.PI / 2]]) {
+      const n = Math.max(1, Math.round(l)), c = Math.cos(ry), sn = Math.sin(ry);
+      for (let k = 0; k < n; k++) { const t = (k + 0.5) / n - 0.5; put(authored('gardenplot', 'wattle', g), x + c * t * l, 0, z - sn * t * l, { ry, sx: l / n }); }
+    }
+    put(authored('gardenplot', 'bed', g, { cast: false }), 0, -0.04, 0, { sx: w - 0.06, sz: d - 0.06 });
+    const rows = Math.max(2, Math.floor(d / 0.5));
+    for (let r = 0; r < rows; r++) {
+      const z = -d / 2 + 0.3 + r * (d - 0.6) / Math.max(1, rows - 1);
+      put(authored('gardenplot', 'row', g, { cast: false }), 0, 0.27, z, { sx: w - 0.3 });
+      const kind = r % 3, n = Math.floor((w - 0.4) / 0.32);
+      for (let i = 0; i < n; i++) {   // the same draws as the code-built crops
+        const x = -w / 2 + 0.35 + i * 0.32 + (rnd() - 0.5) * 0.05;
+        if (kind === 0) put(authored('gardenplot', 'cabbage', g), x, 0.33, z, { ry: i * 2.1 + r });
+        else if (kind === 1) put(authored('gardenplot', 'carrot', g), x, 0.35, z, { ry: i * 1.3 + r });
+        else { const s = rnd() < 0.5 ? 1.1 : 0.9; put(authored('gardenplot', 'tomato', g), x, 0.33, z, { ry: i * 2.7 + r, sx: s, sy: s, sz: s }); }
+      }
+    }
+    for (const sx of [-1, 1]) put(authored('gardenplot', 'stake', g), sx * (w / 2 - 0.1), 0.05, d / 2 - 0.05, { ry: sx });
+    return g;
+  }
   box(w, 0.28, d, MAT.timber, 0, 0.1, 0, g);
   pbox(w - 0.12, 0.08, d - 0.12, 0x5a4030, 0, 0.26, 0, g);
   const rows = Math.max(2, Math.floor(d / 0.5));
@@ -694,6 +1027,26 @@ export function gardenPlot(w = 3, d = 2, rnd = Math.random) {
 export function stoneWall(len = 4, rnd = Math.random, o = {}) {
   const g = new THREE.Group();
   const h = o.h ?? 0.9, rows = Math.round(h / 0.3);
+  if (has('stonewall')) {
+    // chiselled stones (nominal 0.6 x 0.3 x 0.55) stretched to each place; the same draws as below
+    let k = 0;
+    for (let r = 0; r < rows; r++) {
+      let x = -len / 2 + (r % 2 ? 0.25 : 0);
+      while (x < len / 2 - 0.1) {
+        const sw = Math.min(len / 2 - x, 0.45 + rnd() * 0.4), ci = Math.floor(rnd() * 4);
+        const hh = 0.28 + rnd() * 0.05, dz = (rnd() - 0.5) * 0.06, ry = (rnd() - 0.5) * 0.08;
+        put(authored('stonewall', 'stone' + ((ci + (k++ % 2) * 4) % 6), g), x + sw / 2, 0.15 + r * 0.29, dz,
+          { ry: ry + (k % 3 === 0 ? Math.PI : 0), sx: (sw - 0.02) / 0.6, sy: hh / 0.3, sz: (0.55 - r * 0.05) / 0.55 });
+        x += sw;
+      }
+    }
+    for (let x = -len / 2 + 0.3; x < len / 2; x += 0.6) {
+      put(authored('stonewall', 'cap' + (k++ % 3), g), x, rows * 0.29 + 0.08, 0, { rz: (rnd() - 0.5) * 0.1, ry: k % 2 ? Math.PI : 0 });
+      if (rnd() < 0.4) put(authored('stonewall', 'moss', g, { cast: false }), x + (rnd() - 0.5) * 0.3, rows * 0.29 + 0.17, (rnd() - 0.5) * 0.2);
+    }
+    g.userData.top = rows * 0.29 + 0.16;
+    return g;
+  }
   for (let r = 0; r < rows; r++) {
     let x = -len / 2 + (r % 2 ? 0.25 : 0);
     while (x < len / 2 - 0.1) {
@@ -713,7 +1066,36 @@ export function stoneWall(len = 4, rnd = Math.random, o = {}) {
 }
 
 // ------------------------------------------------------------------
+// Authored tower (bd_moratower.glb): the model, then what moves or glows (star, chimes) and the annex.
+function authoredMoraTower(P) {
+  const g = new THREE.Group(), H = 15;
+  bdAdd(P, 'body', g);
+  bdPlants(P, g, mulberry32(99));
+  const star = new THREE.Mesh(crystalGeometry('prism', { double: true, sides: 5, radius: 0.5, seed: 41 }), crystalMaterial({ color: 0xffe2a0, glow: 0xffc860, intensity: 1.5 }));
+  star.scale.setScalar(0.5); star.position.set(2.4, H + 1 + 8.3, 0); g.add(star);
+  star.add(crystalGlowSprite(0xffc860, 5, { intensity: 0.35 }));
+  const an = house({ id: 'annex', w: 5, d: 4.2, h: 2.8, roof: MAT.roofMora, wall: MAT.plaster, seed: 5, chimney: true, porch: false, woodpile: true, dormer: false, shutterCol: 0x3a3f86 });
+  an.position.set(-2, an.userData.solids ? -BD_SINK : 0, -6.2); an.rotation.y = Math.PI; g.add(an);
+  if (an.userData.solids) {   // the authored annex stands BD_SINK lower than the tower's origin: its roof line with it
+    const top = an.userData.roofTop;
+    an.userData.roofTop = (lx, lz) => top(lx, lz) - BD_SINK;
+    an.userData.height -= BD_SINK;
+  }
+  const chimes = [];
+  for (let i = 0; i < 5; i++) {
+    const a = i * 1.25, col = [0xb894ff, 0xff8a3a, 0x7dffc3, 0x8fe3ff, 0xffd84a][i];
+    const c = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 20 + i }), crystalMaterial({ color: col, intensity: 1.3 }));
+    c.scale.setScalar(0.2);
+    c.add(crystalGlowSprite(col, 6, { intensity: 0.35 }));
+    c.position.set(Math.cos(a) * 5.2, H + 0.4 - (i % 2) * 0.4, Math.sin(a) * 5.2);
+    g.add(c); chimes.push(c);
+  }
+  g.userData = { chimes, chimney: an.userData.chimney ? an.userData.chimney.clone().applyEuler(an.rotation).add(an.position) : null };
+  return g;
+}
 export function moraTower() {
+  const A = bdParts('moratower');
+  if (A) return authoredMoraTower(A);
   const g = new THREE.Group();
   const rnd = mulberry32(99);
   const H = 15;
@@ -828,9 +1210,34 @@ export function moraTower() {
 }
 
 // ------------------------------------------------------------------
+// A swinging group of an authored building (its bell, its sails), hung at the pivot the model names.
+function bdPivot(P, grp, parent, o) {
+  const pv = (P.meta.pivots || {})[grp] || [0, 0, 0];
+  const pivot = new THREE.Group(); pivot.position.set(pv[0], pv[1], pv[2]); parent.add(pivot);
+  bdAdd(P, grp, pivot, o);
+  return pivot;
+}
 export function bellTower() {
   const g = new THREE.Group();
   const rnd = mulberry32(7);
+  const P = bdParts('belltower');
+  if (P) {
+    bdAdd(P, 'body', g);
+    const pivot = bdPivot(P, 'bell', g);
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(1.4, 16, 12), fresnelMat(0xfff0c0, 0xffc860, { intensity: 1.5, alpha: 0 }));
+    glow.position.y = -1.2; pivot.add(glow);
+    for (const s of [-1, 1]) planter(g, s * 1.9, 3.5, rnd, { len: 1.0, wid: 0.6, stone: true });
+    // bell-cast pyramid over the belfry: a shallow kick above the eaves, then the steep spire
+    const R = P.meta.roof;
+    g.userData = {
+      bell: pivot, glow, top: R.apex,
+      roofTop: (lx, lz) => {
+        const m = Math.max(Math.abs(lx), Math.abs(lz)), k = R.half - R.kick;
+        return m > k ? R.eave + (R.half - m) * (R.zk - R.eave) / R.kick : R.zk + (k - m) * (R.apex - R.zk) / k;
+      },
+    };
+    return g;
+  }
   // stepped base
   box(6.2, 0.35, 6.2, MAT.stoneDark, 0, 0.1, 0, g);
   box(5.4, 1.0, 5.4, MAT.stoneDark, 0, 0.7, 0, g);
@@ -911,7 +1318,45 @@ export function bellTower() {
 // Collider contract (world.js): discs r10.6 top +0.35 & r9.3 top +0.8,
 // altar box 1.3, pillars r0.7 at radius 8.2, bell posts at (±2, -5).
 const EL_HEX = { fire: 0xff7a2a, frost: 0x6cd0ff, storm: 0xffd84a, wind: 0x6effc0, arcane: 0xa070ff };
+// Authored shrine (bd_shrine_<element>.glb): the stonework and the bell from the model; the rune
+// floor, the crystals and the seal are the game's (story.js moves and hides them).
+function authoredShrine(P, el, runeTex) {
+  const g = new THREE.Group();
+  const rnd = mulberry32(el.length * 31);
+  const bodyCol = new THREE.Color(EL_HEX[el]).lerp(new THREE.Color(0xffffff), 0.25);
+  bdAdd(P, 'body', g);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(16, 16), new THREE.MeshBasicMaterial({ map: runeTex, color: new THREE.Color(EL_HEX[el]).multiplyScalar(0.5), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = 0.87; g.add(floor);
+  const orbMat = crystalMaterial({ color: bodyCol, glow: EL_HEX[el], intensity: 1.1 });
+  (P.meta.tops || []).forEach(([x, y, z], i) => {   // a crystal on every whole column
+    const orb = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 60 + i }), orbMat);
+    orb.scale.setScalar(0.3); orb.rotation.y = rnd() * 3;
+    orb.position.set(x, y + 0.5, z); g.add(orb);
+    orb.add(crystalGlowSprite(EL_HEX[el], 7, { intensity: 0.28 }));
+  });
+  const crystal = new THREE.Group();
+  crystal.position.y = 4.2; g.add(crystal);
+  const cMat = crystalMaterial({ color: bodyCol, glow: EL_HEX[el], intensity: 1.35, seed: el.length });
+  const core = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 5, radius: 0.46 }), cMat);
+  core.scale.setScalar(1.05); crystal.add(core);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + 0.4;
+    const sh = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 80 + i, radius: 0.34 }), cMat);
+    sh.scale.setScalar(0.2 + (i % 2) * 0.06);
+    sh.position.set(Math.cos(a) * 1.25, (i % 2 ? 0.35 : -0.3), Math.sin(a) * 1.25);
+    sh.rotation.set((i % 2 ? 0.3 : -0.25), a, (i % 2 ? -0.2 : 0.25));
+    crystal.add(sh);
+  }
+  crystal.add(crystalGlowSprite(EL_HEX[el], 5.5, { intensity: 0.32 }));
+  const pivot = bdPivot(P, 'bell', g);
+  const seal = new THREE.Mesh(new THREE.SphereGeometry(11, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), fresnelMat(0x2a1640, 0x9a6aff, { intensity: 1.1, power: 2.2, side: THREE.DoubleSide }));
+  seal.position.y = 0.2; g.add(seal);
+  g.userData = { crystal, bell: pivot, seal, floor };
+  return g;
+}
 export function shrine(el, runeTex, opts = {}) {
+  const A = bdParts('shrine_' + el);
+  if (A) return authoredShrine(A, el, runeTex);
   const g = new THREE.Group();
   const rnd = mulberry32(el.length * 31);
   const frost = el === 'frost';
@@ -1045,6 +1490,15 @@ export function shrine(el, runeTex, opts = {}) {
 // open firebox between four posts, wide roof with upturned corners, finial.
 export function lanternStone() {
   const g = new THREE.Group();
+  if (authored('lantern', 'body', g)) {
+    const flame = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), flameMat.clone());
+    flame.position.y = 2.2; flame.visible = false; g.add(flame);
+    flame.add(crystalGlowSprite(0xffa040, 2.6, { intensity: 0.4 }));
+    const cage = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.62, 0.52), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.8, 1.0, 0.4), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    cage.position.y = 2.25; g.add(cage);
+    g.userData = { flame, cage, flameY: 2.25 };
+    return g;
+  }
   box(1.25, 0.28, 1.25, MAT.stoneDark, 0, 0.12, 0, g);
   cyl(0.5, 0.58, 0.22, 8, MAT.stone, 0, 0.36, 0, g);
   cyl(0.24, 0.3, 1.1, 8, MAT.stone, 0, 1.0, 0, g);
@@ -1082,6 +1536,13 @@ export function lanternStone() {
 // Brazier: iron bowl with a rolled rim and studs on three curved legs over a stone slab
 export function brazier() {
   const g = new THREE.Group();
+  if (authored('brazier', 'body', g)) {
+    // the coal heap is one mesh: world.js swaps a lit / cold material on it
+    const coal = new THREE.Mesh(authoredParts('brazier').coal[0].geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(0.15, 0.1, 0.1) }));
+    g.add(coal);
+    g.userData = { coal, fireY: 1.6 };
+    return g;
+  }
   cyl(0.72, 0.8, 0.2, 8, MAT.stoneDark, 0, 0.08, 0, g);
   const bowlMat = toon(0x4a4a50, { rim: 0.5, side: THREE.DoubleSide });
   for (let i = 0; i < 3; i++) {
@@ -1107,6 +1568,20 @@ export function brazier() {
 // Wind wheel: stone footing, braced mast, cloth-sailed rotor with a bronze hub
 export function windWheel() {
   const g = new THREE.Group();
+  if (authored('windwheel', 'body', g)) {
+    const rotor = new THREE.Group(); rotor.position.set(0, 3.3, 0.35); g.add(rotor);
+    authored('windwheel', 'hub', rotor);
+    ['armRed', 'armCream', 'armBlue', 'armCream'].forEach((tag, i) => {
+      const arm = new THREE.Group(); arm.rotation.z = (i / 4) * Math.PI * 2; rotor.add(arm);
+      authored('windwheel', tag, arm);
+    });
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), glowMat(0x6effc0, 2, { nocache: true, opacity: 0 }));
+    rotor.add(glow);
+    consolidate(g, [rotor]);
+    for (const arm of rotor.children) if (arm.isGroup) consolidate(arm);
+    g.userData = { rotor, glow };
+    return g;
+  }
   box(0.9, 0.35, 0.9, MAT.stoneDark, 0, 0.15, 0, g);
   box(0.6, 0.3, 0.6, MAT.stone, 0, 0.45, 0, g);
   cyl(0.11, 0.15, 3.3, 8, MAT.timber, 0, 1.9, 0, g);
@@ -1138,6 +1613,13 @@ export function windWheel() {
 export function windmill() {
   const g = new THREE.Group();
   const rnd = mulberry32(3);
+  const A = bdParts('windmill');
+  if (A) {   // authored mill: the sails are a group of their own, turning about the hub
+    bdAdd(A, 'body', g);
+    for (let i = 0; i < 3; i++) sack(g, 1.4 + i * 0.35, 0, 3.6 - i * 0.2, rnd);
+    g.userData = { rotor: bdPivot(A, 'rotor', g) };
+    return g;
+  }
   const body = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 3.2, 9, 8), MAT.plaster);
   body.position.y = 4.5; body.castShadow = true; body.receiveShadow = true; g.add(body);
   cyl(3.35, 3.5, 1.1, 8, MAT.stone, 0, 0.35, 0, g);
@@ -1184,6 +1666,10 @@ export function windmill() {
 // Well: fitted stone ring with a coping, timber frame, shingled roof, crank, rope & bucket
 export function well() {
   const g = new THREE.Group();
+  if (authored('well', 'body', g)) {
+    cyl(1.18, 1.18, 0.05, 20, new THREE.MeshBasicMaterial({ color: 0x1a3a4a }), 0, 0.7, 0, g, { cast: false });   // water
+    return g;
+  }
   const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.4, 1.1, 16, 1, true), toon(0xb8ad9a, { flat: true, side: THREE.DoubleSide, tex: 'stone' }));
   ring.position.y = 0.55; ring.castShadow = true; g.add(ring);
   mesh(new THREE.TorusGeometry(1.33, 0.14, 5, 16), MAT.stoneDark, 0, 1.12, 0, g, { rx: Math.PI / 2 });
@@ -1215,6 +1701,12 @@ export function stall(color = MAT.clothRed) {
   const g = new THREE.Group();
   const rnd = mulberry32(color === MAT.clothRed ? 5 : 9);
   const stripeA = color === MAT.clothRed ? 0xc0473a : 0x4a6fb0, stripeB = 0xf0e6d2;
+  if (authored('stall', 'body', g)) {
+    authored('stall', color === MAT.clothRed ? 'awningRed' : 'awningBlue', g);
+    sack(g, 1.9, 0, 0.4, rnd);
+    crate(g, -1.95, 0.3, 0.3, 0.6, 0.3, rnd);
+    return g;
+  }
   // counter
   box(3, 0.95, 1.3, MAT.woodLight, 0, 0.48, 0, g);
   box(3.2, 0.1, 1.45, MAT.wood, 0, 0.98, 0.02, g);
@@ -1252,6 +1744,25 @@ export function fence(len = 4) {
   const g = new THREE.Group();
   const rnd = mulberry32(Math.round(len * 100));
   const n = Math.max(2, Math.round(len / 1.6));
+  if (has('fence')) {
+    // riven posts with split rails lashed to their front; rails are 1.6 m models stretched to the bay
+    for (let i = 0; i <= n; i++) {
+      const [m] = authored('fence', i % 3 === 1 ? 'postB' : 'post', g);
+      m.position.set(-len / 2 + (i / n) * len, (rnd() - 0.5) * 0.08, 0);
+      m.rotation.z = (rnd() - 0.5) * 0.07;
+    }
+    for (let i = 0; i < n; i++) {
+      const x0 = -len / 2 + (i / n) * len, x1 = -len / 2 + ((i + 1) / n) * len;
+      for (const [k, y] of [[0, 0.86], [1, 0.46]]) {
+        const y0 = y + (rnd() - 0.5) * 0.06, y1 = y + (rnd() - 0.5) * 0.06;
+        const [m] = authored('fence', (i + k) % 2 ? 'railB' : 'rail', g);
+        m.position.set((x0 + x1) / 2, (y0 + y1) / 2, 0.085);
+        m.rotation.set(rnd() < 0.5 ? Math.PI : 0, 0, Math.atan2(y1 - y0, x1 - x0));
+        m.scale.x = Math.hypot(x1 - x0, y1 - y0) / 1.6;
+      }
+    }
+    return g;
+  }
   for (let i = 0; i <= n; i++) {
     const x = -len / 2 + (i / n) * len;
     box(0.15, 1.15 + (rnd() - 0.5) * 0.1, 0.15, MAT.timber, x, 0.55, 0, g, { rz: (rnd() - 0.5) * 0.06 });
@@ -1268,6 +1779,7 @@ export function fence(len = 4) {
 // Bench: plank seat on turned legs with a slatted back; seat height ~0.5 (NPCs sit on it)
 export function bench() {
   const g = new THREE.Group();
+  if (authored('bench', 'body', g)) return g;
   for (let i = 0; i < 3; i++) box(2, 0.07, 0.17, MAT.wood, 0, 0.5, -0.19 + i * 0.19, g);
   for (let i = 0; i < 2; i++) box(2, 0.12, 0.05, MAT.wood, 0, 0.78 + i * 0.2, -0.3, g, { rx: -0.15 });
   for (const sx of [-1, 1]) {
@@ -1282,6 +1794,13 @@ export function bench() {
 // Signpost: rounded post with a cap and arrow-shaped boards (ry per board)
 export function signpost(texts = []) {
   const g = new THREE.Group();
+  if (authored('signpost', 'post', g)) {
+    texts.forEach((t, i) => {   // boards point along +x from the post
+      const bg = new THREE.Group(); bg.position.y = 2.05 - i * 0.42; bg.rotation.y = t.ry || 0; g.add(bg);
+      authored('signpost', i % 2 ? 'boardB' : 'board', bg);
+    });
+    return g;
+  }
   box(0.4, 0.2, 0.4, MAT.stoneDark, 0, 0.08, 0, g);
   cyl(0.08, 0.1, 2.5, 8, MAT.timber, 0, 1.25, 0, g);
   mesh(new THREE.ConeGeometry(0.14, 0.2, 8), MAT.timber, 0, 2.58, 0, g);
@@ -1299,6 +1818,12 @@ export function signpost(texts = []) {
 // Roadside milestone: rounded stone slab with a carved band
 export function milestone(rnd = Math.random) {
   const g = new THREE.Group();
+  const stone = authored('milestone', 'body', g);
+  if (stone) {
+    const tilt = (rnd() - 0.5) * 0.08;
+    for (const m of stone) m.rotation.z = tilt;
+    return g;
+  }
   box(0.6, 0.9, 0.3, MAT.stone, 0, 0.4, 0, g, { rz: (rnd() - 0.5) * 0.08 });
   const top = mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.3, 10, 1, false, 0, Math.PI), MAT.stone, 0, 0.85, 0, g);
   top.rotation.set(Math.PI / 2, 0, Math.PI / 2);
@@ -1309,6 +1834,19 @@ export function milestone(rnd = Math.random) {
 // Stone cairn (돌탑): stacked flat stones, a prayer ribbon on the top
 export function cairn(rnd = Math.random, h = 1.4) {
   const g = new THREE.Group();
+  if (has('cairn')) {
+    // same stack (and random draws) as the code-built cairn, with sculpted flat stones
+    let y = 0, r = 0.55;
+    for (let i = 0; y < h; i++) {
+      const v = Math.floor(rnd() * 3), jx = (rnd() - 0.5) * 0.06, jz = (rnd() - 0.5) * 0.06, sx = 1 + (rnd() - 0.5) * 0.2;
+      const [m] = authored('cairn', 'stone' + 'ABCD'[(v + i) % 4], g);
+      m.position.set(jx, y + r * 0.35, jz);
+      m.scale.set(r * sx, r * 1.3, r);
+      m.rotation.y = rnd() * 3;
+      y += r * 0.62; r *= 0.82;
+    }
+    return g;
+  }
   let y = 0, r = 0.55;
   while (y < h) {
     const s = pball(r, [0x9a9282, 0x8a8478, 0xa8a090][Math.floor(rnd() * 3)], (rnd() - 0.5) * 0.06, y + r * 0.35, (rnd() - 0.5) * 0.06, g, { mat: MAT.paintStone, sy: 0.42, sx: 1 + (rnd() - 0.5) * 0.2 });
@@ -1321,6 +1859,21 @@ export function cairn(rnd = Math.random, h = 1.4) {
 export function dock(len = 9, width = 2.2, rnd = Math.random) {
   const g = new THREE.Group();
   const n = Math.round(len / 0.3);
+  if (has('dock')) {
+    for (let i = 0; i < n; i++) {   // the same draws as the code-built boards: width, tone, offset, turn
+      const wv = width + (rnd() - 0.5) * 0.12, ci = Math.floor(rnd() * 3), dx = (rnd() - 0.5) * 0.05, ry = (rnd() - 0.5) * 0.03;
+      put(authored('dock', 'plank' + ci, g), dx, 0, 0.15 + i * 0.3, { ry: ry + (i % 2 ? Math.PI : 0), sx: wv / 2.2 });
+    }
+    for (const sx of [-1, 1]) put(authored('dock', 'beam', g), sx * (width / 2 - 0.1), -0.1, len / 2, { sz: len });
+    for (let k = 0; k <= Math.floor(len / 2.2); k++) {
+      const z = Math.min(len - 0.15, 0.2 + k * 2.2);
+      for (const sx of [-1, 1]) put(authored('dock', 'pile', g), sx * (width / 2 - 0.05), -1.35, z, { ry: k + sx });
+    }
+    for (const sx of [-1, 1]) put(authored('dock', 'moor', g), sx * (width / 2 - 0.05), 0.4, len - 0.15, { ry: sx * 1.3 });
+    const boat = new THREE.Group(); boat.position.set(width / 2 + 0.9, -0.28, len * 0.62); boat.rotation.y = 0.08; g.add(boat);
+    authored('dock', 'boat', boat);
+    return g;
+  }
   for (let i = 0; i < n; i++) {
     const z = 0.15 + i * 0.3;
     pbox(width + (rnd() - 0.5) * 0.12, 0.08, 0.27, [0x9c7250, 0x8a6446, 0xa87c58][Math.floor(rnd() * 3)], (rnd() - 0.5) * 0.05, 0.0, z, g, { mat: MAT.paintWood, ry: (rnd() - 0.5) * 0.03 });
@@ -1349,6 +1902,7 @@ export function dock(len = 9, width = 2.2, rnd = Math.random) {
 // Grave: carved headstone with a rounded top, small stone kerb, flowers, a candle
 export function grave() {
   const g = new THREE.Group();
+  if (authored('grave', 'body', g)) return g;
   const rnd = mulberry32(17);
   box(1.4, 0.2, 0.7, MAT.stoneDark, 0, 0.05, 0.05, g);
   const s = box(0.9, 1.3, 0.25, MAT.stoneBlue, 0, 0.6, 0, g, { rx: -0.06 });
@@ -1375,6 +1929,11 @@ export function grave() {
 export function dummy() {
   const g = new THREE.Group();
   const pivot = new THREE.Group(); g.add(pivot);
+  if (authored('dummy', 'pivot', pivot)) {
+    authored('dummy', 'base', g);   // the wedge stones stay put when the scarecrow wobbles
+    g.userData = { pivot };
+    return g;
+  }
   cyl(0.08, 0.1, 2.2, 6, MAT.timber, 0, 1.1, 0, pivot);
   cyl(0.06, 0.06, 1.6, 6, MAT.timber, 0, 1.6, 0, pivot, { rz: Math.PI / 2 });
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.35, 10, 8), MAT.straw); head.position.y = 2.3; head.castShadow = true; pivot.add(head);
@@ -1391,6 +1950,34 @@ export function dummy() {
 export function targetCrystal(color = 0xb894ff) {
   const g = new THREE.Group();
   const mat = crystalMaterial({ color, intensity: 1.15, seed: 3 });
+  if (has('tcrystal')) {
+    // a slim crystal held by gold caps, inside an engraved ring that carries three shards
+    const c = new THREE.Group(); g.add(c);
+    const gem = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 11, radius: 0.36, tip: 0.62, tip2: 0.5 }), mat);
+    gem.scale.setScalar(0.62); c.add(gem);
+    authored('tcrystal', 'cap', c, { cast: false });
+    // world.js spins the ring about its local z, so the ring group lies on its side and the
+    // (upright) model is turned back inside it
+    const ring = new THREE.Group(); ring.rotation.x = Math.PI / 2; g.add(ring);
+    const band = new THREE.Group(); band.rotation.x = -Math.PI / 2; ring.add(band);
+    authored('tcrystal', 'ring', band, { cast: false });
+    const line = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.007, 4, 64), glowMat(color, 0.9));
+    line.position.z = -0.022; ring.add(line);
+    const qInv = new THREE.Quaternion().setFromEuler(ring.rotation).invert();
+    const qW = new THREE.Quaternion(), eW = new THREE.Euler();
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2;
+      const s = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 90 + i, radius: 0.36 }), mat);
+      s.scale.setScalar(0.12);
+      s.position.set(Math.cos(a) * 0.9, Math.sin(a) * 0.9, -0.13);
+      qW.setFromEuler(eW.set(0, -a, 0.12 * (i % 2 ? 1 : -1), 'YXZ'));
+      s.quaternion.copy(qInv).multiply(qW);
+      ring.add(s);
+    }
+    g.add(crystalGlowSprite(color, 3.2, { intensity: 0.3 }));
+    g.userData = { c, ring };
+    return g;
+  }
   const c = new THREE.Mesh(crystalGeometry('prism', { double: true, seed: 11, radius: 0.48 }), mat);
   c.scale.setScalar(0.62); g.add(c);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.022, 6, 48), glowMat(color, 0.9));
@@ -1416,6 +2003,7 @@ export function targetCrystal(color = 0xb894ff) {
 // Training yard furniture: straw target on an easel, weapon rack
 export function strawTarget() {
   const g = new THREE.Group();
+  if (authored('strawtarget', 'body', g)) return g;
   for (const sx of [-1, 1]) stick(new THREE.Vector3(sx * 0.55, 0, 0.3), new THREE.Vector3(sx * 0.2, 2.0, -0.05), 0.05, MAT.timber, g);
   stick(new THREE.Vector3(0, 0, -0.7), new THREE.Vector3(0, 1.8, -0.1), 0.05, MAT.timber, g);
   const tg = new THREE.Group(); tg.position.set(0, 1.35, 0.06); tg.rotation.x = -0.12; g.add(tg);
@@ -1425,6 +2013,10 @@ export function strawTarget() {
 }
 export function weaponRack(rnd = Math.random) {
   const g = new THREE.Group();
+  if (authored('weaponrack', 'body', g)) {
+    for (let i = 0; i < 5; i++) rnd();   // the caller's random sequence stays as it was
+    return g;
+  }
   for (const sx of [-1, 1]) box(0.12, 1.4, 0.12, MAT.timber, sx * 0.9, 0.7, 0, g);
   box(2.0, 0.1, 0.14, MAT.timber, 0, 1.25, 0, g);
   box(2.0, 0.1, 0.3, MAT.timber, 0, 0.12, 0.05, g);
@@ -1437,8 +2029,39 @@ export function weaponRack(rnd = Math.random) {
 }
 
 // Ruined arch: segmented columns with bases, a lintel (sometimes fallen), moss
+// One ruined column from authored pieces: base, fluted drums (the last one cut short), in group p.
+// The random draws per drum follow the code-built versions (arch: offset then turn; pillar: tint then turn).
+function ruinColumn(p, x, y0, h, rnd, arch) {
+  for (let k = 0; k < Math.ceil(h / 1.2); k++) {
+    const dh = Math.min(1.2, h - k * 1.2) - 0.05;
+    if (dh < 0.1) break;
+    const a = rnd(), b = rnd();
+    const [m] = authored('ruin', arch ? ['drumA', 'drumB', 'drumC'][k % 3] : (a < 0.5 ? 'drumA' : k % 2 ? 'drumC' : 'drumB'), p);
+    m.position.set(x + (arch ? (a - 0.5) * 0.05 : 0), y0 + k * 1.2 + dh / 2, 0);
+    m.scale.y = dh / 1.15;
+    m.rotation.y = b * TAU;
+  }
+}
 export function ruinArch(rnd = Math.random) {
   const g = new THREE.Group();
+  if (has('ruin')) {
+    rnd();   // (the code-built arch drew its stone tint here)
+    let minH = 99;
+    const pillars = [];
+    for (const sx of [-1, 1]) {
+      const h = 5 + rnd() * 2;
+      minH = Math.min(minH, h);
+      pillars.push([sx * 2.2, h + 0.45]);
+      authored('ruin', 'base', g)[0].position.x = sx * 2.2;
+      ruinColumn(g, sx * 2.2, 0.45, h, rnd, true);
+    }
+    const lintel = new THREE.Group(); g.add(lintel);
+    authored('ruin', 'lintel', lintel);
+    if (rnd() < 0.6) { lintel.position.y = minH + 0.8; lintel.rotation.z = (rnd() - 0.5) * 0.12; }
+    else { lintel.position.set(0.6, 0.35, 1.6); lintel.rotation.set(0, 0.3, 0.12); }   // fallen beside the columns
+    g.userData.pillars = pillars;
+    return g;
+  }
   const mat = rnd() < 0.5 ? MAT.ruin : MAT.ruinMoss;
   let minH = 99;
   const pillars = [];
@@ -1469,6 +2092,17 @@ export function ruinArch(rnd = Math.random) {
 
 export function pillarBroken(h = 3, rnd = Math.random) {
   const g = new THREE.Group();
+  if (authored('ruin', 'base', g)) {
+    const pg = new THREE.Group(); pg.position.y = 0.42; pg.rotation.z = (rnd() - 0.5) * 0.1; g.add(pg);
+    ruinColumn(pg, 0, 0, h, rnd, false);
+    const [stub] = authored('ruin', 'stub', pg);
+    stub.position.y = h - 0.05;
+    stub.rotation.set(rnd() * 0.1, rnd() * 3, rnd() * 0.1);
+    const [ch] = authored('ruin', 'chunk', g);
+    ch.position.set(0.9 + rnd() * 0.5, 0.2, (rnd() - 0.5) * 1.2);
+    ch.rotation.set(rnd() * 3, rnd() * 3, 0);
+    return g;
+  }
   box(1.45, 0.45, 1.45, MAT.stoneDark, 0, 0.2, 0, g);
   const tilt = (rnd() - 0.5) * 0.1;
   const pg = new THREE.Group(); pg.position.y = 0.42; pg.rotation.z = tilt; g.add(pg);
@@ -1490,7 +2124,94 @@ export function pillarBroken(h = 3, rnd = Math.random) {
 // The Hush Rift gate: a ring of leaning monoliths veined with crystal, and a
 // massive broken stone arch framing an elliptical portal. The portal is a
 // shader disc (soft elliptical edge) inside a carved rim.
-export function riftGate() {
+// The portal: a lightless middle with thin filaments of light wound slowly into it, and a bright
+// line where it meets the gate's lip. Half sizes rx, ry; uAlpha fades the whole disc.
+function riftPortal(rx, ry) {
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uTime: U.time, uAlpha: { value: 1 } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: `uniform float uTime; uniform float uAlpha; varying vec2 vUv;
+      float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y); }
+      float fbm(vec2 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 4; i++) { s += a * vn(p); p = p * 2.03 + 17.0; a *= 0.5; } return s; }
+      void main(){ vec2 p = vUv * 2.0 - 1.0; float r = length(p); float a = atan(p.y, p.x);
+        float w = a + (1.0 - r) * 1.7 + uTime * 0.045;
+        vec2 q = vec2(cos(w), sin(w));
+        float dep = -log(r + 0.07);
+        float n1 = fbm(q * (2.6 + r * 1.6) + vec2(0.0, dep * 1.9 - uTime * 0.2));
+        float n2 = fbm(q * (4.6 + r * 2.4) + vec2(5.0, dep * 3.0 - uTime * 0.33));
+        float fil = smoothstep(0.5, 0.72, n1) * smoothstep(0.34, 0.62, n2);
+        float core = smoothstep(0.62, 0.05, r);
+        vec3 col = mix(vec3(0.012, 0.006, 0.035), vec3(0.2, 0.09, 0.46), n2 * smoothstep(0.1, 0.95, r));
+        col += vec3(1.25, 0.8, 2.2) * fil * (0.2 + 0.8 * smoothstep(0.2, 0.95, r));
+        col *= 1.0 - core * 0.92;
+        float rim = smoothstep(0.8, 0.95, r) * smoothstep(1.0, 0.95, r);
+        col += vec3(1.5, 1.05, 2.5) * rim * (0.8 + 0.2 * sin(uTime * 0.9));
+        gl_FragColor = vec4(col, smoothstep(1.0, 0.97, r) * uAlpha); }`,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  });
+  return new THREE.Mesh(new THREE.PlaneGeometry(rx * 2, ry * 2), mat);
+}
+// Authored rift (bd_riftgate.glb, ref/blender/bd/rift.py): the seal floor, the gate and the standing
+// stones are the model; the portal, the crystal growth and whatever hangs in the air are the game's.
+// groundAt(lx, lz): terrain height relative to the group's origin (the middle of the bowl).
+function authoredRift(P, groundAt) {
+  const g = new THREE.Group();
+  const rnd = mulberry32(777);
+  const [RX, RY, cy, gz] = P.meta.portal;
+  // inlaid crystal: its own unlit material (vertex colour = strength), pulsed by world.js
+  const runes = new THREE.MeshBasicMaterial({ vertexColors: true, color: new THREE.Color(1.5, 0.95, 2.5) });
+  const mats = { glow: runes };
+  const add = (grp, parent) => { for (const m of bdAdd(P, grp, parent, { mats }) || []) if (m.material === runes) m.castShadow = false; };
+  add('body', g);
+  const veinMat = crystalMaterial({ color: 0x6a4a9a, glow: 0xa070ff, intensity: 1.4, seed: 9 });
+  const vein = (seed, count, s, x, y, z, rx = 0, ry = 0, rz = 0) => {
+    const v = new THREE.Mesh(crystalGeometry('cluster', { seed, count }), veinMat);
+    v.scale.setScalar(s); v.position.set(x, y, z); v.rotation.set(rx, ry, rz); g.add(v);
+  };
+  // the outer ring: nine standing stones leaning toward the middle (colliders come from userData.monolith)
+  for (let i = 0; i < 9; i++) {
+    const a = (i / 9) * TAU;
+    rnd(); rnd();
+    let x = Math.cos(a) * (26 + rnd() * 4), z = Math.sin(a) * (26 + rnd() * 4);
+    // off the bowl's wall: pull it in until it stands on the floor
+    for (let k = 0; k < 10 && groundAt(x, z) > 0.03 * Math.hypot(x, z) + 1.0; k++) { x *= 0.96; z *= 0.96; }
+    const s = 0.85 + rnd() * 0.4;
+    const st = new THREE.Group();
+    st.position.set(x, groundAt(x, z), z);
+    st.rotation.set(0.02 + rnd() * 0.07, Math.atan2(-x, -z) + (rnd() - 0.5) * 0.5, (rnd() - 0.5) * 0.1, 'YXZ');
+    st.scale.setScalar(s);
+    st.userData.monolith = 1.75 * s;
+    add('stele' + 'ABCACBABC'[i], st); g.add(st);
+    const va = a + 1.2 + rnd();
+    vein(300 + i, 5, 0.5 + rnd() * 0.25, x + Math.cos(va) * 2.6 * s, groundAt(x + Math.cos(va) * 2.6 * s, z + Math.sin(va) * 2.6 * s) - 0.1, z + Math.sin(va) * 2.6 * s, (rnd() - 0.5) * 0.5, rnd() * 3, (rnd() - 0.5) * 0.5);
+  }
+  // crystal growth on the gate's buttresses and plinths
+  for (const sx of [-1, 1]) {
+    vein(400 + sx, 6, 0.7, sx * 9.8, 4.9, gz, 0.1, sx, sx * 0.25);
+    vein(410 + sx, 4, 0.5, sx * 11.2, 3.3, gz + 0.3, -0.2, 1, sx * 0.4);
+    vein(420 + sx, 4, 0.42, sx * 8.9, 0.9, gz + 2.0, 0.3, 2, sx * 0.3);
+  }
+  // what hangs in the silence: the lintel's middle, and stones adrift round the gate
+  const floaters = [bdPivot(P, 'gap', g, { mats })];
+  for (let i = 0; i < 5; i++) {
+    const f = new THREE.Group();
+    const a = rnd() * TAU, r = 9.5 + rnd() * 3.5;
+    f.position.set(Math.cos(a) * r, 6 + rnd() * 10, gz + Math.sin(a) * 3);
+    f.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
+    add('drift' + 'ABCBA'[i], f); g.add(f); floaters.push(f);
+  }
+  for (const f of floaters) f.userData.y0 = f.position.y;
+  const portal = riftPortal(RX, RY);
+  portal.position.set(0, cy, gz); g.add(portal);
+  const heartAnchor = new THREE.Object3D(); heartAnchor.position.set(0, 7, 0); g.add(heartAnchor);
+  g.userData = { portal, heartAnchor, floaters, runes, authored: P.meta };
+  return g;
+}
+export function riftGate(groundAt = () => 0) {
+  const A = bdParts('riftgate');
+  if (A) return authoredRift(A, groundAt);
   const g = new THREE.Group();
   const rnd = mulberry32(777);
   const veinMat = crystalMaterial({ color: 0x6a4a9a, glow: 0xa070ff, intensity: 1.4, seed: 9 });

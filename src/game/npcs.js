@@ -91,9 +91,11 @@ export class NPC {
     this.rig.update(dt, { speed: this.speed, grounded: true, talk: this.talking, sit: this.pose.sit, wave: this.pose.wave, kneel: this.pose.kneel, lookYaw: look });
     // ambient barks
     this.barkT -= dt;
-    if (this.barks.length && this.barkT <= 0 && dp < 8 && G.mode === 'free' && !G.enemies.inCombat()) {
+    // barks: a list, or a function that picks a line for the moment (it may return nothing)
+    if ((typeof this.barks === 'function' || this.barks.length) && this.barkT <= 0 && dp < 8 && G.mode === 'free' && !G.enemies.inCombat()) {
       this.barkT = randRange(18, 32);
-      G.hud.bark(this, typeof this.barks === 'function' ? this.barks() : pick(this.barks));
+      const line = typeof this.barks === 'function' ? this.barks() : pick(this.barks);
+      if (line) G.hud.bark(this, line);
     }
   }
 }

@@ -1,8 +1,26 @@
 // Local character viewer (dev only, not part of the game build).
 import * as THREE from 'three';
+import { SunLight } from 'three/addons/lights/SunLight.js';
 import { G } from './src/core/context.js';
 import { U, toon } from './src/render/materials.js';
-import * as C from './src/game/characters.js';
+import * as HR from './src/game/humanrig.js';
+import { preloadModels } from './src/render/models.js';
+
+await preloadModels();
+
+// ?wip: load work-in-progress models from ref/blender/wip/ instead of public/models/
+if (new URLSearchParams(location.search).has('wip')) {
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  for (const k of Object.keys(HR.CHAR)) {
+    try { HR.MODEL_OVERRIDE[k] = await new GLTFLoader().loadAsync(`./ref/blender/wip/ch_${k}.glb?t=${Date.now()}`); } catch (_) { /* no wip model */ }
+  }
+}
+
+// people always load; a creature or enemy module that fails to load (mid-edit) only drops its own set
+const C = { ...HR };
+for (const load of [() => import('./src/game/creatures.js'), () => import('./src/game/enemybodies.js'), () => import('./src/game/enemycreatures.js')]) {
+  try { Object.assign(C, await load()); } catch (e) { console.warn('charview: module failed to load', e); }
+}
 
 const q = new URLSearchParams(location.search);
 const W = +(q.get('w') || 960), H = +(q.get('h') || 540);
@@ -16,12 +34,11 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9cc4e0);
 const cam = new THREE.PerspectiveCamera(30, W / H, 0.05, 200);
 G.scene = scene; G.camera = cam;
-const sun = new THREE.DirectionalLight(0xffffff, 2.5);
+const sun = new SunLight(0xffffff, 2.5);   // the game's key light, so the toon and skin shading match
 const sd = new THREE.Vector3(0.45, 0.8, 0.55).normalize();
-sun.position.copy(sd).multiplyScalar(30); sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 80 });
-scene.add(sun, sun.target);
+sun.position.copy(sd); sun.castShadow = true;
+sun.shadow.bias = -0.00022; sun.shadow.normalBias = 0.05; sun.shadow.radius = 3.2; sun.shadow.camera.far = 40;
+scene.add(sun);
 U.sunDir.value.copy(sd);
 scene.add(new THREE.HemisphereLight(0xbfd8ff, 0x7a8a5a, 1.2));
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), toon(0x7fa860, { noAO: true }));
@@ -42,6 +59,12 @@ function make(key) {
   if (key === 'spectral') return C.makeKnight(true);
   return EN[key]();
 }
+function can(key) {
+  if (CHAR_OK(key) || key.startsWith('ghost')) return true;
+  if (key === 'fox') return !!C.makeFox;
+  if (key === 'cat') return !!C.makeCat;
+  return !!C.makeKnight && !!C.makeWailer;
+}
 function CHAR_OK(k) { return !!C.CHAR[k]; }
 
 const rigs = [];
@@ -54,11 +77,12 @@ const views = q.get('views');
 let x = 0;
 const t0 = performance.now();
 for (const k of keys) {
+  if (!can(k)) continue;
   const n = views ? views.split(',').length : 1;
   for (let i = 0; i < n; i++) {
     const r = make(k);
     const box = new THREE.Box3().setFromObject(r.root);
-    const w = Math.max(0.6, box.max.x - box.min.x) * 1.05 + 0.25;
+    const w = (Math.max(0.6, box.max.x - box.min.x) * 1.05 + 0.25) * +(q.get('sp') || 1);   // sp < 1 packs the views (head close-ups)
     r.key = k; r.state = {};
     r.root.rotation.y = views ? (+views.split(',')[i] * Math.PI) / 180 : +(q.get('yaw') || 0) * Math.PI / 180;
     r.root.position.set(x + w / 2, k === 'fox' || k === 'wailer' ? 1.3 : k === 'moth' ? 0.6 : 0, 0);
@@ -103,7 +127,22 @@ function sim(r, n, dt, st, mv = null, yawRate = 0) {
     r.update(dt, typeof st === 'function' ? st(i * dt) : st);
   }
 }
-window.V = { THREE, G, C, rigs, scene, cam, step, render, frame, info, buildMs, sim, setAll(s) { for (const r of rigs) r.state = s; } };
+// orbit the camera about a point (yaw 0 = in front of a character facing +Z)
+function look(x, y, z, dist, yaw = 0, el = 0, fov = 30) {
+  const a = (yaw * Math.PI) / 180, e = (el * Math.PI) / 180;
+  cam.fov = fov; cam.updateProjectionMatrix();
+  cam.position.set(x + Math.sin(a) * Math.cos(e) * dist, y + Math.sin(e) * dist, z + Math.cos(a) * Math.cos(e) * dist);
+  cam.lookAt(x, y, z);
+}
+// post the canvas to the local capture receiver (dev tooling)
+async function shot(name) {
+  render();
+  const blob = await new Promise((r) => renderer.domElement.toBlob(r, 'image/jpeg', 0.93));
+  await fetch('http://127.0.0.1:5197/' + name + '.jpg', { method: 'POST', mode: 'no-cors', body: blob });
+  return name;
+}
+function setSun(x, y, z) { sd.set(x, y, z).normalize(); sun.position.copy(sd); U.sunDir.value.copy(sd); }
+window.V = { THREE, G, C, rigs, scene, cam, step, render, frame, info, buildMs, sim, look, shot, setSun, renderer, setAll(s) { for (const r of rigs) r.state = s; } };
 step(10);
 render();
 renderer.info.autoReset = true;

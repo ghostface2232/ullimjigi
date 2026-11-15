@@ -1,89 +1,119 @@
 // Non-humanoid enemy bodies on the creature rig: 울음탈 (wailer), 잿물 (ooze),
-// 재나방 (moth), 뿌리손 (root hand) and 망루지기 (watcher). Sculpted, skinned,
-// with procedural animation and verlet secondary motion.
+// 재나방 (moth), 뿌리손 (root hand) and 망루지기 (watcher). Signed-distance
+// sculpts for the seamless masses, lofted parts for the crisp ones, procedural
+// animation and verlet secondary motion.
 import * as THREE from 'three';
 import { damp, clamp, rand } from '../core/util.js';
-import { SkelDef, tube, blob, sheet, addGeo, sstep, mix, TAU, bodyMat, vnoise3, zAt, Spring } from './charkit.js';
-import { CreatureRig, creatureType, bakeType, glowBasic, glowTwin, rot } from './creatures.js';
+import { SkelDef, tube, blob, sheet, sstep, mix, TAU, bodyMat, vnoise3, Spring } from './charkit.js';
+import { model } from '../render/models.js';
+import { CreatureRig, creatureType, bakeType, rigidType, glowBasic, rot, Field, shard, spike, tatter, prism, sheen, jelly, extendMat, megalith as megalithBlock } from './creatures.js';
 
 const V3 = THREE.Vector3;
 const v = (x, y, z) => new V3(x, y, z);
 const _e = new THREE.Euler();
 const _w = new V3();
+const ring = (n, f) => Array.from({ length: n }, (_, k) => f((k / n) * TAU, k));
 
 // ===========================================================================
-// 울음탈 — the wailing mask: a cracked, weeping bone mask over a hooded void,
-// a torn crown of cloth and six long streamers that trail as it drifts.
+// 울음탈 — the wailing mask: a broken, weeping bone mask in a ragged cowl, a
+// halo of bone spines, skeletal hands that rise to its face when it wails, a
+// caged core under an open shroud and six long streamers.
 const WAIL_STRIPS = 6, WAIL_SEG = 4;
 function wailerType() {
   return creatureType('wailer', () => {
     const d = new SkelDef();
     d.add('body', null, 0, 0, 0, [0, 0.1, 0]);
     d.add('mask', 'body', 0, 0.05, 0.1, [0, 0.3, 0.12]);
-    d.add('jaw', 'mask', 0, -0.12, 0.28, [0, -0.3, 0.3]);
-    d.add('core', 'body', 0, -0.2, 0, [0, -0.1, 0]);
-    const chains = [];
-    const strips = [];
+    d.add('jaw', 'mask', 0, -0.1, 0.2, [0, -0.3, 0.3]);
+    d.add('core', 'body', 0, -0.3, 0.03, [0, -0.2, 0.03]);
+    for (const sd of [1, -1]) d.add('hand' + (sd > 0 ? 'L' : 'R'), 'body', sd * 0.43, -0.22, 0.2, [sd * 0.43, -0.05, 0.24]);
+    const chains = [], strips = [];
     for (let i = 0; i < WAIL_STRIPS; i++) {
-      const a = (i / WAIL_STRIPS) * TAU + 0.26;
-      const x = Math.sin(a) * 0.26, z = Math.cos(a) * 0.2 - 0.06;
+      const a = (i / WAIL_STRIPS) * TAU + 0.52;
+      const x = Math.sin(a) * 0.27, z = Math.cos(a) * 0.21 - 0.06;
       const names = []; let parent = 'body';
-      const len = 1.0 + (i % 3) * 0.14;
-      for (let k = 0; k < WAIL_SEG; k++) { const nm = `st${i}_${k}`; d.add(nm, parent, x * (1 + k * 0.12), -0.12 - (k * len) / WAIL_SEG, z * (1 + k * 0.12)); names.push(nm); parent = nm; }
-      const tail = v(x * (1 + WAIL_SEG * 0.12), -0.12 - len, z * (1 + WAIL_SEG * 0.12));
+      const len = 0.95 + (i % 3) * 0.16;
+      for (let k = 0; k < WAIL_SEG; k++) { const nm = `st${i}_${k}`; d.add(nm, parent, x * (1 + k * 0.12), -0.2 - (k * len) / WAIL_SEG, z * (1 + k * 0.12)); names.push(nm); parent = nm; }
+      const tail = v(x * (1 + WAIL_SEG * 0.12), -0.2 - len, z * (1 + WAIL_SEG * 0.12));
       chains.push({ names, tail, kind: 'strip', opts: { stiff: 0.07, stiffTip: 0.02, damp: 0.08, grav: 3, drag: 1.1 } });
       strips.push({ a, names, tail, len });
     }
-    const color = { mask: 0xe8e0d0, crack: 0x8a8070, hole: 0x0a0610, cloth: 0x2e2838, clothD: 0x1e1a26, glow: 0xffffff };
-    const group = { mask: 'mask', crack: 'mask', hole: 'mask', cloth: 'cloth', clothD: 'cloth', glow: 'glow' };
+    const color = { bone: 0xe4dcc8, boneD: 0xb9b09c, cloth: 0x41384f, clothD: 0x1d1927, void: 0x08060c, glow: 0xffffff, glowD: 0x9c9c9c };
+    const group = { bone: 'mask', boneD: 'mask', cloth: 'cloth', clothD: 'cloth', void: 'cloth', glow: 'glow', glowD: 'glow' };
     const built = bakeType(d, (S) => {
-      // hooded void behind the mask
-      blob(S, 'clothD', ['body', ['mask', 1.4]], { c: v(0, 0.0, -0.06), r: [0.38, 0.42, 0.32], ws: 18, hs: 12, fn: (dd, p) => { if (dd.y < -0.3) { p.x *= 0.85; p.z *= 0.85; } p.multiplyScalar(1 + 0.05 * Math.sin(Math.atan2(dd.x, dd.z) * 7 + dd.y * 4)); } });
-      // ragged shroud under the hood
+      const mc = v(0, 0.07, 0.13), at = (x, y, z) => mc.clone().add(v(x, y, z));
+      blob(S, 'void', ['body', ['mask', 1.4]], { c: v(0, 0.05, -0.03), r: [0.29, 0.36, 0.25], ws: 16, hs: 12, ol: 0 });
+      // the mask: brow, nose and cheekbones, grieving sockets, upper lip; one corner broken away
+      const K = new Field(S);
+      K.bind(['mask'], 0.035).ell(mc, [0.265, 0.35, 0.2]);
+      K.ell(at(0, 0.15, 0.13), [0.2, 0.05, 0.075], { k: 0.045, rot: [0.2, 0, 0] });
+      K.cone(at(0, 0.11, 0.17), at(0, -0.035, 0.215), 0.026, 0.04, { k: 0.03 });
+      for (const sd of [1, -1]) K.ell(at(sd * 0.145, -0.05, 0.11), [0.06, 0.05, 0.06], { k: 0.045 });
+      K.ell(at(0, 0, -0.085), [0.255, 0.35, 0.2], { sub: true, k: 0.01 });
+      K.box(at(0, -0.43, 0.1), [0.4, 0.26, 0.3], 0.01, { sub: true, k: 0.012 });
+      K.ell(at(0, -0.17, 0.17), [0.085, 0.075, 0.1], { sub: true, k: 0.015 });
+      for (const sd of [1, -1]) K.ell(at(sd * 0.115, 0.065, 0.15), [0.075, 0.046, 0.1], { sub: true, k: 0.012, rot: [0, 0, -sd * 0.5] });
+      K.box(at(0.25, 0.3, 0.05), [0.12, 0.09, 0.2], 0.01, { sub: true, k: 0.006, rot: [0, 0, 0.75] });
+      K.groove([at(0.06, 0.4, 0.1), at(0.035, 0.27, 0.2), at(0.085, 0.2, 0.2), at(0.05, 0.13, 0.2)], 0.007, 0.002);
+      K.groove([at(-0.2, -0.02, 0.12), at(-0.17, -0.1, 0.12), at(-0.2, -0.16, 0.1)], 0.006, 0.002);
+      // lower jaw: a crescent that drops and shudders
+      K.bind(['jaw'], 0.02).ell(at(0, -0.27, 0.08), [0.13, 0.07, 0.11]);
+      K.ell(at(0, -0.215, 0.03), [0.105, 0.07, 0.115], { sub: true, k: 0.012 });
+      K.mesh('bone', { cell: 0.0135, ol: 0.5 });
+      for (const sd of [1, -1]) {
+        blob(S, 'glow', ['mask'], { c: at(sd * 0.112, 0.06, 0.055), r: [0.05, 0.034, 0.02], ws: 10, hs: 8, ol: 0, fn: (dd, p) => { p.y -= p.x * sd * 0.5; } });
+        // tears of light down the cheeks
+        const tp = [[0.115, 0.01], [0.122, -0.06], [0.112, -0.13], [0.118, -0.17]].map(([x, y]) => K.on(at(sd * x, y, 0.3), 0.0015));
+        tube(S, 'glowD', ['mask'], { pts: tp, seg: 6, steps: 12, ref: v(0, 0, 1), ol: 0, cap1: 1, capN: 2, r: (u) => [0.011 * (1 - u * 0.55) * (1 + 0.5 * sstep(0.75, 0.95, u)), 0.004] });
+        // teeth
+        for (let k = 0; k < 3; k++) {
+          spike(S, 'boneD', ['mask'], K.on(at(sd * (0.022 + k * 0.03), -0.165, 0.3), -0.002), v(0, -1, 0.05), 0.04 - k * 0.006, 0.011, { seg: 5, steps: 3, ol: 0.3 });
+          spike(S, 'boneD', ['jaw'], K.on(at(sd * (0.03 + k * 0.03), -0.21, 0.3), -0.002), v(0, 1, 0.1), 0.034 - k * 0.006, 0.01, { seg: 5, steps: 3, ol: 0.3 });
+        }
+      }
+      blob(S, 'glowD', ['mask'], { c: at(0, -0.2, -0.04), r: [0.06, 0.07, 0.03], ws: 10, hs: 8, ol: 0 });
+      // cowl: peaked, ragged, drawn close around the mask
+      sheet(S, 'cloth', [['body', 1], ['mask', 1.3]], {
+        nu: 24, nv: 10, thick: 0.014, sides: true, innerMat: 'clothD',
+        fn: (u, vv, q) => {
+          const open = mix(0.75, 1.15, sstep(0, 0.5, vv)) * sstep(1.05, 0.7, vv) + 0.5 * sstep(0.7, 1, vv), phi = mix(open, TAU - open, u), th = mix(0.08, 2.25, vv);
+          const back = 1 - Math.abs(u - 0.5) * 2, peak = sstep(0.4, 0.95, back) * Math.exp(-((vv - 0.22) ** 2) / 0.02) * 0.16;
+          const tri = Math.abs(((u * 9 + 0.3) % 1) - 0.5) * 2, r = 0.36 + 0.04 * vv;
+          q.set(Math.sin(th) * Math.sin(phi) * r * 0.95, 0.09 + Math.cos(th) * r * 1.12 + peak * 0.9 + 0.05 * tri * sstep(0.8, 1, vv), -0.02 + Math.sin(th) * Math.cos(phi) * r * 0.9 - peak);
+          q.x *= 1 + 0.25 * sstep(0.75, 1, vv); q.z -= 0.012 * Math.sin(u * 34) * vv;
+        },
+        inside: (p) => v(0, p.y, -0.03),
+      });
+      // halo of bone spines behind the head
+      for (let k = 0; k < 7; k++) {
+        const a = mix(-1.25, 1.25, k / 6), len = 0.3 + 0.13 * Math.cos(a * 1.4) + (k % 2) * 0.05;
+        spike(S, k % 2 ? 'boneD' : 'bone', ['body'], v(Math.sin(a) * 0.29, 0.15 + Math.cos(a) * 0.31, -0.13), v(Math.sin(a), Math.cos(a) * 0.9 + 0.15, -0.3), len, 0.034, { flat: 0.4, ref: v(0, 0, 1), bend: v(0, 0, -0.25), seg: 8, steps: 8 });
+      }
+      // shroud, open at the front over a caged core
       sheet(S, 'cloth', ['body', ...strips.map((st) => [st.names[0], 1.6])], {
-        nu: 30, nv: 4, wrap: true, thick: 0.012,
-        fn: (u, vv, out) => { const a = u * TAU; const rag = 0.12 * Math.abs(Math.sin(u * 23)) + 0.08 * Math.abs(Math.sin(u * 9 + 1)); const y = mix(-0.08, -0.52 + rag, vv); const r = mix(0.27, 0.36, vv) * (1 + 0.05 * Math.sin(a * 7)); out.set(Math.sin(a) * r, y, Math.cos(a) * r * 0.85 - 0.04); },
+        nu: 28, nv: 6, thick: 0.012, sides: true, innerMat: 'clothD',
+        fn: (u, vv, q) => { const a = mix(0.62, TAU - 0.62, u), tri = Math.abs(((u * 8 + 0.1) % 1) - 0.5) * 2, r = mix(0.25, 0.4, Math.pow(vv, 0.8)) * (1 + 0.06 * vv * Math.sin(a * 7)); q.set(Math.sin(a) * r, mix(-0.12, -0.6 + 0.2 * tri * tri, vv), Math.cos(a) * r * 0.85 - 0.04); },
         inside: (p) => v(0, p.y, -0.04),
       });
-      // torn cloth crown fanning behind the mask
-      for (let k = 0; k < 9; k++) {
-        const a = mix(-1.35, 1.35, k / 8);
-        const b0 = v(Math.sin(a) * 0.26, 0.2 + Math.cos(a) * 0.1, -0.02 + Math.cos(a) * 0.02);
-        const len = 0.3 + 0.12 * Math.cos(a * 2) + ((k * 7) % 3) * 0.04;
-        const dir = v(Math.sin(a) * 1.1, Math.cos(a) * 0.9 + 0.2, -0.45).normalize();
-        tube(S, 'cloth', ['body'], { pts: [b0, b0.clone().addScaledVector(dir, len * 0.5).add(v(0, 0.02, 0)), b0.clone().addScaledVector(dir, len)], seg: 5, steps: 5, ref: v(0, 0, 1), r: (u) => [0.06 * (1 - u) + 0.004, 0.012 * (1 - u) + 0.002], cap1: 0.5 });
-      }
-      // the mask: thick oval shell, sad carved features
-      const mk = blob(S, 'mask', ['mask'], {
-        c: v(0, 0.05, 0.12), r: [0.3, 0.38, 0.22], ws: 24, hs: 16, skip: (dd) => dd.z < -0.05,
-        fn: (dd, p) => {
-          p.z += 0.06 * (1 - dd.x * dd.x) * sstep(-1, 0.2, dd.y);
-          const cheek = Math.exp(-((Math.abs(dd.x) - 0.55) ** 2 / 0.03 + (dd.y + 0.15) ** 2 / 0.03));
-          p.z += cheek * 0.025;
-          const brow = Math.exp(-((dd.y - 0.35) ** 2) / 0.01) * sstep(0.7, 0.1, Math.abs(dd.x));
-          p.z += brow * 0.02;
-          if (dd.y < -0.5) p.x *= 1 - 0.25 * (-dd.y - 0.5);
-        },
-      }).part;
-      const on = (x, y, dz = 0) => v(x, y, zAt(mk, x, y) + dz);
-      // eye holes (inner corners raised: grief), glowing pupils, tear streaks, down-turned mouth
+      shard(S, 'glow', ['core'], v(0, -0.43, 0.03), v(0, -0.17, 0.03), 0.06, { sides: 5, waist: 0.52, ol: 0 });
+      for (let k = 0; k < 3; k++) { const a = (k / 3) * TAU + 0.5, c = v(Math.sin(a) * 0.12, -0.3 + (k - 1) * 0.06, 0.03 + Math.cos(a) * 0.12); shard(S, 'glowD', ['core'], c.clone().add(v(0, -0.04, 0)), c.clone().add(v(0, 0.05, 0)), 0.016, { sides: 4, waist: 0.5, ol: 0 }); }
       for (const sd of [1, -1]) {
-        blob(S, 'hole', ['mask'], { c: on(sd * 0.11, 0.1, -0.012), r: [0.075, 0.1, 0.02], ws: 12, hs: 8, fn: (dd, p) => { p.y -= p.x * sd * 0.5; } });
-        blob(S, 'glow', ['mask'], { c: on(sd * 0.105, 0.085, 0.004), r: [0.028, 0.034, 0.01], ws: 8, hs: 6 });
-        tube(S, 'crack', ['mask'], { pts: [on(sd * 0.12, 0.0, 0.002), on(sd * 0.125, -0.1, 0.002), on(sd * 0.115, -0.2, 0.002), on(sd * 0.12, -0.28, 0.0)], seg: 5, steps: 8, ref: v(0, 0, 1), r: (u) => [0.013 * (1 - u * 0.5), 0.004], cap1: 1 });
+        for (let k = 0; k < 3; k++) spike(S, 'boneD', ['body'], v(sd * 0.2, -0.17 - k * 0.085, -0.1), v(sd * 0.5, -0.1, 1), 0.3 - k * 0.035, 0.017, { bend: v(-sd * 0.85, 0, 0.15), seg: 6, steps: 10 });
+        // skeletal hand with a torn cuff
+        const n = 'hand' + (sd > 0 ? 'L' : 'R'), hp = d.pos(n);
+        blob(S, 'bone', [n], { c: hp.clone().add(v(0, 0.02, 0)), r: [0.05, 0.062, 0.026], ws: 12, hs: 8, ol: 0.6 });
+        for (let k = 0; k < 4; k++) { const x = (k - 1.5) * 0.026; spike(S, 'bone', [n], hp.clone().add(v(x, 0.065, 0.004)), v(x * 4 - sd * 0.1, 1, 0.25), 0.15 - Math.abs(k - 1.5) * 0.018, 0.0135, { bend: v(0, -0.2, 0.55), ridge: 0.14, rings: 19, seg: 6, steps: 9, ol: 0.5 }); }
+        spike(S, 'bone', [n], hp.clone().add(v(-sd * 0.045, 0.01, 0.006)), v(-sd, 0.55, 0.3), 0.1, 0.014, { bend: v(0, 0.2, 0.4), seg: 6, ol: 0.5 });
+        tatter(S, 'cloth', [n], hp.clone().add(v(-0.055, -0.035, 0.01)), hp.clone().add(v(0.055, -0.035, 0.01)), 0.26, { out: v(0, 0, 1), inner: 'clothD', flare: 0.0, rags: 3, seed: sd + 3, taper: 0.5 });
+        tatter(S, 'cloth', [n], hp.clone().add(v(0.055, -0.035, -0.012)), hp.clone().add(v(-0.055, -0.035, -0.012)), 0.3, { out: v(0, 0, -1), inner: 'clothD', flare: 0.0, rags: 2, seed: sd + 6, taper: 0.5 });
       }
-      tube(S, 'hole', ['jaw', ['mask', 1.2]], { pts: [on(-0.1, -0.2, -0.006), on(-0.05, -0.15, -0.006), on(0, -0.14, -0.006), on(0.05, -0.15, -0.006), on(0.1, -0.2, -0.006)], seg: 8, steps: 12, ref: v(0, 1, 0), r: (u) => [0.012 + 0.03 * Math.sin(u * Math.PI), 0.018], cap0: 1, cap1: 1 });
-      // hairline cracks across the mask
-      tube(S, 'crack', ['mask'], { pts: [on(0.06, 0.4, 0), on(0.03, 0.32, 0.002), on(0.07, 0.25, 0.002), on(0.04, 0.2, 0.002)], seg: 4, steps: 6, ref: v(0, 0, 1), r: [0.005, 0.003] });
-      // glowing core beneath
-      blob(S, 'glow', ['core'], { c: v(0, -0.2, 0), r: [0.11, 0.11, 0.11], ws: 12, hs: 8 });
-      // streamers
+      // streamers: long ribbons with frayed ends
       for (const st of strips) {
-        const P = [...st.names.map((n) => d.pos(n)), st.tail];
-        const curve = new THREE.CatmullRomCurve3(P);
-        const nrm = v(Math.sin(st.a), 0, Math.cos(st.a));
-        tube(S, 'cloth', ['body', ...st.names], { curve, seg: 5, steps: 12, ref: nrm, r: (u) => [0.1 * (1 - u * 0.45) + 0.012 * Math.sin(u * 23), 0.009], shape: (u, a) => 1 + (u > 0.85 ? 0.3 * Math.sin(a * 3 + u * 40) : 0), cap1: 0.4 });
+        const curve = new THREE.CatmullRomCurve3([...st.names.map((n) => d.pos(n)), st.tail]);
+        tube(S, 'cloth', ['body', ...st.names], { curve, seg: 6, steps: 16, ref: v(Math.sin(st.a), 0, Math.cos(st.a)), cap1: 0.3, capN: 2, r: (u) => [0.1 * (1 - u * 0.5) * (1 + 0.1 * Math.sin(u * 19)), 0.008], shape: (u, a) => 1 + (u > 0.78 ? 0.45 * Math.sin(a * 3 + u * 40) * (u - 0.78) * 4 : 0) });
       }
+      const dk = new THREE.Color(0x15121d);
+      return { fields: [K], aoR: 0.04, ao: 0.6, fn: (key, p, n, c) => { if (key === 'cloth') c.lerp(dk, 0.75 * sstep(-0.1, -1.1, p.y)).multiplyScalar(0.85 + 0.25 * Math.max(0, n.y)); if (key === 'bone') c.multiplyScalar(0.86 + 0.18 * Math.max(0, n.y)); } };
     }, color, group);
     return { def: d, built, chains };
   });
@@ -96,11 +126,11 @@ class WailerRig extends CreatureRig {
       cloth: bodyMat(0xffffff, { vertexColors: true, rim: 0.5 }),
       glow,
     };
-    super(wailerType(), M, { main: 'mask', outline: 0.01 });
+    super(wailerType(), M, { main: 'mask', outline: 0.005, dress: { mat: { mask: { spec: 0.6 }, cloth: { spec: 0.25 } } } });
     this.t = rand() * 5;
     this.height = 1.2;
     this.eyeMat = glow;
-    this.p = { head: this.B.mask, torso: this.B.body, hips: this.B.body };
+    this.p = { head: this.B.mask, torso: this.B.body, hips: this.B.body, foreR: this.B.handR };
     this.ch = 0; this.wind = new V3();
   }
   update(dt, s = {}) {
@@ -116,8 +146,15 @@ class WailerRig extends CreatureRig {
     rot(B.mask, Math.sin(t * 2.3) * 0.05 - c * 0.2, Math.sin(t * 0.9) * 0.15 * (1 - c), Math.sin(t * 1.3) * 0.06);
     // wail: the jaw drops and shudders while charging
     rot(B.jaw, c * (0.35 + Math.sin(t * 30) * 0.05) + (s.dead ? 0.4 : 0), 0, 0);
+    // hands hover at its sides and rise to the face while it wails
+    for (const sd of [1, -1]) {
+      const hb = sd > 0 ? B.handL : B.handR, r0 = this.rest[hb.name];
+      hb.position.set(r0.x - sd * 0.17 * c, r0.y + 0.34 * c + Math.sin(t * 1.6 + sd) * 0.04, r0.z + 0.05 * c);
+      rot(hb, -0.3 + c * 0.55 + Math.sin(t * 2.1 + sd) * 0.12 + (s.dead ? 1.2 : 0), sd * (0.5 - c * 0.3), sd * (0.25 + Math.sin(t * 1.3) * 0.1 - c * 0.5));
+    }
     const k = 1 + c * 1.3 + Math.sin(t * 8) * 0.08;
     B.core.scale.setScalar(k);
+    B.core.rotation.y += dt * (1.2 + c * 6);
     for (let i = 0; i < this.chains.length; i++) {
       const ch = this.chains[i];
       for (let j = 0; j < ch.base.length; j++) { _e.set(Math.sin(t * 2.2 + i + j * 0.8) * 0.12, 0, Math.sin(t * 1.7 + i * 1.3 + j) * 0.1); ch.base[j].setFromEuler(_e); }
@@ -128,58 +165,66 @@ class WailerRig extends CreatureRig {
 }
 export function makeWailer() { return new WailerRig(); }
 
+
 // ===========================================================================
-// 잿물 — ash ooze: a translucent, jiggling blob with a glowing core, a cheeky
-// scowl and drips. Variants: ash, fire (flame licks), frost (ice crown), water.
+// 잿물 — ash ooze: a translucent, wobbling body of jelly with lobes that creep
+// along the ground. Inside it: a crystal core in a slow swirl of sediment,
+// bubbles, two scowling lights. Variants: ash (crust plates), fire (flame
+// crown), frost (ice crown), water (ring of droplets).
+// wear: the material groups of the shared model (mn_ooze.glb) that this kind keeps
 const OOZE = {
-  ash: { body: 0x4a3a66, glow: 0xd8b0ff, emi: 0x1c1030, deco: 0x2a2038 },
-  fire: { body: 0xd8502a, glow: 0xffc040, emi: 0x6a1a04, deco: 0xffb040 },
-  frost: { body: 0x7ec8f0, glow: 0xe0fbff, emi: 0x1a5a80, deco: 0xd8f4ff },
-  water: { body: 0x2f7ae0, glow: 0xa8e4ff, emi: 0x08285e, deco: 0xa8e4ff },
+  ash: { body: 0x9a86c8, glow: 0xd8b0ff, emi: 0x1c1030, deco: 0x2a2233, sed: 0x1d1826, wear: ['ash'] },
+  fire: { body: 0xf07a48, glow: 0xffc040, emi: 0x6a1a04, deco: 0xffffff, sed: 0x4a1408, wear: ['ember', 'flame'] },
+  frost: { body: 0xa4dcf8, glow: 0xe0fbff, emi: 0x1a5a80, deco: 0xd8f4ff, sed: 0x2c5a7c, wear: ['ice'] },
+  water: { body: 0x58a0f4, glow: 0xa8e4ff, emi: 0x08285e, deco: 0xffffff, sed: 0x12356e, wear: ['drop'] },
 };
+const OOZE_WEAR = ['ash', 'ember', 'flame', 'ice', 'drop'];
 function oozeType(variant) {
   return creatureType('ooze_' + variant, () => {
     const d = new SkelDef();
     d.add('base', null, 0, 0, 0, [0, 0.3, 0]);
     d.add('body', 'base', 0, 0.3, 0, [0, 0.62, 0]);
     d.add('top', 'body', 0, 0.62, 0, [0, 0.9, 0]);
-    d.add('face', 'body', 0, 0.45, 0.45, [0, 0.45, 0.6]);
-    d.add('core', 'body', 0, 0.34, 0, [0, 0.44, 0]);
+    d.add('face', 'body', 0, 0.45, 0.4, [0, 0.45, 0.6]);
+    d.add('core', 'body', 0, 0.36, 0, [0, 0.46, 0]);
     for (let i = 0; i < 5; i++) { const a = (i / 5) * TAU + 0.3; d.add('drip' + i, 'base', Math.sin(a) * 0.56, 0.06, Math.cos(a) * 0.56, [Math.sin(a) * 0.62, 0.02, Math.cos(a) * 0.62]); }
-    const color = { skin: 0xffffff, eye: 0xffffff, mouth: 0x10060a, core: 0xffffff, deco: OOZE[variant].deco };
-    const group = { skin: 'skin', eye: 'glow', core: 'glow', mouth: 'mouth', deco: variant === 'ash' ? 'mouth' : 'glow' };
+    const C = OOZE[variant];
+    const color = { skin: 0xffffff, sed: C.sed, dark: 0x0c0610, glow: 0xffffff, glowD: 0xa8a8a8, deco: C.deco };
+    const group = { skin: 'skin', sed: 'in', dark: 'in', glow: 'glow', glowD: 'glow', deco: variant === 'ash' ? 'in' : variant === 'frost' ? 'ice' : 'glow' };
     const built = bakeType(d, (S) => {
-      // dome: flat bottom, bulging sides, soft peak
-      blob(S, 'skin', [['base', 1], ['body', 1], ['top', 0.9]], {
-        c: v(0, 0.34, 0), r: [0.62, 0.42, 0.6], ws: 28, hs: 18,
-        fn: (dd, p) => {
-          if (dd.y < 0) { p.y *= 0.62; const k = sstep(0, -0.6, dd.y); p.x *= 1 + 0.08 * k; p.z *= 1 + 0.08 * k; }
-          else { p.y *= 1 + 0.25 * Math.pow(dd.y, 3); }
-          p.multiplyScalar(1 + 0.035 * Math.sin(dd.x * 7) + 0.03 * Math.cos(dd.z * 6 + dd.y * 3));
-        },
-      });
-      // face: angry-cute glowing eyes, wide grin
-      for (const sd of [1, -1]) blob(S, 'eye', ['face'], { c: v(sd * 0.19, 0.5, 0.52), r: [0.07, 0.095, 0.04], ws: 10, hs: 8, fn: (dd, p) => { if (dd.y > 0.3) p.y -= (dd.y - 0.3) * 0.02 + p.x * sd * 0.25; } });
-      tube(S, 'mouth', ['face'], { pts: [v(-0.17, 0.33, 0.54), v(-0.08, 0.28, 0.585), v(0, 0.27, 0.595), v(0.08, 0.28, 0.585), v(0.17, 0.33, 0.54)], seg: 8, steps: 12, ref: v(0, 1, 0), r: (u) => [0.012 + 0.045 * Math.sin(u * Math.PI), 0.02], cap0: 1, cap1: 1 });
-      // core
-      const g = new THREE.IcosahedronGeometry(0.19, 1);
-      addGeo(S, 'core', ['core'], g, new THREE.Matrix4().makeTranslation(0, 0.34, 0));
-      // drips around the base
-      for (let i = 0; i < 5; i++) { const a = (i / 5) * TAU + 0.3; blob(S, 'skin', ['drip' + i], { c: v(Math.sin(a) * 0.56, 0.06, Math.cos(a) * 0.56), r: [0.1, 0.07, 0.1], ws: 10, hs: 6 }); }
+      // one seamless body: dome, sagging skirt, crown bulge, creeping lobes; flat underneath
+      const F = new Field(S);
+      F.bind([['base', 1], ['body', 1], ['top', 0.9]], 0.12).ell(v(0, 0.37, 0), [0.55, 0.4, 0.53]);
+      F.ell(v(0, 0.13, 0), [0.64, 0.16, 0.62], { k: 0.1 });
+      F.bind(['top', ['body', 1.3]], 0.1).ell(v(0.04, 0.72, -0.03), [0.25, 0.19, 0.24]);
+      for (let i = 0; i < 5; i++) { const a = (i / 5) * TAU + 0.3, s = 1 + ((i * 7) % 3) * 0.14; F.bind(['drip' + i, ['base', 1.6]], 0.08).ell(v(Math.sin(a) * 0.62, 0.065, Math.cos(a) * 0.62), [0.15 * s, 0.085, 0.15 * s]); }
+      F.box(v(0, -0.3, 0), [1.2, 0.3, 1.2], 0.001, { sub: true, k: 0.035 });
+      F.mesh('skin', { cell: 0.036 });
+      // core: a crystal cluster in a swirl of sediment
+      shard(S, 'glow', ['core'], v(0, 0.2, 0), v(0.01, 0.56, 0), 0.085, { sides: 6, waist: 0.5, ol: 0 });
+      for (let k = 0; k < 4; k++) { const a = (k / 4) * TAU + 0.4, b = v(Math.sin(a) * 0.05, 0.3, Math.cos(a) * 0.05); shard(S, 'glowD', ['core'], b, b.clone().add(v(Math.sin(a) * 0.14, 0.1 + (k % 2) * 0.07, Math.cos(a) * 0.14)), 0.04, { sides: 5, waist: 0.4, ol: 0 }); }
+      for (let k = 0; k < 5; k++) { const a = k * 2.4, r = 0.2 + (k % 3) * 0.05, y = 0.2 + ((k * 5) % 7) * 0.05; blob(S, 'sed', ['core'], { c: v(Math.sin(a) * r, y, Math.cos(a) * r), r: [0.055 - (k % 3) * 0.012, 0.022, 0.04], ws: 8, hs: 5, ol: 0, fn: (dd, p) => p.applyAxisAngle(_w.set(0, 1, 0), a + 0.8) }); }
+      // bubbles rising under the skin
+      for (let k = 0; k < 8; k++) { const a = k * 1.9 + 0.7, r = 0.18 + (k % 4) * 0.07, s = 0.018 + (k % 3) * 0.009; blob(S, 'glowD', [k % 2 ? 'top' : 'body'], { c: v(Math.sin(a) * r, 0.32 + ((k * 3) % 5) * 0.09, Math.cos(a) * r * 0.9), r: [s, s, s], ws: 6, hs: 5, ol: 0 }); }
+      // scowling lights and a crooked mouth, just under the surface
+      for (const sd of [1, -1]) blob(S, 'glow', ['face'], { c: F.on(v(sd * 0.18, 0.5, 0.6), -0.035), r: [0.085, 0.105, 0.03], ws: 12, hs: 8, ol: 0, skip: (dd) => dd.z < 0, fn: (dd, p) => { if (dd.y > 0.1) p.y -= (dd.y - 0.1) * 0.03 + Math.max(0, -p.x * sd) * 0.9; } });
+      tube(S, 'dark', ['face'], { pts: [[-0.15, 0.345], [-0.07, 0.3], [0.01, 0.31], [0.08, 0.285], [0.15, 0.33]].map(([x, y]) => F.on(v(x, y, 0.7), -0.03)), seg: 6, steps: 12, ref: v(0, 1, 0), ol: 0, cap0: 1, cap1: 1, capN: 2, r: (u) => [0.008 + 0.022 * Math.sin(u * Math.PI), 0.012] });
       // variant dressing
-      if (variant === 'fire') for (let k = 0; k < 5; k++) {
-        const a = (k / 5) * TAU;
-        const b0 = v(Math.sin(a) * 0.14, 0.72, Math.cos(a) * 0.12 - 0.05);
-        tube(S, 'deco', ['top'], { pts: [b0, b0.clone().add(v(Math.sin(a) * 0.06, 0.14, Math.cos(a) * 0.04)), b0.clone().add(v(Math.sin(a) * 0.03, 0.28 + (k % 2) * 0.08, 0))], seg: 6, steps: 5, r: (u) => 0.06 * (1 - u) + 0.003, cap1: 1 });
+      if (variant === 'fire') for (let k = 0; k < 7; k++) {
+        const a = (k / 7) * TAU, b0 = F.on(v(Math.sin(a) * 0.17 + 0.04, 1.0, Math.cos(a) * 0.15 - 0.03), -0.03), h = 0.26 + (k % 3) * 0.1;
+        tube(S, 'deco', ['top'], { pts: [b0, b0.clone().add(v(Math.sin(a) * 0.07, h * 0.45, Math.cos(a) * 0.05)), b0.clone().add(v(Math.sin(a + 1) * 0.05, h * 0.8, Math.cos(a + 1) * 0.03)), b0.clone().add(v(Math.sin(a) * 0.01, h, 0))], seg: 8, steps: 10, ol: 0, cap1: 1, capN: 2, r: (u) => 0.07 * Math.pow(1 - u, 0.8) * (1 + 0.15 * Math.sin(u * 9 + k)) + 0.002 });
       }
-      if (variant === 'frost') for (let k = 0; k < 6; k++) {
-        const a = (k / 6) * TAU + 0.2;
-        const b0 = v(Math.sin(a) * 0.22, 0.68, Math.cos(a) * 0.2 - 0.04);
-        tube(S, 'deco', ['top', ['body', 1.5]], { pts: [b0, b0.clone().add(v(Math.sin(a) * 0.1, 0.22 + (k % 2) * 0.08, Math.cos(a) * 0.08))], seg: 6, steps: 2, r: (u) => 0.055 * (1 - u) + 0.003, cap1: 1 });
+      if (variant === 'frost') for (let k = 0; k < 7; k++) {
+        const a = (k / 7) * TAU + 0.2, b0 = F.on(v(Math.sin(a) * 0.2 + 0.04, 1.0, Math.cos(a) * 0.18 - 0.03), -0.04);
+        shard(S, 'deco', ['top', ['body', 1.5]], b0, b0.clone().add(v(Math.sin(a) * 0.13, 0.26 + (k % 2) * 0.12, Math.cos(a) * 0.11)), 0.05, { sides: 6, waist: 0.35, twist: k });
       }
-      if (variant === 'water') for (let k = 0; k < 7; k++) blob(S, 'deco', ['body'], { c: v(Math.sin(k * 2.3) * 0.3, 0.2 + ((k * 3) % 5) * 0.08, Math.cos(k * 2.3) * 0.25), r: [0.035, 0.035, 0.035], ws: 6, hs: 4 });
-      if (variant === 'ash') for (let k = 0; k < 6; k++) { const a = k * 1.9; blob(S, 'deco', ['top', ['body', 1.2]], { c: v(Math.sin(a) * 0.3, 0.62 - (k % 3) * 0.06, Math.cos(a) * 0.28), r: [0.07, 0.04, 0.07], ws: 8, hs: 5, fn: (dd, p) => p.multiplyScalar(0.8 + 0.4 * vnoise3(dd.x * 3 + k, dd.y * 3, dd.z * 3)) }); }
-    }, color, group);
+      if (variant === 'water') for (let k = 0; k < 8; k++) { const a = (k / 8) * TAU, s = 0.03 + (k % 3) * 0.012; blob(S, 'deco', ['top'], { c: v(Math.sin(a) * 0.38 + 0.04, 0.98 + (k % 2) * 0.07, Math.cos(a) * 0.36 - 0.03), r: [s, s * 1.35, s], ws: 8, hs: 8, ol: 0, fn: (dd, p) => { if (dd.y > 0) p.multiplyScalar(1 - 0.45 * dd.y * dd.y); } }); }
+      if (variant === 'ash') for (let k = 0; k < 7; k++) {
+        const a = k * 1.9, c = F.on(v(Math.sin(a) * 0.22 + 0.03, 0.95 - (k % 3) * 0.08, Math.cos(a) * 0.2), 0.004);
+        blob(S, 'deco', ['top', ['body', 1.2]], { c, r: [0.1 - (k % 3) * 0.018, 0.02, 0.085], ws: 10, hs: 5, fn: (dd, p) => { p.multiplyScalar(0.8 + 0.45 * vnoise3(dd.x * 2 + k, dd.y * 2, dd.z * 2)); if (c.n.y < 0.995) p.applyAxisAngle(_w.set(c.n.z, 0, -c.n.x).normalize(), Math.acos(c.n.y)); } });
+      }
+      return { ao: 0, fn: (key, p, n, c) => { if (key === 'skin') c.multiplyScalar(0.62 + 0.6 * sstep(0, 0.9, p.y)); }, skip: (k) => k !== 'skin' };
+    }, color, group, { file: 'ooze', skip: OOZE_WEAR.filter((g) => !C.wear.includes(g)) });
     return { def: d, built, chains: [] };
   });
 }
@@ -188,11 +233,13 @@ class OozeRig extends CreatureRig {
     const C = OOZE[variant];
     const glow = glowBasic(C.glow, 2.4);
     const M = {
-      skin: bodyMat(C.body, { rim: 1.6, emissive: C.emi, transparent: true, opacity: 0.82, vertexColors: true }),
-      mouth: bodyMat(0xffffff, { vertexColors: true, rim: 0.3 }),
+      skin: jelly(sheen(bodyMat(C.body, { rim: 1.5, emissive: C.emi, transparent: true, vertexColors: true }), { size: 0.045, soft: 0.02, k: 0.9, fres: 0.45 }), { clear: 0.52, dense: 0.97, glow: 0.35, color: C.glow, h: 0.75 }),
+      in: bodyMat(0xffffff, { vertexColors: true, rim: 0.4 }),
       glow,
     };
-    super(oozeType(variant), M, { main: 'skin', outline: 0 });
+    if (variant === 'frost') M.ice = sheen(bodyMat(0xffffff, { vertexColors: true, rim: 1.3, emissive: 0x1c4466 }), { color: 0xdff6ff, size: 0.1, k: 0.9, fres: 0.5 });
+    M.ash = M.ember = M.in; M.flame = M.drop = glow;
+    super(oozeType(variant), M, { main: 'skin', outline: 0, dress: { mat: { skin: { spec: 1.6, ao: 0.25 }, in: { spec: 0.9 }, ice: { spec: 1.6 } } } });
     this.root.scale.setScalar(size);
     M.skin.depthWrite = true;
     this.meshes.forEach((m) => { if (m.material === M.skin) m.renderOrder = 1; });
@@ -229,9 +276,25 @@ class OozeRig extends CreatureRig {
 }
 export function makeOoze(variant = 'ash', size = 1) { return new OozeRig(OOZE[variant] ? variant : 'ash', size); }
 
+
 // ===========================================================================
-// 재나방 — ash moth: furry thorax, segmented abdomen, feathered antennae and
-// two pairs of veined wings with glowing eye-spots.
+// 재나방 — ash moth: a furred thorax with a pale ruff, banded abdomen, great
+// glowing eyes, combed antennae, and two pairs of scalloped wings whose veins
+// and glowing eye-spots are painted in the wing shader.
+const WING = { fore: [0.4, 0.2], hind: [0.29, 0.21] };
+// wing outline: u root -> tip, vv leading -> trailing edge
+function wingAt(kind, sd, u, vv, out) {
+  if (kind === 'fore') {
+    const span = 0.4 * u, lead = 0.065 + 0.03 * Math.sin(u * 2.6) - 0.1 * u * u * u;
+    const chord = 0.2 * (0.42 + 0.58 * Math.sin(Math.min(1, u * 1.08) * Math.PI * 0.62)) * (1 - Math.pow(u, 7)) * (1 + 0.07 * Math.cos(u * 21) * sstep(0.25, 0.5, u));
+    out.set(sd * (0.035 + span), 0.036 + 0.014 * Math.sin(u * Math.PI) - 0.006 * vv, 0.03 + lead - chord * vv);
+  } else {
+    const span = 0.29 * u, lead = -0.03 - 0.05 * u;
+    const chord = 0.21 * Math.sqrt(Math.max(0, 1 - Math.pow(u, 2.4))) * (0.62 + 0.38 * Math.sin(u * Math.PI)) * (1 + 0.1 * Math.cos(u * 16) * sstep(0.2, 0.5, u)) + 0.07 * Math.exp(-((u - 0.55) ** 2) / 0.012);
+    out.set(sd * (0.03 + span), 0.03 + 0.01 * Math.sin(u * Math.PI) - 0.008 * vv, lead - chord * vv);
+  }
+  return out;
+}
 function mothType() {
   return creatureType('moth', () => {
     const d = new SkelDef();
@@ -245,46 +308,64 @@ function mothType() {
       d.add('wH' + n, 'body', sd * 0.04, 0.03, -0.04, [sd * 0.25, 0.03, -0.04]);
       d.add('ant' + n, 'head', sd * 0.025, 0.06, 0.22, [sd * 0.08, 0.16, 0.34]);
     }
-    const color = { fur: 0x4a4050, furL: 0x7a7080, dark: 0x201a24, wing: 0x6a6072, wingD: 0x3a3244, vein: 0x2a2230, eye: 0xffffff, spot: 0xffffff };
-    const group = { fur: 'body', furL: 'body', dark: 'body', wing: 'wing', wingD: 'wing', vein: 'wing', eye: 'glow', spot: 'glow' };
+    const color = { fur: 0x5c5266, furL: 0xb4a9bc, dark: 0x1e1924, wing: 0xffffff, wingH: 0xffff00, eye: 0xffffff, glowD: 0x9a9a9a };
+    const group = { fur: 'body', furL: 'body', dark: 'body', wing: 'wing', wingH: 'wing', eye: 'glow', glowD: 'glow' };
     const built = bakeType(d, (S) => {
-      // fuzzy thorax
-      blob(S, 'fur', ['body'], { c: v(0, 0.01, 0.05), r: [0.07, 0.065, 0.09], ws: 14, hs: 10, fn: (dd, p) => { p.multiplyScalar(1 + 0.12 * Math.pow(Math.abs(Math.sin(dd.x * 13 + dd.y * 9 + dd.z * 11)), 4)); } });
-      blob(S, 'furL', ['body', ['head', 1.4]], { c: v(0, 0.015, 0.13), r: [0.065, 0.06, 0.05], ws: 12, hs: 8, fn: (dd, p) => { p.multiplyScalar(1 + 0.15 * Math.pow(Math.abs(Math.sin(dd.x * 15 + dd.y * 11)), 4)); } });
-      // segmented abdomen
-      tube(S, 'fur', ['abd', 'abd2'], { pts: [v(0, 0.0, -0.02), v(0, -0.015, -0.14), v(0, -0.035, -0.28), v(0, -0.05, -0.34)], seg: 10, steps: 14, ref: v(0, 1, 0), r: (u) => { const r = 0.058 * Math.sin(Math.min(1, 0.25 + u) * Math.PI * 0.85) + 0.006; return [r * (1 + 0.1 * Math.cos(u * 40)), r * 0.9 * (1 + 0.1 * Math.cos(u * 40))]; }, cap1: 1, cap0: 0.6 });
-      // head with big glowing compound eyes
-      blob(S, 'dark', ['head'], { c: v(0, 0.02, 0.2), r: [0.045, 0.042, 0.04], ws: 10, hs: 8 });
+      const fuzz = (f, a) => (dd, p) => { p.multiplyScalar(1 + a * Math.pow(Math.abs(Math.sin(dd.x * f + dd.y * f * 0.7 + dd.z * f * 0.85)), 3)); };
+      // thorax, pale ruff, head
+      blob(S, 'fur', ['body'], { c: v(0, 0.012, 0.045), r: [0.072, 0.068, 0.095], ws: 20, hs: 14, fn: fuzz(17, 0.1) });
+      blob(S, 'furL', ['body', ['head', 1.4]], { c: v(0, 0.02, 0.125), r: [0.07, 0.064, 0.05], ws: 20, hs: 12, fn: (dd, p) => { const lon = Math.atan2(dd.x, dd.y); p.multiplyScalar(1 + 0.2 * Math.pow(Math.abs(Math.sin(lon * 7)), 2) * sstep(0.6, -0.2, dd.z)); } });
+      blob(S, 'dark', ['head'], { c: v(0, 0.02, 0.19), r: [0.046, 0.043, 0.045], ws: 14, hs: 10 });
+      // abdomen: fat rings, alternating bands, a glowing tip
+      const ab = [v(0, 0.0, -0.01), v(0, -0.012, -0.12), v(0, -0.032, -0.25), v(0, -0.05, -0.345)];
+      const abR = (u) => 0.062 * Math.sin(Math.min(1, 0.22 + u) * Math.PI * 0.84) + 0.006;
+      tube(S, 'fur', ['abd', 'abd2'], { pts: ab, seg: 16, steps: 30, ref: v(0, 1, 0), cap0: 0.6, cap1: 1, r: (u) => { const r = abR(u) * (1 + 0.1 * Math.pow(Math.abs(Math.cos(u * 6.5 * Math.PI)), 0.6)); return [r, r * 0.92]; } });
+      const abC = new THREE.CatmullRomCurve3(ab);
+      for (let k = 1; k < 6; k++) { const u = k / 6.5, c = abC.getPointAt(u), t = abC.getTangentAt(u), r = abR(u) * 1.02; tube(S, k === 5 ? 'glowD' : 'furL', [u < 0.5 ? 'abd' : 'abd2'], { pts: [c.clone().addScaledVector(t, -0.008), c.clone().addScaledVector(t, 0.008)], seg: 16, steps: 1, ref: v(0, 1, 0), r: [r, r * 0.92], ol: 0.3 }); }
       for (const sd of [1, -1]) {
         const n = sd > 0 ? 'L' : 'R';
-        blob(S, 'eye', ['head'], { c: v(sd * 0.034, 0.03, 0.222), r: [0.02, 0.024, 0.02], ws: 10, hs: 8 });
-        // feathered antennae
-        const a0 = v(sd * 0.022, 0.055, 0.225), a1 = v(sd * 0.06, 0.13, 0.3), a2 = v(sd * 0.1, 0.17, 0.35);
-        tube(S, 'dark', ['ant' + n], { pts: [a0, a1, a2], seg: 4, steps: 6, r: 0.004, cap1: 1 });
-        for (let k = 1; k <= 5; k++) { const p = a0.clone().lerp(a2, k / 6); tube(S, 'furL', ['ant' + n], { pts: [p, p.clone().add(v(sd * 0.025 * (1 - k / 7), 0.012, -0.012))], seg: 3, steps: 1, r: 0.0035, ol: 0 }); tube(S, 'furL', ['ant' + n], { pts: [p, p.clone().add(v(-sd * 0.02 * (1 - k / 7), 0.014, 0.006))], seg: 3, steps: 1, r: 0.0035, ol: 0 }); }
-        // legs tucked under
-        for (let k = 0; k < 3; k++) { const l0 = v(sd * 0.04, -0.035, 0.1 - k * 0.05); tube(S, 'dark', ['body'], { pts: [l0, l0.clone().add(v(sd * 0.04, -0.03, 0.01)), l0.clone().add(v(sd * 0.05, -0.08, 0.03 - k * 0.02))], seg: 4, steps: 4, r: 0.006, ol: 0.3 }); }
-        // wings: forewing (pointed) and hindwing (rounded), thin sheets with veins and eye-spots
-        const wing = (bone, root, span, chord, sweep, round, spotAt, back) => {
-          const shape = (u, vv, out) => {
-            // u: root -> tip along span, vv: leading -> trailing edge
-            const x = u * span;
-            const c = chord * (round ? Math.sqrt(Math.max(0, 1 - Math.pow(u, 2.2))) * (0.7 + 0.3 * Math.sin(u * Math.PI)) : (0.55 + 0.6 * Math.sin(Math.min(1, u * 1.2) * Math.PI * 0.7)) * (1 - Math.pow(u, 6)));
-            const lead = sweep * u * u;
-            out.set(root.x + sd * x, root.y + 0.012 * Math.sin(u * Math.PI) - 0.008 * vv, root.z + lead + (back ? -c * vv * 0.95 : c * (0.45 - vv)) + 0.006 * Math.sin(vv * 20 + u * 9) * u);
-          };
-          sheet(S, 'wing', [bone], { nu: 10, nv: 6, thick: 0.005, top: true, fn: shape, inside: (p) => v(p.x, p.y - 1, p.z), innerMat: 'wingD' });
-          // veins
-          for (let k = 0; k < 4; k++) { const vv = 0.1 + k * 0.25; const pts = []; for (let j = 0; j <= 5; j++) { const o = new V3(); shape(j / 5 * 0.92, vv * (j / 5), o); o.y += 0.005; pts.push(o); } tube(S, 'vein', [bone], { pts, seg: 3, steps: 6, r: 0.003, ol: 0 }); }
-          const sp = new V3(); shape(spotAt[0], spotAt[1], sp); sp.y += 0.006;
-          blob(S, 'spot', [bone], { c: sp, r: [0.035, 0.005, 0.03], ws: 10, hs: 4 });
-          blob(S, 'vein', [bone], { c: sp.clone().add(v(0, -0.001, 0)), r: [0.05, 0.004, 0.044], ws: 10, hs: 4 });
-        };
-        wing('wF' + n, v(sd * 0.04, 0.035, 0.06), 0.36, 0.22, -0.1, false, [0.62, 0.5], false);
-        wing('wH' + n, v(sd * 0.04, 0.03, -0.01), 0.27, 0.22, -0.02, true, [0.5, 0.45], true);
+        // compound eyes with a dark glint ring
+        blob(S, 'eye', ['head'], { c: v(sd * 0.036, 0.03, 0.212), r: [0.024, 0.028, 0.024], ws: 14, hs: 10, ol: 0 });
+        // combed antennae
+        const a0 = v(sd * 0.02, 0.055, 0.218), a1 = v(sd * 0.06, 0.135, 0.3), a2 = v(sd * 0.115, 0.165, 0.37);
+        const ac = new THREE.CatmullRomCurve3([a0, a1, a2]);
+        tube(S, 'dark', ['ant' + n], { curve: ac, seg: 5, steps: 10, r: (u) => 0.0048 * (1 - u * 0.5), cap1: 1, capN: 2, ol: 0.5 });
+        for (let k = 1; k <= 9; k++) { const u = k / 10, p = ac.getPointAt(u), L = 0.036 * Math.sin(u * Math.PI * 0.85 + 0.25); for (const s2 of [1, -1]) tube(S, 'furL', ['ant' + n], { pts: [p, p.clone().add(v(s2 * L * 0.8, L * 0.25, -L * 0.45))], seg: 3, steps: 1, r: (uu) => 0.0032 * (1 - uu * 0.6), ol: 0 }); }
+        // six legs tucked under
+        for (let k = 0; k < 3; k++) { const l0 = v(sd * 0.04, -0.035, 0.1 - k * 0.05); tube(S, 'dark', ['body'], { pts: [l0, l0.clone().add(v(sd * 0.045, -0.03, 0.012)), l0.clone().add(v(sd * 0.05, -0.085, 0.03 - k * 0.022)), l0.clone().add(v(sd * 0.04, -0.11, 0.045 - k * 0.03))], seg: 5, steps: 8, r: (u) => 0.0065 * (1 - u * 0.5), cap1: 1, capN: 2, ol: 0.3 }); }
+        // wings (thin, two-sided; the pattern is in the material)
+        for (const kind of ['hind', 'fore']) sheet(S, kind === 'fore' ? 'wing' : 'wingH', ['w' + (kind === 'fore' ? 'F' : 'H') + n], { nu: 22, nv: 9, thick: 0.004, top: true, ol: 0.5, fn: (u, vv, out) => wingAt(kind, sd, u, vv, out), inside: (p) => v(p.x, p.y - 1, p.z) });
       }
     }, color, group);
     return { def: d, built, chains: [] };
+  });
+}
+// wing pattern in bind-pose space: dusky gradient, veins fanning from the root, pale bands,
+// eye-spots whose pupils glow with `glowColor` (shared with the tier-colored glow material)
+function wingMat(glowColor) {
+  const m = bodyMat(0xffffff, { vertexColors: true, rim: 0.7 });
+  return extendMat(m, 'wing', { uWingG: { value: glowColor } }, (sh) => {
+    sh.fragmentShader = 'uniform vec3 uWingG;\nfloat _wglow = 0.0;\n' + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+{
+  vec2 w = vec2(abs(vObj.x), vObj.z);
+  bool fore = vColor.b > 0.5;
+  vec2 dv = w - vec2(0.03, fore ? 0.07 : -0.04);
+  float r = length(dv), th = atan(dv.y, dv.x);
+  float n1 = _dn(vec3(w * 38.0, 1.0)), n2 = _dn(vec3(w * 9.0, 4.0));
+  vec3 base = mix(vec3(0.2, 0.17, 0.24), vec3(0.47, 0.42, 0.52), smoothstep(0.02, 0.3, r + (n2 - 0.5) * 0.08));
+  base = mix(base, vec3(0.7, 0.64, 0.6), smoothstep(0.035, 0.0, abs(r - (fore ? 0.2 : 0.15) + (n2 - 0.5) * 0.05) - 0.012) * 0.7);
+  base = mix(base, vec3(0.12, 0.1, 0.15), smoothstep(0.03, 0.0, abs(r - (fore ? 0.31 : 0.235) + (n2 - 0.5) * 0.04) - 0.008) * 0.8);
+  float aa = fwidth(th) * r + 0.0008;
+  float vein = 1.0 - smoothstep(0.0012, 0.0012 + aa * 1.5, abs(fract(th * 2.9 + 0.5) - 0.5) / 2.9 * r);
+  base = mix(base, vec3(0.1, 0.085, 0.13), vein * smoothstep(0.02, 0.06, r) * 0.85);
+  vec2 e = w - (fore ? vec2(0.265, 0.03) : vec2(0.17, -0.15));
+  float de = length(e * vec2(1.0, fore ? 1.15 : 1.0)) / (fore ? 0.05 : 0.042);
+  base = mix(base, vec3(0.86, 0.8, 0.7), 1.0 - smoothstep(0.92, 1.0, de));
+  base = mix(base, vec3(0.07, 0.05, 0.1), 1.0 - smoothstep(0.7, 0.76, de));
+  _wglow = 1.0 - smoothstep(0.38, 0.44, de);
+  base = mix(base, vec3(0.9), (1.0 - smoothstep(0.1, 0.14, length(e / (fore ? 0.05 : 0.042) - vec2(0.12, 0.14)))) * _wglow);
+  diffuseColor.rgb = diffuse * base * (0.9 + 0.2 * n1);
+}`).replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += uWingG * _wglow * 0.55;');
   });
 }
 class MothRig extends CreatureRig {
@@ -292,10 +373,10 @@ class MothRig extends CreatureRig {
     const glow = glowBasic(0xc9a0ff, 2.6);
     const M = {
       body: bodyMat(0xffffff, { vertexColors: true, rim: 0.9 }),
-      wing: bodyMat(0xffffff, { vertexColors: true, rim: 0.6, emissive: 0x100818 }),
+      wing: model('mn_moth') ? bodyMat(0xffffff, { vertexColors: true, rim: 0.9 }) : wingMat(glow.color),   // the authored wings are painted
       glow,
     };
-    super(mothType(), M, { main: 'body', outline: 0.006 });
+    super(mothType(), M, { main: 'body', outline: 0.004 });
     this.t = rand() * 5;
     this.height = 0.4;
     this.p = { head: this.B.head, torso: this.B.body, hips: this.B.body };
@@ -334,9 +415,11 @@ class MothRig extends CreatureRig {
 }
 export function makeMoth() { return new MothRig(); }
 
+
 // ===========================================================================
-// 뿌리손 — a gnarled root-hand that swims through the soil: bark forearm
-// wrapped in tendrils, knotted fingers with thorn tips, an eye in the palm.
+// 뿌리손 — a hand of twisted roots that swims through the soil: braided root
+// forearm with glowing sap veins, a knotted palm with one lidded eye, five
+// root fingers ending in thorn talons, shelf fungus and dead twigs.
 const RH_FING = [[-0.3, 1.52, 0.06, 0.32, 1], [-0.1, 1.62, 0.1, 0.1, 1.05], [0.12, 1.62, 0.1, -0.1, 1], [0.32, 1.52, 0.06, -0.32, 0.9], [0.46, 1.2, 0.2, -1.1, 0.8]];
 const RH_LEN = [0.36, 0.3, 0.24];
 function rootHandType() {
@@ -361,70 +444,92 @@ function rootHandType() {
       }
       fingers.push({ names, pts, axis: v(Math.cos(rz), Math.sin(rz), 0), s });
     });
-    const color = { bark: 0x4b3a2c, barkD: 0x2e241c, barkL: 0x6a5440, moss: 0x4a5a30, glow: 0xffffff, thorn: 0x1e1812, lid: 0x2e241c, pupil: 0x0c0810 };
-    const group = { bark: 'bark', barkD: 'bark', barkL: 'bark', moss: 'bark', thorn: 'bark', lid: 'bark', pupil: 'bark', glow: 'glow' };
+    const color = { bark: 0x6b5340, barkD: 0x3a2c22, thorn: 0x1e1712, moss: 0x5f7038, fungus: 0xc9a878, fungusD: 0x8a6a48, lid: 0x2c2119, pupil: 0x0c0810, glow: 0xffffff, glowD: 0xa0a0a0 };
+    const group = { glow: 'glow', glowD: 'glow' };
     const built = bakeType(d, (S) => {
-      // gnarled forearm
-      tube(S, 'bark', [['arm0', 1], ['arm1', 1], ['palm', 1.3]], {
-        pts: [v(0, -0.35, 0), v(0.02, 0.2, 0.01), v(-0.02, 0.7, 0.03), v(0, 1.18, 0.05)], seg: 14, steps: 14, ref: v(0, 0, 1),
-        r: (u) => { const r = mix(0.5, 0.33, Math.pow(u, 0.7)) + 0.03 * Math.sin(u * 9); return [r, r * 0.88]; },
-        shape: (u, a) => 1 + 0.07 * Math.sin(a * 7 + u * 6) + 0.05 * vnoise3(Math.cos(a) * 3, Math.sin(a) * 3, u * 8),
-      });
-      // tendrils spiraling up the arm
-      for (let k = 0; k < 4; k++) {
-        const pts = [];
-        for (let j = 0; j <= 10; j++) { const u = j / 10; const a = k * 1.6 + u * 2.4; const r = mix(0.52, 0.36, u); pts.push(v(Math.sin(a) * r, mix(-0.2, 1.1, u), Math.cos(a) * r * 0.9 + 0.02)); }
-        tube(S, k % 2 ? 'barkD' : 'barkL', ['arm0', 'arm1', ['palm', 1.5]], { pts, seg: 6, steps: 20, r: (u) => 0.045 * (1 - u * 0.6) + 0.008, cap1: 1 });
+      const F = new Field(S), G = new Field(S);
+      // bark: long ridges that wander with the grain
+      F.disp = (x, y, z) => { const a = Math.atan2(x, z), w = Math.sin(y * 2.3 + x * 3.1) * 1.6 + Math.sin(z * 4.1 - y * 1.7) * 1.2; return 0.014 * Math.sin(a * 11 + y * 1.6 + w) + 0.008 * Math.sin(a * 23 - y * 2.3 + w * 1.7); };
+      F.dispAmp = 0.022;
+      // forearm: a braid of thick roots around a heartwood, swelling at the wrist
+      F.bind([['arm0', 1], ['arm1', 1], ['palm', 1.3]], 0.05).limb([v(0, -0.4, 0), v(0.01, 0.3, 0.01), v(-0.01, 0.8, 0.03), v(0, 1.15, 0.045)], [0.36, 0.3, 0.25, 0.27]);
+      G.bind([['arm0', 1], ['arm1', 1], ['palm', 1.3]], 0.05).limb([v(0, -0.4, 0), v(0.01, 0.3, 0.01), v(-0.01, 0.8, 0.03), v(0, 1.2, 0.045)], [0.33, 0.27, 0.22, 0.24]);
+      for (let k = 0; k < 5; k++) {
+        const pts = [], rad = [];
+        for (let q = 0; q <= 7; q++) { const u = q / 7, a = k * 1.257 + u * 2.6 * (k % 2 ? 1 : -0.8), r = mix(0.42, 0.25, Math.pow(u, 0.8)); pts.push(v(Math.sin(a) * r, mix(-0.35, 1.2, u), Math.cos(a) * r * 0.92 + 0.02 * u)); rad.push(mix(0.14, 0.085, u) * (1 + 0.15 * Math.sin(k + q * 1.7))); }
+        F.bind([['arm0', 1], ['arm1', 1], ['palm', 1.3]], 0.035).limb(pts, rad);
       }
-      // glowing knots and moss
-      for (const [x, y, z, r] of [[0.3, 0.42, 0.34, 0.065], [-0.24, 0.85, 0.28, 0.055], [0.06, 0.22, -0.46, 0.065], [-0.36, 0.3, -0.2, 0.05]]) blob(S, 'glow', [y < 0.5 ? 'arm0' : 'arm1'], { c: v(x, y, z), r: [r, r, r * 0.7], ws: 8, hs: 6 });
-      for (const [x, y, z] of [[-0.3, 0.55, 0.3], [0.33, 0.9, -0.1], [0.1, 1.05, -0.3]]) blob(S, 'moss', ['arm1'], { c: v(x, y, z), r: [0.13, 0.05, 0.11], ws: 10, hs: 6, fn: (dd, p) => p.multiplyScalar(0.85 + 0.3 * vnoise3(dd.x * 4, dd.y * 4, dd.z * 4)) });
-      // palm with knuckles
-      blob(S, 'bark', ['palm', ['arm1', 1.6]], { c: v(0, 1.33, 0.04), r: [0.45, 0.3, 0.3], ws: 18, hs: 12, fn: (dd, p) => { if (dd.y > 0.3) p.x *= 1 + 0.1 * dd.y; p.multiplyScalar(1 + 0.05 * vnoise3(dd.x * 5, dd.y * 5, dd.z * 5)); } });
-      // palm eye: dark lids, glowing orb, slit pupil
-      blob(S, 'lid', ['palm'], { c: v(0, 1.32, 0.3), r: [0.2, 0.15, 0.08], ws: 14, hs: 8 });
-      blob(S, 'glow', ['eye'], { c: v(0, 1.32, 0.35), r: [0.12, 0.09, 0.06], ws: 14, hs: 8 });
-      blob(S, 'pupil', ['eye'], { c: v(0, 1.32, 0.405), r: [0.025, 0.07, 0.012], ws: 8, hs: 6 });
-      // fingers: knotted segments with thorn tips
-      fingers.forEach((F) => {
-        const W = ['palm', ...F.names];
-        const curve = new THREE.CatmullRomCurve3(F.pts);
-        tube(S, 'bark', W, { curve, seg: 8, steps: 14, ref: v(0, 0, 1), r: (u) => { const r = (mix(0.09, 0.05, u) + 0.012 * Math.cos(u * 3 * TAU)) * F.s; return [r, r]; }, shape: (u, a) => 1 + 0.08 * Math.sin(a * 5 + u * 13), cap0: 0.8 });
-        for (let k = 1; k < 3; k++) blob(S, 'barkL', [F.names[k]], { c: F.pts[k], r: [0.07 * F.s, 0.06 * F.s, 0.07 * F.s], ws: 8, hs: 6 });
-        const tip = F.pts[3], dir = F.pts[3].clone().sub(F.pts[2]).normalize();
-        tube(S, 'thorn', [F.names[2]], { pts: [tip.clone().addScaledVector(dir, -0.03), tip.clone().addScaledVector(dir, 0.12).add(v(0, 0, 0.04)), tip.clone().addScaledVector(dir, 0.2).add(v(0, 0, 0.1))], seg: 6, steps: 5, r: (u) => 0.05 * F.s * (1 - u) + 0.003, cap1: 1 });
+      // palm: knotted mass with knuckle burls
+      F.bind(['palm', ['arm1', 1.7]], 0.08).ell(v(0, 1.34, 0.05), [0.44, 0.3, 0.27]);
+      for (const [x, y, z, r] of [[-0.3, 1.5, 0.08, 0.1], [-0.1, 1.6, 0.12, 0.105], [0.12, 1.6, 0.12, 0.1], [0.32, 1.5, 0.08, 0.09], [0.42, 1.22, 0.18, 0.1], [-0.36, 1.2, 0.1, 0.11]]) F.ell(v(x, y, z), [r, r * 0.9, r], { k: 0.05 });
+      G.bind(['palm'], 0.05).ell(v(0, 1.34, 0.05), [0.4, 0.262, 0.232]);
+      // fingers: tapering roots with swollen joints
+      fingers.forEach((f) => {
+        F.bind(['palm', ...f.names], 0.035).limb(f.pts, [0.098 * f.s, 0.08 * f.s, 0.064 * f.s, 0.04 * f.s]);
+        for (let k = 1; k < 3; k++) F.bind([f.names[k]], 0.03).ell(f.pts[k], [0.088 * f.s * (1 - k * 0.12), 0.07 * f.s, 0.088 * f.s * (1 - k * 0.12)], { y: f.pts[k + 1].clone().sub(f.pts[k - 1]) });
       });
+      // eye socket in the palm and sap fissures spiralling up the arm
+      F.bind(['palm'], 0.03).ell(v(0, 1.32, 0.3), [0.21, 0.16, 0.09], { k: 0.05 });
+      F.ell(v(0, 1.32, 0.36), [0.155, 0.11, 0.12], { sub: true, k: 0.02 });
+      F.groove([v(-0.25, 1.2, 0.5), v(-0.3, 1.36, 0.5), v(-0.22, 1.5, 0.5)], 0.035, 0.016);
+      F.groove([v(0.3, 1.12, 0.5), v(0.33, 1.3, 0.5), v(0.26, 1.46, 0.5)], 0.035, 0.016);
+      F.mesh('bark', { cell: 0.038 });
+      G.mesh('glowD', { cell: 0.07, ol: 0 });
+      // sap knots glowing in the folds of the braid
+      for (const [a, y, r] of [[0.5, 0.42, 0.075], [-0.9, 0.86, 0.06], [3.0, 0.25, 0.075], [-2.2, 0.38, 0.055], [1.7, 0.98, 0.05], [2.4, 0.72, 0.045]]) blob(S, 'glow', [y < 0.5 ? 'arm0' : 'arm1'], { c: F.on(v(Math.sin(a) * 0.7, y, Math.cos(a) * 0.7), -r * 0.45), r: [r, r, r], ws: 10, hs: 8, ol: 0 });
+      // the eye: glowing orb, slit pupil, a glint, heavy lids
+      blob(S, 'glow', ['eye'], { c: v(0, 1.32, 0.33), r: [0.135, 0.1, 0.07], ws: 18, hs: 12, ol: 0 });
+      blob(S, 'pupil', ['eye'], { c: v(0, 1.32, 0.392), r: [0.026, 0.078, 0.014], ws: 10, hs: 8, ol: 0 });
+      blob(S, 'glow', ['eye'], { c: v(0.045, 1.355, 0.395), r: [0.016, 0.016, 0.006], ws: 6, hs: 5, ol: 0 });
+      for (const sy of [1, -1]) tube(S, 'lid', ['palm'], { pts: [-1, -0.5, 0, 0.5, 1].map((t) => v(t * 0.175, 1.32 + sy * 0.1 * (1 - t * t), 0.37 - 0.05 * t * t)), seg: 8, steps: 14, ref: v(0, 0, 1), cap0: 1, cap1: 1, r: (u) => [0.012 + 0.024 * Math.sin(u * Math.PI), 0.02 + 0.014 * Math.sin(u * Math.PI)] });
+      // thorn talons, dead twigs at the knuckles, thorns on the wrist
+      fingers.forEach((f, i) => {
+        const tip = f.pts[3], dir = tip.clone().sub(f.pts[2]).normalize();
+        spike(S, 'thorn', [f.names[2]], tip.clone().addScaledVector(dir, -0.04), dir, 0.3 * f.s, 0.05 * f.s, { bend: v(0, 0, 0.55), ridge: 0.06, rings: 22, seg: 10, steps: 12 });
+        if (i < 4) { const b = F.on(f.pts[1].clone().add(v(0, 0, -0.2)), -0.01); spike(S, 'barkD', [f.names[0]], b, v((i - 1.5) * 0.3, 0.6, -1), 0.2, 0.018, { bend: v(0, 0.6, 0), seg: 6, taper: 0.6 }); }
+      });
+      for (let k = 0; k < 7; k++) { const a = k * 0.9 + 0.3, b = F.on(v(Math.sin(a) * 0.6, 0.75 + (k % 3) * 0.13, Math.cos(a) * 0.6), -0.015); spike(S, 'thorn', ['arm1'], b, v(Math.sin(a), 0.5, Math.cos(a)), 0.13 + (k % 2) * 0.05, 0.03, { bend: v(0, 0.5, 0), seg: 7 }); }
+      // shelf fungus and moss
+      for (const [a, y, s] of [[2.3, 0.5, 1], [2.6, 0.68, 0.75], [-1.2, 0.35, 0.85], [-1.0, 0.9, 0.6]]) {
+        const c = F.on(v(Math.sin(a) * 0.7, y, Math.cos(a) * 0.7), -0.03), o = v(c.n.x, 0, c.n.z).normalize();
+        blob(S, 'fungus', [y < 0.45 ? 'arm0' : 'arm1'], { c: c.clone().addScaledVector(o, 0.07 * s), r: [0.15 * s, 0.035 * s, 0.15 * s], ws: 16, hs: 8, fn: (dd, p) => { if (dd.y < 0) p.y *= 0.4; p.multiplyScalar(1 + 0.06 * Math.sin(Math.atan2(dd.x, dd.z) * 9)); } });
+        blob(S, 'fungusD', [y < 0.45 ? 'arm0' : 'arm1'], { c: c.clone().addScaledVector(o, 0.07 * s).add(v(0, -0.012 * s, 0)), r: [0.135 * s, 0.022 * s, 0.135 * s], ws: 14, hs: 6, ol: 0 });
+      }
+      for (const [x, y, z] of [[-0.34, 1.52, -0.12], [0.3, 1.0, -0.2], [0.05, 1.56, -0.2], [-0.25, 0.6, 0.3]]) { const c = F.on(v(x, y, z), -0.02); blob(S, 'moss', [y > 1.15 ? 'palm' : 'arm1'], { c, r: [0.15, 0.06, 0.13], ws: 12, hs: 8, ol: 0.4, fn: (dd, p) => p.multiplyScalar(0.8 + 0.4 * vnoise3(dd.x * 4 + x * 7, dd.y * 4, dd.z * 4)) }); }
+      const lt = new THREE.Color(0x8a6e52);
+      return { fields: [F], aoR: 0.09, ao: 0.7, fn: (key, p, n, c) => { if (key === 'bark') { const a = Math.atan2(p.x, p.z); c.lerp(lt, 0.5 * sstep(0.2, 0.8, 0.5 + 0.5 * Math.sin(a * 11 + p.y * 1.6 + Math.sin(p.y * 2.3 + p.x * 3.1) * 1.6 + Math.sin(p.z * 4.1 - p.y * 1.7) * 1.2))).multiplyScalar(0.8 + 0.3 * sstep(-0.2, 1.9, p.y)); } } };
     }, color, group);
-    // dirt mound (rigid, stays at ground level)
-    const mound = HBrigid((S2) => {
-      blob(S2, 'dirt', 'r', { c: v(0, -0.38, 0), r: [0.95, 0.46, 0.95], ws: 18, hs: 10, fn: (dd, p) => p.multiplyScalar(0.85 + 0.3 * vnoise3(dd.x * 3, dd.y * 3, dd.z * 3)) });
-      for (let i = 0; i < 7; i++) { const a = (i / 7) * TAU + 0.4; blob(S2, i % 2 ? 'dirt' : 'dirtD', 'r', { c: v(Math.cos(a) * 1.0, 0.02, Math.sin(a) * 1.0), r: [0.16 + (i % 3) * 0.05, 0.1, 0.14], ws: 8, hs: 6, fn: (dd, p) => p.multiplyScalar(0.8 + 0.4 * vnoise3(dd.x * 3 + i, dd.y * 3, dd.z * 3)) }); }
-    }, { dirt: 0x5a4936, dirtD: 0x3e3226 });
-    const tips = HBrigid((S2) => {
-      for (let i = 0; i < 5; i++) { const a = (i / 5) * TAU; const b0 = v(Math.cos(a) * 0.4, -0.05, Math.sin(a) * 0.4); tube(S2, 'bark', 'r', { pts: [b0, b0.clone().add(v(Math.cos(a) * 0.12, 0.2, Math.sin(a) * 0.12)), b0.clone().add(v(Math.cos(a) * 0.1, 0.38, Math.sin(a) * 0.1))], seg: 6, steps: 5, r: (u) => 0.06 * (1 - u) + 0.004, cap1: 1 }); }
-    }, { bark: 0x4b3a2c });
+    // dirt mound (rigid, stays at ground level) and the root tips that show while it swims
+    const mound = rigidType((S) => {
+      const F = new Field(S); F.bind('r', 0.1);
+      F.disp = (x, y, z) => (vnoise3(x * 5, y * 5, z * 5) - 0.5) * 0.05; F.dispAmp = 0.03;
+      F.ell(v(0, -0.36, 0), [0.98, 0.5, 0.98]);
+      for (let i = 0; i < 8; i++) { const a = (i / 8) * TAU + 0.4, r = 0.95 + (i % 3) * 0.08; F.ell(v(Math.cos(a) * r, -0.02, Math.sin(a) * r), [0.2 + (i % 3) * 0.06, 0.11 + (i % 2) * 0.04, 0.17], { k: 0.06, rot: [0, a, 0] }); }
+      F.ell(v(0, 0.15, 0), [0.58, 0.3, 0.58], { sub: true, k: 0.12 });
+      F.mesh('dirt', { cell: 0.05 });
+      for (let i = 0; i < 6; i++) { const a = i * 1.1 + 0.2, r = 0.8 + (i % 2) * 0.22, s = 0.07 + (i % 3) * 0.025; blob(S, 'rock', 'r', { c: v(Math.cos(a) * r, 0.05, Math.sin(a) * r), r: [s * 1.3, s, s * 1.1], ws: 12, hs: 8, fn: (dd, p) => p.multiplyScalar(0.85 + 0.3 * vnoise3(dd.x * 1.5 + i, dd.y * 1.5, dd.z * 1.5)) }); }
+      const dk = new THREE.Color(0x2f251c);
+      return { fields: [F], aoR: 0.12, ao: 0.6, fn: (key, p, n, c) => { if (key === 'dirt') c.lerp(dk, 0.6 * sstep(0.75, 0.4, Math.hypot(p.x, p.z))).multiplyScalar(0.85 + 0.25 * vnoise3(p.x * 6, p.y * 6, p.z * 6)); } };
+    }, { dirt: 0x64513c, rock: 0x77726c });
+    const tips = rigidType((S) => {
+      for (let i = 0; i < 5; i++) { const a = (i / 5) * TAU; spike(S, 'bark', 'r', v(Math.cos(a) * 0.4, -0.05, Math.sin(a) * 0.4), v(Math.cos(a) * 0.3, 1, Math.sin(a) * 0.3), 0.42, 0.07, { bend: v(-Math.cos(a) * 0.4, 0, -Math.sin(a) * 0.4), ridge: 0.08, rings: 18, seg: 8 }); }
+    }, { bark: 0x6b5340 });
     return { def: d, built, chains: [], fingers, mound, tips };
   });
-}
-// vertex-colored rigid geometry (no skinning)
-function HBrigid(build, colors) {
-  const d0 = new SkelDef(); d0.add('r', null, 0, 0, 0, [0, 1, 0]);
-  const g = bakeType(d0, build, colors, {}).geo;
-  g.deleteAttribute('skinIndex'); g.deleteAttribute('skinWeight'); g.clearGroups();
-  return g;
 }
 const _qa = new THREE.Quaternion();
 class RootHandRig extends CreatureRig {
   constructor() {
     const T = rootHandType();
     const glow = glowBasic(0xc9a0ff, 2.6);
-    const M = { bark: bodyMat(0xffffff, { vertexColors: true, rim: 0.5 }), glow };
-    super(T, M, { main: 'bark', outline: 0.012, bsPad: 1 });
-    const dirt = bodyMat(0xffffff, { vertexColors: true, rim: 0.2 });
-    this.mats.push(dirt);
+    const M = { main: bodyMat(0xffffff, { vertexColors: true, rim: 0.5 }), glow };
+    super(T, M, { main: 'main', outline: 0.006, bsPad: 1 });
+    const held = T.built.rigid || {};
+    const dirt = held.mound ? M.main : bodyMat(0xffffff, { vertexColors: true, rim: 0.2 });
+    if (!held.mound) this.mats.push(dirt);
     const mound = (this.mound = new THREE.Group()); this.root.add(mound);
-    const mm = new THREE.Mesh(T.mound, dirt); mm.castShadow = true; mm.receiveShadow = true; mound.add(mm);
-    const tips = (this.tips = new THREE.Mesh(T.tips, M.bark)); tips.castShadow = true; mound.add(tips);
+    const mm = new THREE.Mesh(held.mound ? held.mound.geo : T.mound, dirt); mm.castShadow = true; mm.receiveShadow = true; mound.add(mm);
+    const tips = (this.tips = new THREE.Mesh(held.tips ? held.tips.geo : T.tips, dirt)); tips.castShadow = true; mound.add(tips);
     this.fingers = T.fingers.map((F) => ({ bones: F.names.map((n) => this.B[n]), axis: F.axis }));
     this.t = rand() * 5; this.height = 2.2; this.emerge = 0; this.grip = 0.3; this.droop = 0;
     this.p = { head: this.B.palm, torso: this.B.arm1, hips: this.B.arm0, foreR: this.B.palm };
@@ -459,9 +564,11 @@ class RootHandRig extends CreatureRig {
 }
 export function makeRootHand() { return new RootHandRig(); }
 
+
 // ===========================================================================
-// 망루지기 — a forgotten watchtower construct: carved stone drum banded in
-// brass, a rotating lantern-dome head with one great eye, three spider legs.
+// 망루지기 — a forgotten watchtower that walks: a drum of dressed stone under a
+// crown of battlements, glowing arrow-slits, brass bands; a turning lantern
+// head with one great lidded eye under a tiled cap and spire; three jointed legs.
 function watcherType() {
   return creatureType('watcher', () => {
     const d = new SkelDef();
@@ -480,37 +587,66 @@ function watcherType() {
       d.add('foot' + i, 'knee' + i, foot.x, foot.y, foot.z, foot.clone().add(v(0, -0.1, 0)).toArray());
       legs.push({ a, out, hip, knee, foot });
     }
-    const color = { stone: 0x6a6470, stoneD: 0x3e3946, stoneL: 0x7e7884, moss: 0x4a5a3a, brass: 0x8a7048, glow: 0xffffff, eye: 0xffffff, pupil: 0x120a18 };
-    const group = { stone: 'stone', stoneD: 'stone', stoneL: 'stone', moss: 'stone', brass: 'stone', pupil: 'stone', glow: 'glow', eye: 'eye' };
+    const color = { stone: 0x8a8492, stoneD: 0x5c5666, stoneL: 0xa49eaa, mortar: 0x3a3542, moss: 0x5a6a44, brass: 0xa08452, brassD: 0x6e5a3a, tile: 0x4a4e6a, glow: 0xffffff, glowD: 0xa0a0a0, eye: 0xffffff, pupil: 0x120a18, void: 0x0c0a12 };
+    const group = { brass: 'metal', brassD: 'metal', glow: 'glow', glowD: 'glow', eye: 'eye' };
+    const megalith = (S, A, mat, w, c, h, rotn, o = {}) => megalithBlock(S, A, mat, w, c, h, { ...o, rot: rotn });
     const built = bakeType(d, (S) => {
-      const blocks = (u, a, rows, cols) => { const r = Math.floor(u * rows); const c = Math.floor(((a / TAU) + (r % 2) * 0.5 / cols) * cols); return 1 + 0.02 * Math.sin(r * 7.1 + c * 3.3) - 0.015 * Math.pow(Math.abs(Math.sin(u * rows * Math.PI)), 12) - 0.015 * Math.pow(Math.abs(Math.sin(((a / TAU) + (r % 2) * 0.5 / cols) * cols * Math.PI)), 14); };
-      // stone drum with block courses
-      tube(S, 'stoneD', ['body'], { pts: [v(0, 1.8, 0), v(0, 2.2, 0), v(0, 2.56, 0)], seg: 20, steps: 12, ref: v(0, 0, 1), r: (u) => { const r = mix(0.72, 1.0, sstep(0, 0.35, u)) - 0.08 * sstep(0.8, 1, u); return [r, r]; }, shape: (u, a) => blocks(u, a, 4, 10), flat0: true, flat1: true });
-      tube(S, 'brass', ['body'], { pts: Array.from({ length: 20 }, (_, k) => v(Math.sin((k / 20) * TAU) * 0.99, 2.52, Math.cos((k / 20) * TAU) * 0.99)), closed: true, seg: 6, steps: 40, r: 0.07, ref: v(0, 1, 0) });
-      tube(S, 'brass', ['body'], { pts: Array.from({ length: 20 }, (_, k) => v(Math.sin((k / 20) * TAU) * 0.93, 1.95, Math.cos((k / 20) * TAU) * 0.93)), closed: true, seg: 6, steps: 40, r: 0.05, ref: v(0, 1, 0) });
-      for (let i = 0; i < 6; i++) { const a = (i / 6) * TAU; const n = v(Math.sin(a), 0, Math.cos(a)); tube(S, 'glow', ['body'], { pts: [n.clone().multiplyScalar(1.0).setY(2.02), n.clone().multiplyScalar(1.0).setY(2.4)], seg: 4, steps: 2, ref: n, r: [0.05, 0.02], cap0: 1, cap1: 1 }); }
-      for (let i = 0; i < 5; i++) { const a = (i / 5) * TAU + 0.3; blob(S, 'moss', ['body'], { c: v(Math.sin(a) * 0.8, 2.56, Math.cos(a) * 0.8), r: [0.26, 0.08, 0.22], ws: 10, hs: 6, fn: (dd, p) => p.multiplyScalar(0.8 + 0.4 * vnoise3(dd.x * 4 + i, dd.y * 4, dd.z * 4)) }); }
-      // head: stone collar, dome, brass rings, spire, eye socket
-      tube(S, 'stone', ['head'], { pts: [v(0, 2.62, 0), v(0, 2.9, 0), v(0, 3.15, 0)], seg: 20, steps: 8, ref: v(0, 0, 1), r: (u) => { const r = mix(0.86, 0.76, u); return [r, r]; }, shape: (u, a) => blocks(u, a, 2, 12), flat0: true });
-      blob(S, 'stoneL', ['head'], { c: v(0, 3.15, 0), r: [0.8, 0.72, 0.8], ws: 22, hs: 12, skip: (dd) => dd.y < -0.02, fn: (dd, p) => { p.multiplyScalar(blocks(dd.y, Math.atan2(dd.x, dd.z) + Math.PI, 4, 12)); } });
-      tube(S, 'brass', ['head'], { pts: Array.from({ length: 20 }, (_, k) => v(Math.sin((k / 20) * TAU) * 0.81, 3.15, Math.cos((k / 20) * TAU) * 0.81)), closed: true, seg: 6, steps: 40, r: 0.06, ref: v(0, 1, 0) });
-      for (let i = 0; i < 4; i++) { const a = (i / 4) * TAU + Math.PI / 4; tube(S, 'brass', ['head'], { pts: Array.from({ length: 7 }, (_, k) => { const th = (k / 6) * Math.PI * 0.5; return v(Math.sin(a) * Math.cos(th) * 0.82, 3.15 + Math.sin(th) * 0.74, Math.cos(a) * Math.cos(th) * 0.82); }), seg: 5, steps: 10, r: [0.03, 0.02], ref: v(0, 1, 0) }); }
-      tube(S, 'brass', ['head'], { pts: [v(0, 3.82, 0), v(0, 4.1, 0), v(0, 4.36, 0)], seg: 8, steps: 5, r: (u) => 0.16 * (1 - u) + 0.01, cap1: 1, flat0: true });
-      blob(S, 'brass', ['head'], { c: v(0, 3.87, 0), r: [0.14, 0.07, 0.14], ws: 10, hs: 6 });
-      tube(S, 'stoneD', ['head'], { pts: Array.from({ length: 16 }, (_, k) => v(Math.sin((k / 16) * TAU) * 0.36, 3.17 + Math.cos((k / 16) * TAU) * 0.36, 0.76)), closed: true, seg: 8, steps: 32, r: [0.07, 0.1], ref: v(0, 0, 1) });
-      tube(S, 'brass', ['head'], { pts: Array.from({ length: 16 }, (_, k) => v(Math.sin((k / 16) * TAU) * 0.44, 3.17 + Math.cos((k / 16) * TAU) * 0.44, 0.72)), closed: true, seg: 6, steps: 32, r: 0.04, ref: v(0, 0, 1) });
-      blob(S, 'eye', ['eye'], { c: v(0, 3.17, 0.8), r: [0.27, 0.27, 0.14], ws: 16, hs: 10 });
-      blob(S, 'pupil', ['eye'], { c: v(0, 3.17, 0.93), r: [0.07, 0.13, 0.03], ws: 10, hs: 8 });
-      // legs: square stone beams, brass knees, splayed feet
+      const A = new Field(S);
+      const circ = (r, y, n = 24, z = 0) => ring(n, (a) => v(Math.sin(a) * r, y, Math.cos(a) * r + z));
+      // dressed-stone courses: a ring of blocks with open joints over a dark core
+      const course = (w, y, h, r, n, off, mats, o = {}) => {
+        for (let k = 0; k < n; k++) {
+          const a = ((k + off) / n) * TAU, cw = (Math.PI * r / n) * 0.93, dp = o.depth ?? 0.13;
+          const c = v(Math.sin(a) * (r - dp), y + h / 2, Math.cos(a) * (r - dp));
+          megalith(S, A, mats[(k * 7 + Math.round(y * 3)) % mats.length], w, c, [cw, h / 2 * 0.95, dp], [0, a, 0], { n: 5, ws: 10, hs: 8 });
+        }
+      };
+      tube(S, 'mortar', ['body'], { pts: [v(0, 1.72, 0), v(0, 2.2, 0), v(0, 2.62, 0)], seg: 24, steps: 6, ref: v(0, 0, 1), r: (u) => mix(0.62, 0.86, sstep(0, 0.4, u)), flat0: true, flat1: true, ol: 0 });
+      course(['body'], 1.72, 0.2, 0.74, 9, 0, ['stoneD', 'stone']);
+      course(['body'], 1.93, 0.22, 0.9, 10, 0.5, ['stone', 'stoneL', 'stone']);
+      course(['body'], 2.16, 0.22, 0.98, 11, 0, ['stone', 'stoneD', 'stoneL']);
+      course(['body'], 2.39, 0.2, 0.98, 11, 0.5, ['stoneL', 'stone']);
+      // glowing arrow-slits between the blocks, brass bands, battlements
+      for (let i = 0; i < 6; i++) { const a = (i / 6) * TAU + 0.26, n = v(Math.sin(a), 0, Math.cos(a)); prism(S, 'glow', ['body'], [2.0, 2.36].map((y) => ring(4, (b) => n.clone().multiplyScalar(0.9 + 0.02 * Math.cos(b)).add(v(Math.cos(a) * 0.035 * Math.sin(b), y, -Math.sin(a) * 0.035 * Math.sin(b))))), { ol: 0 }); }
+      tube(S, 'brass', ['body'], { pts: circ(1.0, 2.15), closed: true, seg: 6, steps: 48, r: [0.035, 0.05], ref: v(0, 1, 0) });
+      tube(S, 'brass', ['body'], { pts: circ(1.03, 2.6), closed: true, seg: 8, steps: 48, r: [0.05, 0.07], ref: v(0, 1, 0) });
+      tube(S, 'brassD', ['body'], { pts: circ(0.8, 1.72), closed: true, seg: 6, steps: 40, r: [0.05, 0.05], ref: v(0, 1, 0) });
+      for (let k = 0; k < 9; k++) { const a = (k / 9) * TAU; megalith(S, A, k % 2 ? 'stone' : 'stoneL', ['body'], v(Math.sin(a) * 0.95, 2.76, Math.cos(a) * 0.95), [0.19, 0.13, 0.1], [0, a, 0], { n: 6, ws: 12, hs: 8, cuts: k % 4 === 1 ? [[1, 1, 0, 1.15]] : null }); }
+      for (let i = 0; i < 5; i++) { const a = (i / 5) * TAU + 0.5; blob(S, 'moss', ['body'], { c: v(Math.sin(a) * 0.93, 2.9 - (i % 2) * 0.24, Math.cos(a) * 0.96), r: [0.2, 0.06, 0.13], ws: 12, hs: 6, ol: 0.4, fn: (dd, p) => { p.multiplyScalar(0.8 + 0.4 * vnoise3(dd.x * 4 + i, dd.y * 4, dd.z * 4)); p.applyAxisAngle(_w.set(0, 1, 0), a); } }); }
+      // head: stone collar, lantern drum of pillars around a lit core, tiled cap, spire
+      course(['head'], 2.66, 0.2, 0.8, 9, 0.3, ['stoneD', 'stone']);
+      tube(S, 'mortar', ['head'], { pts: [v(0, 2.66, 0), v(0, 2.86, 0)], seg: 20, steps: 1, r: 0.64, flat1: true, ref: v(0, 0, 1), ol: 0 });
+      blob(S, 'glowD', ['head'], { c: v(0, 3.17, -0.05), r: [0.5, 0.36, 0.5], ws: 16, hs: 10, ol: 0 });
+      for (let k = 0; k < 8; k++) { const a = ((k + 0.5) / 8) * TAU; if (Math.abs(a - TAU) < 0.5 || a < 0.5) continue; megalith(S, A, k % 2 ? 'stone' : 'stoneL', ['head'], v(Math.sin(a) * 0.7, 3.17, Math.cos(a) * 0.7), [0.105, 0.33, 0.1], [0, a, 0], { n: 5, ws: 12, hs: 10 }); }
+      tube(S, 'brass', ['head'], { pts: circ(0.8, 2.87), closed: true, seg: 6, steps: 40, r: [0.04, 0.06], ref: v(0, 1, 0) });
+      tube(S, 'brass', ['head'], { pts: circ(0.82, 3.5), closed: true, seg: 6, steps: 40, r: [0.05, 0.07], ref: v(0, 1, 0) });
+      sheet(S, 'tile', ['head'], { nu: 36, nv: 8, wrap: true, thick: 0.03, fn: (u, vv, q) => { const a = u * TAU, r = mix(0.06, 1.02, Math.pow(vv, 0.85)) * (1 + 0.035 * Math.pow(Math.abs(Math.sin(a * 6)), 0.5) * vv); q.set(Math.sin(a) * r, 4.08 - vv * 0.56 - 0.1 * vv * vv + 0.02 * Math.pow(Math.abs(Math.sin(vv * 5 * Math.PI)), 6), Math.cos(a) * r); }, inside: (p) => v(p.x * 0.8, p.y - 1, p.z * 0.8) });
+      for (let k = 0; k < 6; k++) { const a = (k / 6) * TAU; tube(S, 'brassD', ['head'], { pts: [0, 0.3, 0.65, 1].map((vv) => { const r = mix(0.07, 1.04, Math.pow(vv, 0.85)); return v(Math.sin(a) * r, 4.1 - vv * 0.56 - 0.1 * vv * vv, Math.cos(a) * r); }), seg: 6, steps: 10, r: 0.028, cap1: 1 }); }
+      spike(S, 'brass', ['head'], v(0, 4.02, 0), v(0, 1, 0), 0.5, 0.13, { ridge: 0.3, rings: 12, seg: 10, steps: 14 });
+      blob(S, 'brass', ['head'], { c: v(0, 4.08, 0), r: [0.13, 0.07, 0.13], ws: 12, hs: 8 });
+      // the eye: brass iris ring, stone lids, lens and slit pupil
+      megalith(S, A, 'stoneD', ['head'], v(0, 3.17, 0.6), [0.5, 0.42, 0.13], [0, 0, 0], { n: 4, ws: 20, hs: 14 });
+      blob(S, 'void', ['head'], { c: v(0, 3.17, 0.7), r: [0.35, 0.35, 0.08], ws: 16, hs: 8, ol: 0 });
+      tube(S, 'brass', ['head'], { pts: ring(20, (a) => v(Math.sin(a) * 0.38, 3.17 + Math.cos(a) * 0.38, 0.74)), closed: true, seg: 8, steps: 40, r: [0.05, 0.06], ref: v(0, 0, 1) });
+      for (let k = 0; k < 8; k++) { const a = (k / 8) * TAU + 0.39; blob(S, 'brassD', ['head'], { c: v(Math.sin(a) * 0.38, 3.17 + Math.cos(a) * 0.38, 0.8), r: [0.028, 0.028, 0.02], ws: 8, hs: 6 }); }
+      for (const sy of [1, -1]) tube(S, 'stoneL', ['head'], { pts: [-1, -0.5, 0, 0.5, 1].map((t) => v(t * 0.36, 3.17 + sy * (0.3 - 0.14 * t * t), 0.8 - 0.06 * t * t)), seg: 10, steps: 14, ref: v(0, 0, 1), cap0: 1, cap1: 1, r: (u) => [0.03 + 0.07 * Math.sin(u * Math.PI), 0.05] });
+      blob(S, 'eye', ['eye'], { c: v(0, 3.17, 0.8), r: [0.27, 0.27, 0.13], ws: 20, hs: 12, ol: 0 });
+      blob(S, 'pupil', ['eye'], { c: v(0, 3.17, 0.925), r: [0.065, 0.14, 0.02], ws: 12, hs: 8, ol: 0 });
+      // legs: stone thigh and shin beams in brass sockets, lit knee joints, three-toed feet
       legs.forEach((L, i) => {
-        const beam = (a, b, r0, r1, mat, w) => tube(S, mat, w, { pts: [a, a.clone().lerp(b, 0.5), b], seg: 8, steps: 6, ref: v(0, 1, 0), r: (u) => { const r = mix(r0, r1, u); return [r, r]; }, shape: (u, aa) => 1 / Math.pow(Math.pow(Math.abs(Math.cos(aa)), 4) + Math.pow(Math.abs(Math.sin(aa)), 4), 0.25) * (1 + 0.03 * Math.sin(u * 30)), flat0: true, flat1: true });
-        blob(S, 'brass', ['hip' + i], { c: L.hip, r: [0.22, 0.22, 0.22], ws: 10, hs: 8 });
-        beam(L.hip, L.knee, 0.17, 0.15, 'stone', ['hip' + i]);
-        blob(S, 'brass', ['knee' + i], { c: L.knee, r: [0.21, 0.21, 0.21], ws: 10, hs: 8 });
-        beam(L.knee, L.foot.clone().add(v(0, 0.12, 0)), 0.15, 0.1, 'stoneD', ['knee' + i]);
-        tube(S, 'stoneD', ['foot' + i], { pts: [L.foot.clone().add(v(0, 0.14, 0)), L.foot.clone().add(v(0, 0.0, 0))], seg: 8, steps: 2, r: (u) => mix(0.16, 0.3, u), flat0: true, flat1: true, ref: v(0, 0, 1) });
-        tube(S, 'brass', ['knee' + i], { pts: [L.knee.clone().lerp(L.foot, 0.35), L.knee.clone().lerp(L.foot, 0.42)], seg: 8, steps: 1, r: 0.15, ref: v(0, 1, 0) });
+        const w0 = ['hip' + i], w1 = ['knee' + i], w2 = ['foot' + i], lat = v(Math.cos(L.a), 0, -Math.sin(L.a));
+        const beam = (w, a, b, r, mat) => { const c = a.clone().lerp(b, 0.5), dir = b.clone().sub(a), q = new THREE.Quaternion().setFromUnitVectors(v(0, 1, 0), dir.clone().normalize()), e = new THREE.Euler().setFromQuaternion(q); megalith(S, A, mat, w, c, [r, dir.length() / 2, r], [e.x, e.y, e.z], { n: 6, ws: 12, hs: 12, taper: -0.12 }); };
+        blob(S, 'brass', w0, { c: L.hip, r: [0.25, 0.25, 0.25], ws: 14, hs: 10 });
+        blob(S, 'glowD', w0, { c: L.hip.clone().addScaledVector(L.out, 0.06), r: [0.215, 0.215, 0.215], ws: 10, hs: 8, ol: 0 });
+        beam(w0, L.hip.clone().lerp(L.knee, 0.14), L.hip.clone().lerp(L.knee, 0.86), 0.16, 'stone');
+        tube(S, 'brassD', w0, { pts: [L.hip.clone().lerp(L.knee, 0.45), L.hip.clone().lerp(L.knee, 0.55)], seg: 4, steps: 1, r: 0.21, ref: lat, twist: () => Math.PI / 4, flat0: true, flat1: true });
+        blob(S, 'glow', w1, { c: L.knee, r: [0.16, 0.16, 0.16], ws: 12, hs: 8, ol: 0 });
+        for (const s2 of [1, -1]) tube(S, 'brass', w1, { pts: [L.knee.clone().addScaledVector(lat, s2 * 0.13), L.knee.clone().addScaledVector(lat, s2 * 0.22)], seg: 12, steps: 1, r: 0.2, flat0: true, flat1: true, ref: v(0, 1, 0) });
+        beam(w1, L.knee.clone().lerp(L.foot, 0.12), L.foot.clone().add(v(0, 0.2, 0)), 0.135, 'stoneD');
+        megalith(S, A, 'stone', w2, L.foot.clone().add(v(0, 0.1, 0)), [0.26, 0.1, 0.26], [0, L.a, 0], { n: 4, ws: 14, hs: 8, taper: -0.25 });
+        for (let k = -1; k <= 1; k++) { const b = L.a + k * 0.85, o2 = v(Math.sin(b), 0, Math.cos(b)); spike(S, 'brass', w2, L.foot.clone().addScaledVector(o2, 0.2).add(v(0, 0.09, 0)), v(o2.x, -0.12, o2.z), 0.3, 0.085, { bend: v(0, -0.35, 0), seg: 8, flat: 0.75, ref: v(0, 1, 0) }); }
       });
+      return { fields: [A], aoR: 0.12, ao: 0.6, skip: (k, g) => g === 'glow' || g === 'eye', fn: (key, p, n, c) => { if (key.startsWith('stone')) c.multiplyScalar(0.84 + 0.26 * Math.max(0, n.y) - 0.12 * sstep(1.0, 0, p.y)); if (key === 'tile') c.multiplyScalar(0.8 + 0.4 * sstep(3.5, 4.1, p.y)); } };
     }, color, group);
     return { def: d, built, chains: [], legs };
   });
@@ -520,8 +656,8 @@ class WatcherRig extends CreatureRig {
     const T = watcherType();
     const glow = glowBasic(0xc9a0ff, 2.6);
     const eyeM = glowBasic(0xffc070, 2.2);
-    const M = { stone: bodyMat(0xffffff, { vertexColors: true, rim: 0.6 }), glow, eye: eyeM };
-    super(T, M, { main: 'stone', outline: 0.02, bsPad: 1 });
+    const M = { main: bodyMat(0xffffff, { vertexColors: true, rim: 0.6 }), metal: sheen(bodyMat(0xffffff, { vertexColors: true, rim: 0.9 }), { color: 0xfff0d0, size: 0.09, soft: 0.03, k: 0.45, fres: 0.25 }), glow, eye: eyeM };
+    super(T, M, { main: 'main', outline: 0.008, bsPad: 1, dress: { mat: { main: { spec: 0.8 } } } });
     this.glowMats = [glow];
     this.eyeMat = eyeM;
     const B = this.B;

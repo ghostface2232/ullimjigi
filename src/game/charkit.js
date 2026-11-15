@@ -90,7 +90,7 @@ function segDist(p, a, b) {
 export class Sculpt {
   constructor(skel) { this.skel = skel; this.buckets = new Map(); this.order = []; this.stats = {}; }
   bucket(mat) {
-    if (!this.buckets.has(mat)) { this.buckets.set(mat, { p: [], n: [], i: [], si: [], sw: [], ol: [] }); this.order.push(mat); }
+    if (!this.buckets.has(mat)) { this.buckets.set(mat, { p: [], n: [], i: [], si: [], sw: [], ol: [], c: [] }); this.order.push(mat); }
     return this.buckets.get(mat);
   }
   // weights: array of bone names (auto, inverse-distance to bone segments),
@@ -117,7 +117,13 @@ export class Sculpt {
     this.stats[mat] = (this.stats[mat] || 0) + part.i.length / 3;
     const base = B.p.length / 3;
     const nrm = computeNormals(part.p, part.i);
+    if (part.nfn) for (let k = 0; k < nrm.length; k += 3) {
+      _pv.set(part.p[k], part.p[k + 1], part.p[k + 2]); _o1.set(nrm[k], nrm[k + 1], nrm[k + 2]);
+      part.nfn(_pv, _o1); _o1.normalize();
+      nrm[k] = _o1.x; nrm[k + 1] = _o1.y; nrm[k + 2] = _o1.z;
+    }
     for (let k = 0; k < part.p.length; k++) { B.p.push(part.p[k]); B.n.push(nrm[k]); }
+    for (let k = 0; k < part.p.length / 3; k++) B.c.push(part.c[k] ?? 1);
     const ol = part.ol ?? 1;
     for (let k = 0; k < part.p.length / 3; k++) B.ol.push(ol);
     for (const x of part.i) B.i.push(x + base);
@@ -128,7 +134,8 @@ export class Sculpt {
     }
     void smooth;
   }
-  // o.color(key) -> hex vertex color; o.group(key) -> material group name.
+  // o.color(key) -> hex vertex color; o.group(key) -> material group name;
+  // o.surf(key) -> surface kind for clothMat (attribute `surf`).
   // Parts sharing a group are drawn with one material (vertex colored).
   build(o = {}) {
     const g = new THREE.BufferGeometry();
@@ -138,7 +145,7 @@ export class Sculpt {
     for (const m of this.order) { const gn = groupOf(m); if (!gmap.has(gn)) { gmap.set(gn, []); groups.push(gn); } gmap.get(gn).push(m); }
     let nv = 0, ni = 0;
     for (const m of this.order) { const B = this.buckets.get(m); nv += B.p.length / 3; ni += B.i.length; }
-    const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3), SI = new Uint16Array(nv * 4), SW = new Float32Array(nv * 4), C = new Float32Array(nv * 3), OL = new Float32Array(nv);
+    const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3), SI = new Uint16Array(nv * 4), SW = new Float32Array(nv * 4), C = new Float32Array(nv * 3), OL = new Float32Array(nv), SF = new Float32Array(nv);
     const I = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
     let vo = 0, io = 0;
     const col = new THREE.Color();
@@ -148,7 +155,8 @@ export class Sculpt {
         const B = this.buckets.get(m);
         P.set(B.p, vo * 3); N.set(B.n, vo * 3); SI.set(B.si, vo * 4); SW.set(B.sw, vo * 4); OL.set(B.ol, vo);
         col.set(o.color ? o.color(m) : 0xffffff);
-        for (let k = 0; k < B.p.length / 3; k++) { C[(vo + k) * 3] = col.r; C[(vo + k) * 3 + 1] = col.g; C[(vo + k) * 3 + 2] = col.b; }
+        const sf = o.surf ? o.surf(m) : 0;
+        for (let k = 0; k < B.p.length / 3; k++) { const sh = B.c[k]; C[(vo + k) * 3] = col.r * sh; C[(vo + k) * 3 + 1] = col.g * sh; C[(vo + k) * 3 + 2] = col.b * sh; SF[vo + k] = sf; }
         for (let k = 0; k < B.i.length; k++) I[io + k] = B.i[k] + vo;
         vo += B.p.length / 3; io += B.i.length;
       }
@@ -160,6 +168,7 @@ export class Sculpt {
     g.setAttribute('skinWeight', new THREE.BufferAttribute(SW, 4));
     g.setAttribute('color', new THREE.BufferAttribute(C, 3));
     g.setAttribute('olw', new THREE.BufferAttribute(OL, 1));
+    g.setAttribute('surf', new THREE.BufferAttribute(SF, 1));
     g.setIndex(new THREE.BufferAttribute(I, 1));
     g.computeBoundingSphere();
     return { geo: g, mats: groups, tris: ni / 3, stats: this.stats };
@@ -184,11 +193,12 @@ export function computeNormals(p, idx) {
 
 // Part helper: positions + weights + indices
 export class Part {
-  constructor(wfn) { this.p = []; this.i = []; this.w = []; this.wfn = wfn; }
+  constructor(wfn) { this.p = []; this.i = []; this.w = []; this.c = []; this.sh = 1; this.wfn = wfn; }
   v(x, y, z, w) {
     const k = this.p.length / 3;
     this.p.push(x, y, z);
     this.w.push(w || this.wfn(_pv.set(x, y, z)));
+    this.c.push(this.sh);
     return k;
   }
   quad(a, b, c, d) { this.i.push(a, b, c, a, c, d); }
@@ -220,7 +230,8 @@ const _pv = new V3(), _o1 = new V3(), _o2 = new V3(), _o3 = new V3();
 // Tube lofted along a smooth curve through `pts`.
 // o: { pts, closed, seg, steps, r(u) -> number | [rx, rz], shape(u, a) -> mult,
 //      off(u) -> [side, front], ref: V3 (front reference), cap0, cap1 (round caps; number = cap length factor),
-//      flat0/flat1 (flat caps), a0/a1 (open angular range for partial tubes), twist(u) }
+//      flat0/flat1 (flat caps), a0/a1 (open angular range for partial tubes), twist(u),
+//      shade(u, a) -> vertex colour multiplier, nfn(p, n) edits the smooth normal in place }
 export function tube(S, mat, w, o) {
   const part = new Part(S.weigher(w));
   const curve = o.curve || new THREE.CatmullRomCurve3(o.pts, !!o.closed, 'centripetal', 0.5);
@@ -249,6 +260,7 @@ export function tube(S, mat, w, o) {
     for (let j = 0; j < seg; j++) {
       const a = (o.a0 !== undefined ? o.a0 + (o.a1 - o.a0) * (j / (seg - 1)) : (j / seg) * TAU) + tw;
       const m = o.shape ? o.shape(u, a) : 1;
+      if (o.shade) part.sh = o.shade(u, a);
       const x = Math.cos(a) * rx * m + (of ? of[0] : 0), z = Math.sin(a) * rz * m + (of ? of[1] : 0);
       out.push(part.v(C.x + Sd.x * x + F.x * z + T.x * shift, C.y + Sd.y * x + F.y * z + T.y * shift, C.z + Sd.z * x + F.z * z + T.z * shift));
     }
@@ -283,7 +295,7 @@ export function tube(S, mat, w, o) {
     return tmpC;
   });
   if (o.inward) part.flip();
-  part.ol = o.ol;
+  part.ol = o.ol; part.nfn = o.nfn;
   S.addPart(mat, part);
   return part;
 }
@@ -294,6 +306,7 @@ function fan(part, ringIdx, pole, rev) {
 
 // Sculpted blob: lat-long sphere around c with radii r, fn(d, p) mutates p
 // (d = unit direction on the sphere, p = ellipsoid point). skip(d) removes faces.
+// lonWarp (0..0.8) packs the meridians towards +Z; shade(d, p), nfn(p, n) as in tube.
 export function blob(S, mat, w, o) {
   const part = new Part(S.weigher(w));
   const ws = o.ws ?? 16, hs = o.hs ?? 12;
@@ -301,20 +314,23 @@ export function blob(S, mat, w, o) {
   const c = o.c;
   const d = new V3(), p = new V3();
   const idx = [];
+  const lw = o.lonWarp ?? 0;
+  const lon = (t) => t * TAU - lw * Math.sin(t * TAU);
   for (let i = 0; i <= hs; i++) {
     const th = (i / hs) * Math.PI;
     const row = [];
     const cnt = i === 0 || i === hs ? 1 : ws;
     for (let j = 0; j < cnt; j++) {
-      const ph = (j / ws) * TAU;
+      const ph = lon(j / ws);
       d.set(Math.sin(th) * Math.sin(ph), Math.cos(th), Math.sin(th) * Math.cos(ph));
       p.set(d.x * rx, d.y * ry, d.z * rz);
       if (o.fn) o.fn(d, p);
+      if (o.shade) part.sh = o.shade(d, p);
       row.push(part.v(c.x + p.x, c.y + p.y, c.z + p.z));
     }
     idx.push(row);
   }
-  const keep = (i, j) => { if (!o.skip) return true; const th = ((i + 0.5) / hs) * Math.PI, ph = ((j + 0.5) / ws) * TAU; d.set(Math.sin(th) * Math.sin(ph), Math.cos(th), Math.sin(th) * Math.cos(ph)); return !o.skip(d); };
+  const keep = (i, j) => { if (!o.skip) return true; const th = ((i + 0.5) / hs) * Math.PI, ph = lon((j + 0.5) / ws); d.set(Math.sin(th) * Math.sin(ph), Math.cos(th), Math.sin(th) * Math.cos(ph)); return !o.skip(d); };
   for (let i = 0; i < hs; i++) {
     for (let j = 0; j < ws; j++) {
       if (!keep(i, j)) continue;
@@ -326,7 +342,7 @@ export function blob(S, mat, w, o) {
   }
   part.orient(o.inside || (() => c));
   if (o.inward) part.flip();
-  part.ol = o.ol;
+  part.ol = o.ol; part.nfn = o.nfn;
   S.addPart(mat, part);
   return { part, idx };
 }
@@ -352,12 +368,13 @@ export function zAt(part, x, y) {
 // Thick cloth sheet: outer surface fn(u, v, out), inner surface offset by
 // `thick` along -normal (normal oriented away from inside(p)). Closes the
 // hem (v = 1), sides (u = 0/1, unless wrap) and optionally the top edge.
+// shade(u, v) -> vertex colour multiplier (innerShade scales it on the lining).
 export function sheet(S, mat, w, o) {
   const nu = o.nu ?? 12, nv = o.nv ?? 8, wrap = !!o.wrap;
   const thick = o.thick ?? 0.012;
   const wf = S.weigher(w);
   const cu = wrap ? nu : nu + 1;
-  const pos = [], nrm = [];
+  const pos = [], nrm = [], shd = [];
   const P = new V3(), A = new V3(), B = new V3(), Nn = new V3();
   const eps = 1e-3;
   for (let j = 0; j <= nv; j++) for (let i = 0; i < cu; i++) {
@@ -369,7 +386,7 @@ export function sheet(S, mat, w, o) {
     Nn.crossVectors(tu, A).normalize();
     const ins = o.inside ? o.inside(P) : new V3(0, P.y, 0);
     if (Nn.dot(_o1.subVectors(P, ins)) < 0) Nn.negate();
-    pos.push(P.clone()); nrm.push(Nn.clone());
+    pos.push(P.clone()); nrm.push(Nn.clone()); shd.push(o.shade ? o.shade(u, v) : 1);
   }
   const id = (i, j) => j * cu + (wrap ? i % nu : i);
   const mk = (sign) => {
@@ -377,6 +394,7 @@ export function sheet(S, mat, w, o) {
     const vi = [];
     for (let k = 0; k < pos.length; k++) {
       const q = pos[k].clone().addScaledVector(nrm[k], sign > 0 ? 0 : -thick);
+      part.sh = sign > 0 ? shd[k] : shd[k] * (o.innerShade ?? 1);
       vi.push(part.v(q.x, q.y, q.z, wf(pos[k])));
     }
     for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) {
@@ -396,6 +414,7 @@ export function sheet(S, mat, w, o) {
     const a = [], b = [];
     for (const k of list) {
       const q0 = pos[k], q1 = pos[k].clone().addScaledVector(nrm[k], -thick);
+      part.sh = shd[k];
       a.push(part.v(q0.x, q0.y, q0.z, wf(q0))); b.push(part.v(q1.x, q1.y, q1.z, wf(q0)));
     }
     for (let k = 0; k < a.length - 1; k++) part.quad(a[k], a[k + 1], b[k + 1], b[k]);
@@ -461,22 +480,38 @@ uniform vec4 uMouth;   // open, smile (+) / frown (-), width, round (o-shape)
 uniform vec4 uMouthP;  // y, lip darkness, teeth, jaw drop scale
 uniform vec4 uCheek;   // blush, wrinkles, freckles, lash thickness
 uniform vec3 uBlushC;
+uniform vec4 uFaceX;   // fringe shadow line y (9 = none), nose tip y, lip tint, lower lashes
 float fLine(float d, float w, float aa) { return 1.0 - smoothstep(w - aa, w + aa, abs(d)); }
 `;
 const FACE_FRAG = `
 #include <color_fragment>
 {
   vec3 q3 = (vObj - uFaceC.xyz) / uFaceC.w;
+  // the jaw's shadow on the throat (a fixed cel shape, as in drawn animation)
+  if (q3.y < -0.8 && q3.y > -2.4 && abs(q3.x) < 0.7 && q3.z < 0.5) {
+    float ns = smoothstep(-1.27 - 0.16 * cos(q3.x * 4.0), -1.22 - 0.16 * cos(q3.x * 4.0), q3.y);
+    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.86, 0.68, 0.68), ns);
+  }
   if (q3.z > 0.05 && q3.y > -1.25 && q3.y < 1.0 && abs(q3.x) < 1.05) {
     vec2 f = q3.xy;
     float aa = max(fwidth(f.x), fwidth(f.y)) * 1.1 + 0.002;
     vec3 col = diffuseColor.rgb;
     float front = smoothstep(0.05, 0.3, q3.z);
+    // ---- fringe shadow on the forehead, nose shadow
+    {
+      float hy = uFaceX.x - 0.05 * cos(f.x * 7.0) - 0.035 * cos(f.x * 19.0 + 1.0);
+      col *= mix(vec3(1.0), vec3(0.88, 0.72, 0.72), smoothstep(hy - aa, hy + aa, f.y) * front);
+      vec2 np = (f - vec2(0.05, uFaceX.y - 0.045)) * vec2(1.0, 1.7);
+      col *= mix(vec3(1.0), vec3(0.84, 0.62, 0.6), (1.0 - smoothstep(0.035 - aa, 0.035 + aa, length(np))) * 0.8);
+    }
     // ---- blush, wrinkles, freckles
     {
       vec2 bc = vec2(abs(f.x) - 0.52, f.y + 0.3);
       float bl = exp(-dot(bc, bc) / 0.022) * uCheek.x;
       col = mix(col, uBlushC, bl * 0.45);
+      // a few hatch strokes across the blush
+      float hat = fLine(fract((bc.x * 0.6 + bc.y) * 14.0) - 0.5, 0.11, aa * 14.0) * step(abs(bc.x), 0.13) * step(abs(bc.y - bc.x * 0.2), 0.045);
+      col = mix(col, uBlushC * 0.9, hat * uCheek.x * 0.35);
       if (uCheek.z > 0.0) {
         vec2 fp = f * 26.0; vec2 cell = floor(fp); vec2 fr = fract(fp) - 0.5;
         float h = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
@@ -505,19 +540,24 @@ const FACE_FRAG = `
     if (inEye > 0.0 && open > 0.08) {
       vec3 sclera = vec3(0.96, 0.95, 0.93);
       // lid shadow on the sclera
-      sclera *= 1.0 - 0.25 * smoothstep(b * 0.55, 0.0, yTop - p.y);
-      vec2 ic = vec2(uLook.x * a * 0.42, uLook.y * b * 0.35 - b * 0.05);
+      sclera *= mix(vec3(1.0), vec3(0.62, 0.66, 0.78), smoothstep(b * 0.6, 0.0, yTop - p.y));
+      vec2 ic = vec2(uLook.x * a * 0.36, uLook.y * b * 0.3 - b * 0.03);
       float ir = b * uLook.z;
-      float di = length((p - ic) * vec2(1.0, 0.92));
-      vec3 iris = mix(uIris * 0.55, uIris * 1.15, smoothstep(-ir, ir, p.y - ic.y));
-      iris = mix(iris, uIris * 0.4, smoothstep(ir * 0.75, ir, di));
+      vec2 dq = (p - ic) * vec2(1.08, 0.94);
+      float di = length(dq);
+      // iris painted like an animation cel: deep under the lid, a glowing crescent below,
+      // fine fibres, a dark limbal ring
+      float up = smoothstep(-ir, ir, p.y - ic.y);
+      vec3 iris = mix(uIris * 1.5 + vec3(0.07), uIris * 0.4, smoothstep(0.12, 0.82, up));
+      iris *= 0.93 + 0.07 * sin(atan(dq.y, dq.x) * 22.0);
+      iris = mix(iris, uIris * 0.2, smoothstep(ir * 0.78, ir * 0.98, di));
       float pr = ir * uLook.w;
       vec3 e = mix(sclera, iris, 1.0 - smoothstep(ir - aa, ir + aa, di));
-      e = mix(e, vec3(0.03, 0.02, 0.04), 1.0 - smoothstep(pr - aa, pr + aa, di));
-      // highlights (same side on both eyes)
-      float h1 = 1.0 - smoothstep(ir * 0.26 - aa, ir * 0.26 + aa, length(p - ic - vec2(ir * 0.38, ir * 0.36)));
-      float h2 = 1.0 - smoothstep(ir * 0.12 - aa, ir * 0.12 + aa, length(p - ic - vec2(-ir * 0.3, -ir * 0.42)));
-      e = mix(e, vec3(1.0), max(h1, h2 * 0.8));
+      e = mix(e, vec3(0.03, 0.02, 0.05), 1.0 - smoothstep(pr - aa, pr + aa * 2.0, di));
+      // catchlights (same side on both eyes): a large one high up, a small one opposite
+      float h1 = 1.0 - smoothstep(ir * 0.3 - aa, ir * 0.3 + aa, length((p - ic - vec2(ir * 0.36, ir * 0.42)) * vec2(1.0, 1.25)));
+      float h2 = 1.0 - smoothstep(ir * 0.13 - aa, ir * 0.13 + aa, length(p - ic - vec2(-ir * 0.34, -ir * 0.4)));
+      e = mix(e, vec3(1.0), max(h1, h2 * 0.85));
       col = mix(col, e, inEye * front);
     }
     // lash line along the upper lid, thicker at the outer corner, with a flick
@@ -531,6 +571,10 @@ const FACE_FRAG = `
     float closedLine = fLine(p.y - arcY, lt * 0.55, aa) * step(abs(xo), a * 1.02) * max(cl, happy);
     // lower lid line (thin, soft)
     float low = fLine(p.y - yBot, b * 0.05, aa) * step(abs(xo), a * 0.85) * smoothstep(0.1, 0.4, open) * 0.45;
+    // lower lashes at the outer third; the fold of the upper lid
+    low = max(low, fLine(p.y - yBot + b * 0.03, b * 0.075, aa) * step(a * 0.35, xo) * step(xo, a * 0.98) * smoothstep(0.3, 0.6, open) * uFaceX.w);
+    float fold = fLine(p.y - yTop - b * (0.3 + 0.1 * bowl), b * 0.028, aa) * step(abs(xo - a * 0.1), a * 0.72) * smoothstep(0.5, 0.8, open) * (1.0 - happy);
+    col = mix(col, col * vec3(0.72, 0.5, 0.48), fold * 0.7 * front);
     col = mix(col, uLash, max(max(lash * smoothstep(0.08, 0.2, open) * (1.0 - happy), closedLine), low) * front);
     // ---- brows
     {
@@ -561,6 +605,9 @@ const FACE_FRAG = `
       float bw = sqrt(max(0.0, 1.0 - xm * xm));
       float cy = uMouth.y * 0.09 * xm * xm - uMouth.y * 0.02;
       float o = uMouth.x;
+      // lip tint and the soft shadow under the lower lip
+      col = mix(col, uBlushC * 0.92, exp(-(xm * xm) * 1.6 - pow((m.y - cy + 0.012) / 0.05, 2.0)) * uFaceX.z * 0.7 * front);
+      col *= mix(vec3(1.0), vec3(0.86, 0.68, 0.66), fLine(m.y - cy + 0.085, 0.014, aa) * step(abs(xm), 0.42) * 0.55 * front);
       float H = 0.2 * (0.55 + uMouth.w * 0.6);
       float yU = cy + o * H * 0.35 * mix(bw, sqrt(bw), uMouth.w) + 0.002;
       float yL = cy - o * H * mix(bw, sqrt(bw), uMouth.w) * (0.8 + 0.2 * uMouthP.w);
@@ -598,12 +645,408 @@ export function faceMat(color, o = {}) {
     uMouthP: { value: new THREE.Vector4(-0.5, 0, 1, 1) },
     uCheek: { value: new THREE.Vector4(0, 0, 0, 0.16) },
     uBlushC: { value: new THREE.Color(0xf09088) },
+    uFaceX: { value: new THREE.Vector4(9, -0.36, 0, 0) },
   };
   m.userData.face = u;
   extend(m, 'face', (sh) => {
     Object.assign(sh.uniforms, u);
     OBJ_VERT(sh);
     sh.fragmentShader = FACE_PARS + sh.fragmentShader.replace('#include <color_fragment>', FACE_FRAG);
+  });
+  return m;
+}
+
+// Skin of an authored, sculpted head (ref/blender/ch_face.py). The mesh carries the forms and the
+// expressions (shape keys); this shader adds what is drawn on them, in the face coordinates
+// stored in the UV map (head radii about the head centre, so it follows the moving lids and
+// lips): lash lines on the lid margins, the lip tint and line, nostrils, blush. `surf` tells
+// the parts apart: 0 plain skin, 1 face skin, 2 eyeball (iris, pupil, catchlights painted on
+// the ball around the gaze direction), 3 lid rim, 4 mouth interior, 5 brow hair.
+// Skin is lit softly instead of with the hard toon band: a wide terminator, a warm lifted
+// shadow and a little blood colour along it, so the sculpted forms read.
+const FACE2_PARS = `
+varying vec3 vObj;
+varying vec2 vFace;
+varying float vSurfF;
+uniform vec4 uFaceC;   // head centre (bind space), radius
+uniform vec4 uEyeA;    // eye x, y, half width, tilt
+uniform vec4 uEyeB;    // upper height, lower height, eyeball radius, eyeball centre z
+uniform vec4 uLook;    // gaze x, y (-1..1), iris angular radius, pupil size (rel.)
+uniform vec3 uIris;
+uniform vec3 uLash;
+uniform vec4 uMouthP;  // mouth y, half width, upper lip height, lower lip height
+uniform vec4 uCheek;   // blush, wrinkles, freckles, lash thickness
+uniform vec3 uBlushC;
+uniform vec4 uFaceX;   // fringe shadow line y (9 = none), nose tip y, lip tint, lower lash
+float fLine(float d, float w, float aa) { return 1.0 - smoothstep(w - aa, w + aa, abs(d)); }
+float eyeU(float t) { return uEyeA.y + uEyeB.x * pow(max(0.0, 1.0 - pow(abs(t), 2.3)), 0.75) * (1.0 - 0.1 * t) + uEyeA.w * uEyeA.z * t; }
+float eyeL(float t) { return uEyeA.y - uEyeB.y * pow(max(0.0, 1.0 - t * t), 0.8) * (1.0 - 0.3 * t) + uEyeA.w * uEyeA.z * t; }
+float lipT(float x) { float q = min(1.0, abs(x) / uMouthP.y); return uMouthP.x + uMouthP.z * pow(max(0.0, 1.0 - pow(q, 2.2)), 0.7) * (1.0 + 0.28 * exp(-pow((q - 0.33) / 0.2, 2.0)) - 0.16 * exp(-pow(q / 0.14, 2.0))); }
+float lipB(float x) { float q = min(1.0, abs(x) / uMouthP.y); return uMouthP.x - uMouthP.w * pow(max(0.0, 1.0 - q * q), 0.75); }
+`;
+const FACE2_FRAG = `
+#include <color_fragment>
+float _eyeball = 0.0;
+{
+  vec2 f = vFace;
+  vec3 q3 = (vObj - uFaceC.xyz) / uFaceC.w;
+  float aa = max(fwidth(f.x), fwidth(f.y)) + 0.0012;
+  float sx = f.x < 0.0 ? -1.0 : 1.0;
+  float t = (abs(f.x) - uEyeA.x) / uEyeA.z, tc = clamp(t, -1.0, 1.0);
+  float yU = eyeU(tc), yL = eyeL(tc);
+  if (vSurfF < 0.5) {
+    // the jaw's shadow on the throat
+    if (q3.y < -0.8 && q3.y > -2.4 && abs(q3.x) < 0.7 && q3.z < 0.5) {
+      float ns = smoothstep(-1.3 - 0.16 * cos(q3.x * 4.0), -1.16 - 0.16 * cos(q3.x * 4.0), q3.y);
+      diffuseColor.rgb *= mix(vec3(1.0), vec3(0.84, 0.68, 0.66), ns);
+    }
+  } else if (vSurfF < 1.5) {
+    vec3 col = diffuseColor.rgb;
+    // fringe shadow, blush, freckles
+    float hy = uFaceX.x - 0.05 * cos(f.x * 7.0) - 0.035 * cos(f.x * 19.0 + 1.0);
+    col *= mix(vec3(1.0), vec3(0.86, 0.72, 0.7), smoothstep(hy - 0.02, hy + 0.02, f.y));
+    vec2 bc = vec2(abs(f.x) - 0.44, f.y + 0.3);
+    col = mix(col, uBlushC, exp(-dot(bc, bc) / 0.03) * uCheek.x * 0.4);
+    col = mix(col, col * vec3(1.06, 0.86, 0.8), exp(-pow(f.x / 0.08, 2.0) - pow((f.y - uFaceX.y) / 0.06, 2.0)) * 0.5);      // warmth at the nose tip
+    if (uCheek.z > 0.0) {
+      vec2 fp = f * 30.0; vec2 cell = floor(fp); vec2 fr = fract(fp) - 0.5;
+      float h = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
+      float zone = exp(-pow((abs(f.x) - 0.26) / 0.24, 2.0) - pow((f.y + 0.2) / 0.12, 2.0));
+      col = mix(col, col * vec3(0.76, 0.58, 0.48), (1.0 - smoothstep(0.1, 0.2, length(fr - (h - 0.5) * 0.4))) * step(0.5, h) * zone * uCheek.z);
+    }
+    // nostrils
+    vec2 nq = (vec2(abs(f.x) - 0.045, f.y - uFaceX.y + 0.034)) / vec2(0.02, 0.011);
+    col = mix(col, col * vec3(0.38, 0.22, 0.2), (1.0 - smoothstep(0.6, 1.1, length(nq))) * 0.85);
+    // lids: lash line along the upper margin, thickening outwards into a short flick;
+    // a finer line under the lower margin; the fold of the upper lid
+    float lt = uEyeB.x * uCheek.w * (0.6 + 0.55 * smoothstep(-0.7, 1.0, t));
+    float lash = (1.0 - smoothstep(lt - aa, lt + aa, f.y - yU)) * step(yU - 0.01, f.y) * (1.0 - smoothstep(1.0, 1.04, abs(t)));
+    float fy = yU + (t - 1.0) * uEyeA.z * 0.55;
+    lash = max(lash, fLine(f.y - fy - lt * 0.3, lt * 0.55 * clamp((1.4 - t) / 0.4, 0.0, 1.0), aa) * step(0.96, t) * step(t, 1.4));
+    float low = (1.0 - smoothstep(0.004, 0.004 + aa * 2.0, yL - f.y)) * step(f.y, yL + 0.01) * step(abs(t), 1.0) * (0.25 + 0.75 * uFaceX.w) * smoothstep(-0.2, 0.6, t) * 0.7;
+    float fold = fLine(f.y - yU - uEyeB.x * (0.42 + 0.2 * (1.0 - tc * tc)), 0.006, aa) * step(abs(t - 0.05), 0.9);
+    col = mix(col, col * vec3(0.7, 0.5, 0.46), fold * 0.6);
+    col = mix(col, uLash, max(lash, low));
+    // lips: vermilion tint between the borders, the line of the mouth
+    float xm = abs(f.x) / uMouthP.y;
+    float lipm = smoothstep(lipB(f.x) - 0.006, lipB(f.x) + 0.012, f.y) * (1.0 - smoothstep(lipT(f.x) - 0.012, lipT(f.x) + 0.006, f.y)) * (1.0 - smoothstep(0.92, 1.03, xm));
+    col = mix(col, col * vec3(1.0, 0.72, 0.7) * 0.94 + vec3(0.03, 0.0, 0.0), lipm * (0.35 + 0.55 * uFaceX.z));
+    col = mix(col, col * vec3(0.5, 0.28, 0.28), fLine(f.y - uMouthP.x, 0.0055, aa) * (1.0 - smoothstep(0.98, 1.06, xm)) * 0.9);
+    // age lines
+    if (uCheek.y > 0.0) {
+      float w1 = fLine(f.y - yL + uEyeB.y * 0.9 + 0.05 * tc * tc, 0.005, aa) * step(abs(t), 0.85);
+      float w3 = fLine(length(vec2(t - 1.25, (f.y - uEyeA.y) / uEyeA.z)) - 0.3, 0.02, aa * 4.0) * step(1.25, t);
+      col = mix(col, col * 0.74, max(w1, w3) * uCheek.y);
+    }
+    diffuseColor.rgb = col;
+  } else if (vSurfF < 2.5) {
+    // eyeball: iris, limbal ring, pupil and catchlights around the gaze direction
+    _eyeball = 1.0;
+    vec3 ec = vec3(sx * uEyeA.x, uEyeA.y, uEyeB.w);
+    vec3 d = normalize(q3 - ec);
+    vec3 fw = normalize(vec3(uLook.x * 0.42, uLook.y * 0.3, 1.0));
+    vec3 rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw)), up = cross(fw, rt);
+    vec2 ip = vec2(dot(d, rt), dot(d, up)) / max(dot(d, fw), 0.2);       // gnomonic coords about the gaze
+    float ir = uLook.z, di = length(ip);
+    vec3 col = vec3(0.95, 0.94, 0.92);
+    col *= mix(vec3(0.62, 0.64, 0.74), vec3(1.0), smoothstep(0.0, uEyeB.x * 0.9, yU - f.y));        // the upper lid's shadow
+    col *= 1.0 - 0.25 * smoothstep(0.55, 1.0, abs(t));
+    float upk = smoothstep(-ir, ir, ip.y);
+    vec3 iris = mix(uIris * 1.6 + vec3(0.06), uIris * 0.45, smoothstep(0.1, 0.9, upk));
+    float ang = atan(ip.y, ip.x);
+    iris *= 0.86 + 0.14 * sin(ang * 26.0 + sin(ang * 7.0) * 2.0) * smoothstep(0.2, 0.7, di / ir);
+    iris = mix(iris, uIris * 0.16, smoothstep(ir * 0.8, ir, di));
+    iris = mix(iris, uIris * 2.0 + vec3(0.12), (1.0 - smoothstep(ir * 0.3, ir * 0.62, length(ip - vec2(0.0, -ir * 0.3)))) * 0.45);
+    col = mix(col, iris, 1.0 - smoothstep(ir - aa * 3.0, ir + aa * 3.0, di));
+    float pr = ir * uLook.w;
+    col = mix(col, vec3(0.02, 0.015, 0.03), 1.0 - smoothstep(pr - aa * 3.0, pr + aa * 3.0, di));
+    float h1 = 1.0 - smoothstep(ir * 0.22, ir * 0.3, length((ip - vec2(ir * 0.38, ir * 0.42)) * vec2(1.0, 1.2)));
+    float h2 = 1.0 - smoothstep(ir * 0.08, ir * 0.13, length(ip - vec2(-ir * 0.36, -ir * 0.4)));
+    col = mix(col, vec3(1.0), max(h1, h2 * 0.8));
+    diffuseColor.rgb = col;
+  } else if (vSurfF < 3.5) {
+    diffuseColor.rgb = f.y > (yU + yL) * 0.5 ? uLash : diffuseColor.rgb * vec3(0.72, 0.5, 0.48);
+  }
+}
+`;
+const SKIN_SOFT = `
+#if NUM_SUN_LIGHTS > 0
+if (vSurfF < 1.5) {
+  float _ndl = dot(normal, sunLights[0].direction);
+  float _g = texture2D(gradientMap, vec2(clamp(_ndl * 0.5 + 0.5, 0.0, 1.0), 0.5)).r;
+  float _sh = _dirShadow * _cloudSh;
+  vec3 _base = reflectedLight.directDiffuse / mix(uShadeTint, vec3(1.0), _g * _sh);
+  float _soft = smoothstep(-0.34, 0.52, _ndl) * mix(0.2, 1.0, _sh);
+  vec3 _shade = uShadeTint * vec3(1.55, 1.1, 0.96) + vec3(0.11, 0.035, 0.02);
+  vec3 _sss = vec3(0.34, 0.08, 0.03) * exp(-pow((_ndl - 0.04) / 0.3, 2.0)) * (0.3 + 0.7 * _sh);
+  outgoingLight = _base * (mix(_shade, vec3(1.0), _soft) + _sss) + reflectedLight.indirectDiffuse + totalEmissiveRadiance;
+} else if (_eyeball > 0.5) {
+  outgoingLight = max(outgoingLight, diffuseColor.rgb * 0.34);       // eyes never go dead in shade
+}
+#endif
+`;
+export function faceMat2(color, o = {}) {
+  const m = bodyMat(color, { rim: o.rim ?? 0.3, vertexColors: true });
+  const u = {
+    uFaceC: { value: new THREE.Vector4(0, 1.6, 0, 0.13) }, uEyeA: { value: new THREE.Vector4(0.34, -0.05, 0.17, 0.08) }, uEyeB: { value: new THREE.Vector4(0.09, 0.05, 0.2, 0.6) },
+    uLook: { value: new THREE.Vector4(0, 0, 0.5, 0.42) }, uIris: { value: new THREE.Color(0x3a5a7a) }, uLash: { value: new THREE.Color(0x221612) },
+    uMouthP: { value: new THREE.Vector4(-0.64, 0.15, 0.06, 0.08) }, uCheek: { value: new THREE.Vector4(0, 0, 0, 0.2) }, uBlushC: { value: new THREE.Color(0xf09088) },
+    uFaceX: { value: new THREE.Vector4(9, -0.4, 0, 0) },
+  };
+  m.userData.face = u;
+  extend(m, 'face2', (sh) => {
+    Object.assign(sh.uniforms, u);
+    sh.vertexShader = 'attribute float surf;\nvarying float vSurfF;\nvarying vec2 vFace;\nvarying vec3 vObj;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvObj = position; vSurfF = surf; vFace = vec2(uv.x, 1.0 - uv.y);');
+    let fs = FACE2_PARS + sh.fragmentShader.replace('#include <color_fragment>', FACE2_FRAG).replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\nif (_eyeball > 0.5) { _specK = 9.0; _rough = 0.16; }');
+    const at = fs.indexOf('if (uDissolve > 0.0) outgoingLight +=');
+    if (at > 0) fs = fs.slice(0, at) + SKIN_SOFT + fs.slice(at);
+    sh.fragmentShader = fs;
+  });
+  return m;
+}
+
+// Skin of a modelled character (ref/blender/c2_*.py): the albedo is painted per vertex and the
+// forms are in the mesh, so the shader only lights it. `surf`: 0 skin (wide terminator, warm
+// lifted shade, a little blood colour along it, soft sheen), 4 mouth interior (wet),
+// 5 brows and lashes (matte).
+const SKIN2_LIGHT = `
+#if NUM_SUN_LIGHTS > 0
+if (vSurfF < 0.5) {
+  float _ndl = dot(normal, sunLights[0].direction);
+  float _g = texture2D(gradientMap, vec2(clamp(_ndl * 0.5 + 0.5, 0.0, 1.0), 0.5)).r;
+  float _sh = _dirShadow * _cloudSh;
+  vec3 _base = reflectedLight.directDiffuse / mix(uShadeTint, vec3(1.0), _g * _sh);
+  float _soft = smoothstep(-0.3, 0.62, _ndl) * mix(0.16, 1.0, _sh);
+  vec3 _shade = uShadeTint * vec3(1.5, 1.08, 0.96) + vec3(0.1, 0.03, 0.02);
+  vec3 _sss = vec3(0.3, 0.07, 0.03) * exp(-pow((_ndl - 0.02) / 0.3, 2.0)) * (0.25 + 0.75 * _sh);
+  vec3 _vd = normalize(vViewPosition);
+  vec3 _hv = normalize(sunLights[0].direction + _vd);
+  float _spec = pow(max(dot(normal, _hv), 0.0), 26.0) * 0.07 * _sh * max(_ndl, 0.0);
+  outgoingLight = _base * (mix(_shade, vec3(1.0), _soft) + _sss) + sunLights[0].color * _spec + reflectedLight.indirectDiffuse + totalEmissiveRadiance;
+}
+#endif
+// teeth and tongue keep some light of their own: an open mouth must not read as a black hole or grey teeth
+if (_mouthLit > 0.0) outgoingLight = max(outgoingLight, diffuseColor.rgb * _mouthLit);
+`;
+// Baked maps of a modelled character on a toon material (tex: { map, normalMap, orm }): the
+// albedo replaces the vertex colours, the normal map is read in the frame of the uv derivatives.
+function mapped(m, tex) {
+  m.map = tex.map; m.normalMap = tex.normalMap || null;
+  m.defines = { ...(m.defines || {}), CH_TEX: 1 };
+  return { uOrm: { value: tex.orm || null } };
+}
+export function skinMat(o = {}) {
+  const m = bodyMat(0xffffff, { rim: o.rim ?? 0.16, vertexColors: !o.tex });
+  if (o.tex) mapped(m, o.tex);
+  // uBlush: the cheeks' place in bind space (|x|, y, z, radius); uBlushK: how flushed they are (HumanRig.facePerson)
+  const u = { uBlush: { value: new THREE.Vector4(0.07, 1.5, 0.1, 0.04) }, uBlushK: { value: 0 } };
+  m.userData.skin = u;
+  extend(m, 'skin2', (sh) => {
+    Object.assign(sh.uniforms, u);
+    sh.vertexShader = 'attribute float surf;\nvarying float vSurfF;\nvarying vec3 vBindP;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurfF = surf; vBindP = position;');
+    let fs = 'varying float vSurfF;\nvarying vec3 vBindP;\nuniform vec4 uBlush;\nuniform float uBlushK;\nfloat _mouthLit = 0.0;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+if (vSurfF > 3.5 && vSurfF < 4.5) {
+  // inside the mouth: teeth a clean warm white, everything else one soft dark rose (no black gaps)
+  float _tooth = smoothstep(0.35, 0.6, diffuseColor.g);
+  diffuseColor.rgb = mix(max(diffuseColor.rgb, vec3(0.3, 0.1, 0.11)), vec3(0.97, 0.94, 0.88), _tooth);
+  _specK = 5.0 * (1.0 - _tooth); _rough = 0.25; _mouthLit = mix(0.42, 0.72, _tooth);
+}
+if (uBlushK > 0.0 && vSurfF < 0.5) { vec3 _bp = vec3(abs(vBindP.x), vBindP.yz) - uBlush.xyz; _bp.y *= 1.25; diffuseColor.rgb *= mix(vec3(1.0), vec3(1.0, 0.74, 0.72), exp(-dot(_bp, _bp) / (uBlush.w * uBlush.w)) * uBlushK); }`);
+    const at = fs.indexOf('if (uDissolve > 0.0) outgoingLight +=');
+    if (at > 0) fs = fs.slice(0, at) + SKIN2_LIGHT + fs.slice(at);
+    sh.fragmentShader = fs;
+  });
+  return m;
+}
+
+// Eyeball of a modelled character. uv holds the position on the ball about its forward axis
+// (0.5 = the pole; radius 0.5 = the equator, beyond it the back half), so iris, pupil and
+// catchlights are drawn there and turn with the eye bone.
+const EYE_FRAG = `
+#include <color_fragment>
+{
+  vec2 e = (vEyeUv - 0.5) * vec2(2.0, -2.0);          // +y up (the model's v runs down the ball)
+  float r = length(e), ir = uEye.x, aa = fwidth(r) + 0.004;
+  vec3 col = mix(vec3(0.95, 0.935, 0.91), vec3(0.8, 0.62, 0.6), smoothstep(0.62, 1.05, r));          // sclera, pinker towards the corners
+  float ang = atan(e.y, e.x), q = r / ir, soft = uEye.w;
+  // a very dark iris would read as one black disc with the pupil: its lit lower half is lifted
+  // towards the colour it has in light (blue and green eyes are bright enough and stay as painted)
+  float dark = smoothstep(0.1, 0.02, dot(uIrisC, vec3(0.3, 0.55, 0.15)));
+  vec3 lit = mix(uIrisC * 2.1 + 0.1, pow(uIrisC, vec3(0.62)) * 0.9 + 0.05, max(dark * 0.8, soft * 0.5));
+  vec3 iris = uIrisC * mix(1.25, 0.62, smoothstep(0.25, 1.0, q));
+  iris *= 0.88 + 0.12 * sin(ang * 31.0 + sin(ang * 9.0) * 2.5) * smoothstep(0.3, 0.8, q);              // fibres
+  iris = mix(iris, lit, (1.0 - smoothstep(0.2, mix(0.75, 0.95, max(dark, soft)), length(e / ir - vec2(0.0, -0.42)))) * mix(0.55, 0.8, max(dark, soft)));   // light pooling at the bottom
+  iris = mix(iris, uIrisC * 0.38, smoothstep(0.0, 1.0, e.y / ir) * mix(0.55, 0.3, soft));              // the upper lid's shade
+  iris = mix(iris, uIrisC * 0.14, smoothstep(0.8, 0.98, q) * (1.0 - 0.3 * soft));                      // limbal ring
+  col = mix(col, iris, 1.0 - smoothstep(ir - aa, ir + aa, r));
+  float pr = ir * uEye.y;
+  col = mix(col, vec3(0.012, 0.01, 0.018), 1.0 - smoothstep(pr - aa, pr + aa, r));
+  // the lids' shadow lies on the ball in the head's frame, so it stays put when the eye turns:
+  // deep under the upper lid, a soft rim all round where the lids meet the ball
+  vec3 dh = uEyeR * vec3(e, sqrt(max(1.0 - r * r, 0.0)));
+  col *= mix(1.0, mix(0.52, 0.7, soft), smoothstep(0.02, 0.62, dh.y)) * mix(1.0, 0.8, smoothstep(0.35, 0.95, length(dh.xy)));
+  // catchlights (soft: a larger main one, a child's or any face that should read as gentle)
+  float hs = 1.0 + 0.35 * soft;
+  float h1 = 1.0 - smoothstep(0.1 * hs, 0.27 * hs, length((e / ir - vec2(-0.34, 0.36)) * vec2(1.0, 1.15)));
+  float h2 = 1.0 - smoothstep(0.03 * hs, 0.13 * hs, length(e / ir - vec2(0.36, -0.38)));
+  _eyeHi = max(h1 * 0.78, h2 * 0.45) * uEye.z * (1.0 - mix(0.6, 0.3, soft) * smoothstep(0.1, 0.6, dh.y));
+  diffuseColor.rgb = col;
+}
+`;
+export function eyeMat(iris = 0x3a5a7a, o = {}) {
+  const m = bodyMat(0xffffff, { rim: 0 });
+  // uEyeR: the eye bones' turn out of their rest direction (HumanRig.updateFace)
+  const u = { uIrisC: { value: new THREE.Color(iris) }, uEye: { value: new THREE.Vector4(o.iris ?? 0.56, o.pupil ?? 0.4, 1, o.soft ?? 0) }, uEyeR: { value: new THREE.Matrix3() } };
+  m.userData.eye = u;
+  extend(m, 'eye2', (sh) => {
+    Object.assign(sh.uniforms, u);
+    sh.vertexShader = 'varying vec2 vEyeUv;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvEyeUv = uv;');
+    let fs = 'varying vec2 vEyeUv;\nuniform vec3 uIrisC;\nuniform vec4 uEye;\nuniform mat3 uEyeR;\nfloat _eyeHi = 0.0;\n' + sh.fragmentShader.replace('#include <color_fragment>', EYE_FRAG)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n_specK = 7.0; _rough = 0.14;');
+    const at = fs.indexOf('if (uDissolve > 0.0) outgoingLight +=');
+    // eyes never go dead in shade; the painted catchlights sit on top of the lighting
+    if (at > 0) fs = fs.slice(0, at) + 'outgoingLight = max(outgoingLight, diffuseColor.rgb * 0.3) + vec3(_eyeHi) * (0.5 + 0.5 * _dirShadow * _cloudSh);\n' + fs.slice(at);
+    sh.fragmentShader = fs;
+  });
+  return m;
+}
+
+// Clothing and hair: one vertex-coloured material whose response follows the per-vertex
+// `surf` kind (Sculpt.build o.surf): 0 woven cloth, 1 leather, 2 polished metal, 3 hair
+// (strand streaks, a highlight ring around the crown in bind space), 4 matte, 5 gem.
+export const SURF = { cloth: 0, leather: 1, metal: 2, hair: 3, matte: 4, gem: 5 };
+const CLOTH_PARS = `
+varying vec3 vObj;
+varying float vSurf;
+uniform vec4 uHairC;   // head centre (bind space), radius
+`;
+const CLOTH_FRAG = `
+#include <emissivemap_fragment>
+{
+  float _nv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+  float _px = length(fwidth(vObj));
+  if (vSurf < 0.5) {
+    // warp and weft, faded out before the threads alias; soft dye mottling; a nap that
+    // catches light at grazing angles
+    vec3 q = vObj * 1500.0;
+    diffuseColor.rgb *= 1.0 + 0.085 * sin(q.y) * sin(q.x + q.z) * (1.0 - smoothstep(0.0009, 0.0026, _px));
+    diffuseColor.rgb *= 0.95 + 0.1 * _dn(vObj * 11.0);
+    diffuseColor.rgb *= 1.0 + 0.16 * pow(1.0 - _nv, 3.0);
+  } else if (vSurf < 1.5) {
+    float g = _dn(vObj * 210.0) * (1.0 - smoothstep(0.002, 0.006, _px));
+    diffuseColor.rgb *= (0.93 + 0.14 * g) * (0.9 + 0.2 * _dn(vObj * 17.0));
+    _specK = 2.6; _rough = 0.4;
+  } else if (vSurf < 2.5) {
+    // the sky above and the ground below, mirrored in a few hard bands
+    float e = reflect(-normalize(vViewPosition), normal).y;
+    diffuseColor.rgb *= 0.62 + 0.42 * smoothstep(-0.25, -0.1, e) + 0.3 * smoothstep(0.42, 0.5, e);
+    _specK = 7.0; _rough = 0.26;
+  } else if (vSurf < 3.5) {
+    vec3 hd = vObj - uHairC.xyz;
+    float hl = length(hd) / uHairC.w;
+    hd = normalize(hd);
+    float lon = atan(hd.x, hd.z);
+    float st = _dn(vec3(lon * 13.0, hd.y * 1.2, hl * 0.7));
+    float fine = _dn(vec3(lon * 46.0, hd.y * 2.0, hl * 1.4));
+    diffuseColor.rgb *= 0.9 + 0.12 * st + 0.08 * fine;
+    // highlight ring, toothed along the strands, on the side that faces the viewer
+    float ring = abs(hd.y - 0.5 - (st - 0.5) * 0.3 - (fine - 0.5) * 0.12);
+    float band = (1.0 - smoothstep(0.035, 0.075, ring)) * smoothstep(1.55, 1.2, hl) * smoothstep(0.25, 0.6, _nv);
+    diffuseColor.rgb += (diffuseColor.rgb * 0.7 + 0.16) * band * 0.75;
+    _specK = 1.2; _rough = 0.5;
+  } else if (vSurf > 4.5) {
+    float e = reflect(-normalize(vViewPosition), normal).y;
+    diffuseColor.rgb *= 0.75 + 0.6 * smoothstep(0.1, 0.3, e);
+    totalEmissiveRadiance += diffuseColor.rgb * 0.3;
+    _specK = 9.0; _rough = 0.18;
+  }
+}
+`;
+// With baked maps (o.tex) the ORM texture sets occlusion and roughness per texel and `surf` only
+// picks the kind of response.
+const CLOTH_TEX_FRAG = `
+#include <emissivemap_fragment>
+{
+  vec4 _mo = texture2D( uOrm, vMapUv );
+  float _nv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+  float _px = length(fwidth(vObj));
+  _rough = clamp(_mo.g, 0.08, 1.0); _cav = mix(1.0, _mo.r, 0.75);
+  if (vSurf < 0.5) {
+    // threads below the texel size of the maps; the nap catches light at grazing angles
+    vec3 q = vObj * 1500.0;
+    diffuseColor.rgb *= 1.0 + 0.06 * sin(q.y) * sin(q.x + q.z) * (1.0 - smoothstep(0.0009, 0.0026, _px));
+    diffuseColor.rgb *= 1.0 + 0.2 * pow(1.0 - _nv, 3.0) * _mo.g;
+    _specK = 0.35;
+  } else if (vSurf < 1.5) {
+    _specK = 1.1;
+  } else if (vSurf < 2.5) {
+    float e = reflect(-normalize(vViewPosition), normal).y;
+    diffuseColor.rgb *= 0.7 + 0.3 * smoothstep(-0.3, 0.1, e) + 0.22 * smoothstep(0.3, 0.6, e);
+    _specK = 5.0;
+  } else if (vSurf < 3.5) {
+    // hair: the strands run along v of their uv strips (never turned in the atlas). The locks are
+    // lit as one mass: their normals lean towards the head's own, so no lock has a dark side
+    _hairT = normalize(tbn[1] + vec3(1e-5)); _specK = 0.0; _shK = 0.3;      // and locks barely shadow each other
+    vec3 _hn = normalize(vHairN);
+    normal = normalize(mix(normal, _hn, 0.6)); nonPerturbedNormal = normalize(mix(nonPerturbedNormal, _hn, 0.6));
+  } else if (vSurf > 4.5) {
+    float e = reflect(-normalize(vViewPosition), normal).y;
+    diffuseColor.rgb *= 0.75 + 0.6 * smoothstep(0.1, 0.3, e);
+    totalEmissiveRadiance += diffuseColor.rgb * 0.3;
+    _specK = 9.0; _rough = 0.18;
+  } else {
+    _specK = 0.15;
+  }
+}
+`;
+// hair highlight (Kajiya-Kay about the strand direction, widened and softened), added to the lit result
+const CLOTH_TEX_OUT = `
+#if NUM_SUN_LIGHTS > 0
+{
+  // relief: the toon ramp is flat in the light and in the shade, so the baked forms are lit on
+  // their own: by the sun where it reaches, by the sky elsewhere
+  vec3 _dn = normal - nonPerturbedNormal;
+  float _sl = _dirShadow * _cloudSh * smoothstep(-0.1, 0.25, dot(nonPerturbedNormal, sunLights[0].direction));
+  float _rl = dot(_dn, sunLights[0].direction) * _sl + dot(_dn, normalize((viewMatrix * vec4(0.25, 1.0, 0.1, 0.0)).xyz)) * (0.55 - 0.3 * _sl);
+  outgoingLight *= 1.0 + clamp(_rl * uRelief, -0.5, 0.4);
+}
+if (vSurf > 2.5 && vSurf < 3.5) {
+  // a broad soft band across the strands (Kajiya-Kay), ruffled by the grooves of the normal map
+  vec3 _vd = normalize(vViewPosition), _l = sunLights[0].direction;
+  vec3 _t = normalize(_hairT + (normal - nonPerturbedNormal) * 0.55 + nonPerturbedNormal * 0.14);
+  vec3 _hv = normalize(_l + _vd);
+  float _th = dot(_t, _hv), _s1 = sqrt(max(1.0 - _th * _th, 0.0));
+  float _sh = 0.3 + 0.7 * _dirShadow * _cloudSh;
+  float _wrap = smoothstep(-0.2, 0.6, dot(nonPerturbedNormal, _l)) * smoothstep(0.0, 0.5, dot(nonPerturbedNormal, _vd));
+  // (dark hair needs a strong band to show at all; white hair must not burn out)
+  vec3 _hc = diffuseColor.rgb * mix(3.2, 0.45, smoothstep(0.08, 0.6, dot(diffuseColor.rgb, vec3(0.3, 0.6, 0.1)))) + vec3(0.05, 0.042, 0.035);
+  outgoingLight += sunLights[0].color * _hc * (pow(_s1, 9.0) * 0.2 + pow(_s1, 40.0) * 0.14) * _wrap * _sh * _cav;
+}
+#endif
+`;
+export function clothMat(o = {}) {
+  const m = bodyMat(0xffffff, { vertexColors: !o.tex, rim: o.rim ?? 0.34 });
+  const u = { uHairC: { value: new THREE.Vector4(0, 1.6, 0, 0.13) } };
+  if (o.tex) Object.assign(u, mapped(m, o.tex), { uRelief: { value: o.relief ?? 1.1 } });
+  m.userData.cloth = u;
+  extend(m, o.tex ? 'clothT' : 'cloth', (sh) => {
+    Object.assign(sh.uniforms, u);
+    sh.vertexShader = 'attribute float surf;\nvarying float vSurf;\nvarying vec3 vObj;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvObj = position; vSurf = surf;');
+    if (!o.tex) { sh.fragmentShader = CLOTH_PARS + sh.fragmentShader.replace('#include <emissivemap_fragment>', CLOTH_FRAG); return; }
+    // direction out of the head through the vertex, carried with the skin (hair shading)
+    sh.vertexShader = 'uniform vec4 uHairC;\nvarying vec3 vHairN;\n' + sh.vertexShader.replace('#include <defaultnormal_vertex>', `#include <defaultnormal_vertex>
+  vec3 _hn = position - uHairC.xyz;
+  #ifdef USE_SKINNING
+    _hn = ( skinMatrix * vec4( _hn, 0.0 ) ).xyz;
+  #endif
+  vHairN = normalMatrix * _hn;`);
+    let fs = CLOTH_PARS + 'varying vec3 vHairN;\nuniform sampler2D uOrm;\nuniform float uRelief;\nvec3 _hairT = vec3(0.0, 1.0, 0.0);\nfloat _shK = 1.0;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>', CLOTH_TEX_FRAG)
+      .replace('float lit = g * _dirShadow * _cloudSh;', 'float lit = g * mix( 1.0, _dirShadow, _shK ) * _cloudSh;')
+      // the sculpted forms read in the light as well as along the terminator
+      .replace('float g = texture2D( gradientMap, vec2( clamp( ndl * 0.5 + 0.5, 0.0, 1.0 ), 0.5 ) ).r;', 'float g = 0.6 * smoothstep( -0.14, 0.1, ndl ) + 0.4 * smoothstep( -0.1, 0.85, ndl );');
+    const at = fs.indexOf('if (uDissolve > 0.0) outgoingLight +=');
+    if (at > 0) fs = fs.slice(0, at) + CLOTH_TEX_OUT + fs.slice(at);
+    sh.fragmentShader = fs;
   });
   return m;
 }
@@ -682,16 +1125,22 @@ export function stripeMat(color, stripe, o = {}) {
 
 // Outline hull material with a per-vertex width (attribute olw; 0 = no outline)
 const olCache = new Map();
-export function olMat(color = 0x1a1410, width = 0.012) {
-  const key = color + '|' + width;
+// tint: the line takes a darkened version of the surface's own vertex colour
+// smooth: the hull grows along `onrm` (normals welded across split vertices), so it stays closed
+export function olMat(color = 0x1a1410, width = 0.012, tint = false, smooth = false) {
+  const key = color + '|' + width + '|' + tint + '|' + smooth;
   if (olCache.has(key)) return olCache.get(key);
-  const m = new THREE.MeshBasicMaterial({ color, side: THREE.BackSide });
+  const m = new THREE.MeshBasicMaterial({ color: tint ? 0x6c5258 : color, side: THREE.BackSide, vertexColors: tint });
   const w = { value: width };
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uOutline = w;
-    sh.vertexShader = 'uniform float uOutline;\nattribute float olw;\n' + sh.vertexShader.replace('#include <begin_vertex>', 'vec3 transformed = position + normalize(normal) * uOutline * olw;');
+    sh.vertexShader = 'uniform float uOutline;\nattribute float olw;\n' + (smooth ? 'attribute vec3 onrm;\n' : '') + sh.vertexShader
+      .replace('#include <begin_vertex>', `vec3 transformed = position + normalize(${smooth ? 'onrm' : 'normal'}) * uOutline * olw;`)
+      // pushed back along the view ray: the line survives across real depth gaps (silhouettes,
+      // an arm in front of the chest) but not where two parts of one surface meet
+      .replace('#include <project_vertex>', '#include <project_vertex>\nmvPosition.xyz += normalize(mvPosition.xyz) * (0.022 * olw);\ngl_Position = projectionMatrix * mvPosition;');
   };
-  m.customProgramCacheKey = () => 'olw';
+  m.customProgramCacheKey = () => 'olw2' + smooth;
   olCache.set(key, m);
   return m;
 }
@@ -780,7 +1229,7 @@ export function instance(parent, def, built, mats, o = {}) {
   if (o.outline) {
     // one hull for the whole body (full geometry), bound to the same skeleton
     const full = built.fullOl || (built.fullOl = built.geo);
-    const ol = new THREE.SkinnedMesh(full, full.attributes.olw ? olMat(o.outlineColor ?? 0x1a1410, o.outline) : outlineMat(o.outlineColor ?? 0x1a1410, o.outline));
+    const ol = new THREE.SkinnedMesh(full, full.attributes.olw ? olMat(o.outlineColor ?? 0x1a1410, o.outline, !!o.outlineTint, !!full.attributes.onrm) : outlineMat(o.outlineColor ?? 0x1a1410, o.outline));
     ol.bind(skeleton, mesh.bindMatrix);
     ol.castShadow = false; ol.receiveShadow = false;
     ol.userData.isOutline = true;
@@ -853,7 +1302,7 @@ export class Chain {
     this.damp = o.damp ?? 0.08;
     this.grav = o.grav ?? 9.8;
     this.drag = o.drag ?? 0;               // pull with wind / air
-    this.colliders = o.colliders || [];    // [{ obj, off: V3, r }]
+    this.colliders = o.colliders || [];    // [{ obj, off: V3, r }] spheres, or [{ obj, a: V3, b: V3, r }] capsules (r in world units)
     this.init = false;
     this.base = bones.map(() => new THREE.Quaternion()); // animated local rotations (rest = identity)
   }
@@ -863,8 +1312,11 @@ export class Chain {
     this.t[this.n - 1].copy(this.tail).applyMatrix4(B[B.length - 1].matrixWorld);
   }
   reset() { this.targets(); for (let k = 0; k < this.n; k++) { this.p[k].copy(this.t[k]); this.q[k].copy(this.t[k]); } this.init = true; }
+  // an impulse along dir (world), growing towards the free end: d metres per step at the tip
+  kick(dir, d) { if (this.init) for (let k = 1; k < this.n; k++) this.q[k].addScaledVector(dir, -d * k / (this.n - 1)); }
   // call after the skeleton's animated pose has been applied and matrixWorld updated
-  step(dt, wind = null, sim = true) {
+  // defer: stop before the bones are turned (the caller evens out neighbouring chains, then calls orient())
+  step(dt, wind = null, sim = true, defer = false) {
     const B = this.bones;
     for (let k = 0; k < B.length; k++) B[k].quaternion.copy(this.base[k]);
     B[0].updateMatrixWorld(true);
@@ -892,6 +1344,17 @@ export class Chain {
         const d = tmp.length() || 1e-6;
         P.copy(A).addScaledVector(tmp, this.len[k - 1] / d);
         for (const c of this.colliders) {
+          if (c.b) {
+            // capsule (a limb): pushed straight out from its axis, so cloth lies along it
+            if (!c.wa) { c.wa = new V3(); c.wb = new V3(); }
+            if (it === 0 && k === 1) { c.wa.copy(c.a).applyMatrix4(c.obj.matrixWorld); c.wb.copy(c.b).applyMatrix4(c.obj.matrixWorld); }
+            _n.subVectors(c.wb, c.wa);
+            const u = Math.min(1, Math.max(0, tmp.subVectors(P, c.wa).dot(_n) / _n.lengthSq()));
+            tmp.addScaledVector(_n, -u);
+            const dl = tmp.length();
+            if (dl < c.r && dl > 1e-6) P.addScaledVector(tmp, (c.r - dl) / dl);
+            continue;
+          }
           if (!c.w) c.w = new V3();
           c.w.copy(c.off).applyMatrix4(c.obj.matrixWorld);
           const r = c.r * (c.obj.matrixWorld.elements[0] ** 2 + c.obj.matrixWorld.elements[1] ** 2 + c.obj.matrixWorld.elements[2] ** 2) ** 0.5;
@@ -901,6 +1364,10 @@ export class Chain {
         }
       }
     }
+    if (!defer) this.orient();
+  }
+  orient() {
+    const B = this.bones;
     // orient bones along the simulated points (keep animated twist)
     for (let k = 0; k < B.length; k++) {
       const b = B[k];

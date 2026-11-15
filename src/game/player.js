@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { G, ELEMENTS } from '../core/context.js';
 import { makeHumanoid, CHAR } from './characters.js';
-import { BOLT, HEAVY, WEAVE_COST, WEAVE_CD, CHARGED, CHARGE_T, weaveInfo } from './spells.js';
+import { BOLT, HEAVY, WEAVE_COST, WEAVE_CD, CHARGED, CHARGE_T, WINDUP, ULT_WINDUP, weaveInfo } from './spells.js';
 import { ULT_COST, SIG, WEAVE_NODE } from './skills.js';
 import { clamp, damp, angleDamp, lerp, randRange, josa } from '../core/util.js';
 import { PAL } from '../render/vfx.js';
@@ -89,7 +89,10 @@ export class Player {
       cg.computeVertexNormals();
       const cone = new THREE.Mesh(cg, hm); cone.position.y = hr * 0.75 + hr * 2; cone.rotation.x = -0.1; g.add(cone);
       const band = new THREE.Mesh(new THREE.TorusGeometry(hr * 1.07, 0.02, 6, 16), toon(0xd8a860)); band.position.y = hr * 0.82; band.rotation.x = Math.PI / 2 - 0.1; g.add(band);
-      g.traverse((o) => { if (o.isMesh) { o.castShadow = true; addOutline(o, 0.012); } });
+      // collect first: addOutline() adds a mesh under the one being visited, and traverse would then outline the outline without end
+      const parts = [];
+      g.traverse((o) => { if (o.isMesh) parts.push(o); });
+      for (const o of parts) { o.castShadow = true; addOutline(o, 0.012); }
       head.add(g);
     }
   }
@@ -122,13 +125,28 @@ export class Player {
     if (t !== null) return start.addScaledVector(d, t);
     return start.addScaledVector(d, maxD);
   }
+  // Where spells leave the caster: the staff crystal itself. While the staff is still behind
+  // the body along the aim (first frame of a cast out of a run, a turn), it eases toward a
+  // point in front of the shoulder so nothing is fired through the caster.
   staffTip() {
     const out = new THREE.Vector3();
     const ay = G.cameraRig.yaw;
     const fx = -Math.sin(ay), fz = -Math.cos(ay);
     const rx = Math.cos(ay), rz = -Math.sin(ay);
     out.set(this.pos.x + fx * 0.65 + rx * 0.22, this.pos.y + 1.45, this.pos.z + fz * 0.65 + rz * 0.22);
+    const gem = this.gemPos(tmp2);
+    if (gem) {
+      const ahead = (gem.x - this.pos.x) * fx + (gem.z - this.pos.z) * fz;
+      out.lerp(gem, clamp((ahead + 0.1) / 0.4, 0, 1));
+    }
     return out;
+  }
+  // world position of the staff crystal (null before the rig has one, or while it is hidden)
+  gemPos(out = new THREE.Vector3()) {
+    const tip = this.rig.p && this.rig.p.tip;
+    if (!tip || this.swimming || this.climbing || this.mantle) return null;
+    // the root moves after this frame's casting; carry the crystal along with it
+    return tip.getWorldPosition(out).add(this.pos).sub(this.root.position);
   }
 
   // --------------------------------------------------------------
@@ -355,7 +373,9 @@ export class Player {
     this.rig.update(dt, {
       speed: this.swimming ? hs : this.grounded ? hs : 0, grounded: this.grounded, vy: this.vel.y,
       cast: this.castHold > 0 && !this.climbing, aimPitch, glide: this.gliding, swim: this.swimming, talk: this.talking,
+      charge: this.charge ? Math.min(1, (performance.now() / 1000 - this.charge.t0) / CHARGE_T) : 0,
       climb: !!this.climbing || !!this.mantle, climbPhase: this.climbPhase, climbMove: this.climbMove, mantle: this.mantle ? this.mantle.t / this.mantle.dur : 0,
+      dead: this.dead,
     });
     if (this.rig.p.gem) {
       const c = PAL[this.element].core;
@@ -685,7 +705,8 @@ export class Player {
   }
   beginCharge() {
     const el = this.element;
-    this.charge = { el, t0: performance.now() / 1000, ready: false, fx: G.vfx.charge(el, () => this.staffTip(), CHARGE_T, { big: 0.85, hold: 60 }) };
+    // the hold shows what is being made (a lance drawn out, a bomb swelling, a rod crackling…)
+    this.charge = { el, t0: performance.now() / 1000, ready: false, fx: G.vfx.chargeShot(el, () => this.gemPos() || this.staffTip(), () => G.cameraRig.forward, CHARGE_T, { ground: this.root }) };
     G.audio.play('charge_hold', { pos: this.staffTip() });
   }
   updateCharge() {
@@ -695,10 +716,8 @@ export class Player {
     const k = Math.min(1, (performance.now() / 1000 - c.t0) / CHARGE_T);
     if (!c.ready && k >= 1) {
       c.ready = true;
-      const tip = this.staffTip();
-      G.audio.play('charge_ready', { pos: tip });
-      G.vfx.burst(tip, 'star', 1, { el: c.el, size: 2.2, life: 0.16 });
-      G.vfx.ring(tip, PAL[c.el].core, 1.1, 0.3, { y: 0, thick: 0.3, up: G.camera.position.clone().sub(tip).normalize() });
+      G.audio.play('charge_ready', { pos: this.staffTip() });
+      c.fx.ready(); // the held shape locks (fuse lit, blade upright, rod forked…)
     }
     if (G.hud.chargeRing) G.hud.chargeRing(k, c.ready, c.el, this.mana >= CHARGED[c.el].cost);
   }
@@ -709,12 +728,18 @@ export class Player {
     if (G.hud.chargeRing) G.hud.chargeRing(0, false, c.el);
     if (fire && c.el === this.element) this.castCharged();
   }
+  // the release frame of a wound-up cast (signature spell, ultimate): pose kick + cloth
+  castRelease(kind, el) {
+    if (this.rig.windup) this.rig.flick(kind, el);
+    if (this.rig.gust) this.rig.gust(new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)), kind === 'ult' ? 1 : 0.8);
+  }
   castCharged() {
     const el = this.element, def = CHARGED[el];
     if (!this.spend(def.cost)) return;
     this.cd.bolt = Math.max(this.cd.bolt, 0.4);
     this.castHold = 1.0;
-    this.rig.flick();
+    this.rig.flick('charged', el);
+    if (this.rig.gust) this.rig.gust(new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)), 0.6);
     G.spells.charged(el, this.staffTip(), this.aimPoint(), this.power(), this);
     G.hud.castPulse();
     this.stats.casts++; this.stats.charged = (this.stats.charged || 0) + 1;
@@ -726,7 +751,7 @@ export class Player {
     if (!this.spend(def.cost)) { this.cd.bolt = 0.3; return; }
     this.cd.bolt = def.cd;
     this.castHold = 0.9;
-    this.rig.flick();
+    this.rig.flick('bolt', el);
     const origin = this.staffTip();
     const aim = this.aimPoint();
     G.spells.bolt(el, origin, aim, this.power());
@@ -740,10 +765,10 @@ export class Player {
     if (!this.spend(def.cost)) return;
     this.cd.heavy = def.cd; this.cd.heavyMax = def.cd;
     this.castHold = 1.0;
-    this.rig.flick();
+    // the rig gathers for the wind-up; Spells.heavy() calls castRelease() when the spell leaves the staff
+    if (this.rig.windup) this.rig.windup('heavy', WINDUP[el] ?? 0.15, el); else this.rig.flick('heavy', el);
     const origin = this.staffTip();
     G.spells.heavy(el, origin, this.aimPoint(), this.power(), this);
-    G.cameraRig.shake(0.08);
     this.stats.casts++; this.stats.heavies++;
     if (G.story) G.story.onCast('heavy', el);
   }
@@ -756,10 +781,11 @@ export class Player {
     if (!this.spend(WEAVE_COST)) return;
     this.cd.weave = WEAVE_CD;
     this.castHold = 1.2;
-    this.rig.flick();
+    this.rig.flick('weave', a);
+    if (this.rig.gust) this.rig.gust(new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)), 0.7);
     G.spells.weave(a, b, this.staffTip(), this.aimPoint(), this.power(), this);
-    G.hitstop = Math.max(G.hitstop, 0.05);
-    G.cameraRig.shake(0.15);
+    G.combat.stop(0.05, true);
+    G.cameraRig.shake(0.12);
     this.stats.casts++; this.stats.weaves++;
     if (G.story) G.story.onCast('weave', info.key);
   }
@@ -771,10 +797,12 @@ export class Player {
     if (!id) { G.hud.toast(K && Object.keys(K.ranks).some((k) => k.endsWith('_ult')) ? '이 속성의 궁극기를 아직 익히지 못했다. <kbd>K</kbd> 울림 나무' : '궁극기는 울림 나무(<kbd>K</kbd>) 각 속성의 끝에서 익힐 수 있다.'); return; }
     if (K.gauge < ULT_COST) { G.hud.ultShort && G.hud.ultShort(); G.audio.play('mana_empty', { gap: 0.3 }); return; }
     K.gauge = 0;
-    this.castHold = 1.4;
-    this.rig.flick();
-    this.invuln = Math.max(this.invuln, 0.6);
-    G.spells.ult(el, this.staffTip(), this.aimPoint(), this.power(), this);
+    // a short authored beat: the song is gathered overhead (ULT_WINDUP), then released.
+    // The caster cannot be hurt until just after the release.
+    this.castHold = ULT_WINDUP + 1.3;
+    this.invuln = Math.max(this.invuln, ULT_WINDUP + 0.45);
+    if (this.rig.windup) this.rig.windup('ult', ULT_WINDUP, el); else this.rig.flick('ult', el);
+    G.spells.ultBegin(el, this.power(), this);
     this.stats.casts++;
     if (G.story && G.story.onCast) G.story.onCast('ult', el);
   }
@@ -853,7 +881,7 @@ export class Player {
       G.audio.play('levelup');
       if (G.skills) { G.skills.gain(2 * up); G.skills.cross = Math.min(5, (G.skills.cross || 0) + up); }
       const calm = G.mode === 'free' && !G.enemies.inCombat();
-      G.hud.banner('LEVEL UP', `울림이 깊어졌다 — Lv ${this.level}`, `마법의 위력이 강해졌다.${this.level % 2 === 0 ? ' 생명력의 그릇이 늘었다.' : ''}<br><b style="color:#f1d48a">울림점 +${2 * up}</b> · <b>울림의 갈림길</b>이 열린다${calm ? '' : ' — 싸움이 끝나면 새 기술을 고를 수 있다'}`, '#f1d48a', 3800, { minor: true });
+      G.hud.banner('LEVEL UP', `울림이 깊어졌다 — Lv ${this.level}`, `마법의 위력이 강해졌다.${this.level % 2 === 0 ? ' 최대 체력이 늘었다.' : ''}<br><b style="color:#f1d48a">울림점 +${2 * up}</b> · <b>울림의 갈림길</b>이 열린다${calm ? '' : ' — 싸움이 끝나면 새 기술을 고를 수 있다'}`, '#f1d48a', 3800, { minor: true });
       G.vfx.burst(this.center(), 'soul', 30, { el: 'gold' });
       G.vfx.ring(this.pos, PAL.gold.core, 4, 0.8, { thick: 0.2 });
       G.hud.updateHearts();

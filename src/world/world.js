@@ -43,9 +43,9 @@ export const SEEDS = [
 
 export const MEMORIES = {
   hairpin: { name: '은빛 머리핀', x: -47, z: 80, desc: '작은 은방울꽃이 새겨진 머리핀. 끝이 조금 휘어 있다.' },
-  book: { name: '눌러 말린 꽃 책', x: 81.5, z: 66, desc: '들꽃이 곱게 눌린 낡은 책. 첫 장에 두 사람의 이름이 있었던 자국.' },
+  book: { name: '눌러 말린 꽃 책', x: 81.5, z: 66, desc: '책장 사이에 들꽃을 곱게 눌러 말린 낡은 책. 첫 장엔 두 사람의 이름이 적혀 있던 자국이 남아 있다.' },
   musicbox: { name: '서리 오르골', x: -34, z: -163, desc: '태엽을 감으면 익숙한 노래가 흘러나오는 작은 오르골.' },
-  badge: { name: '기사의 휘장', x: -163, z: -30, desc: '번개 문양이 새겨진 청동 휘장. 뒷면에 누군가 긁어 쓴 글씨.' },
+  badge: { name: '기사의 휘장', x: -163, z: -30, desc: '번개 문양이 새겨진 청동 휘장. 뒷면에 누군가 긁어 쓴 글씨가 있다.' },
 };
 
 const COAL = { lit: null, cold: null };
@@ -76,6 +76,7 @@ export class World {
     G.env = new Env(this);
     onProgress(0.45, '숲을 가꾸는 중…');
     this.props = new Props(scene, this.terrain, this.col, G.settings.quality);
+    this.dressCliffs();
     onProgress(0.65, '마을을 짓는 중…');
     this.buildVillage();
     this.buildTowerHill();
@@ -127,9 +128,11 @@ export class World {
     for (const b of buckets.values()) {
       if (b.list.length < 2) continue;
       const geos = [];
+      // textured materials (authored props) keep their texture coordinates through the merge
+      const uv = !!(b.mat.map || b.mat.normalMap || b.mat.emissiveMap);
       for (const m of b.list) {
         let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
-        for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && !(k === 'color' && b.mat.vertexColors)) g.deleteAttribute(k);
+        for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && !(k === 'color' && b.mat.vertexColors) && !(k === 'uv' && uv)) g.deleteAttribute(k);
         if (!g.attributes.normal) g.computeVertexNormals();
         if (b.mat.vertexColors && !g.attributes.color) {
           const cc = new Float32Array(g.attributes.position.count * 4).fill(1);
@@ -175,6 +178,17 @@ export class World {
     c.base = base;
     return c;
   }
+  // Extra boxes of an authored building (chimney stacks, lean-tos, dormers), in its local frame:
+  // { x, z, hw, hd, y0, y1, tilt?: [per metre of local x, of local z] (a sloping top; y1 at the centre) }
+  solidParts(obj, list) {
+    const by = obj.getWorldPosition(new THREE.Vector3()).y;
+    for (const s of list || []) {
+      const p = obj.localToWorld(new THREE.Vector3(s.x, 0, s.z));
+      const c = this.col.addBox(p.x, p.z, s.hw, s.hd, obj.rotation.y, by + s.y0, by + s.y1 + (s.tilt ? Math.abs(s.tilt[0]) * s.hw + Math.abs(s.tilt[1]) * s.hd : 0));
+      if (s.tilt) c.topFn = (lx, lz) => by + s.y1 + s.tilt[0] * lx + s.tilt[1] * lz;
+      c.base = by;
+    }
+  }
   // shapes it would look odd to scale or stand on (lanterns, columns, braziers, altars)
   noClimb(c) { c.climb = false; c.noTop = true; return c; }
   place(obj, x, z, ry = 0, dy = 0) {
@@ -190,6 +204,34 @@ export class World {
   addTarget(o) { this.targets.push(o); return o; }
 
   // ------------------------------------------------------------
+  // Boulders at the feet of the cliffs: authored rocks leaning on the wall where it meets
+  // walkable ground, so the rock does not rise straight out of the grass. All over the map,
+  // from its own random stream and with every draw explicit, so the scatter of the vale
+  // (which shares Props' stream) is not disturbed.
+  dressCliffs() {
+    const T = this.terrain, P = this.props, rnd = mulberry32(90417), N = T.N, st = T.step;
+    const DIR = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+    const pick = (type) => Math.floor(rnd() * P.types[type].variants.length);
+    for (let iz = 6; iz < N - 6; iz += 2) for (let ix = 6; ix < N - 6; ix += 2) {
+      const i = iz * N + ix;
+      if (T.cw[i] > 0 || T.h[i] < 0.8) continue;
+      // the wall: rock within 6 m that stands well above this spot
+      let wx = 0, wz = 0, found = 0;
+      for (const [dx, dz] of DIR) { const j = (iz + dz * 3) * N + ix + dx * 3; if (T.cw[j] > 0.9 && T.h[j] - T.h[i] > 3) { wx += dx; wz += dz; found++; } }
+      if (!found || rnd() > 0.2) continue;
+      const l = Math.hypot(wx, wz) || 1, x0 = -T.half + ix * st + (rnd() - 0.5) * 3, z0 = -T.half + iz * st + (rnd() - 0.5) * 3;
+      // lean it on the wall, unless that would lift it off the ground
+      let x = x0 + (wx / l) * 2.2, z = z0 + (wz / l) * 2.2;
+      if (T.height(x, z) - T.h[i] > 2) { x = x0; z = z0; }
+      if (T.pathInfo(x, z).d < 6 || (Math.hypot(x, z) < 226 && P.excluded(x, z, 3))) continue;
+      if (T.passes.some((q) => q.segs.some((g) => { const t = Math.max(0, Math.min(1, ((x - g.ax) * (g.bx - g.ax) + (z - g.az) * (g.bz - g.az)) / (g.len * g.len || 1))); return Math.hypot(x - g.ax - (g.bx - g.ax) * t, z - g.az - (g.bz - g.az) * t) < q.w * 0.7; }))) continue;
+      const big = rnd() < 0.32, sz = big ? 1.3 + rnd() * 2.0 : 0.6 + rnd() * 0.9;
+      const type = T.snowAt(x, z) > 0.4 ? 'rockSnow' : big ? 'rockBig' : 'rock';
+      P.add(type, x, z, sz, { v: pick(type), ry: rnd() * TAU, col: sz > 1.2 ? 0.8 : 0 });
+      if (rnd() < 0.5) P.add('pebbles', x - (wx / l) * (1 + sz) + (rnd() - 0.5) * 2, z - (wz / l) * (1 + sz) + (rnd() - 0.5) * 2, 0.8 + rnd() * 0.7, { v: pick('pebbles'), ry: rnd() * TAU });
+    }
+  }
+
   buildVillage() {
     const plaza = { x: 6, z: 14 };
     const rnd = mulberry32(88);
@@ -211,6 +253,7 @@ export class World {
       this.place(g, hd.x, hd.z, ry, -0.2);
       const u = g.userData, by = g.position.y;
       this.solid(g, { hw: u.w / 2, hd: u.d / 2, top: by + u.height, topFn: (lx, lz) => by + u.roofTop(lx, lz) });
+      this.solidParts(g, u.solids);
       if (g.userData.chimney) this.chimneys.push(g.localToWorld(g.userData.chimney.clone()));
       this.houses[hd.id] = g;
     });
@@ -238,7 +281,10 @@ export class World {
     // bell tower
     const bt = B.bellTower();
     this.place(bt, POI.bellTower.x, POI.bellTower.z, 0.1);
-    this.solid(bt, { hw: 2.7, hd: 2.7, rot: 0.1 });
+    { // the authored tower gives its roof line; the code-built one keeps a flat top
+      const u = bt.userData, by = bt.position.y;
+      this.solid(bt, u.roofTop ? { hw: 2.7, hd: 2.7, rot: 0.1, top: by + u.top, topFn: (lx, lz) => by + u.roofTop(lx, lz) } : { hw: 2.7, hd: 2.7, rot: 0.1 });
+    }
     this.bellTower = bt;
     this.bellSwing = 0;
     this.anims.push((dt) => {
@@ -268,7 +314,8 @@ export class World {
     const s2 = B.stall(B.MAT.clothBlue); this.place(s2, -2, 26, this.faceTo(-2, 26, 6, 14)); this.col.addBox(-2, 26, 1.6, 0.8, s2.rotation.y, -10, this.h(-2, 26) + 2.95);
     for (const [x, z] of [[-12, 6], [-4, -6], [-12, -8]]) this.place(B.bench(), x, z, this.faceTo(x, z, -8, -2) + Math.PI);
     // fences at village edge
-    for (const [x, z, r, l] of [[40, 30, 1.4, 12], [38, 4, 1.8, 10], [-38, 30, 1.7, 10], [-36, 2, 1.3, 12], [10, 58, 0.1, 14]]) this.place(B.fence(l), x, z, r);
+    // (the south run stands either side of the tower road, which crosses z = 58 at x = 4)
+    for (const [x, z, r, l] of [[40, 30, 1.4, 12], [38, 4, 1.8, 10], [-38, 30, 1.7, 10], [-36, 2, 1.3, 12], [15, 58.3, 0.1, 12], [-6.5, 57.8, -0.08, 9]]) this.place(B.fence(l), x, z, r);
     // dry-stone walls flanking the north road (the village gate) and at the edges
     for (const [x, z, r, l] of [[-12, -17, 0.25, 7], [4, -18, -0.2, 7], [-40, -1, 1.45, 6], [38, -9, 2.0, 6]]) {
       const w = B.stoneWall(l, rnd); this.place(w, x, z, r);
@@ -346,6 +393,7 @@ export class World {
     const ty = t.position.y;
     this.annexCol = this.col.addBox(POI.tower.x - 2, POI.tower.z - 6.2, an ? an.userData.w / 2 : 2.9, an ? an.userData.d / 2 : 2.5, 0, -10, ty + (an ? an.userData.height : 6));
     if (an) this.annexCol.topFn = (lx, lz) => ty + an.userData.roofTop(lx, lz);
+    if (an) this.solidParts(an, an.userData.solids);
     this.tower = t;
     this.anims.push(() => {
       t.userData.chimes.forEach((c, i) => { c.position.y = 16 + Math.sin(G.time * 1.5 + i) * 0.15 - (i % 2) * 0.4; c.rotation.y += 0.02; });
@@ -566,16 +614,42 @@ export class World {
   }
 
   buildRift() {
-    const g = B.riftGate();
     const y = this.h(POI.rift.x, POI.rift.z);
-    g.position.set(POI.rift.x, y - 0.3, POI.rift.z);
+    const g = B.riftGate((lx, lz) => this.h(POI.rift.x + lx, POI.rift.z + lz) - y);
+    const A = g.userData.authored;   // the authored model stands on the ground; the code-built one is sunk 0.3 m
+    g.position.set(POI.rift.x, A ? y : y - 0.3, POI.rift.z);
     this.scene.add(g);
     this.rift = { group: g, y, center: new THREE.Vector3(POI.rift.x, y, POI.rift.z) };
     g.children.forEach((c) => {
-      if (c.userData.monolith) { const cc = this.col.addCircle(POI.rift.x + c.position.x, POI.rift.z + c.position.z, 1.5, -10, 40); cc.climb = false; cc.noTop = true; }
+      const m = c.userData.monolith;
+      if (m) { const cc = this.col.addCircle(POI.rift.x + c.position.x, POI.rift.z + c.position.z, m === true ? 1.5 : m, -10, 40); cc.climb = false; cc.noTop = true; }
     });
-    // gate plinths are solid blocks you can stand on
-    for (const sx of [-1, 1]) this.col.addBox(POI.rift.x + sx * 6.8, POI.rift.z - 14, 2.3, 2.3, 0, -10, y - 0.3 + 1.4);
+    if (!A) {
+      // gate plinths are solid blocks you can stand on
+      for (const sx of [-1, 1]) this.col.addBox(POI.rift.x + sx * 6.8, POI.rift.z - 14, 2.3, 2.3, 0, -10, y - 0.3 + 1.4);
+      return;
+    }
+    // Shapes of ref/blender/bd/rift.py: the seal floor, the landing and its two steps, then per side
+    // the stepped plinth, the pylon, the buttress (three steps down, outward) and the cheek block.
+    const X = POI.rift.x, Z = POI.rift.z, gz = A.portal[3];
+    this.col.addPlatform({ type: 'disc', x: X, z: Z, r: A.seal.r, top: y + A.seal.top });
+    this.col.addPlatform({ type: 'box', x: X, z: Z + gz - 0.05, hw: 4.5, hd: 1.15, top: y + A.step.top });
+    this.col.addPlatform({ type: 'box', x: X, z: Z + gz + 1.29, hw: 3.9, hd: 0.26, top: y + A.step.top - 0.16 });
+    this.col.addPlatform({ type: 'box', x: X, z: Z + gz + 1.74, hw: 4.15, hd: 0.26, top: y + A.step.top - 0.32 });
+    for (const sx of [-1, 1]) {
+      this.col.addBox(X + sx * 6.8, Z + gz, 2.3, 2.3, 0, -10, y + 0.97);
+      this.col.addBox(X + sx * 6.8, Z + gz, 2.0, 2.0, 0, -10, y + 1.52);
+      this.noClimb(this.col.addBox(X + sx * 6.8, Z + gz, 1.68, 1.68, 0, -10, y + 22));
+      const bt = this.col.addBox(X + sx * 11.1, Z + gz, 2.0, 0.95, 0, -10, y + 5.2);
+      bt.topFn = (lx) => { const d = sx * lx + 2.0; return y + (d < 1.5 ? 5.0 : d < 2.8 ? 3.3 : 1.7); };
+      this.col.addBox(X + sx * 4.6, Z + gz + 1.55, 0.5, 0.7, 0, -10, y + 1.53);
+    }
+    // the hanging stones breathe; the inlaid crystal pulses
+    const fl = g.userData.floaters, runes = g.userData.runes;
+    this.anims.push((dt) => {
+      fl.forEach((f, i) => { f.position.y = f.userData.y0 + Math.sin(G.time * 0.45 + i * 1.7) * (i ? 0.16 : 0.06); if (i) f.rotation.y += dt * 0.04 * (i % 2 ? 1 : -1); });
+      runes.color.setRGB(1.5, 0.95, 2.5).multiplyScalar(0.85 + 0.15 * Math.sin(G.time * 0.8));
+    });
   }
 
   buildLandmarks() {
@@ -769,7 +843,7 @@ export class World {
     this.sky.update(dt, playerPos, 1, camPos);
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);
-    this.props.update(G.camera);
+    this.props.update(G.camera, this.water.reflecting ? this.water.frustum : null);
     this.terrain.update(G.camera);
     const n = this.sky.night;
     B.windowMat.color.setRGB(1.6, 1.1, 0.5).multiplyScalar(0.25 + n * 1.3);

@@ -1,6 +1,6 @@
 # Generates the ornament SVGs used by src/styles-fantasy.css as CSS custom properties.
-# Run: python3 scripts/ornaments.py  -> paste the printed :root blocks over the ones at the top
-# of src/styles-fantasy.css. '#' must stay percent-encoded inside the data URIs.
+# Run: python3 scripts/ornaments.py  -> paste the printed :root block over the first one in
+# src/styles-fantasy.css. '#' must stay percent-encoded inside the data URIs.
 import math, random, urllib.parse
 G = '#f1d48a'
 def uri(svg): return 'url("data:image/svg+xml,' + urllib.parse.quote(svg, safe=" =:/,.'-()") + '")'
@@ -94,11 +94,29 @@ star = uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>"
 spark = uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'>"
   f"<path d='{star_path(10, 10, 10, 5, 1.6, 4)}' fill='#fff6d6'/></svg>")
 
+# five staff lines with diamond note heads: the valley's songs as a quiet rule under headers
+def staff(w=720, notes=((78, 3), (150, 1), (236, 4), (318, 2), (402, 5), (486, 3), (566, 1), (642, 4))):
+    y = lambda l: 30 - l * 5
+    lines = ''.join(f"<path d='M0 {y(i)} H{w}' stroke='url(#g)' stroke-width='.8'/>" for i in range(1, 6))
+    heads = ''.join(
+        f"<path d='M{x} {y(l) - 3.4} l3.4 3.4 -3.4 3.4 -3.4 -3.4Z' fill='{G}' fill-opacity='.9'/>"
+        f"<path d='M{x + 3} {y(l)} v-12' stroke='{G}' stroke-width='.9' stroke-opacity='.75'/>" for x, l in notes)
+    return uri(f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {w} 36'>"
+      f"<defs><linearGradient id='g' gradientUnits='userSpaceOnUse' x1='0' y1='0' x2='{w}' y2='0'><stop offset='0' stop-color='{G}' stop-opacity='0'/>"
+      f"<stop offset='.2' stop-color='{G}' stop-opacity='.38'/><stop offset='.8' stop-color='{G}' stop-opacity='.38'/>"
+      f"<stop offset='1' stop-color='{G}' stop-opacity='0'/></linearGradient></defs>{lines}{heads}</svg>")
+
+# resonance: rings spreading from a point, a watermark for wide dark surfaces
+ripple = uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 600'><g fill='none' stroke='#f1d48a'>"
+  + ''.join(f"<circle cx='300' cy='300' r='{r}' stroke-opacity='{0.16 * (1 - r / 320):.3f}' stroke-width='{1.4 if i % 3 == 0 else 0.8}'/>" for i, r in enumerate(range(40, 300, 26)))
+  + "</g></svg>")
+
 VARS = {
   'orn-tl': corner(''), 'orn-tr': corner('translate(60 0) scale(-1 1)'),
   'orn-bl': corner('translate(0 60) scale(1 -1)'), 'orn-br': corner('translate(60 60) scale(-1 -1)'),
   'orn-rule': rule, 'pat-stars': stars, 'orn-rune': rune, 'orn-rune-soft': soft,
   'orn-rune-bright': bright, 'orn-star': star, 'orn-spark': spark,
+  'orn-staff': staff(), 'orn-ripple': ripple,
 }
 print(":root {")
 for k, v in VARS.items(): print(f"  --{k}: {v};")

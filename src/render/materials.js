@@ -28,6 +28,23 @@ export const U = {
   seeA: { value: new THREE.Vector3() },
   seeB: { value: new THREE.Vector3() },
   seeR: { value: 0 },
+  // Leaf-clump atlas for foliage cards (created lazily by leafTexture())
+  leaf: { value: null },
+  // Surface detail arrays (surfaces.js, baked by the Renderer) and the terrain's ground-layer
+  // weights on the heightmap grid: R grass, G earth, B sand, A snow (the rest is rock / paving)
+  surfA: { value: null },
+  surfN: { value: null },
+  splatTex: { value: null },
+  paveTex: { value: null },
+  // more maps on the height grid (terrain.js buildMesh): colour of level ground, distance to
+  // the nearest road, the smooth ground's normal; and the palette the shader paints rock and
+  // roads from
+  groundTex: { value: null },
+  pathTex: { value: null },
+  tnormTex: { value: null },
+  terrPal: { value: Array.from({ length: 9 }, () => new THREE.Color()) },
+  // sky colour mirrored by glossy and wet surfaces (set by Sky)
+  skyRefl: { value: new THREE.Color(0.5, 0.6, 0.75) },
 };
 
 // ---------------------------------------------------------------------------
@@ -78,6 +95,179 @@ export function noiseTexture() {
   return U.noise.value;
 }
 noiseTexture();
+
+// ---------------------------------------------------------------------------
+// Foliage atlas (4x4 tiles) for the cards of props.js: alpha = the shapes, rgb = a tint
+// multiplier (what lies underneath is darker; a leaf has a lit and a shaded half and a midrib).
+//   row 0: broadleaf clumps
+//   row 1: needle sprays (two; the twig runs along u from the left edge) and needle tufts (two)
+//   row 2: the snow lying on those four
+//   row 3: willow strands (two; hanging from v = 0) and blossom clusters (two)
+// Colour and coverage are drawn on separate canvases so the tint does not go dark where
+// the alpha fades (canvas pixels are premultiplied).
+function makeLeafTexture(S = 2048) {
+  const C = S / 4;
+  const mk = () => { const cv = document.createElement('canvas'); cv.width = cv.height = S; return cv.getContext('2d', { willReadFrequently: true }); };
+  const gc = mk(), ga = mk();
+  gc.fillStyle = 'rgb(170,170,170)'; gc.fillRect(0, 0, S, S);
+  ga.fillStyle = '#000'; ga.fillRect(0, 0, S, S);
+  let s = 90210;
+  const rnd = () => { s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const grey = (v) => { const k = Math.round(Math.min(255, Math.max(0, v))); return 'rgb(' + k + ',' + k + ',' + k + ')'; };
+  // Shapes are queued (the random numbers drawn once) and then painted on both canvases.
+  // sx, sy: units of the tile's own space (pixels by default; metres for the strands).
+  const paint = (v, ops, sx = 1, sy = 1) => {
+    for (const g of [gc, ga]) {
+      g.save();
+      g.beginPath(); g.rect((v % 4) * C, Math.floor(v / 4) * C, C, C); g.clip();
+      g.translate((v % 4) * C, Math.floor(v / 4) * C); g.scale(sx, sy);
+      for (const op of ops) op(g, g === ga);
+      g.restore();
+    }
+  };
+  const leaf = (ops, x, y, rot, L, W, tone, lw) => ops.push((g, A) => {
+    g.save();
+    g.translate(x, y); g.rotate(rot); g.translate(-L * 0.35, 0);
+    g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(L * 0.42, -W, L, 0); g.quadraticCurveTo(L * 0.42, W, 0, 0); g.closePath();
+    if (A) { g.fillStyle = '#fff'; g.fill(); } else {
+      const gr = g.createLinearGradient(0, -W * 0.5, 0, W * 0.5);
+      gr.addColorStop(0, grey(tone * 1.04)); gr.addColorStop(0.5, grey(tone)); gr.addColorStop(0.52, grey(tone * 0.88)); gr.addColorStop(1, grey(tone * 0.82));
+      g.fillStyle = gr; g.fill();
+      g.strokeStyle = grey(tone * 0.7); g.lineWidth = lw; g.stroke();
+    }
+    g.restore();
+  });
+  const line = (ops, x0, y0, x1, y1, w, tone) => ops.push((g, A) => {
+    g.strokeStyle = A ? '#fff' : grey(tone); g.lineWidth = w; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+  });
+  const poly = (ops, pts, tone) => ops.push((g, A) => {
+    g.fillStyle = A ? '#fff' : grey(tone);
+    g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.closePath(); g.fill();
+  });
+  // soft round shape, lit from the upper left (snow, petals)
+  const blob = (ops, x, y, rx, ry, rot, tone, edge = 0.8) => ops.push((g, A) => {
+    g.save(); g.translate(x, y); g.rotate(rot); g.scale(rx, ry);
+    g.beginPath(); g.arc(0, 0, 1, 0, 7);
+    if (A) g.fillStyle = '#fff'; else {
+      const gr = g.createRadialGradient(-0.25, -0.3, 0.1, 0, 0, 1);
+      gr.addColorStop(0, grey(tone)); gr.addColorStop(1, grey(tone * edge));
+      g.fillStyle = gr;
+    }
+    g.fill(); g.restore();
+  });
+  // -- row 0: clumps of broad leaves
+  for (let v = 0; v < 4; v++) {
+    const ops = [], n = 18 + v * 3;
+    for (let i = 0; i < n; i++) {
+      const under = i < n * 0.45;
+      const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * 0.26 * C;
+      const L = (0.17 + rnd() * 0.06) * C * (under ? 1.08 : 1), W = L * (0.42 + rnd() * 0.14);
+      const rot = a + (rnd() - 0.5) * 1.6;
+      const tone = under ? 132 + rnd() * 28 : 206 + rnd() * 48;
+      leaf(ops, C / 2 + Math.cos(a) * d, C / 2 + Math.sin(a) * d, rot, L, W, tone, C / 256);
+    }
+    paint(v, ops);
+  }
+  // -- rows 1 and 2: conifer. A twig is a dark tapering body (so a spray keeps its mass at a
+  // distance) under needles that point forward on both sides.
+  const twig = (ops, x, y, ang, len, tone) => {
+    const ca = Math.cos(ang), sa = Math.sin(ang), bw = len * 0.12 + C * 0.012;
+    poly(ops, [[x, y], [x + ca * len * 0.3 - sa * bw, y + sa * len * 0.3 + ca * bw], [x + ca * len * 0.96, y + sa * len * 0.96], [x + ca * len * 0.3 + sa * bw, y + sa * len * 0.3 - ca * bw]], tone * 0.66);
+    const nl = Math.max(0.05 * C, len * 0.2), step = 0.019 * C;
+    for (let d = step * 0.6; d < len; d += step) {
+      const t = d / len, l = nl * (1 - 0.5 * t);
+      for (const sd of [-1, 1]) {
+        const na = ang + sd * (0.8 - 0.25 * t + (rnd() - 0.5) * 0.3), ll = l * (0.75 + rnd() * 0.45);
+        line(ops, x + ca * d, y + sa * d, x + ca * d + Math.cos(na) * ll, y + sa * d + Math.sin(na) * ll, C * 0.0115, tone * (0.84 + rnd() * 0.3));
+      }
+    }
+    line(ops, x, y, x + ca * len * 0.9, y + sa * len * 0.9, C * 0.008, tone * 0.55);
+  };
+  // snow resting along the inner part of each twig: needle tips stay out
+  const snowOn = (twigs) => {
+    const ops = [];
+    for (const [x, y, ang, len] of twigs) {
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      for (let d = len * 0.04; d < len * 0.74; d += C * 0.05) {
+        const t = d / len, r = C * (0.07 - 0.03 * t) * (0.75 + rnd() * 0.5);
+        const fit = (q) => Math.min(C - r - 3, Math.max(r + 3, q));   // (whole inside the tile)
+        blob(ops, fit(x + ca * d + (rnd() - 0.5) * r * 0.5), fit(y + sa * d + (rnd() - 0.5) * r * 0.5), r, r * (0.7 + rnd() * 0.2), ang, 226 + rnd() * 29, 0.82);
+      }
+    }
+    return ops;
+  };
+  for (let v = 4; v < 8; v++) {
+    const ops = [], twigs = [];
+    if (v < 6) {
+      // spray: side twigs alternate along the main one, longest before the middle
+      const x0 = 0.04 * C, x1 = 0.86 * C, bow = (rnd() - 0.5) * 0.07 * C, n = 7;
+      for (let k = 0; k < n; k++) for (const sd of [-1, 1]) {
+        const t = 0.04 + ((k + (sd > 0 ? 0.5 : 0)) / n) * 0.8;
+        const len = C * 0.5 * Math.pow(Math.sin(Math.PI * (0.17 + 0.8 * t)), 0.9) * (0.85 + rnd() * 0.22);
+        twigs.push([x0 + (x1 - x0) * t, 0.5 * C + Math.sin(t * Math.PI) * bow, sd * (0.84 - 0.3 * t + (rnd() - 0.5) * 0.14), len, (176 + rnd() * 62) * (0.84 + 0.2 * t)]);
+      }
+      twigs.push([x0, 0.5 * C, 0, x1 - x0 + 0.08 * C, 226]);
+    } else {
+      // tuft: twigs of every length all round a centre (a ragged ball, not a star)
+      const n = 17 + (v - 6) * 2;
+      for (let k = 0; k < n; k++) twigs.push([0.5 * C + (rnd() - 0.5) * 0.06 * C, 0.5 * C + (rnd() - 0.5) * 0.06 * C, k * 2.3999632 + rnd() * 0.4, C * (0.25 + rnd() * 0.17), k % 3 ? 196 + rnd() * 56 : 148 + rnd() * 30]);
+    }
+    // darker ones underneath
+    twigs.sort((a, b) => a[4] - b[4]);
+    for (const tw of twigs) twig(ops, tw[0], tw[1], tw[2], tw[3], tw[4]);
+    paint(v, ops);
+    paint(v + 4, snowOn(twigs));
+  }
+  // -- row 3: willow strands, drawn in metres on a 0.6 x 2.4 m tile
+  for (let v = 12; v < 14; v++) {
+    const ops = [];
+    for (let k = 0; k < 4; k++) {
+      const x0 = 0.1 + k * 0.133 + (rnd() - 0.5) * 0.04, len = 1.5 + rnd() * 0.82, ph = rnd() * 6.3, base = k % 2 ? 150 : 205;
+      const xa = (y) => x0 + Math.sin(y * 2.1 + ph) * 0.028 * Math.min(1, y * 2);
+      for (let y = 0; y < len - 0.06; y += 0.06) line(ops, xa(y), y, xa(y + 0.06), y + 0.06, 0.0075, base * 0.56);
+      let sd = 1;
+      for (let y = 0.02; y < len; y += 0.046 + rnd() * 0.02) {
+        sd = -sd;
+        const L = (0.105 + rnd() * 0.05) * (1 - 0.45 * Math.pow(y / len, 3));
+        leaf(ops, xa(y) + sd * 0.012, y + L * 0.3, Math.PI / 2 - sd * (0.32 + rnd() * 0.42), L, L * (0.19 + rnd() * 0.06), base + rnd() * 46, 0.0022);
+      }
+    }
+    paint(v, ops, C / 0.6, C / 2.4);
+  }
+  // -- row 3: blossom clusters over a few leaves
+  for (let v = 14; v < 16; v++) {
+    const ops = [];
+    for (let i = 0; i < 6; i++) {
+      const a = rnd() * Math.PI * 2, d = (0.1 + rnd() * 0.2) * C, L = (0.2 + rnd() * 0.06) * C;
+      leaf(ops, C / 2 + Math.cos(a) * d, C / 2 + Math.sin(a) * d, a + (rnd() - 0.5), L, L * 0.44, 118 + rnd() * 30, C / 256);
+    }
+    const n = 11 + (v - 14) * 2;
+    for (let i = 0; i < n; i++) {
+      const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * 0.31 * C, fr = (0.07 + rnd() * 0.03) * C;
+      const x = C / 2 + Math.cos(a) * d, y = C / 2 + Math.sin(a) * d, r0 = rnd() * 6.3, tone = i < n * 0.4 ? 178 + rnd() * 22 : 224 + rnd() * 31;
+      for (let k = 0; k < 5; k++) {
+        const pa = r0 + k * 1.2566;
+        blob(ops, x + Math.cos(pa) * fr * 0.56, y + Math.sin(pa) * fr * 0.56, fr * 0.56, fr * 0.43, pa, tone, 0.86);
+      }
+      blob(ops, x, y, fr * 0.2, fr * 0.2, 0, tone * 0.6, 0.9);
+    }
+    paint(v, ops);
+  }
+  const dc = gc.getImageData(0, 0, S, S).data, da = ga.getImageData(0, 0, S, S).data;
+  const data = new Uint8Array(S * S * 4);
+  for (let i = 0; i < S * S * 4; i += 4) { data[i] = dc[i]; data[i + 1] = dc[i + 1]; data[i + 2] = dc[i + 2]; data[i + 3] = da[i]; }
+  const t = new THREE.DataTexture(data, S, S, THREE.RGBAFormat);
+  t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true; t.anisotropy = 4;
+  t.colorSpace = THREE.NoColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+export function leafTexture() {
+  if (!U.leaf.value) U.leaf.value = makeLeafTexture();
+  return U.leaf.value;
+}
 
 // ---------------------------------------------------------------------------
 // Aerial perspective fog (global ShaderChunk override).
@@ -212,6 +402,18 @@ float seeFade(vec3 p){
 const DISSOLVE_CLIP = `
   #include <clipping_planes_fragment>
   if (uDissolve > 0.0 && _dnoise() < uDissolve * 1.08) discard;
+  #ifdef LEAF_CARDS
+  if (vCard.z >= 0.0) {
+    // one of the sixteen tiles of the atlas; edges go to MSAA coverage (alphaToCoverage)
+    float _v = floor(vCard.z);
+    vec4 _lf = texture2D(uLeafTex, (clamp(vCard.xy, 0.01, 0.99) + vec2(mod(_v, 4.0), floor(_v * 0.25))) * 0.25, -0.75);
+    float _a = clamp((_lf.a - 0.42) / max(fwidth(_lf.a), 0.02) + 0.5, 0.0, 1.0) * (1.0 - vCard.w);
+    if (_a < 0.03) discard;
+    diffuseColor.a = _a;
+    diffuseColor.rgb *= _lf.rgb * 1.22;
+    _isCard = 1.0;
+  }
+  #endif
 `;
 const DISSOLVE_VERT = `
   #include <project_vertex>
@@ -222,6 +424,45 @@ const DISSOLVE_VERT = `
     #endif
     vDWP = (modelMatrix * _dwp).xyz;
   }
+  #ifdef LEAF_CARDS
+    // foliage, textured from the atlas: aCard = (corner x, corner y, kind, tile + seed).
+    //   kind < 0: a sheet that stays where the mesh puts it (needle sprays, boughs)
+    //   0 < kind < 100: a card whose four vertices sit at one point and spread out facing the
+    //     viewer (half-width = kind), turned by its seed and rustling a little in the wind
+    //   kind > 100: a hanging strand: a strip down the tree's vertical that turns about it to
+    //     face the viewer (half-width = kind - 100); its lower end (y = 1) swings
+    vCard = vec4(0.0, 0.0, -1.0, 0.0);
+    if (aCard.z != 0.0) {
+      vCard = vec4(aCard.xy * 0.5 + 0.5, aCard.w, 0.0);
+      // foliage in the camera's way (too close to it, or between it and the player) makes room
+      // whole: cards and strands shrink, sheets thin out through their coverage. No stipple.
+      float _keep = 1.0;
+      #ifdef LEAF_SEE
+        _keep = 1.0 - seeFade(vDWP);
+      #endif
+      if (aCard.z < 0.0) vCard.w = smoothstep(0.3, 0.7, 1.0 - _keep);
+      if (aCard.z > 0.0) {
+        float _fr = fract(aCard.w);
+        float _cs = length(modelMatrix[0].xyz);
+        vec3 _up = modelViewMatrix[1].xyz;
+        #ifdef USE_INSTANCING
+          _cs *= (length(instanceMatrix[0].xyz) + length(instanceMatrix[1].xyz)) * 0.5;
+          _up = (modelViewMatrix * vec4(instanceMatrix[1].xyz, 0.0)).xyz;
+        #endif
+        if (aCard.z < 100.0) {
+          float _cr = _fr * 6.2831853 + sin(uTime * (1.1 + _fr * 1.7) + _fr * 47.0) * 0.13 * uWind;
+          float _cc = cos(_cr), _sn = sin(_cr);
+          mvPosition.xy += vec2(aCard.x * _cc - aCard.y * _sn, aCard.x * _sn + aCard.y * _cc) * aCard.z * _cs * _keep;
+        } else {
+          vec3 _sd = cross(normalize(_up), normalize(mvPosition.xyz));
+          _sd /= max(length(_sd), 0.25);
+          float _lo = aCard.y * 0.5 + 0.5;
+          mvPosition.xyz += _sd * (aCard.x * (aCard.z - 100.0) * _cs * _keep + sin(uTime * (0.8 + _fr * 0.9) + _fr * 40.0) * 0.16 * uWind * _lo * _lo);
+        }
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    }
+  #endif
 `;
 
 const RIM_FRAG = `
@@ -231,6 +472,11 @@ const RIM_FRAG = `
     float _r = 1.0 - clamp(dot(normal, _vd), 0.0, 1.0);
     float _lit = clamp(dot(reflectedLight.directDiffuse, vec3(0.6)), 0.0, 1.0);
     outgoingLight += uRimColor * smoothstep(0.5, 1.0, _r) * uRim * (0.35 + 0.65 * _lit);
+    #ifdef SURF_SPEC
+      // the sky in smooth and wet surfaces, strongest at grazing angles
+      float _gl = 1.0 - _rough;
+      outgoingLight += uSkyRefl * ((0.04 + 0.96 * _r * _r * _r * _r * _r) * _gl * _gl * _cav * _specK);
+    #endif
   }
   #include <opaque_fragment>`;
 
@@ -247,9 +493,10 @@ const WIND_VERT = `
   transformed.z += cos(uTime * 1.1 + _ip.z * 0.2) * uWind * _h * uSway * 0.6;
 `;
 
-// Key-light response. The directional light's shadow-map term and the cloud
+// Key-light response (the sky's SunLight). Its shadow-map term and the cloud
 // shadow are folded into the band instead of scaling the light, so cast and
-// form shadows share the same cool shade color.
+// form shadows share the same cool shade color. Surfaces with a detail layer
+// (surfaces.js) shade their relief with a softer ramp, a GGX highlight and a cavity term.
 const TOON_LIGHT_PARS = `
 varying vec3 vViewPosition;
 struct ToonMaterial { vec3 diffuseColor; };
@@ -261,6 +508,10 @@ float _dirShadow = 1.0;
 float _isDir = 0.0;
 float _cloudSh = 1.0;
 float _ndlOff = 0.0;
+// detail-layer response: roughness, highlight strength (0 = none), cavity (1 = open)
+float _rough = 0.9;
+float _specK = 0.0;
+float _cav = 1.0;
 // Foliage mask from the vertex colour alpha (RGBA vertex colours only):
 // 1 = leaves, 0 = wood/stone. -1 = not provided (fall back to hue tests).
 float _leafM = -1.0;
@@ -274,21 +525,35 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
   float ndl = dot( geometryNormal, directLight.direction );
   if ( _isDir > 0.5 ) {
     #if defined( TOON_SOFT )
-      float g = smoothstep( -0.12, 0.5, ndl + _ndlOff );
+      float g = smoothstep( -0.16, 0.56, ndl + _ndlOff );
     #elif defined( TOON_FOLIAGE )
       float g = smoothstep( -0.28, 0.3, ndl + _ndlOff );
+    #elif defined( SURF_LAYER )
+      float g = smoothstep( -0.14, 0.42, ndl );
     #elif defined( USE_GRADIENTMAP )
       float g = texture2D( gradientMap, vec2( clamp( ndl * 0.5 + 0.5, 0.0, 1.0 ), 0.5 ) ).r;
     #else
       float g = smoothstep( -0.12, 0.08, ndl );
     #endif
     float lit = g * _dirShadow * _cloudSh;
-    vec3 irr = directLight.color * mix( uShadeTint, vec3( 1.0 ), lit );
+    vec3 irr = directLight.color * mix( uShadeTint, vec3( 1.0 ), lit ) * mix( 1.0, _cav, 0.55 );
     reflectedLight.directDiffuse += irr * BRDF_Lambert( material.diffuseColor );
+    if ( _specK > 0.0 ) {
+      vec3 hv = normalize( directLight.direction + geometryViewDir );
+      float nh = max( dot( geometryNormal, hv ), 0.0 ), a = _rough * _rough, a2 = a * a;
+      float dd = nh * nh * ( a2 - 1.0 ) + 1.0;
+      float fr = 0.04 + 0.96 * pow( 1.0 - max( dot( hv, geometryViewDir ), 0.0 ), 5.0 );
+      reflectedLight.directDiffuse += directLight.color * ( min( a2 / ( 3.14159 * dd * dd ), 40.0 ) * fr * 0.25 * _specK * lit * max( ndl, 0.0 ) * _cav );
+    }
     #ifdef TOON_FOLIAGE
       float tr = pow( clamp( dot( -geometryViewDir, directLight.direction ), 0.0, 1.0 ), 3.0 );
       float leaf = _leafM >= 0.0 ? _leafM : smoothstep( 0.0, 0.06, material.diffuseColor.g - material.diffuseColor.r );
       reflectedLight.directDiffuse += directLight.color * material.diffuseColor * vec3( 1.0, 1.05, 0.7 ) * tr * leaf * 0.32 * ( 0.3 + 0.7 * _dirShadow * _cloudSh );
+      #ifdef LEAF_CARDS
+        // foliage cards seen from their far side (looking up into a crown): the sun that
+        // reaches them comes through the leaves
+        reflectedLight.directDiffuse += directLight.color * material.diffuseColor * vec3( 1.0, 1.1, 0.5 ) * ( clamp( -ndl - _ndlOff, 0.0, 1.0 ) * _isCard * 0.55 * _dirShadow * _cloudSh );
+      #endif
     #endif
   } else {
     vec3 irradiance = getGradientIrradiance( geometryNormal, directLight.direction ) * directLight.color;
@@ -296,15 +561,15 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
   }
 }
 void RE_IndirectDiffuse_Toon( const in vec3 irradiance, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in ToonMaterial material, inout ReflectedLight reflectedLight ) {
-  reflectedLight.indirectDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );
+  reflectedLight.indirectDiffuse += irradiance * BRDF_Lambert( material.diffuseColor ) * _cav;
 }
 #define RE_Direct RE_Direct_Toon
 #define RE_IndirectDiffuse RE_IndirectDiffuse_Toon
 `;
 function toonLightsBegin() {
   return THREE.ShaderChunk.lights_fragment_begin
-    .replace('getDirectionalLightInfo( directionalLight, directLight );', 'getDirectionalLightInfo( directionalLight, directLight ); _isDir = 1.0;')
-    .replace(/directLight\.color \*= \( directLight\.visible && receiveShadow \) \? getShadow\( directionalShadowMap/g, '_dirShadow = ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap');
+    .replace('getSunLightInfo( sunLight, directLight );', 'getSunLightInfo( sunLight, directLight ); _isDir = 1.0;')
+    .replace('directLight.color *= ( directLight.visible && receiveShadow ) ? getSunShadow( sunShadowMap', '_dirShadow = ( directLight.visible && receiveShadow ) ? getSunShadow( sunShadowMap');
 }
 const LIGHTS_PRE = `
   _cloudSh = cloudShadowAt( vDWP );
@@ -316,85 +581,273 @@ const LIGHTS_PRE = `
   #endif
 `;
 
-// Terrain: painterly brush noise, rock strata on steep slopes.
+// Terrain: macro brush variation on the vertex-painted palette, then the ground layers
+// (turf, earth, rock, sand, snow, paving) blended by the splat map and by their heights.
 const TERRAIN_VERT_PARS = `varying vec3 vWPos;\nvarying vec3 vWNrm;\n`;
 const TERRAIN_FRAG_PARS = `
 uniform sampler2D uBurnTex;
+uniform sampler2D uGroundTex;
+uniform sampler2D uSplatTex;
+uniform sampler2D uPaveTex;
+uniform sampler2D uPathTex;
+uniform sampler2D uTNormTex;
+uniform vec3 uPal[9]; // rock, rockDark, rockWarm, rockCool, dirt, dirtDark, dirtLight, worn, grassDark
 uniform float uWet;
 varying vec3 vWPos;
 varying vec3 vWNrm;
+// worked out once per pixel (TERRAIN_FRAG), used again at the lighting stage (TERRAIN_SURF)
+vec3 _wn = vec3(0.0, 1.0, 0.0);
+float _wG = 0.0, _wD = 0.0, _wS = 0.0, _wN = 0.0, _wRock = 0.0, _wPave = 0.0, _wBare = 0.0, _moss = 0.0, _beds = 0.0, _yb = 0.0;
+#ifdef CLIFF_SKIN
+varying vec2 vEdge; // x: open to the sky (1) or shut in, y: 1 on a top that grows grass
+#endif
 float _h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float _vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
   return mix(mix(_h21(i), _h21(i+vec2(1,0)), f.x), mix(_h21(i+vec2(0,1)), _h21(i+vec2(1,1)), f.x), f.y); }
 `;
+// (after the samplers are declared)
+const TERRAIN_FN = `
+// Bicubic (B-spline) read of a map on the 2 m height grid, as four bilinear taps: nothing of
+// the grid is left in what comes back, so colours and layer borders can be drawn per pixel.
+vec4 _bic(sampler2D t, vec2 uv){
+  vec2 sz = vec2(textureSize(t, 0)), st = uv * sz - 0.5, i = floor(st), f = st - i;
+  vec2 w0 = (1.0 - f) * (1.0 - f) * (1.0 - f) / 6.0, w1 = (4.0 - 6.0 * f * f + 3.0 * f * f * f) / 6.0, w3 = f * f * f / 6.0;
+  vec2 g0 = w0 + w1, g1 = 1.0 - g0;
+  vec2 p0 = (i + w1 / g0 - 0.5) / sz, p1 = (i + w3 / g1 + 1.5) / sz;
+  // (explicit gradients: the taps jump at every texel, which would send the mip level wild)
+  vec2 dx = dFdx(uv), dy = dFdy(uv);
+  return g0.y * (g0.x * textureGrad(t, p0, dx, dy) + g1.x * textureGrad(t, vec2(p1.x, p0.y), dx, dy))
+       + g1.y * (g0.x * textureGrad(t, vec2(p0.x, p1.y), dx, dy) + g1.x * textureGrad(t, p1, dx, dy));
+}
+`;
 const TERRAIN_FRAG = `
   #include <color_fragment>
   {
-    vec3 wn = normalize(vWNrm);
-    float slope = 1.0 - wn.y;
+    vec2 p = vWPos.xz;
+    vec2 guv0 = (p + uHeightP.x) * uHeightP.y + uHeightP.z;
+    // the maps are read through a small warp, so no border drawn from them runs straight
+    vec2 wq = (texture2D(uNoiseTex, p * 0.027).rg - 0.5) * 3.2 + (texture2D(uNoiseTex, p * 0.19).gb - 0.5) * 0.7;
+    vec2 guv = guv0 + wq * uHeightP.y;
+    vec3 gc = _bic(uGroundTex, guv).rgb;
+    vec4 sp = _bic(uSplatTex, guv);
+    float pv = _bic(uPaveTex, guv).r;
+    float rockK, fringe = 0.0;
+    #ifdef CLIFF_SKIN
+    {
+      // the true face of the triangle says wall or top (the smooth normal turns too slowly),
+      // and lights the rock as the planes it is cut into, their edges only slightly eased
+      vec3 Tx = dFdx(vWPos), Ty = dFdy(vWPos);
+      vec3 gn = normalize(cross(Tx, Ty));
+      if (gn.y < 0.0) gn = -gn;
+      _wn = normalize(mix(normalize(vWNrm), gn, 0.4));
+      float steep = 1.0 - smoothstep(0.62, 0.78, gn.y);
+      // (for the tops: by the smooth normal, unless the face itself is level: a ramp at the
+      // foot of the rock has triangles leaning either way, and would be cut in saw teeth)
+      float steepT = (1.0 - smoothstep(0.62, 0.78, normalize(vWNrm).y)) * (1.0 - smoothstep(0.9, 0.97, gn.y));
+      float nq = texture2D(uNoiseTex, p * 0.31).b;
+      // grass keeps to the gentle tops marked for it (in patches where the mark is partial)...
+      float top = smoothstep(0.42, 0.58, vEdge.y + (texture2D(uNoiseTex, p * 0.055).b - 0.5) * 0.5 + (nq - 0.5) * 0.12) * (1.0 - steepT);
+      // ...and hangs over the lip of the wall below in a ragged fringe: the mark falls from 1
+      // to 0 down the first row of the wall, and its gradient turns that into metres
+      float ex = dFdx(vEdge.y), ey = dFdy(vEdge.y);
+      float ta = dot(Tx, Tx), tb = dot(Tx, Ty), tc = dot(Ty, Ty);
+      vec3 eg = ((tc * ex - tb * ey) * Tx + (ta * ey - tb * ex) * Ty) / max(ta * tc - tb * tb, 1e-12);
+      float lip = (1.0 - vEdge.y) / max(length(eg), 1e-3);
+      float len = 0.12 + 0.6 * texture2D(uNoiseTex, p * 0.23).g * (0.4 + 1.2 * nq);
+      // (only where the mark really falls away downwards: a face between two grass tops has no lip)
+      fringe = steep * smoothstep(0.03, 0.12, eg.y) * smoothstep(0.35, 0.65, eg.y / max(length(eg), 1e-3)) * (1.0 - smoothstep(0.55, 1.0, lip / len));
+      rockK = 1.0 - max(top, fringe);
+      fringe *= 1.0 - top;
+      _moss = 0.16 * smoothstep(0.0, 0.5, vEdge.y) + 0.12 * (1.0 - smoothstep(0.2, 0.8, vEdge.x));
+    }
+    #else
+    {
+      // the smooth ground's own normal, the same at every level of detail
+      vec4 tn = _bic(uTNormTex, guv0);
+      vec2 nxz = (tn.rb * 65280.0 + tn.ga * 255.0) / 65535.0 * 2.0 - 1.0;
+      _wn = normalize(vec3(nxz.x, sqrt(max(1.0 - dot(nxz, nxz), 0.0)), nxz.y));
+      rockK = smoothstep(0.84, 0.7, _wn.y + (texture2D(uNoiseTex, p * 0.21).b - 0.5) * 0.1);
+    }
+    #endif
+    // rock: grey, warmer or cooler by region; faces turned to the sky are paler and warmer
+    // than the ones that lean out
+    vec2 q3 = p + vWPos.y * vec2(0.61, 0.37);
+    vec3 rockC = mix(uPal[0], uPal[1], smoothstep(0.3, 0.8, texture2D(uNoiseTex, q3 * 0.0125).r));
+    rockC = mix(rockC, uPal[2], smoothstep(0.45, 0.8, texture2D(uNoiseTex, p * 0.005 + 0.37).g) * 0.5);
+    rockC = mix(rockC, uPal[3], smoothstep(0.45, 0.8, texture2D(uNoiseTex, p * 0.0033 + 0.71).r) * 0.45);
+    // Bedded country (lower down, by region): the beds dip a little and roll slowly, so no
+    // bedding plane is a level line across the map (_yb: height measured along the beds).
+    // Up a cliff the rock comes in units: thin beds, then a massive band, then beds again.
+    // Each bed has its own tone, some warmer, the odd one dark.
+    _yb = vWPos.y + (texture2D(uNoiseTex, p * 0.006 + 0.9).r - 0.5) * 5.0 + dot(p, vec2(0.05, -0.035));
+    float unit = texture2D(uNoiseTex, vec2(0.37 + p.x * 0.0006 + p.y * 0.0004, _yb * 0.012)).g;
+    _beds = smoothstep(0.44, 0.56, texture2D(uNoiseTex, p * 0.0031 + 0.57).g + clamp((30.0 - vWPos.y) * 0.004, -0.15, 0.15)) * smoothstep(0.36, 0.46, unit);
+    float bed = texture2D(uNoiseTex, vec2(0.11 + p.x * 0.0005 - p.y * 0.0003, _yb * 0.055)).b;
+    float bedT = (floor(bed * 5.0) + smoothstep(0.35, 0.65, fract(bed * 5.0))) / 5.0;
+    rockC *= 1.0 + _beds * (bedT - 0.5) * 0.3;
+    rockC = mix(rockC, rockC * vec3(1.1, 1.0, 0.86), _beds * smoothstep(0.55, 0.75, unit) * 0.6);
+    float up = smoothstep(-0.2, 0.7, _wn.y);
+    rockC *= (0.98 + 0.16 * up) * mix(vec3(0.99, 0.99, 1.01), vec3(1.06, 1.01, 0.93), up);
+    // (snow, ash and wet sand lie on rock too)
+    rockC = mix(rockC, gc, max(sp.b, max(sp.g, sp.a * 0.5)));
+    vec3 col = mix(gc, rockC, rockK);
+    col = mix(col, uPal[8], rockK * (1.0 - rockK) * 0.5 * sp.r);
+    col *= mix(vec3(1.0), vec3(0.6, 0.76, 0.5), fringe);
+    #ifdef CLIFF_SKIN
+      // shut-in rock is darker and cooler: walls deepen below their lips, gullies most of all
+      col *= mix(vec3(0.74, 0.78, 0.86), vec3(1.0), smoothstep(0.0, 0.9, vEdge.x));
+    #endif
+    // roads: the edge is drawn here from the distance to the road, so it is as crisp as the
+    // pixel, ragged with noise; trampled grass along it, packed earth in the middle
+    float pd = texture2D(uPathTex, guv0).r * uHeightP.w;
+    float pf = 1.0 - smoothstep(1.6, 3.3, pd + (texture2D(uNoiseTex, p * 0.045).r - 0.5) * 1.6 + (texture2D(uNoiseTex, p * 0.31).g - 0.5) * 0.5);
+    float over = max(max(sp.a, sp.g), pv);
+    float road = smoothstep(0.3, 0.8, pf) * (1.0 - over);
+    col = mix(col, uPal[7], smoothstep(0.05, 0.4, pf) * (1.0 - smoothstep(0.45, 0.85, pf)) * 0.45 * (1.0 - sp.b) * (1.0 - over));
+    float gN = texture2D(uNoiseTex, p * 0.0045 + 0.13).g;
+    vec3 dirtC = mix(mix(uPal[4], uPal[5], gN * 0.45), uPal[6], smoothstep(0.75, 1.0, pf) * smoothstep(0.4, 0.75, texture2D(uNoiseTex, p * 0.075).b) * 0.5);
+    col = mix(col, dirtC, road * 0.94);
+    diffuseColor.rgb *= col;
+    // layer weights: grass, earth, sand, snow; what is left is rock (slopes) or bare / laid stone
+    _wG = sp.r * (1.0 - road) * (1.0 - rockK);
+    _wD = max(road * (1.0 - sp.b), sp.g * (1.0 - rockK));
+    _wS = sp.b;
+    _wN = sp.a * (1.0 - 0.55 * rockK);
+    float rest = clamp(1.0 - _wG - _wD - _wS - _wN, 0.0, 1.0);
+    #ifdef CLIFF_SKIN
+      _wRock = rest;
+    #else
+      _wRock = rest * smoothstep(0.05, 0.24, 1.0 - _wn.y);
+      _wPave = (rest - _wRock) * pv;
+      _wBare = rest - _wRock - _wPave;
+    #endif
+  }
+  {
     // painterly brush strokes: anisotropic noise, rotated per region
     vec2 p = vWPos.xz;
     float ang = texture2D(uNoiseTex, p * 0.0021).a * 6.2832;
     mat2 R = mat2(cos(ang), -sin(ang), sin(ang), cos(ang));
     vec2 pr = R * p;
     float stroke = texture2D(uNoiseTex, pr * vec2(0.05, 0.16)).b;
-    float n1 = _vn(p * 0.45);
-    float n2 = _vn(p * 1.9 + 7.0);
     float macro = texture2D(uNoiseTex, p * 0.0037 + 0.31).g;
-    float k = 0.9 + 0.1 * n1 + 0.05 * n2 + 0.12 * (stroke - 0.5) + 0.12 * (macro - 0.5);
+    float k = 0.94 + 0.1 * (stroke - 0.5) + 0.14 * (macro - 0.5);
     // macro hue drift: warm/olive vs. cool/teal patches (mostly on greens)
     float green = smoothstep(0.02, 0.12, diffuseColor.g - max(diffuseColor.r, diffuseColor.b));
     vec3 hue = mix(vec3(1.06, 1.02, 0.86), vec3(0.9, 1.0, 1.08), macro);
     diffuseColor.rgb *= mix(vec3(1.0), hue, green * 0.8) * k;
-    // rock strata on cliffs
-    float rock = smoothstep(0.2, 0.38, slope);
-    if (rock > 0.0) {
-      float wob = texture2D(uNoiseTex, p * 0.012).r * 5.0 + _vn(p * 0.3) * 1.2;
-      float y = (vWPos.y + wob) * 0.3;
-      float fw = fwidth(y);
-      float detail = 1.0 - smoothstep(0.08, 0.35, fw);   // fade bands before they alias
-      float band = fract(y);
-      float bands = smoothstep(0.0, 0.1, band) * smoothstep(1.0, 0.6, band);
-      float layer = _h21(vec2(floor(y), 3.1));
-      vec3 strata = mix(vec3(0.88, 0.86, 0.9), vec3(1.06, 1.0, 0.92), layer) * mix(0.84, 1.02, bands);
-      float chip = _vn(vec2(p.x + p.y, vWPos.y * 2.0) * 1.1);
-      strata *= 0.95 + 0.1 * chip;
-      diffuseColor.rgb *= mix(vec3(1.0), strata, rock * detail);
+  }
+`;
+// at the lighting stage (the normal exists by then): ground layers, wildfire, rain
+const TERRAIN_SURF = `
+  {
+    vec3 wn = _wn;
+    vec2 p = vWPos.xz;
+    vec2 guv = (p + uHeightP.x) * uHeightP.y + uHeightP.z;
+    vec3 alb = vec3(0.0), dW = vec3(0.0);
+    float rgh = 0.0, cav = 0.0, ws = 0.0;
+    vec4 a_, n_; float w_;
+    _tileSeed(p + vWPos.y * vec2(0.61, 0.37));
+    // a layer wins where its own relief stands higher (grass between pebbles, not a blur)
+    #define GROUND(L, UV, W0, TX, BX, TURN) if (W0 > 0.004) { _layer(L, UV, TURN, a_, n_); w_ = W0 * (0.3 + a_.a); w_ *= w_; w_ *= w_; alb += a_.rgb * w_; dW += (TX * (n_.r * 2.0 - 1.0) + BX * (n_.g * 2.0 - 1.0)) * w_; rgh += n_.b * w_; cav += n_.a * w_; ws += w_; }
+    const vec3 X = vec3(1.0, 0.0, 0.0), Y = vec3(0.0, 1.0, 0.0), Z = vec3(0.0, 0.0, 1.0);
+    GROUND(0.0, p / 4.0, _wG, X, Z, 1.0)
+    GROUND(1.0, p / 3.0, _wD, X, Z, 1.0)
+    GROUND(3.0, p / 3.0, _wS, X, Z, 0.0)
+    GROUND(4.0, p / 4.0, _wN, X, Z, 1.0)
+    GROUND(10.0, p / 2.8, _wPave, X, Z, 1.0)
+    GROUND(12.0, p / 5.0, _wBare, X, Z, 1.0)
+    if (_wRock > 0.004) {
+      // rock: projected from the sides on a face (bedding runs level), from above on a top
+      vec3 bw = abs(wn); bw *= bw; bw *= bw; bw /= bw.x + bw.y + bw.z;
+      float wx = _wRock * bw.x, wy = _wRock * bw.y, wz = _wRock * bw.z;
+      #define ROCK(L, T, W) { float k_ = (W); if (k_ > 0.004) { GROUND(L, vWPos.zy / (T), wx * k_, Z, Y, 0.0) GROUND(L, vWPos.xy / (T), wz * k_, X, Y, 0.0) GROUND(L, p / (T), wy * k_, X, Z, 1.0) } }
+      // Two kinds of bedrock, each over its own country (thin beds lower down, big jointed
+      // blocks higher up), the blocks in two sizes. Far away both are read much larger: at
+      // its true size the relief would shrink to an even grain, and a cliff seen from afar
+      // shows its great ledges, not its small ones.
+      float farK = smoothstep(40.0, 150.0, length(cameraPosition - vWPos));
+      // (beds are laid along the dipping, rolling bedding, and come thick and thin)
+      #define BEDS(L, T, W) { float k_ = (W); if (k_ > 0.004) { GROUND(L, vec2(vWPos.z, _yb) / (T), wx * k_, Z, Y, 0.0) GROUND(L, vec2(vWPos.x, _yb) / (T), wz * k_, X, Y, 0.0) GROUND(L, p / (T), wy * k_, X, Z, 1.0) } }
+      float beds = _beds;
+      float big = smoothstep(0.48, 0.56, texture2D(uNoiseTex, p * 0.0047 + 0.21).r);
+      float thick = smoothstep(0.5, 0.6, texture2D(uNoiseTex, vec2(0.63 + p.x * 0.0005, _yb * 0.021)).r);
+      ROCK(2.0, 9.0, (1.0 - beds) * (1.0 - farK) * (1.0 - big))
+      ROCK(2.0, 16.0, (1.0 - beds) * (1.0 - farK) * big)
+      ROCK(2.0, 33.0, (1.0 - beds) * farK)
+      BEDS(13.0, 6.5, beds * (1.0 - farK) * (1.0 - thick))
+      BEDS(13.0, 12.0, beds * (1.0 - farK) * thick)
+      BEDS(13.0, 26.0, beds * farK)
+    }
+    float iw = 1.0 / max(ws, 1e-5);
+    diffuseColor.rgb *= ws > 0.0 ? alb * iw * 2.0 : vec3(1.0);
+    // (rock: the relief comes and goes over a face, strong in one stretch and worn nearly
+    // smooth in the next, and is read more gently from afar, or a far wall is all one grain)
+    float rf = _wRock * (1.0 - mix(0.15, 0.75, texture2D(uNoiseTex, p * 0.013 + vWPos.y * 0.021 + 0.7).r) * (0.45 + 0.55 * smoothstep(40.0, 150.0, length(cameraPosition - vWPos))));
+    vec3 pn = normalize(wn + dW * iw * 1.15 * (1.0 - _wRock + rf));
+    normal = normalize((viewMatrix * vec4(pn, 0.0)).xyz);
+    if (ws > 0.0) { _rough = rgh * iw; _cav = cav * iw; _specK = 1.0; }
+    if (_wRock > 0.05) {
+      // moss: on whatever faces the sky at the scale of the relief (the tops of ledges and
+      // blocks, never the risers), in damp stretches of country, thicker under grass tops
+      // and in shut-in places; none under snow
+      float mf = texture2D(uNoiseTex, p * 0.61 + vWPos.y * 0.37).b;
+      float damp = texture2D(uNoiseTex, p * 0.021 + vWPos.y * 0.013 + 0.4).g + _moss;
+      float moss = smoothstep(0.42, 0.74, pn.y + (mf - 0.5) * 0.4) * smoothstep(0.4, 0.62, damp) * _wRock * (1.0 - smoothstep(0.05, 0.3, _wN));
+      diffuseColor.rgb = mix(diffuseColor.rgb, uPal[8] * vec3(1.0, 1.12, 0.7) * (0.75 + 0.5 * mf), moss * 0.85);
+      _rough = mix(_rough, 0.95, moss);
     }
     // wildfire: scorched ground (patchy ash) and a hot rim while burning
-    vec2 buv = (vWPos.xz + uHeightP.x) * uHeightP.y + uHeightP.z;
-    vec4 burn = texture2D(uBurnTex, buv);
+    vec4 burn = texture2D(uBurnTex, guv);
     if (burn.r + burn.g > 0.002) {
       float ashN = _vn(p * 1.3);
       vec3 ash = mix(vec3(0.16, 0.14, 0.13), vec3(0.34, 0.3, 0.27), ashN);
-      diffuseColor.rgb = mix(diffuseColor.rgb, ash, burn.r * (0.75 + 0.25 * ashN) * (1.0 - rock * 0.6));
+      diffuseColor.rgb = mix(diffuseColor.rgb, ash, burn.r * (0.75 + 0.25 * ashN) * (1.0 - _wRock * 0.6));
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.08, 0.04), burn.g * 0.6);
     }
-    // rain: darker, more saturated soil and rock
-    diffuseColor.rgb *= 1.0 - uWet * (0.22 + 0.12 * rock);
+    // rain: darker, more saturated ground with a wet sheen
+    diffuseColor.rgb *= 1.0 - uWet * (0.22 + 0.12 * _wRock);
+    _rough = mix(_rough, 0.22, uWet * 0.75);
   }
-`;
+  #include <lights_toon_fragment>`;
 
-// World-space procedural surface detail, chosen per material with opts.tex.
-// Subtle on purpose: breaks up flat toon fills without fighting the style.
-// Also: ground-contact AO + grime from the terrain heightmap.
+// World-space surface detail, chosen per material with opts.tex: a baked layer from
+// surfaces.js (albedo, relief, roughness) mapped on the dominant plane, plus ground-contact
+// grime and moss. Also: ground-contact AO from the terrain heightmap.
 const SURFACE_PARS = `
 uniform sampler2D uHeightTex;
 uniform vec4 uHeightP;
-vec2 _hash2(vec2 p){ p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3))); return fract(sin(p) * 43758.5453); }
-vec3 _voro(vec2 x){
-  vec2 n = floor(x), f = fract(x);
-  float f1 = 8.0, f2 = 8.0, id = 0.0;
-  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
-    vec2 g = vec2(float(i), float(j));
-    vec2 o = _hash2(n + g) * 0.76 + 0.12;
-    vec2 r = g + o - f; float d = dot(r, r);
-    if (d < f1) { f2 = f1; f1 = d; id = _hash2(n + g + 17.0).x; } else if (d < f2) f2 = d;
-  }
-  return vec3(sqrt(f1), sqrt(f2), id);
-}
+uniform sampler2DArray uSurfA;
+uniform sampler2DArray uSurfN;
 float groundAbove(vec3 p){
   return p.y - texture2D(uHeightTex, (p.xz + uHeightP.x) * uHeightP.y + uHeightP.z).r;
+}
+// A layer of the surface arrays without its repeat showing: every pixel reads two copies of
+// the tile, each shifted (and, with turn, rotated: for layers with no direction of their
+// own) by an amount picked from a slowly wandering index, and cross-fades from one to the
+// next where the index steps (by height, so the fade is not a blur).
+vec2 _toA = vec2(0.0), _toB = vec2(0.0);
+mat2 _trA = mat2(1.0), _trB = mat2(1.0);
+float _tf = 0.0;
+void _tileSeed(vec2 q){
+  float l = texture2D(uNoiseTex, q * 0.0061).r * 9.0 + texture2D(uNoiseTex, q * 0.041).g * 1.6;
+  float ia = floor(l), aa = ia * 2.3999, ab = aa + 2.3999;
+  _tf = l - ia;
+  _toA = sin(vec2(3.0, 7.0) * ia); _toB = sin(vec2(3.0, 7.0) * (ia + 1.0));
+  _trA = mat2(cos(aa), sin(aa), -sin(aa), cos(aa)); _trB = mat2(cos(ab), sin(ab), -sin(ab), cos(ab));
+}
+void _layer(float L, vec2 uv, float turn, out vec4 a, out vec4 n){
+  mat2 ra = turn > 0.5 ? _trA : mat2(1.0), rb = turn > 0.5 ? _trB : mat2(1.0);
+  vec2 dx = dFdx(uv), dy = dFdy(uv);
+  // (a layer with a direction is only shifted along it: bedding has to run on unbroken)
+  vec2 oa = turn > 0.5 ? _toA : vec2(_toA.x, 0.0), ob = turn > 0.5 ? _toB : vec2(_toB.x, 0.0);
+  vec3 ua = vec3(ra * uv + oa, L), ub = vec3(rb * uv + ob, L);
+  vec4 a0 = textureGrad(uSurfA, ua, ra * dx, ra * dy), a1 = textureGrad(uSurfA, ub, rb * dx, rb * dy);
+  float m = smoothstep(0.3, 0.7, _tf + (a1.a - a0.a) * 0.6);
+  a = mix(a0, a1, m);
+  vec4 n0 = textureGrad(uSurfN, ua, ra * dx, ra * dy), n1 = textureGrad(uSurfN, ub, rb * dx, rb * dy);
+  // (the relief of a turned copy is turned back into the frame of uv)
+  n0.rg = (n0.rg * 2.0 - 1.0) * ra * 0.5 + 0.5; n1.rg = (n1.rg * 2.0 - 1.0) * rb * 0.5 + 0.5;
+  n = mix(n0, n1, m);
 }
 `;
 const SURFACE_FRAG = `
@@ -405,46 +858,76 @@ const SURFACE_FRAG = `
     bool _top = _an.y > max(_an.x, _an.z);
     // dominant-plane coords: (across, along) with 'along' vertical on walls
     vec2 _uv = _top ? _p.xz : vec2(_an.x > _an.z ? _p.z : _p.x, _p.y);
+    vec3 _tx = (_top || _an.z >= _an.x) ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
+    vec3 _bx = _top ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
     float _above = groundAbove(_p);
     float _leafN = 0.5;
     #ifdef USE_COLOR_ALPHA
       _leafM = clamp(vColor.a, 0.0, 1.0);
     #endif
+    #ifdef LEAF_CARDS
+      // only card edges go to coverage: the vertex colour's alpha is the leaf mask (0 on
+      // wood), which would otherwise make trunks vanish under alphaToCoverage
+      if (_isCard < 0.5) diffuseColor.a = 1.0;
+    #endif
+    #ifdef SURF_LAYER
+    {
+      vec4 sa, sn; vec3 dW;
+      float mixK = 1.0;
+      #if defined( TEX_ROOF )
+        // courses follow the eaves: across = along the ridge, up = world height
+        vec3 rd = normalize(cross(_wn, vec3(0.0, 1.0, 0.0)) + vec3(1e-4, 0.0, 0.0));
+        vec2 suv = vec2(dot(_p, rd) / 1.8, _p.y / 1.6);
+        sa = texture(uSurfA, vec3(suv, SURF_LAYER)); sn = texture(uSurfN, vec3(suv, SURF_LAYER));
+        dW = rd * (sn.r * 2.0 - 1.0) + normalize(vec3(0.0, 1.0, 0.0) - _wn * _wn.y + 1e-4) * (sn.g * 2.0 - 1.0);
+      #elif defined( TEX_ROCK ) || defined( TEX_BARK )
+        // rounded shapes: blend the three (rock) or two side (bark) projections
+        vec3 bw = _an * _an;
+        #ifdef TEX_BARK
+          bw.y = 0.0;
+          mixK = _leafM >= 0.0 ? 1.0 - _leafM : smoothstep(0.0, 0.035, diffuseColor.r - diffuseColor.g);
+        #endif
+        bw /= max(bw.x + bw.y + bw.z, 1e-4);
+        vec4 ax = texture(uSurfA, vec3(_p.zy / SURF_TILE, SURF_LAYER)), nx = texture(uSurfN, vec3(_p.zy / SURF_TILE, SURF_LAYER));
+        vec4 az = texture(uSurfA, vec3(_p.xy / SURF_TILE, SURF_LAYER)), nz = texture(uSurfN, vec3(_p.xy / SURF_TILE, SURF_LAYER));
+        sa = ax * bw.x + az * bw.z; sn = nx * bw.x + nz * bw.z;
+        dW = (vec3(0.0, 0.0, 1.0) * (nx.r * 2.0 - 1.0) + vec3(0.0, 1.0, 0.0) * (nx.g * 2.0 - 1.0)) * bw.x
+           + (vec3(1.0, 0.0, 0.0) * (nz.r * 2.0 - 1.0) + vec3(0.0, 1.0, 0.0) * (nz.g * 2.0 - 1.0)) * bw.z;
+        #ifdef TEX_ROCK
+          vec4 ay = texture(uSurfA, vec3(_p.xz / SURF_TILE, SURF_LAYER)), ny = texture(uSurfN, vec3(_p.xz / SURF_TILE, SURF_LAYER));
+          sa += ay * bw.y; sn += ny * bw.y;
+          dW += (vec3(1.0, 0.0, 0.0) * (ny.r * 2.0 - 1.0) + vec3(0.0, 0.0, 1.0) * (ny.g * 2.0 - 1.0)) * bw.y;
+        #endif
+      #else
+        #if defined( TEX_WOOD ) || defined( TEX_PLANKS )
+          // boards run along the longer world axis of a floor, up a wall
+          vec2 suv = (_top ? _p.zx : _uv) / SURF_TILE;
+          if (_top) { _tx = vec3(0.0, 0.0, 1.0); _bx = vec3(1.0, 0.0, 0.0); }
+        #else
+          vec2 suv = _uv / SURF_TILE;
+        #endif
+        sa = texture(uSurfA, vec3(suv, SURF_LAYER)); sn = texture(uSurfN, vec3(suv, SURF_LAYER));
+        dW = _tx * (sn.r * 2.0 - 1.0) + _bx * (sn.g * 2.0 - 1.0);
+      #endif
+      diffuseColor.rgb *= mix(vec3(1.0), sa.rgb * 2.0, mixK);
+      _wn = normalize(_wn + dW * (SURF_BUMP * mixK));
+      normal = normalize((viewMatrix * vec4(_wn, 0.0)).xyz);
+      _rough = mix(0.9, sn.b, mixK); _cav = mix(1.0, sn.a, mixK); _specK = mixK;
+    }
+    #endif
     #if defined( TEX_PLASTER )
     {
+      // damp, dirty foot of a wall
       float mott = texture2D(uNoiseTex, _uv * 0.11).g;
-      float brush = texture2D(uNoiseTex, _uv * vec2(0.45, 0.12) + 0.3).b;
-      diffuseColor.rgb *= 0.93 + 0.12 * mott + 0.06 * (brush - 0.5);
       float gr = 1.0 - smoothstep(0.05, 0.75 + mott * 0.5, _above);
       diffuseColor.rgb *= mix(vec3(1.0), vec3(0.8, 0.74, 0.66), gr * 0.55);
     }
     #elif defined( TEX_WOOD ) || defined( TEX_PLANKS )
     {
-      vec2 g = _top ? _p.zx : _uv;
-      float fw = fwidth(g.x) * 30.0;
-      float grain = texture2D(uNoiseTex, vec2(g.x * 1.1, g.y * 0.05)).b;
-      float st = sin(grain * 60.0 + g.x * 9.0) * 0.5 + 0.5;
-      float detail = 1.0 - smoothstep(0.4, 1.2, fw);
-      diffuseColor.rgb *= 0.92 + (0.12 * st - 0.05) * detail + 0.08 * (texture2D(uNoiseTex, g * 0.15).a - 0.5);
-      #ifdef TEX_PLANKS
-        float pk = fract(g.x / 0.24);
-        float seam = smoothstep(0.0, 0.05, pk) * smoothstep(1.0, 0.95, pk);
-        float pid = fract(sin(floor(g.x / 0.24) * 12.9898) * 43758.5453);
-        diffuseColor.rgb *= mix(1.0, (0.62 + 0.38 * seam) * (0.92 + 0.14 * pid), detail);
-      #endif
       diffuseColor.rgb *= 1.0 - 0.25 * (1.0 - smoothstep(0.0, 0.6, _above));
     }
     #elif defined( TEX_STONE )
     {
-      vec2 suv = _top ? _uv * 1.5 : _uv * vec2(1.35, 2.3);
-      vec3 v = _voro(suv);
-      float fw = fwidth(suv.x) + fwidth(suv.y);
-      float detail = 1.0 - smoothstep(0.25, 0.8, fw);
-      float mortar = smoothstep(0.035, 0.11, v.y - v.x);
-      float tone = 0.86 + 0.22 * v.z;
-      vec3 hue = mix(vec3(1.03, 1.0, 0.95), vec3(0.95, 0.98, 1.04), fract(v.z * 7.3));
-      float bump = 0.94 + 0.08 * smoothstep(0.0, 0.4, v.x);
-      diffuseColor.rgb *= mix(vec3(0.95), hue * tone * mix(0.6, 1.0, mortar) * bump, detail);
       #ifndef NO_MOSS
       float moss = smoothstep(0.55, 0.85, texture2D(uNoiseTex, _p.xz * 0.05 + _p.y * 0.02).g) * (0.4 + 0.6 * (1.0 - smoothstep(0.0, 1.6, _above)));
       diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.62, 0.8, 0.45), moss * 0.55 * (_top ? 1.0 : 0.6));
@@ -452,42 +935,19 @@ const SURFACE_FRAG = `
     }
     #elif defined( TEX_ROOF )
     {
-      vec3 rd = normalize(cross(_wn, vec3(0.0, 1.0, 0.0)) + vec3(1e-4, 0.0, 0.0));
-      float along = dot(_p, rd);
-      float rc = _p.y / 0.2;
-      float row = floor(rc), fr = fract(rc);
-      float cc = along / 0.36 + row * 0.5;
-      float fc = fract(cc);
-      float fw = fwidth(rc) + fwidth(cc);
-      float detail = 1.0 - smoothstep(0.35, 0.9, fw);
-      float tid = fract(sin(dot(vec2(row, floor(cc)), vec2(12.9898, 78.233))) * 43758.5453);
-      float lip = mix(1.06, 0.7, smoothstep(0.62, 1.0, fr));
-      float gap = 1.0 - 0.22 * (1.0 - smoothstep(0.0, 0.07, min(fc, 1.0 - fc)));
-      diffuseColor.rgb *= mix(vec3(1.0), vec3(lip * gap * (0.9 + 0.18 * tid)), detail);
       float moss = smoothstep(0.58, 0.85, texture2D(uNoiseTex, _p.xz * 0.08).g);
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.34, 0.38, 0.2) * dot(diffuseColor.rgb, vec3(0.5)) * 1.6, moss * 0.35);
     }
     #elif defined( TEX_ROCK )
     {
-      vec3 w = _an / (_an.x + _an.y + _an.z);
-      float cr = texture2D(uNoiseTex, _p.zy * 0.3).b * w.x + texture2D(uNoiseTex, _p.xz * 0.3).b * w.y + texture2D(uNoiseTex, _p.xy * 0.3).b * w.z;
-      float fw = fwidth(cr) * 8.0;
-      float crack = (1.0 - smoothstep(0.0, 0.02 + fw, abs(cr - 0.5))) * (1.0 - smoothstep(0.5, 1.5, fw));
-      float grain = texture2D(uNoiseTex, _uv * 1.2).a;
-      diffuseColor.rgb *= (0.9 + 0.16 * grain) * (1.0 - 0.3 * crack);
       #ifndef NO_MOSS
       float moss = smoothstep(0.45, 0.8, _wn.y + (texture2D(uNoiseTex, _p.xz * 0.15).g - 0.5) * 0.6);
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.33, 0.1), moss * 0.5);
+      _rough = mix(_rough, 0.95, moss);
       #endif
     }
     #elif defined( TEX_BARK )
     {
-      float brown = _leafM >= 0.0 ? 1.0 - _leafM : smoothstep(0.0, 0.035, diffuseColor.r - diffuseColor.g);
-      if (brown > 0.0) {
-        float a = (_an.x > _an.z ? _p.z : _p.x) * 2.2;
-        float f = texture2D(uNoiseTex, vec2(a, _p.y * 0.12)).b;
-        diffuseColor.rgb *= mix(1.0, mix(0.7, 1.08, smoothstep(0.3, 0.62, f)), brown);
-      }
       float green = _leafM >= 0.0 ? _leafM : smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
       #ifdef LEAFY_EDGE
         _leafN = _dn(_p * 3.3);
@@ -503,19 +963,22 @@ const SURFACE_FRAG = `
       // (smoothed) foliage normal turns away from the viewer
       float green = _leafM >= 0.0 ? _leafM : smoothstep(0.0, 0.05, diffuseColor.g - diffuseColor.r);
       if (green > 0.5) {
-        float e = 1.0 - abs(dot(normal, normalize(vViewPosition)));
-        #ifdef TEX_BARK
-          float lf = _leafN * 0.55 + _dn(_p * 9.0) * 0.45;
-        #else
-          float lf = _dn(_p * 3.3) * 0.55 + _dn(_p * 9.0) * 0.45;
-        #endif
-        if (lf < (e - 0.4) * 1.6) discard;
-        float _sf = seeFade(_p);
+        if (_isCard < 0.5) {
+          float e = 1.0 - abs(dot(normal, normalize(vViewPosition)));
+          #ifdef TEX_BARK
+            float lf = _leafN * 0.55 + _dn(_p * 9.0) * 0.45;
+          #else
+            float lf = _dn(_p * 3.3) * 0.55 + _dn(_p * 9.0) * 0.45;
+          #endif
+          if (lf < (e - 0.4) * 1.6) discard;
+          diffuseColor.rgb *= 1.0 - 0.18 * smoothstep(0.55, 0.3, lf) * smoothstep(0.2, 0.6, e);
+        }
+        // (cards, strands and sheets make room in the vertex stage instead: LEAF_CARDS)
+        float _sf = _isCard > 0.5 ? 0.0 : seeFade(_p);
         if (_sf > 0.0) {
           float _ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
           if (_ign < _sf * 0.88) discard;
         }
-        diffuseColor.rgb *= 1.0 - 0.18 * smoothstep(0.55, 0.3, lf) * smoothstep(0.2, 0.6, e);
       }
     }
     #endif
@@ -528,13 +991,17 @@ const SURFACE_FRAG = `
   }
   #include <lights_toon_fragment>`;
 
+// opts.tex -> [layer in the surface arrays, tile size (m), relief strength]
+const SURF_OF = { plaster: [6, 2.6, 0.7], wood: [11, 1.0, 0.8], planks: [7, 1.5, 0.9], stone: [5, 2.2, 1.0], roof: [8, 1.6, 1.0], rock: [12, 3.2, 1.0], bark: [9, 1.1, 1.0] };
+
 const cache = new Map();
 
 /**
  * Create (or reuse) a toon material.
  * opts: { emissive, emissiveIntensity, rim, vertexColors, flat, side, transparent, opacity, sway, swayBase, terrain, key,
  *         foliage (bool), leafy (ragged crown edges), tex ('plaster'|'wood'|'planks'|'stone'|'roof'|'rock'|'bark'), noAO (bool),
- *         noMoss (bool: no moss on 'stone'/'rock' surfaces), lodFade (bool: per-instance `aFade` dither, props only) }
+ *         noMoss (bool: no moss on 'stone'/'rock' surfaces), lodFade (bool: per-instance `aFade` dither, props only),
+ *         cards (bool: the geometry carries `aCard` foliage cards, see props.js Mesher.card) }
  * RGBA vertex colours: alpha is a foliage mask (1 = leaves) for translucency, bark detail and leafy edges.
  */
 export function toon(color = 0xffffff, opts = {}) {
@@ -566,8 +1033,10 @@ export function patch(m, opts = {}) {
   const dissolveColor = { value: new THREE.Color(0.8, 0.45, 1.6) };
   m.userData.dissolve = dissolve;
   m.userData.dissolveColor = dissolveColor;
-  const isTerrain = !!opts.terrain;
+  const isTerrain = !!opts.terrain, isCliff = !!opts.cliff;
   const lodFade = !!opts.lodFade;
+  const cards = !!opts.cards;
+  if (cards) { m.alphaToCoverage = true; leafTexture(); }
   const hasSway = (opts.sway ?? 0) > 0;
   const foliage = opts.foliage ?? hasSway;
   const texKind = opts.tex || '';
@@ -587,27 +1056,36 @@ export function patch(m, opts = {}) {
     sh.uniforms.uHeightTex = U.heightTex;
     sh.uniforms.uHeightP = U.heightP;
     sh.uniforms.uSeeA = U.seeA; sh.uniforms.uSeeB = U.seeB; sh.uniforms.uSeeR = U.seeR;
-    if (isTerrain) { sh.uniforms.uBurnTex = U.burnTex; sh.uniforms.uWet = U.wet; }
+    if (isTerrain) { sh.uniforms.uBurnTex = U.burnTex; sh.uniforms.uWet = U.wet; sh.uniforms.uSplatTex = U.splatTex; sh.uniforms.uPaveTex = U.paveTex; sh.uniforms.uGroundTex = U.groundTex; sh.uniforms.uPathTex = U.pathTex; sh.uniforms.uTNormTex = U.tnormTex; sh.uniforms.uPal = U.terrPal; }
+    sh.uniforms.uSurfA = U.surfA; sh.uniforms.uSurfN = U.surfN; sh.uniforms.uSkyRefl = U.skyRefl;
+    if (cards) sh.uniforms.uLeafTex = U.leaf;
     let fs = sh.fragmentShader;
     const isToon = fs.includes('#include <lights_toon_pars_fragment>');
     let defs = '';
     if (isToon) {
-      if (isTerrain) defs += '#define TOON_SOFT\n';
+      // rock props are lit like the cliffs they stand against (the terrain's soft ramp)
+      if (isTerrain || texKind === 'rock') defs += '#define TOON_SOFT\n';
       else if (foliage) defs += '#define TOON_FOLIAGE\n';
       if (opts.leafy) defs += '#define LEAFY_EDGE\n';
       if (!isTerrain && !opts.noAO) defs += '#define TOON_GROUND_AO\n';
       if (texKind) defs += `#define TEX_${texKind.toUpperCase()}\n`;
+      const sf = SURF_OF[texKind];
+      if (sf) defs += `#define SURF_LAYER ${sf[0].toFixed(1)}\n#define SURF_TILE ${sf[1].toFixed(2)}\n#define SURF_BUMP ${sf[2].toFixed(2)}\n`;
+      if (sf || isTerrain) defs += '#define SURF_SPEC\n';
       if (opts.noMoss) defs += '#define NO_MOSS\n';
-      fs = fs.replace('#include <lights_toon_pars_fragment>', TOON_LIGHT_PARS + SURFACE_PARS)
+      fs = fs.replace('#include <lights_toon_pars_fragment>', TOON_LIGHT_PARS + SURFACE_PARS + (isTerrain ? TERRAIN_FN : ''))
         .replace('#include <lights_fragment_begin>', LIGHTS_PRE + toonLightsBegin());
-      if (!isTerrain) fs = fs.replace('#include <lights_toon_fragment>', SURFACE_FRAG);
+      fs = fs.replace('#include <lights_toon_fragment>', isTerrain ? TERRAIN_SURF : SURFACE_FRAG);
     } else {
       fs = 'uniform sampler2D uNoiseTex;\n' + fs;
     }
     fs = fs.replace('#include <opaque_fragment>', RIM_FRAG).replace('#include <clipping_planes_fragment>', DISSOLVE_CLIP);
     if (isToon && opts.leafy) fs = SEE_PARS + fs;
-    sh.fragmentShader = defs + 'uniform float uRim;\nuniform vec3 uRimColor;\n' + DISSOLVE_PARS + fs;
-    sh.vertexShader = 'uniform float uTime;\nuniform float uWind;\nuniform float uSway;\nuniform float uSwayBase;\nvarying vec3 vDWP;\n' + sh.vertexShader.replace('#include <project_vertex>', DISSOLVE_VERT);
+    const cdef = cards ? '#define LEAF_CARDS\n' : '';
+    sh.fragmentShader = defs + cdef + 'uniform float uRim;\nuniform vec3 uRimColor;\nuniform vec3 uSkyRefl;\nfloat _isCard = 0.0;\n#ifdef LEAF_CARDS\nvarying vec4 vCard;\nuniform sampler2D uLeafTex;\n#endif\n' + DISSOLVE_PARS + fs;
+    // (leafy card foliage moves out of the camera's way in the vertex stage: seeFade there too)
+    const vsee = cards && isToon && opts.leafy ? '#define LEAF_SEE\n' + SEE_PARS : '';
+    sh.vertexShader = cdef + vsee + '#ifdef LEAF_CARDS\nattribute vec4 aCard;\nvarying vec4 vCard;\n#endif\nuniform float uTime;\nuniform float uWind;\nuniform float uSway;\nuniform float uSwayBase;\nvarying vec3 vDWP;\n' + sh.vertexShader.replace('#include <project_vertex>', DISSOLVE_VERT);
     if (lodFade) {
       // per-instance cross-fade between a near and a far model: > 0 dithers this instance out
       // by that fraction, < 0 keeps only that fraction; the two use the same pattern so they
@@ -621,11 +1099,14 @@ export function patch(m, opts = {}) {
     }
     if (hasSway) sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', WIND_VERT);
     if (isTerrain) {
-      sh.vertexShader = TERRAIN_VERT_PARS + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWNrm = normal;');
-      sh.fragmentShader = TERRAIN_FRAG_PARS + sh.fragmentShader.replace('#include <color_fragment>', TERRAIN_FRAG);
+      // (the define has to come before the declarations that test it)
+      const cl = isCliff ? '#define CLIFF_SKIN\n' : '';
+      sh.vertexShader = cl + TERRAIN_VERT_PARS + (isCliff ? 'attribute vec2 aEdge;\nvarying vec2 vEdge;\n' : '')
+        + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWNrm = normal;' + (isCliff ? '\nvEdge = aEdge;' : ''));
+      sh.fragmentShader = cl + TERRAIN_FRAG_PARS + sh.fragmentShader.replace('#include <color_fragment>', TERRAIN_FRAG);
     }
   };
-  m.customProgramCacheKey = () => `toon3|${hasSway}|${isTerrain}|${foliage}|${texKind}|${!!opts.noAO}|${!!opts.leafy}|${!!opts.noMoss}|${lodFade}`;
+  m.customProgramCacheKey = () => `toon6|${hasSway}|${isTerrain}|${isCliff}|${foliage}|${texKind}|${!!opts.noAO}|${!!opts.leafy}|${!!opts.noMoss}|${lodFade}|${cards}`;
   return m;
 }
 

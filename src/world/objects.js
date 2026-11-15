@@ -2,14 +2,18 @@
 // boulders that roll downhill and flatten what they hit, crates that break
 // or burn. They react to every element through world targets (spells call
 // target.baseHit(el, src)), to wildfire under them, to the player walking
-// into them and to each other. One InstancedMesh per kind.
+// into them and to each other. One InstancedMesh per kind, plus the far models of kegs and
+// crates and the wrecks of broken crates. The models are authored (public/models/pr_keg,
+// pr_lootcrate, pr_boulder; see ref/blender/props/loose.py and boulder.py); the code-built
+// shapes below stand in when a file is missing.
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { G } from '../core/context.js';
 import { toon } from '../render/materials.js';
 import { mulberry32, clamp, smoothstep } from '../core/util.js';
 import { CAMPS } from '../game/enemies.js';
 import { POI } from './layout.js';
+import { authoredParts, authoredTex } from './buildings.js';
 
 const GRAV = 26;
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), q1 = new THREE.Quaternion(), m4 = new THREE.Matrix4(), sc = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
@@ -22,6 +26,19 @@ const KIND = {
 };
 // how hard each element shoves (m/s of impulse on mass 1)
 const PUSH = { wind: 11, water: 8, arcane: 5, storm: 2.5, fire: 1.5, frost: 1 };
+// beyond this distance from the camera a kind is not drawn (a few pixels tall by then)
+const DRAW = { barrel: 170, crate: 170, wreck: 90, boulder: 320 };
+// Within NEAR everything is drawn (off screen it may still cast a shadow into view), beyond it
+// only what the camera sees; past FAR_AT kegs and crates are their far models.
+const NEAR = 40, FAR_AT = 34;
+const frustum = new THREE.Frustum(), projM = new THREE.Matrix4(), sph = new THREE.Sphere();
+// end of the keg's fuse in model space (ref/blender/props/loose.py FUSE_PATH), and of the code-built one
+const FUSE_TIP = new THREE.Vector3(0.185, 1.215, -0.02), FUSE_TIP_BUILT = new THREE.Vector3(0.12, 1.15, 0.05);
+const WHITE = new THREE.Color(1, 1, 1), DAMP = new THREE.Color(0.7, 0.74, 0.8), CHARRED = new THREE.Color(0.2, 0.17, 0.16);
+const SPLINTER = new THREE.Color(0.56, 0.42, 0.27), tint = new THREE.Color();
+// height of a resting boulder's centre in radii: no plane of the authored model lies nearer its centre
+// (ref/blender/props/boulder.py SINK), so no way up leaves a gap under it
+const BOULDER_SINK = 0.8;
 
 const hexC = (h) => new THREE.Color(h);
 function paint(geo, fn) {
@@ -75,19 +92,30 @@ function crateGeo() {
 // Boulder: lumpy rounded stone, mossy on top, darker underside
 function boulderGeo() {
   const rnd = mulberry32(9);
-  const g = new THREE.IcosahedronGeometry(1, 2);
+  // IcosahedronGeometry is a triangle soup: weld it first, or the random part of the jitter
+  // moves each face's copy of a shared corner by a different amount and the faces come apart
+  const soup = new THREE.IcosahedronGeometry(1, 2);
+  soup.deleteAttribute('normal'); soup.deleteAttribute('uv');
+  const g = mergeVertices(soup, 1e-4);
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) {
     tmp.fromBufferAttribute(p, i);
     const k = 1 + (Math.sin(tmp.x * 3.1 + 1) * Math.sin(tmp.y * 2.7) * Math.sin(tmp.z * 3.3 + 2)) * 0.12 + (rnd() - 0.5) * 0.05;
     tmp.multiplyScalar(k); p.setXYZ(i, tmp.x, tmp.y, tmp.z);
   }
-  const ng = strip(g); ng.computeVertexNormals();
+  const ng = g.toNonIndexed(); ng.computeVertexNormals();
   paint(ng, (c, x, y, z, ny) => {
     c.copy(hexC(0x8d867c)).lerp(hexC(0x5d5953), smoothstep(0.2, -0.8, y)).multiplyScalar(0.92 + 0.12 * Math.sin(x * 5 + z * 3));
     if (ny > 0.55) c.lerp(hexC(0x5f8a3c), smoothstep(0.55, 0.85, ny) * 0.8);
   });
   return ng;
+}
+// The authored boulder is painted like the scattered rocks (props.js rockMaterial): its own
+// albedo under the toon shader's rock surface. No normal map: every chip is in the mesh.
+function boulderMat(tex) {
+  const m = toon(0xffffff, { vertexColors: true, rim: 0.15, tex: 'rock', noMoss: true, nocache: true });
+  m.map = tex.map;
+  return m;
 }
 
 export class WorldObjects {
@@ -96,9 +124,21 @@ export class WorldObjects {
     this.list = [];
     this.meshes = {};
     const mat = toon(0xffffff, { vertexColors: true, rim: 0.25 });
-    const geos = { barrel: barrelGeo(), crate: crateGeo(), boulder: boulderGeo() };
-    for (const k in KIND) {
-      const im = new THREE.InstancedMesh(geos[k], mat, KIND[k].max);
+    const part = (name, grp = 'body') => { const P = authoredParts(name); return (P && P[grp] && P[grp][0]) || null; };
+    const keg = part('keg'), crate = part('lootcrate'), wreck = part('lootcrate', 'wreck'), rock = part('boulder'), rockTex = rock && authoredTex('bouldertex');
+    const defs = {
+      barrel: keg ? [keg.geo, keg.mat] : [barrelGeo(), mat],
+      crate: crate ? [crate.geo, crate.mat] : [crateGeo(), mat],
+      boulder: rockTex ? [rock.geo, boulderMat(rockTex)] : [boulderGeo(), mat],
+    };
+    if (wreck) defs.wreck = [wreck.geo, wreck.mat];
+    for (const [k, name] of [['barrel', 'keg'], ['crate', 'lootcrate']]) { const far = part(name, 'far'); if (far) defs[k + 'Far'] = [far.geo, far.mat]; }
+    this.fuseTip = keg ? FUSE_TIP : FUSE_TIP_BUILT;
+    this.sink = rockTex ? BOULDER_SINK : 0.85;
+    for (const k in defs) {
+      const im = new THREE.InstancedMesh(defs[k][0], defs[k][1], (KIND[k] || KIND[k.replace('Far', '')] || KIND.crate).max);
+      // tinted per instance (lit fuse, damp, charred); set up front so the program is compiled with it
+      if (k !== 'boulder') im.setColorAt(0, WHITE);
       im.count = 0; im.castShadow = true; im.receiveShadow = true;
       im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       im.userData.noBake = true; im.frustumCulled = false;
@@ -108,6 +148,7 @@ export class WorldObjects {
     this.place();
     this.rollLoop = null;
     this.dirty = true;
+    this.camM = new THREE.Matrix4();
   }
 
   // ---------------------------------------------------------------- placement
@@ -164,7 +205,7 @@ export class WorldObjects {
       kind, s, r: K.r * s, h: K.h * s, mass: K.mass * s * s * s,
       pos: new THREE.Vector3(x, y, z), vel: new THREE.Vector3(), home: new THREE.Vector3(x, y, z),
       rot: new THREE.Quaternion().setFromAxisAngle(UP, Math.random() * 6.28), yaw: 0,
-      asleep: true, alive: true, hp: kind === 'crate' ? 3 : 1, fuse: 0, burn: 0, respawn: 0, stillT: 0, wetT: 0,
+      asleep: true, alive: true, hp: kind === 'crate' ? 3 : 1, fuse: 0, burn: 0, respawn: 0, stillT: 0, wetT: 0, wreck: null,
     };
     b.target = this.W.addTarget({ id: 'prop', ground: true, kind, pos: new THREE.Vector3(x, y + b.h * 0.5, z), r: b.r + 0.2, baseHit: (el, src) => this.hit(b, el, src) });
     this.list.push(b);
@@ -201,6 +242,7 @@ export class WorldObjects {
   light(b, fuse) {
     b.fuse = fuse;
     G.audio.play('fuse_hiss', { pos: b.pos });
+    if (G.vfx.flash) G.vfx.flash(this.tipOf(b), 0xffb050, 9, 5, 0.3);
     if (G.story && G.story.once('barrel1')) G.hud.hint('<b>화약 통</b> — 불이나 번개에 닿으면 잠시 뒤 터진다. 적 사이로 굴려 보내거나, 물로 적셔 불씨를 끌 수 있다', 7);
   }
   explode(b) {
@@ -208,7 +250,7 @@ export class WorldObjects {
     const c = this.center(b);
     const P = G.player;
     G.spells.explode(c, 5.2, P.power() * 3.4, 'fire', { knock: 15, lift: 7, shake: 0.7, big: true });
-    G.vfx.chunks && G.vfx.chunks(c, 'wood', 10, { speed: 9 });
+    this.splinters(c, 10, 9, true);
     if (this.W.fire) this.W.fire.ignite(c.x, c.z, 2.6, 0.8);
     // shove the player and other loose things
     const d = P.center().distanceTo(c);
@@ -223,7 +265,8 @@ export class WorldObjects {
   breakCrate(b, burnt = false) {
     b.alive = false; b.respawn = 240;
     const c = this.center(b);
-    G.vfx.chunks && G.vfx.chunks(c, 'wood', 8, { speed: 5 });
+    this.splinters(c, 8, 5, burnt);
+    b.wreck = this.wreckOf(b, burnt);
     G.audio.play('crate_break', { pos: c });
     if (!burnt) {
       const E = G.enemies;
@@ -235,6 +278,23 @@ export class WorldObjects {
   hide(b) { b.target.r = -99; this.dirty = true; }
   wake(b) { b.asleep = false; b.stillT = 0; }
   center(b) { return tmp2.set(b.pos.x, b.pos.y + b.h * 0.5, b.pos.z).clone(); }
+  // where the keg's fuse burns
+  tipOf(b) { return tmp2.copy(this.fuseTip).multiplyScalar(b.s).applyQuaternion(b.rot).add(b.pos).clone(); }
+  // flying bits of wood (the debris pools have no wood of their own: rock chunks in wood tones)
+  splinters(c, n, speed, burnt) {
+    if (!G.vfx.chunks) return;
+    G.vfx.chunks(c, 'rock', n, { speed, size: 0.13, color: burnt ? CHARRED : SPLINTER });
+    if (burnt) G.vfx.chunks(c, 'ember', Math.round(n * 0.6), { speed: speed * 0.7 });
+  }
+  // What a broken crate leaves on the ground (drawn until the crate respawns); nothing where
+  // it broke over water or in the air.
+  wreckOf(b, burnt) {
+    const W = this.W, x = b.pos.x, z = b.pos.z, gy = W.ground(x, z, b.pos.y + 0.5);
+    if (gy < W.water.level + 0.05 || b.pos.y - gy > 1.2) return null;
+    const q = new THREE.Quaternion();
+    if (Math.abs(gy - W.terrain.height(x, z)) < 0.1) q.setFromUnitVectors(UP, W.terrain.normal(x, z, tmp));
+    return { pos: new THREE.Vector3(x, gy, z), rot: q.multiply(b.rot), burnt };
+  }
   // spells that land near objects without a direct target hit (area magic)
   onSpell(el, pos, r) {
     for (const b of this.list) {
@@ -258,11 +318,17 @@ export class WorldObjects {
       // fuse / burning
       if (b.fuse > 0) {
         b.fuse -= dt;
-        if (Math.random() < dt * 30) G.vfx.burst(tmp.set(b.pos.x + 0.12, b.pos.y + b.h + 0.1, b.pos.z + 0.05), 'spark', 1, { el: 'fire', speed: 2 });
+        // the burning end: a flickering point of light, sparks spitting from it, a thread of smoke
+        const tip = this.tipOf(b);
+        if (Math.random() < dt * 30) G.vfx.burst(tip, 'spark', 1, { el: 'fire', speed: 2 });
+        if (Math.random() < dt * 45) G.vfx.burst(tip, 'glow', 1, { el: 'fire', size: 0.55, size1: 0.2, life: 0.07, alpha: 0.85 });
+        if (Math.random() < dt * 10) G.vfx.burst(tip, 'smoke', 1, { size: 0.45, alpha: 0.3 });
+        this.dirty = true;
         if (b.fuse <= 0) { this.explode(b); continue; }
       }
       if (b.burn > 0) {
         b.burn -= dt;
+        this.dirty = true;
         if (Math.random() < dt * 20) G.vfx.burst(this.center(b), 'fire', 1, { spread: 0.35, speed: 0.8, size: 1.2 });
         if (b.burn <= 0) { this.breakCrate(b, true); continue; }
       }
@@ -389,28 +455,63 @@ export class WorldObjects {
   }
 
   reset(b) {
-    b.alive = true; b.asleep = true; b.fuse = 0; b.burn = 0; b.wetT = 0; b.hp = b.kind === 'crate' ? 3 : 1;
+    b.alive = true; b.asleep = true; b.fuse = 0; b.burn = 0; b.wetT = 0; b.hp = b.kind === 'crate' ? 3 : 1; b.wreck = null;
     b.pos.copy(b.home); b.vel.set(0, 0, 0);
     b.target.r = b.r + 0.2; b.target.pos.set(b.pos.x, b.pos.y + b.h * 0.5, b.pos.z);
     this.dirty = true;
   }
 
   writeInstances() {
+    const cam = G.camera;
+    // the lists follow the camera: redo them whenever it has moved or turned
+    if (cam && !this.camM.equals(cam.matrixWorld)) { this.camM.copy(cam.matrixWorld); this.dirty = true; }
     if (!this.dirty) return;
     this.dirty = false;
-    const n = { barrel: 0, crate: 0, boulder: 0 };
+    const M = this.meshes, n = {};
+    for (const k in M) n[k] = 0;
+    if (cam) frustum.setFromProjectionMatrix(projM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+    // 0: not drawn, 1: drawn, 2: drawn as the far model
+    const seen = (p, kind, r) => {
+      if (!cam) return 1;
+      const d2 = cam.position.distanceToSquared(p);
+      if (d2 > DRAW[kind] * DRAW[kind]) return 0;
+      if (d2 > NEAR * NEAR && !frustum.intersectsSphere(sph.set(p, r + 2))) return 0;
+      return d2 > FAR_AT * FAR_AT ? 2 : 1;
+    };
     for (const b of this.list) {
-      if (!b.alive) continue;
-      const im = this.meshes[b.kind];
-      const i = n[b.kind]++;
+      if (!b.alive) {
+        const w = b.wreck;
+        if (w && M.wreck && seen(w.pos, 'wreck', 1.2)) {
+          const i = n.wreck++;
+          m4.compose(w.pos, w.rot, sc.set(b.s, b.s, b.s));
+          M.wreck.setMatrixAt(i, m4);
+          M.wreck.setColorAt(i, w.burnt ? CHARRED : WHITE);
+        }
+        continue;
+      }
+      const lod = seen(b.pos, b.kind, b.h);
+      if (!lod) continue;
+      const k = lod === 2 && M[b.kind + 'Far'] ? b.kind + 'Far' : b.kind, im = M[k];
+      const i = n[k]++;
       // boulder origin at its centre; barrels/crates stand on their base
-      const cy = b.kind === 'boulder' ? b.pos.y + b.r * 0.85 : b.pos.y;
+      const cy = b.kind === 'boulder' ? b.pos.y + b.r * this.sink : b.pos.y;
       // fuse: the barrel shivers and swells a little
       const swell = b.fuse > 0 ? 1 + Math.sin(G.time * 40) * 0.03 : 1;
       sc.set(b.s * swell, b.s * swell, b.s * swell);
       m4.compose(tmp.set(b.pos.x, cy, b.pos.z), b.rot, sc);
       im.setMatrixAt(i, m4);
+      if (b.kind === 'boulder') continue;
+      if (b.fuse > 0) {
+        // glows hot in pulses that quicken as the fuse runs out
+        const p = 0.5 + 0.5 * Math.sin((1.2 - b.fuse) * (1.2 - b.fuse) * 26);
+        tint.setRGB(1 + 1.6 * p, 1 + 0.2 * p, 1 - 0.3 * p);
+      } else if (b.burn > 0) tint.copy(WHITE).lerp(CHARRED, clamp(1 - b.burn / 3.2, 0, 1) * 0.85);
+      else tint.copy(b.wetT > 0 ? DAMP : WHITE);
+      im.setColorAt(i, tint);
     }
-    for (const k in n) { this.meshes[k].count = n[k]; this.meshes[k].instanceMatrix.needsUpdate = true; }
+    for (const k in n) {
+      M[k].count = n[k]; M[k].instanceMatrix.needsUpdate = true;
+      if (M[k].instanceColor) M[k].instanceColor.needsUpdate = true;
+    }
   }
 }

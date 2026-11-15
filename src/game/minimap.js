@@ -4,13 +4,15 @@
 // rotated around the player. A compass ring, the tracked quest marker (pinned to the rim with
 // its distance when it lies outside), lit waystones, nearby villagers and enemies that are
 // hunting you are drawn on top.
-import { G } from '../core/context.js';
+import { G, iconImage } from '../core/context.js';
 
 const PX_PER_M = 3;          // base resolution
 const VIEW_R = 62;           // metres from the centre to the rim
 const TILE = 64;             // base tiles (metres); built when first seen, the least recently used dropped
 const MAX_TILES = 24;
-const CARD = [['N', 0], ['E', Math.PI / 2], ['S', Math.PI], ['W', -Math.PI / 2]];
+const CARD = [['북', 0], ['동', Math.PI / 2], ['남', Math.PI], ['서', -Math.PI / 2]];
+// a glyph from the icon family, centred (skipped for the frame or two its image takes to decode)
+const glyph = (g, name, col, x, y, s) => { const im = iconImage(name, col); if (im) g.drawImage(im, x - s / 2, y - s / 2, s, s); };
 
 export class Minimap {
   constructor(root) {
@@ -121,7 +123,7 @@ export class Minimap {
       if (r > R - S * 0.05) { if (!pin) return null; r = R - S * 0.05; out = true; }
       return { x: c + Math.sin(b) * r, y: c - Math.cos(b) * r, d, out, b };
     };
-    const u = S / 180; // marker scale (canvas is ~180 css px at scale 1)
+    const u = S / 192; // marker scale (the canvas is 192 css px at scale 1)
 
     // villagers: soft dots so the village can be read at a glance
     for (const n of G.npcs.list) {
@@ -133,10 +135,7 @@ export class Minimap {
     // waystones
     for (const L of Object.values(G.world.lanterns)) {
       const m = toMini(L.x, L.z); if (!m) continue;
-      g.save(); g.translate(m.x, m.y);
-      g.beginPath(); g.moveTo(0, -5.5 * u); g.lineTo(4.5 * u, 3.5 * u); g.lineTo(-4.5 * u, 3.5 * u); g.closePath();
-      g.fillStyle = L.lit ? '#ffc870' : 'rgba(150,150,150,.8)'; g.fill();
-      g.lineWidth = 1.2 * u; g.strokeStyle = 'rgba(20,14,6,.85)'; g.stroke(); g.restore();
+      glyph(g, 'waystone', L.lit ? '#ffc870' : '#9a9ca6', m.x, m.y, (L.lit ? 15 : 12) * u);
     }
     // enemies that are after you
     for (const e of G.enemies.list) {
@@ -152,19 +151,16 @@ export class Minimap {
       g.save(); g.translate(m.x, m.y);
       if (m.out) { // small chevron pointing outwards
         g.save(); g.rotate(m.b);
-        g.beginPath(); g.moveTo(0, -9 * u); g.lineTo(4 * u, -4 * u); g.lineTo(-4 * u, -4 * u); g.closePath();
+        g.beginPath(); g.moveTo(0, -14.5 * u); g.lineTo(4 * u, -10 * u); g.lineTo(-4 * u, -10 * u); g.closePath();
         g.fillStyle = '#f1d48a'; g.fill(); g.restore();
       }
-      g.rotate(Math.PI / 4);
-      const s = 5 * u;
-      g.fillStyle = '#f1d48a'; g.fillRect(-s, -s, s * 2, s * 2);
-      g.lineWidth = 1.5 * u; g.strokeStyle = '#2a1e0c'; g.strokeRect(-s, -s, s * 2, s * 2);
       g.restore();
+      glyph(g, 'quest', '#f1d48a', m.x, m.y, 17 * u);
       if (m.out) {
         const tx = c + (m.x - c) * 0.78, ty = c + (m.y - c) * 0.78;
-        g.font = `600 ${10 * u}px 'Hahmlet', serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.font = `700 ${11 * u}px 'HeirOfLight', serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
         g.lineWidth = 3 * u; g.strokeStyle = 'rgba(0,0,0,.75)'; const txt = `${Math.round(m.d)}m`;
-        g.strokeText(txt, tx, ty); g.fillStyle = '#f7e6b8'; g.fillText(txt, tx, ty);
+        g.strokeText(txt, tx, ty); g.fillStyle = '#fff2cc'; g.fillText(txt, tx, ty);
       }
     }
     // the player: arrow for the body's facing, relative to the view direction
@@ -176,13 +172,14 @@ export class Minimap {
     g.fillStyle = cone; g.fill();
     g.save(); g.translate(c, c); g.rotate(face);
     g.beginPath(); g.moveTo(0, -9 * u); g.lineTo(6.5 * u, 7 * u); g.lineTo(0, 3.5 * u); g.lineTo(-6.5 * u, 7 * u); g.closePath();
-    g.fillStyle = '#5ad0ff'; g.fill(); g.lineWidth = 1.8 * u; g.strokeStyle = '#fff'; g.stroke();
+    g.lineJoin = 'round'; g.lineWidth = 4.5 * u; g.strokeStyle = '#0a0c18'; g.stroke();
+    g.fillStyle = '#5ad0ff'; g.fill(); g.lineWidth = 1.4 * u; g.strokeStyle = '#fff'; g.stroke();
     g.restore();
 
     // compass ring
     const ringR = S / 2 - S * 0.035;
     g.beginPath(); g.arc(c, c, ringR, 0, Math.PI * 2);
-    g.lineWidth = S * 0.07; g.strokeStyle = 'rgba(10,12,18,0.82)'; g.stroke();
+    g.lineWidth = S * 0.07; g.strokeStyle = 'rgba(9,12,26,0.9)'; g.stroke();
     g.beginPath(); g.arc(c, c, R, 0, Math.PI * 2);
     g.lineWidth = 1.5 * u; g.strokeStyle = 'rgba(241,212,138,0.55)'; g.stroke();
     // ticks every 30°
@@ -197,8 +194,8 @@ export class Minimap {
     for (const [t, a] of CARD) {
       const b = a - heading;
       const x = c + Math.sin(b) * ringR, y = c - Math.cos(b) * ringR;
-      g.font = `700 ${(t === 'N' ? 11 : 9) * u}px 'Cinzel', serif`;
-      g.fillStyle = t === 'N' ? '#ff8a7a' : 'rgba(244,239,226,0.8)';
+      g.font = `700 ${(a === 0 ? 11.5 : 10) * u}px 'HeirOfLight', serif`;
+      g.fillStyle = a === 0 ? '#fff2cc' : 'rgba(241,234,219,0.72)';
       g.fillText(t, x, y + 0.5 * u);
     }
   }

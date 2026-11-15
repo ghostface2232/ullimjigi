@@ -5,6 +5,13 @@ import { G } from '../core/context.js';
 import { fillName } from '../core/util.js';
 import { SPEAKERS } from './npcs.js';
 
+// name-plate colours (presentation only; the cast itself lives in npcs.js)
+const WHO = {
+  mora: '#d9c2ff', boreum: '#bff3ff', bau: '#f1d48a', dodam: '#ffcf8a', isol: '#a8e6c1', danbi: '#ffb7a8',
+  kael: '#c9d4ee', kaelShadow: '#b3adc6', seha: '#9fd8ff', hush: '#b8a6d9', player: '#fff2cc',
+  farmer: '#d8e08a', fisher: '#9fe0d6', elder: '#e3c9a4',
+};
+
 function parse(text) {
   // *emphasis*  and  [text|cls]
   const segs = [];
@@ -52,7 +59,7 @@ export class Dialogue {
     // backlog + skip affordances
     this.log = [];
     this.keysEl = document.createElement('div'); this.keysEl.className = 'dlg-keys';
-    this.keysEl.innerHTML = '<span><kbd>L</kbd> 지난 대사</span><span class="dlg-skip"><kbd>Esc</kbd> 누르고 있기: 빨리 넘기기<i></i></span>';
+    this.keysEl.innerHTML = '<span><kbd>L</kbd>지난 대사</span><span class="dlg-skip"><kbd>Esc</kbd>길게 눌러 빨리 넘기기<i></i></span>';
     this.box.appendChild(this.keysEl);
     this.skipBar = this.keysEl.querySelector('.dlg-skip i');
     this.logEl = document.createElement('div'); this.logEl.id = 'dlg-log'; this.logEl.className = 'hidden';
@@ -181,7 +188,8 @@ export class Dialogue {
     }
     if (obj && opts.cam !== false) this.frameOn(obj, opts);
     this.box.classList.remove('hidden');
-    this.nameEl.textContent = name;
+    if (this.shownName !== name) { this.shownName = name; this.nameEl.textContent = name; }
+    this.box.style.setProperty('--who', WHO[who] || '#f1d48a');
     this.textEl.classList.toggle('narr', who === 'narr');
     this.choicesEl.innerHTML = '';
     this.nextEl.classList.remove('on');
@@ -202,7 +210,8 @@ export class Dialogue {
       const btns = options.map((o, i) => {
         const b = document.createElement('button');
         b.className = 'dlg-choice';
-        b.innerHTML = `<span style="opacity:.5;margin-right:10px">${i + 1}</span>${fillName(o, G.playerName)}`;
+        b.style.setProperty('--i', i); // staggered entrance
+        b.innerHTML = `<kbd>${i + 1}</kbd><span>${fillName(o, G.playerName)}</span>`;
         b.addEventListener('click', (e) => { e.stopPropagation(); pick(i); });
         b.addEventListener('mouseenter', () => { this.sel = i; mark(); });
         this.choicesEl.appendChild(b);
@@ -233,8 +242,9 @@ export class Dialogue {
     // hold Esc to fast-forward (stops at choices)
     const held = I.heldFor('Escape');
     this.ffwd = held > 0.6;
-    this.skipBar.style.width = `${Math.min(1, held / 0.6) * 100}%`;
-    this.keysEl.classList.toggle('ff', this.ffwd);
+    const hk = Math.round(Math.min(1, held / 0.6) * 50) * 2;
+    if (this.skipK !== hk) { this.skipK = hk; this.skipBar.style.width = `${hk}%`; }
+    if (this.ffShown !== this.ffwd) { this.ffShown = this.ffwd; this.keysEl.classList.toggle('ff', this.ffwd); }
     if (this.choosing) {
       const c = this.choosing;
       for (let i = 0; i < c.n; i++) if (I.pressed.has('Digit' + (i + 1))) return c.pick(i);
@@ -263,7 +273,7 @@ export class Dialogue {
           if (c.blip % 2 === 1) G.audio.blip(c.voice);
         }
       }
-      this.textEl.innerHTML = render(c.parsed, c.n);
+      if (c.shown !== c.n) { c.shown = c.n; this.textEl.innerHTML = render(c.parsed, c.n); } // only when a letter was added
       if (c.n >= c.parsed.total) { c.done = true; c.wait = c.hold; this.nextEl.classList.add('on'); }
     } else {
       c.wait -= dt;

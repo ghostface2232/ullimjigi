@@ -3,9 +3,10 @@
 // distant mountain-range silhouettes on the horizon.
 import * as THREE from 'three';
 import { U, FOG, noiseTexture } from '../render/materials.js';
+import { SunLight } from 'three/addons/lights/SunLight.js';
 import { lerp, clamp, smoothstep, createNoise2D, ridged } from '../core/util.js';
-
-const CLOUD_H = 160; // cloud layer height (m), shared with ground cloud shadows
+import { tier } from '../render/quality.js';
+import { Clouds, CLOUD } from '../render/clouds.js';
 
 const SKY_VS = `
 varying vec3 vDir;
@@ -15,14 +16,23 @@ void main(){
   gl_Position = p.xyww;
 }`;
 const SKY_FS = `
-uniform vec3 uTop, uHorizon, uBottom, uSunColor, uSunDir, uMoonDir, uCloud, uCloudShade, uCam;
+const float C_MID = ${CLOUD.mid.toFixed(1)}, C_FAR = ${CLOUD.far.toFixed(1)}, DOME_S = ${CLOUD.domeS.toFixed(3)};
+uniform vec3 uTop, uHorizon, uBottom, uSunColor, uSunDir, uMoonDir, uCloud, uCloudShade, uCam, uLightDir;
 uniform float uTime, uNight, uSunVis, uHush, uCover;
 uniform vec4 uCloudW;
-uniform sampler2D uNoiseTex;
+uniform sampler2D uNoiseTex, uCloudMap;
+uniform vec3 uSnapCam;
+uniform vec2 uDrift;
 varying vec3 vDir;
 float hash(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
-float cloudDens(vec2 uv){
-  return texture2D(uNoiseTex, uv).r + (texture2D(uNoiseTex, uv * 4.3 + vec2(0.37, 0.11)).b - 0.5) * 0.24;
+// Cumulus from the dome map (render/clouds.js): rgb = sun energy, height in the cloud and
+// distance, each weighted by opacity; a = opacity.
+vec4 cloudAt(vec3 d){
+  // re-aim through the middle of the layer, so the map follows the drift and the camera's
+  // travel since it was drawn
+  float tm = (C_MID - uCam.y) / max(d.y, 0.03);
+  vec3 q = normalize(uCam + d * tm + vec3(uDrift.x, 0.0, uDrift.y) - uSnapCam);
+  return texture2D(uCloudMap, q.xz / (1.0 + max(q.y, 0.0)) * (0.5 * DOME_S) + 0.5);
 }
 void main(){
   vec3 d = normalize(vDir);
@@ -50,32 +60,23 @@ void main(){
     float mw = smoothstep(0.35, 0.0, abs(d.x * 0.6 + d.z * 0.8 - 0.1)) * smoothstep(0.0, 0.5, y);
     col += vec3(0.25, 0.28, 0.45) * mw * texture2D(uNoiseTex, d.xz * 1.6).g * uNight * 0.6;
   }
-  // painterly cumulus layer (same world mapping as the ground cloud shadows)
-  if (y > -0.03) {
-    float yy = max(y, 0.0);
-    vec2 wp = uCam.xz + d.xz * (${CLOUD_H.toFixed(1)} - uCam.y) / (yy + 0.045);
-    vec2 uv = (wp + uCloudW.xy) * uCloudW.z;
-    float dens = cloudDens(uv);
-    float cov = smoothstep(uCover, uCover + 0.13, dens);
-    if (cov > 0.001) {
-      vec2 toSun = normalize(uSunDir.xz + vec2(1e-4)) * 0.02;
-      float ds = cloudDens(uv + toSun);
-      float lit = smoothstep(0.2, 0.8, 0.55 - (ds - dens) * 7.0);
-      float thick = smoothstep(uCover + 0.06, uCover + 0.34, dens);
-      vec3 cc = mix(uCloudShade, uCloud, mix(lit, 1.0, 0.2) * (1.0 - thick * 0.4));
-      // silver lining on thin edges, strongest near the sun
-      float edge = cov * (1.0 - smoothstep(uCover + 0.02, uCover + 0.16, dens));
-      cc += uSunColor * edge * (pow(sdp, 5.0) * 1.2 + 0.12) * uSunVis;
-      cc += uSunColor * pow(sdp, 8.0) * 0.25 * uSunVis;
-      // distant clouds sink into the horizon haze
-      cc = mix(uHorizon, cc, 0.35 + 0.65 * smoothstep(0.02, 0.3, y));
-      col = mix(col, cc, cov * smoothstep(0.0, 0.12, y) * 0.96);
+  if (y > 0.0) {
+    vec4 cl = cloudAt(d);
+    if (cl.a > 0.004) {
+      vec3 k = cl.rgb / cl.a;
+      // the map's edge, a little tightened: soft, but not smeared
+      float a = smoothstep(0.02, 0.84, cl.a);
+      // two soft tones: sunlit white over a pale shade that gathers at the base
+      float tone = smoothstep(0.08, 0.5, k.r) * (0.8 + 0.2 * smoothstep(0.0, 0.5, k.g));
+      vec3 cc = mix(uCloudShade, uCloud, tone);
+      // thin edges glow when the sun is behind them
+      cc += uSunColor * pow(sdp, 8.0) * cl.a * (1.0 - cl.a) * 2.2 * uSunVis;
+      // far clouds sink into the horizon haze
+      float dist = k.b * C_FAR;
+      cc = mix(cc, mix(uHorizon, uCloud, 0.4), 1.0 - exp(-dist / 15000.0));
+      a *= 1.0 - smoothstep(0.82, 1.0, k.b);
+      col = mix(col, cc, a);
     }
-    // high cirrus wisps
-    vec2 cw = (uCam.xz + d.xz * 700.0 / (yy + 0.08) + uCloudW.xy * 1.7) * uCloudW.z * 0.45;
-    cw = vec2(cw.x * 0.6 + cw.y * 0.8, (cw.y * 0.6 - cw.x * 0.8) * 3.5);
-    float ci = smoothstep(0.56, 0.86, texture2D(uNoiseTex, cw).g) * smoothstep(0.04, 0.4, y) * (1.0 - cov);
-    col = mix(col, uCloud + uSunColor * pow(sdp, 4.0) * 0.3 * uSunVis, ci * 0.32);
   }
   col = mix(col, vec3(0.32, 0.26, 0.4) * (0.6 + 0.4 * col), uHush * 0.55);
   gl_FragColor = vec4(col, 1.0);
@@ -167,8 +168,8 @@ const KEYS = [
   { h: 0, top: 0x060b20, hor: 0x1a2546, bot: 0x0c1226, sun: 0x8fa6ff, sunI: 0.35, hemiS: 0x31406e, hemiG: 0x1a1e2a, hemiI: 0.55, fog: 0x18223c, cloud: 0x2a3456, shade: 0x151b30, rim: 0.25, night: 1 },
   { h: 4.5, top: 0x101a3a, hor: 0x3d3f66, bot: 0x151a30, sun: 0x9aaaff, sunI: 0.3, hemiS: 0x3d4a78, hemiG: 0x221f2c, hemiI: 0.6, fog: 0x2b3050, cloud: 0x3d3f60, shade: 0x22263e, rim: 0.3, night: 0.9 },
   { h: 6, top: 0x3e5b9a, hor: 0xf4ab7e, bot: 0x6a5a6a, sun: 0xffb27a, sunI: 1.3, hemiS: 0x9aa3c8, hemiG: 0x6a5a50, hemiI: 1.0, fog: 0xe0ab94, cloud: 0xffd0b8, shade: 0xa87890, rim: 0.8, night: 0.15 },
-  { h: 8, top: 0x4a82d4, hor: 0xcfe3f0, bot: 0x9ab0c0, sun: 0xfff0dc, sunI: 2.5, hemiS: 0xbfd8ff, hemiG: 0x7a8a5a, hemiI: 1.25, fog: 0xc6dbeb, cloud: 0xffffff, shade: 0xaebfd8, rim: 1, night: 0 },
-  { h: 12.5, top: 0x3a78d4, hor: 0xbcdaf2, bot: 0x9ab0c0, sun: 0xfffaf0, sunI: 2.8, hemiS: 0xc4ddff, hemiG: 0x7d8f58, hemiI: 1.3, fog: 0xbcd6ec, cloud: 0xffffff, shade: 0xb0c0d8, rim: 1, night: 0 },
+  { h: 8, top: 0x2f74d6, hor: 0xb4dcf4, bot: 0x9ab0c0, sun: 0xfff0dc, sunI: 2.5, hemiS: 0xbfd8ff, hemiG: 0x7a8a5a, hemiI: 1.25, fog: 0xc6dbeb, cloud: 0xffffff, shade: 0xc0d2ee, rim: 1, night: 0 },
+  { h: 12.5, top: 0x1e66cc, hor: 0x9ed6f6, bot: 0x9ab0c0, sun: 0xfffaf0, sunI: 2.8, hemiS: 0xc4ddff, hemiG: 0x7d8f58, hemiI: 1.3, fog: 0xbcd6ec, cloud: 0xffffff, shade: 0xc8dbf5, rim: 1, night: 0 },
   { h: 16.5, top: 0x4478cc, hor: 0xf0d8b0, bot: 0x9a9aa0, sun: 0xffe2b4, sunI: 2.4, hemiS: 0xc8d4f0, hemiG: 0x857f55, hemiI: 1.2, fog: 0xcfd9e2, cloud: 0xfff4e0, shade: 0xbcb0c4, rim: 1, night: 0 },
   { h: 18.6, top: 0x33447e, hor: 0xff9a60, bot: 0x5a4450, sun: 0xff8a4a, sunI: 1.4, hemiS: 0x9a88b0, hemiG: 0x5a4640, hemiI: 0.95, fog: 0xd08a70, cloud: 0xffb890, shade: 0x80567a, rim: 0.9, night: 0.1 },
   { h: 20, top: 0x141c44, hor: 0x5a4a78, bot: 0x1a1a2e, sun: 0xa0a8ff, sunI: 0.35, hemiS: 0x4a5080, hemiG: 0x252230, hemiI: 0.62, fog: 0x3a3a5e, cloud: 0x4a4468, shade: 0x2a2640, rim: 0.4, night: 0.75 },
@@ -195,7 +196,10 @@ export class Sky {
       uCloud: { value: new THREE.Color() }, uCloudShade: { value: new THREE.Color() },
       uTime: U.time, uNight: { value: 0 }, uSunVis: { value: 1 }, uHush: { value: 0 },
       uCover: { value: 0.53 }, uCloudW: U.cloud, uNoiseTex: { value: noiseTexture() }, uCam: { value: new THREE.Vector3() },
+      uLightDir: U.sunDir,
     };
+    this.clouds = new Clouds();
+    Object.assign(this.uni, this.clouds.uni);
     const mat = new THREE.ShaderMaterial({ uniforms: this.uni, vertexShader: SKY_VS, fragmentShader: SKY_FS, side: THREE.BackSide, depthWrite: false, fog: false });
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1500, 48, 24), mat);
     // Drawn last among opaques so early-z skips every covered pixel.
@@ -214,20 +218,28 @@ export class Sky {
     this.ranges.userData.noBake = true;
     scene.add(this.ranges);
 
-    this.sun = new THREE.DirectionalLight(0xffffff, 2.5);
+    // Key light with two shadow cascades fitted to the view (three's SunLight): its position
+    // is the direction towards the light, and shadow.camera.far is how far shadows reach.
+    this.sun = new SunLight(0xffffff, 2.5);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
-    const sc = this.sun.shadow.camera;
-    sc.left = -55; sc.right = 55; sc.top = 55; sc.bottom = -55; sc.near = 1; sc.far = 260;
-    this.sun.shadow.bias = -0.0004;
-    this.sun.shadow.normalBias = 0.04;
-    this.sun.shadow.radius = 2.6; // wider PCF disk: soft painterly shadow edges at no extra taps
-    scene.add(this.sun); scene.add(this.sun.target);
+    this.sun.shadow.bias = -0.00022;
+    this.sun.shadow.normalBias = 0.05;
+    this.sun.shadow.radius = 3.2; // PCF disk in atlas texels: soft painterly shadow edges
+    this.applyQuality();
+    scene.add(this.sun);
     this.hemi = new THREE.HemisphereLight(0xbfd8ff, 0x7a8a5a, 1.2);
     scene.add(this.hemi);
     scene.fog = new THREE.FogExp2(0xbcd6ec, 0.003);
     this.fogBase = 0.003;
     this.cur = {};
+  }
+
+  applyQuality() {
+    const T = tier(), sh = this.sun.shadow;
+    this.clouds.applyQuality();
+    if (!T.shadowMap) return; // shadows are switched off on the renderer
+    sh.mapSize.set(T.shadowMap, T.shadowMap);
+    sh.camera.far = T.shadowDist;
   }
 
   setHour(h) { this.hour = ((h % 24) + 24) % 24; }
@@ -269,8 +281,7 @@ export class Sky {
     const useMoon = sunUp < 0.02;
     const ldir = useMoon ? u.uMoonDir.value : sunDir;
     const lightDir = _lightDir.set(ldir.x, Math.max(ldir.y, 0.25), ldir.z).normalize();
-    this.sun.position.copy(center).addScaledVector(lightDir, 120);
-    this.sun.target.position.copy(center);
+    this.sun.position.copy(lightDir);
     lerpHex(a.sun, b.sun, t, this.sun.color);
     const hushDim = 1 - this.hush * 0.35;
     this.sun.intensity = lerp(a.sunI, b.sunI, t) * hushDim * (1 - oc * 0.62 - st * 0.15);
@@ -288,9 +299,12 @@ export class Sky {
     // the far ranges stay at one distance wherever you are on the map (they are the horizon)
     this.ranges.position.set((camPos || center).x, 0, (camPos || center).z);
     this.night = night;
+    // how strongly the air lights up in shafts: full under a clear sun, faint by moonlight
+    this.shaft = (sunVis * (1 - night) + 0.18 * night) * (1 - oc * 0.85) * (1 - this.hush * 0.5);
 
     // --- shared lighting uniforms ---------------------------------------
     U.sunDir.value.copy(lightDir);
+    U.skyRefl.value.copy(u.uHorizon.value).lerp(u.uTop.value, 0.45).multiplyScalar(0.9 * (1 - night * 0.55));
     // cool shade tint: sky color normalized to a fixed share of the key light
     cT.copy(this.hemi.color);
     const l = Math.max(lum(cT), 1e-3);
@@ -299,6 +313,12 @@ export class Sky {
     U.shadeTint.value.copy(cT).multiplyScalar(lerp(0.3, 0.42, night) * (1 - this.hush * 0.2));
     // cloud shadows drift with the sky clouds
     this.cloudT += dt;
+    // the sky's cumulus: drift, slow rise of the billows, cover and light
+    const W = 80000; // every noise period divides this, so wrapping never shows
+    this.clouds.wind.set((this.cloudT * 9) % W, (this.cloudT * 3.6) % W, (this.cloudT * 1.5) % W);
+    this.clouds.cover = 0.7 + oc * 0.3;
+    this.clouds.deck = smoothstep(0.3, 1, oc);
+    this.clouds.light.copy(lightDir);
     const cw = U.cloud.value;
     cw.x = -this.cloudT * 3.2; cw.y = -this.cloudT * 1.3;
     cw.w = 0.42 * smoothstep(0.05, 0.3, sunUp) * (1 - night) * (1 - oc * 0.8);
@@ -315,12 +335,5 @@ export class Sky {
     FOG.height.x = (0.0022 + 0.004 * dawn + 0.002 * night) * (1 + this.hush);
     FOG.height.y = 0.045;
     FOG.height.z = 0;
-
-    // snap shadow camera to texel grid to avoid shimmering
-    const sc = this.sun.shadow.camera;
-    const texel = (sc.right - sc.left) / this.sun.shadow.mapSize.x;
-    this.sun.target.position.x = Math.round(center.x / texel) * texel;
-    this.sun.target.position.z = Math.round(center.z / texel) * texel;
-    this.sun.position.copy(this.sun.target.position).addScaledVector(lightDir, 120);
   }
 }

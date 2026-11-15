@@ -51,6 +51,7 @@ export class CameraRig {
     this.slowPrev = false;
     this.pendAmt = 0; this.pendDir = new THREE.Vector3();
     this.basePos = new THREE.Vector3(); this.baseDir = new THREE.Vector3(0, 0, -1);
+    this.push = null;
   }
 
   // random trauma shake (0..1 accumulates, quadratic falloff)
@@ -74,6 +75,12 @@ export class CameraRig {
     this.kr.v[0] += (-lz * 0.55 - ly * 0.3) * a; // forward push pitches the view down
     this.kr.v[1] += -lx * 0.2 * a;
     this.kr.v[2] += lx * 0.7 * a + (Math.random() - 0.5) * 0.3 * a;
+  }
+  // Short authored lean-in (ultimates): over `dur` seconds the boom shortens by `dist`, the
+  // lens narrows by `fov` degrees and the horizon tips by `roll`; it then lets go over `out`.
+  // Additive and on real time (it carries through hit stop); the player keeps the stick.
+  focus(dur = 0.45, o = {}) {
+    this.push = { t: 0, dur, out: o.out ?? 0.4, dist: o.dist ?? -1.4, fov: o.fov ?? -7, roll: o.roll ?? 0 };
   }
   // one-call hit feel: kick + trauma + optional FOV punch
   impact(dir, amt = 0.3, fov = 0) {
@@ -145,11 +152,18 @@ export class CameraRig {
     springStep(this.kr, dt, 17, 0.4);
     springStep(this.kf, dt, 11, 0.55);
 
+    let pk = 0;
+    const F = this.push;
+    if (F) {
+      F.t += dt;
+      const a = F.t < F.dur ? F.t / F.dur : 1 - (F.t - F.dur) / F.out;
+      if (a <= 0) this.push = null; else pk = F.t < F.dur ? 1 - (1 - a) ** 3 : a * a * (3 - 2 * a);
+    }
     const cy = Math.cos(this.pitch);
     const back = tmp.set(Math.sin(this.yaw) * cy, Math.sin(this.pitch), Math.cos(this.yaw) * cy);
     this.right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const look = this.lookAtP.copy(this.smoothT).addScaledVector(this.right, this.shoulder);
-    let d = this.dist;
+    let d = this.dist + (F ? F.dist * pk : 0);
     // terrain collision: march from look point outward
     const W = G.world;
     if (W) {
@@ -186,11 +200,11 @@ export class CameraRig {
     this.cam.getWorldDirection(this.baseDir);
     const pitch = (noise1(t * 0.9, 3) * 0.016 * sh + this.kr.x[0]) * cine;
     const yawJ = (noise1(t * 0.9, 4) * 0.012 * sh + this.kr.x[1]) * cine;
-    const roll = (noise1(t * 0.7, 5) * 0.045 * sh + this.kr.x[2]) * cine;
+    const roll = (noise1(t * 0.7, 5) * 0.045 * sh + this.kr.x[2] + (F ? F.roll * pk : 0)) * cine;
     if (pitch) this.cam.rotateX(pitch);
     if (yawJ) this.cam.rotateY(yawJ);
     if (roll) this.cam.rotateZ(roll);
-    const fov = clamp(this.fov + this.kf.x[0], 35, 90);
+    const fov = clamp(this.fov + this.kf.x[0] + (F ? F.fov * pk : 0), 35, 90);
     if (Math.abs(this.cam.fov - fov) > 0.01) { this.cam.fov = fov; this.cam.updateProjectionMatrix(); }
     this.forward.copy(this.baseDir);
   }

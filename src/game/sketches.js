@@ -10,17 +10,17 @@ import { clamp } from '../core/util.js';
 
 export const SKETCHES = [
   { id: 'hill', name: '언덕 위의 우리 집', eye: [-2, 128], look: [-27, 153, 8],
-    text: '세하가 졸라서 그린 우리 집. 창가에 앉은 게 나, 문 앞에서 손 흔드는 게 세하란다. …언젠가 이 애의 아이도 여기서 자라겠지.' },
+    text: '세하가 졸라서 그린 우리 집. 자기는 문 앞에서 손 흔드는 걸로 그려 달란다. 다 그리고 보니 지붕이 좀 삐뚤지만 그냥 두기로 했다. …언젠가 이 애의 아이도 저 문 앞에 서겠지.' },
   { id: 'dawn', name: '새벽의 종탑', eye: [-8, 30], look: [6, 10, 9],
-    text: '매일 새벽 종을 친다. 한 번 칠 때마다 한 사람의 이름을 불러. 오늘은 카엘, 내일도 카엘.' },
+    text: '새벽마다 종보다 먼저 일어나 노래한다. 한 소절마다 그 사람 이름을 담아서. 오늘도 카엘, 내일도 카엘. 모레도… 아마 평생 그 이름 하나뿐이겠지.' },
   { id: 'lake', mem: 'hairpin', name: '거울 호숫가', eye: [-40, 86], look: [-84, 64, 2],
-    text: '세하 열 살. 은방울꽃 핀을 호수에 빠뜨리고 울었다. 아무리 뒤져도 없더구나. …언젠가 누가 찾아 주겠지.' },
+    text: '세하가 열 살 되던 해. 은방울꽃 핀을 호수에 빠뜨리고 해 질 때까지 울었다. 치마 걷고 물가를 다 뒤졌는데도 못 찾았다. 호수가 잠시 맡아 두는 셈 치자.' },
   { id: 'meadow', mem: 'book', name: '노을 들판의 나무', eye: [96, 84], look: [81, 64, 4],
     text: '카엘이 꽃 이름을 가르쳐 준 나무. 물망초는 나를 잊지 말라는 뜻이래. 흥, 누가 잊는대.' },
   { id: 'frost', mem: 'musicbox', name: '서리봉 가는 길', eye: [-26, -140], look: [-34, -170, 3], after: 'frostBell',
-    text: '세하가 오르골을 품에 안고 올라간 길. 금방 온다고 했지. 그 애는 늘 약속을 지키는 애였는데.' },
+    text: '세하가 오르골을 품고 올라간 길. 금방 온다고 했다. 약속 한 번 어긴 적 없는 애니까, 이번에도 그저 걸음이 조금 길어지는 것뿐이겠지.' },
   { id: 'storm', mem: 'badge', name: '천둥 고원의 폐허', eye: [-150, -10], look: [-170, -24, 3], after: 'stormBell',
-    text: '카엘이 마지막으로 서 있던 자리. 천둥이 칠 때마다 그 사람 이름을 불러 주는 것 같더라.' },
+    text: '카엘이 마지막으로 서 있던 자리. 여긴 천둥이 잦다. 천둥이 칠 때마다 하늘이 내 대신 그 이름을 크게 불러 주는 것 같아서, 연필을 놓고 한참을 들었다.' },
 ];
 const EYE_H = 2.6;           // a normal over-the-shoulder camera height
 const NEAR = 7;              // camera within this of the vantage point (m)
@@ -94,9 +94,9 @@ export class Sketchbook {
     const hide = [G.player.root, G.companion && G.companion.root, ...G.npcs.list.map((n) => n.root), ...G.enemies.list.map((e) => e.root)].filter(Boolean);
     const vis = hide.map((o) => o.visible);
     hide.forEach((o) => (o.visible = false));
-    W.props.update(cam); W.terrain.update(cam, Infinity);
+    W.props.update(cam); W.terrain.update(cam, Infinity, 1);
     R.setRenderTarget(this.rt); R.render(G.scene, cam); R.setRenderTarget(null);
-    W.props.update(G.camera); W.terrain.update(G.camera, Infinity);
+    W.props.update(G.camera); W.terrain.update(G.camera);
     hide.forEach((o, i) => (o.visible = vis[i]));
     // read back without waiting on the GPU in this frame
     const px = new Uint8Array(w * h * 4);

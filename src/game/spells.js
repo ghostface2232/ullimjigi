@@ -8,11 +8,14 @@ import { U } from '../render/materials.js';
 import { randRange, rand, clamp, pick, josa } from '../core/util.js';
 import { NODES, ULTS } from './skills.js';
 import { Fields } from './fields.js';
+import { ultAccent, ultTitle } from './ultfx.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const RAIN_C = new THREE.Color(0.55, 0.65, 0.85);
 const WAVE_BLUE = new THREE.Color(0.1, 0.34, 0.75), WAVE_FROST = new THREE.Color(0.32, 0.6, 0.85);
 const C85 = new THREE.Color(0.85, 0.95, 1.05), C60 = new THREE.Color(0.6, 0.8, 1.0);
+const FLAME_A = new THREE.Color(2.6, 1.6, 0.5), FLAME_B = new THREE.Color(2.0, 0.6, 0.08);
+const SOOT_A = new THREE.Color(0.1, 0.08, 0.08), SOOT_B = new THREE.Color(0.26, 0.24, 0.25);
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
 const R = (id) => (G.skills ? G.skills.r(id) : 0);
 const NOLOOP = { set() {}, vol() {}, stop() {} };
@@ -25,25 +28,24 @@ function sndLoop(name, pos, o = {}) {
   try { return A.loop(name, { pos, ...o }) || NOLOOP; } catch (e) { return NOLOOP; }
 }
 // noise-sphere look for each element's projectile core
-const CORE_LOOK = { arcane: 'arcane', fire: 'fireball', water: 'water', frost: 'frost', storm: 'storm', wind: 'wind', hush: 'hush' };
 
 export const BOLT = {
   arcane: { name: '비전 화살', cost: 0, cd: 0.26, desc: '빠르고 정확한 기본 마법. 마나를 쓰지 않는다.' },
-  fire: { name: '불씨 탄', cost: 4, cd: 0.34, desc: '적을 불태운다. 한기 서린 적을 녹여 큰 피해(융해).' },
-  wind: { name: '바람 칼날', cost: 4, cd: 0.36, desc: '여러 적을 꿰뚫고 밀어낸다. 불·한기·전기를 퍼뜨린다.' },
-  frost: { name: '서리 파편', cost: 5, cd: 0.4, desc: '세 갈래 얼음 파편. 한기가 세 번 쌓이면 얼어붙는다. 물을 얼린다.' },
-  storm: { name: '전격', cost: 5, cd: 0.42, desc: '즉시 적중하고 옆의 적에게 튄다. 젖은 적·언 적에게 치명적.' },
-  water: { name: '물방울 탄', cost: 4, cd: 0.32, desc: '적을 적신다. 젖은 적은 번개에 감전되고 서리에 얼어붙는다. 불타는 적에게는 불을 끄는 대신 피해가 준다.' },
+  fire: { name: '불씨 탄', cost: 4, cd: 0.34, desc: '적을 불태운다. 한기 서린 적을 녹여 큰 피해(융해)를 입힌다.' },
+  wind: { name: '바람 칼날', cost: 4, cd: 0.36, desc: '여러 적을 꿰뚫고 밀어낸다. 불·한기·전기를 주변으로 퍼뜨린다.' },
+  frost: { name: '서리 파편', cost: 5, cd: 0.4, desc: '세 갈래 얼음 파편. 한기가 세 번 쌓이면 얼어붙고, 수면을 얼린다.' },
+  storm: { name: '전격', cost: 5, cd: 0.42, desc: '즉시 적중하고 옆의 적에게 튄다. 젖은 적·언 적에게 치명적이다.' },
+  water: { name: '물방울 탄', cost: 4, cd: 0.32, desc: '적을 적신다. 젖은 적은 번개에 감전되고 서리에 얼어붙는다. 불타는 적에게 쓰면 불을 끄는 대신 피해가 줄어든다.' },
 };
 // Charged basic spell (hold left mouse, release when full). Mana comes only from here.
 export const CHARGE_T = 0.75;
 export const CHARGED = {
-  arcane: { name: '별빛 창', cost: 8, desc: '모든 적을 꿰뚫는 빠른 창. 지나가는 땅의 흔적을 터뜨린다 (공명 폭발).' },
+  arcane: { name: '별빛 창', cost: 8, desc: '일직선상의 모든 적을 꿰뚫는 창. 스쳐 지나가는 땅의 흔적을 폭발시킨다 (공명 폭발).' },
   fire: { name: '불씨 폭탄', cost: 14, desc: '포물선을 그리며 날아가 터지고, 떨어진 자리에 불길을 남긴다.' },
-  wind: { name: '큰 바람 칼날', cost: 12, desc: '모든 적을 꿰뚫고 띄우는 커다란 칼날. 지나가는 땅의 흔적의 속성을 머금는다.' },
-  frost: { name: '얼음 창', cost: 14, desc: '무거운 얼음 창이 한기를 크게 쌓고, 꽂힌 자리에 서리밭을 남긴다.' },
+  wind: { name: '큰 바람 칼날', cost: 12, desc: '적을 꿰뚫고 공중으로 띄우는 커다란 칼날. 땅의 흔적을 스치면 그 속성을 머금고 날아간다.' },
+  frost: { name: '얼음 창', cost: 14, desc: '묵직한 얼음 창이 한기를 크게 쌓고, 꽂힌 자리에 서리밭을 남긴다.' },
   storm: { name: '뇌창', cost: 15, desc: '겨눈 적에게 곧바로 내리꽂혀 주변 적 넷에게 튀고, 대전된 땅을 남긴다.' },
-  water: { name: '물폭탄', cost: 12, desc: '포물선을 그리며 날아가 넓게 터져 모두 적시고, 물웅덩이를 남긴다.' },
+  water: { name: '물폭탄', cost: 12, desc: '포물선을 그리며 날아가 넓게 터져 주변 적을 모두 적시고, 물웅덩이를 남긴다.' },
 };
 export const HEAVY = {
   arcane: { name: '비전 파동', cost: 22, cd: 3.5, desc: '주위를 밀쳐내는 충격파. 적의 투사체를 지우고, 닿은 땅의 흔적을 한꺼번에 터뜨린다.' },
@@ -64,11 +66,14 @@ export const WEAVE = {
   'frost+water': { name: '빙하 해일', desc: '거대한 물결이 밀려가며 휩쓴 적을 모두 얼려 버린다.' },
   'storm+water': { name: '전류 소용돌이', desc: '적을 빨아들이는 소용돌이에 전류가 흐른다. 젖은 적은 계속 감전된다.' },
   'water+wind': { name: '폭풍우', desc: '비바람의 벽이 앞으로 휩쓸며 적을 밀어내고 적신다. 불을 끄고, 물웅덩이를 남긴다.' },
-  arcane: { name: '비전 광선', desc: '짝지은 속성으로 물든 광선을 내뿜는다. 계속 조준할 수 있다.' },
+  arcane: { name: '비전 광선', desc: '짝지은 속성의 힘을 담은 광선을 내뿜는다. 쏘는 동안 방향을 바꿀 수 있다.' },
 };
 export const WEAVE_COST = 45, WEAVE_CD = 9;
 // signature spells gather at the staff for a beat before they are released
 export const WINDUP = { arcane: 0.1, fire: 0.2, wind: 0.14, frost: 0.18, storm: 0.12, water: 0.18 };
+// ultimates gather overhead for this long before the release beat (the `ult_cast` sound
+// swells for the same time and lands its boom on the release)
+export const ULT_WINDUP = 0.4;
 export function weaveInfo(a, b) {
   if (!a || !b || a === b) return null;
   if (a === 'arcane' || b === 'arcane') {
@@ -92,7 +97,7 @@ const RIBBON = {
   hush: { el: 'hush', width: 0.24, life: 0.26, wave: 0.3 },
 };
 // trail sprite emission rates (per second) so density doesn't depend on frame rate
-const TRAIL_RATE = { arcane: 70, fire: 90, bigfire: 160, plasma: 110, wind: 120, frost: 50, water: 80, hush: 70 };
+const TRAIL_RATE = { arcane: 45, fire: 55, bigfire: 60, plasma: 110, wind: 120, frost: 50, water: 80, hush: 70 };
 
 // Water wall shader for waves: curling crest, deep body, foam, fresnel glint
 const WAVE_VS = `
@@ -145,7 +150,6 @@ export class Spells {
     const cg = new THREE.TorusGeometry(0.7, 0.07, 4, 18, Math.PI * 0.9);
     cg.rotateZ(Math.PI * 0.05);
     this.crescentGeo = cg;
-    this.shardGeo = new THREE.OctahedronGeometry(0.12, 0); this.shardGeo.scale(0.7, 0.7, 2.6);
     const wg = new THREE.CylinderGeometry(3.4, 3.8, 2.6, 40, 10, true, -Math.PI * 0.32, Math.PI * 0.64);
     wg.translate(0, 1.3, 0);
     this.waveGeo = wg;
@@ -201,9 +205,9 @@ export class Spells {
     const V = G.vfx;
     // noise-volume core (fire ball, water blob, energy); falls back to a fresnel orb when the pool is busy
     if (p.core) {
-      p.coreH = V.sphere(p.core, p.pos, { mini: !p.bigCore, r0: p.coreR ?? 0.25, dur: 0, follow: p.pos, alpha: 1, speed: p.coreSpeed, pulse: p.corePulse ?? 0.04 });
+      p.coreH = V.sphere(p.core, p.pos, { mini: !p.bigCore, r0: p.coreR ?? 0.25, dur: 0, follow: p.pos, alpha: 1, speed: p.coreSpeed, pulse: p.corePulse ?? 0.04, along: p.coreStretch ? p.vel : null, squash: p.coreStretch ?? 1 });
       if (!p.coreH && !p.orb) p.orb = (p.coreR ?? 0.25) * 0.8;
-      if (p.coreH && p.orb) { p.halo = V.orb(p.el === 'hush' ? 'hush' : p.el, p.orb, { halo: p.bigCore ? 2.6 : 3.6, haloI: p.bigCore ? 0.2 : 0.3 }); p.halo.material.uniforms.uAlpha.value = 0; p.orb = 0; }
+      if (p.coreH && p.orb) { p.halo = V.orb(p.el === 'hush' ? 'hush' : p.el, p.orb, { halo: p.bigCore ? 2.6 : 3.6, haloI: (p.bigCore ? 0.2 : 0.3) * (p.haloK ?? 1) }); p.halo.material.uniforms.uAlpha.value = 0; p.orb = 0; }
     }
     if (p.orb) p.mesh = V.orb(p.el === 'hush' ? 'hush' : p.el, p.orb, { halo: p.trail === 'bigfire' || p.trail === 'plasma' ? 2.6 : 4, haloI: p.trail === 'bigfire' || p.trail === 'plasma' ? 0.22 : p.owner === 'enemy' ? 0.28 : 0.38 });
     const rc = RIBBON[p.trail];
@@ -219,13 +223,10 @@ export class Spells {
         G.scene.add(p.mesh);
       }
     }
-    if (p.meshType === 'shard') {
-      p.mesh = new THREE.Mesh(this.shardGeo, V.iceMat);
-      p.sharedMat = true;
-      G.scene.add(p.mesh);
-    }
+    // faceted bodies (frost splinter, arcane star-needle) come from the VFX pool
+    if (p.meshType === 'shard' || p.meshType === 'needle') { p.mesh = V.body(p.meshType, p.bodyScale ?? (p.meshType === 'shard' ? 0.42 : 0.5)); p.pooled = true; p.roll = rand() * 6.28; }
     if (p.lightI) p.light = V.holdLight(PAL[p.el]?.light ?? 0xffffff, p.lightI, p.lightD ?? 10);
-    if (p.hazeR) p.haze = V.distort.haze(p.pos, p.hazeR, 0, { follow: p.pos, amp: 0.014 });
+    if (p.hazeR) p.haze = V.distort.haze(p.pos, p.hazeR, 0, { follow: p.pos, amp: 0.008 });
     if (p.loop) p.snd = sndLoop(p.loop, p.pos, { v: p.loopV ?? 1 });
     if (p.mesh) { p.mesh.position.copy(p.pos); this.orient(p); }
     this.list.push(p);
@@ -233,6 +234,11 @@ export class Spells {
   }
   orient(p) {
     if (!p.mesh || p.orb) return;
+    if (p.pooled) { // long axis along the flight, turning about it so the facets catch the light
+      p.mesh.quaternion.setFromUnitVectors(UP, tmp.copy(p.vel).normalize());
+      p.mesh.rotateY(p.roll + (p.age || 0) * (p.meshType === 'needle' ? 14 : 5));
+      return;
+    }
     tmp.copy(p.pos).add(p.vel);
     p.mesh.lookAt(tmp);
     if (p.meshType === 'crescent') p.mesh.rotateX(Math.PI / 2);
@@ -246,7 +252,7 @@ export class Spells {
     if (p.halo) { G.vfx.disposeOrb(p.halo); p.halo = null; }
     if (p.haze) { p.haze.end(); p.haze = null; }
     if (p.snd) { p.snd.stop(0.25); p.snd = null; }
-    if (p.mesh) { if (p.orb) G.vfx.disposeOrb(p.mesh); else { G.scene.remove(p.mesh); if (!p.sharedMat) p.mesh.material.dispose(); } }
+    if (p.mesh) { if (p.pooled) G.vfx.releaseBody(p.mesh); else if (p.orb) G.vfx.disposeOrb(p.mesh); else { G.scene.remove(p.mesh); if (!p.sharedMat) p.mesh.material.dispose(); } }
     if (p.light) G.vfx.releaseLight(p.light);
   }
 
@@ -314,12 +320,12 @@ export class Spells {
     G.cameraRig.kick && G.cameraRig.kick(tmp.copy(dir).negate(), 0.05);
     switch (el) {
       case 'arcane':
-        this.projectile({ el, pos: origin, vel: dir.clone().multiplyScalar(46), r: 0.28, life: 1.4, dmg: P * (1 + 0.12 * R('a_focus')), core: 'arcane', coreR: 0.17, orb: 0.14, trail: 'arcane', knock: 2.5, pierce: R('a_pierce'), source: 'player' });
+        this.projectile({ el, pos: origin, vel: dir.clone().multiplyScalar(46), r: 0.28, life: 1.4, dmg: P * (1 + 0.12 * R('a_focus')), meshType: 'needle', trail: 'arcane', knock: 2.5, pierce: R('a_pierce'), focus: R('a_focus') >= 3 ? P * 0.5 : 0, source: 'player' });
         break;
       case 'fire': {
         const m = (1 + 0.12 * R('f_heat')) * this.fireMul();
         const splash = R('f_splash') ? { r: 2.2, dmg: P * 0.4, el: 'fire' } : null;
-        this.projectile({ el, pos: origin, vel: dir.clone().multiplyScalar(36), r: 0.3, life: 1.6, dmg: P * 1.1 * m, core: 'fireball', coreR: 0.23, coreSpeed: 4, orb: 0.2, trail: 'fire', knock: 3, splash, source: 'player' });
+        this.projectile({ el, pos: origin, vel: dir.clone().multiplyScalar(36), r: 0.3, life: 1.6, dmg: P * 1.1 * m, core: 'comet', coreR: 0.21, coreStretch: 2.2, orb: 0.2, haloK: 0.5, trail: 'fire', knock: 3, splash, source: 'player' });
         break;
       }
       case 'wind':
@@ -330,13 +336,13 @@ export class Spells {
         const angs = five ? [-0.11, -0.055, 0, 0.055, 0.11] : [-0.055, 0, 0.055];
         for (const a of angs) {
           const d = dir.clone().applyAxisAngle(UP, a);
-          this.projectile({ el, pos: origin, vel: d.multiplyScalar(46), r: 0.24, life: 1.2, dmg: P * 0.5 * (1 + 0.12 * R('i_edge')), status: 0.55, meshType: 'shard', trail: 'frost', knock: 1.5, source: 'player' });
+          this.projectile({ el, pos: origin, vel: d.multiplyScalar(46), r: 0.24, life: 1.2, dmg: P * 0.5 * (1 + 0.12 * R('i_edge')), status: 0.55, meshType: 'shard', bodyScale: 0.55, trail: 'frost', knock: 1.5, source: 'player' });
         }
         break;
       }
       case 'water': {
         const splash = R('wa_pressure') >= 3 ? { r: 2, dmg: P * 0.25, el: 'water' } : null;
-        this.projectile({ el, pos: origin, vel: dir.clone().multiplyScalar(40), r: 0.3, life: 1.5, dmg: P * 0.9 * (1 + 0.12 * R('wa_pressure')), core: 'water', coreR: 0.22, corePulse: 0.1, orb: 0.16, trail: 'water', knock: 4.5, splash, grav: 2.2, source: 'player' });
+        this.projectile({ el, pos: origin, vel: dir.clone().multiplyScalar(40), r: 0.3, life: 1.5, dmg: P * 0.9 * (1 + 0.12 * R('wa_pressure')), core: 'water', coreR: 0.2, coreStretch: 1.6, corePulse: 0.1, orb: 0.16, trail: 'water', knock: 4.5, splash, grav: 2.2, source: 'player' });
         break;
       }
       case 'storm': {
@@ -350,8 +356,10 @@ export class Spells {
         V.impact('storm', end, { dir, target: hitE ? hitE.e : null, scale: 0.8 });
         this.touch('storm', hitE ? (this.groundAt(end) || end) : end, 1.2, 'bolt');
         if (hitE) {
+          // 충전 3: a target that is already shocked passes the bolt on once more
+          const live = R('s_charge') >= 3 && hitE.e.st && (hitE.e.st.shock > 0 || hitE.e.st.electro > 0) ? 1 : 0;
           G.combat.hit(hitE.e, { dmg: P * 1.05 * (1 + 0.12 * R('s_charge')), el, pos: end, dir, knock: 2, source: 'player' });
-          const jumps = 1 + R('s_chain');
+          const jumps = 1 + R('s_chain') + live;
           const cm = 0.6 + 0.1 * R('s_chain');
           const done = new Set([hitE.e]);
           let from = end, last = hitE.e;
@@ -384,53 +392,101 @@ export class Spells {
     const dir = tmp2.subVectors(aim, origin).normalize().clone();
     const def = CHARGED[el];
     A.play('heavy_' + el, { pos: origin, v: 0.7, pitch: 1.12 }); A.play('cast_' + el, { pos: origin });
-    V.cast(el, origin, dir, 'heavy');
+    V.cast(el, origin, dir, 'charged');
     G.hud.castName && G.hud.castName(def.name, [el]);
     G.cameraRig.kick && G.cameraRig.kick(tmp.copy(dir).negate(), 0.14);
     G.cameraRig.shake(0.1);
     const lob = (sp, up) => dir.clone().multiplyScalar(sp).add(tmp.set(0, up, 0));
     switch (el) {
-      case 'arcane':
-        this.projectile({ el, pos: origin, vel: dir.clone().multiplyScalar(64), r: 0.45, life: 0.9, dmg: P * 2.2 * (1 + 0.12 * R('a_focus')), core: 'arcane', coreR: 0.28, orb: 0.22, trail: 'arcane', ribW: 2.2, knock: 7, pierce: 99, heavy: true, kind: 'charged', sweep: true, touchR: 1.8, lightI: 10, lightD: 8, source: 'player' });
-        break;
-      case 'fire': {
-        const m = (1 + 0.12 * R('f_heat')) * this.fireMul();
-        this.projectile({
-          el, pos: origin, vel: lob(24, 5.5), r: 0.42, life: 2.2, dmg: P * 2 * m, core: 'fireball', coreR: 0.4, coreSpeed: 4, orb: 0.3, trail: 'fire', ribW: 1.8, grav: 15, heavy: true, lightI: 12, lightD: 9, loop: 'loop_fireball', loopV: 0.6, source: 'player',
-          onImpact: (pos) => {
-            this.explode(pos, 3.2, P * 2 * m, 'fire', { shake: 0.35, knock: 9, lift: 4, kind: 'charged' });
-            const g = this.groundAt(pos); if (g) this.fields.add('blaze', g, { r: 2.4, dur: 3, dmg: P * 0.15, noGround: true });
-          },
-        });
+      case 'arcane': {
+        // a lance: thin rings are left strung along its path, so the line it drew stays readable
+        const p = this.projectile({ el, pos: origin, vel: dir.clone().multiplyScalar(64), r: 0.45, life: 0.9, dmg: P * 2.2 * (1 + 0.12 * R('a_focus')), meshType: 'needle', bodyScale: 1.15, trail: 'arcane', ribW: 1.6, knock: 7, pierce: 99, heavy: true, kind: 'charged', sweep: true, touchR: 1.8, lightI: 5, lightD: 7, source: 'player' });
+        let rt = 0.03, n = 0;
+        p.tick = (dt) => {
+          if ((rt -= dt) > 0) return;
+          rt = 0.045; n++;
+          V.ring(p.pos, n % 2 ? PAL.arcane.core : PAL.arcane.glow, 0.5 + 0.12 * (n % 3), 0.3, { up: dir, y: 0, thick: 0.09, alpha: 0.65, r0: 0.1 });
+          if (n % 2) V.burst(p.pos, 'glyph', 1, { spread: 0.25, size: 0.7 });
+        };
         break;
       }
-      case 'wind':
-        this.projectile({ el, pos: origin, vel: dir.clone().multiplyScalar(24), r: 1.35, life: 1.4, dmg: P * 1.5 * (1 + 0.12 * R('w_edge')), pierce: 99, meshType: 'crescent', bladeR: 1.9, trail: 'wind', knock: 5, lift: 6, heavy: true, canInfuse: true, sweep: true, kind: 'charged', source: 'player' });
+      case 'fire': {
+        // a bomb: dark crust, a fuse spitting behind it, and bomblets thrown from the burst
+        const m = (1 + 0.12 * R('f_heat')) * this.fireMul();
+        const p = this.projectile({
+          el, pos: origin, vel: lob(24, 5.5), r: 0.42, life: 2.2, dmg: P * 2 * m, core: 'meteor', coreR: 0.3, coreStretch: 1.2, coreSpeed: 4, orb: 0.24, haloK: 0.3, trail: 'fire', ribW: 1.2, grav: 15, heavy: true, lightI: 7, lightD: 8, loop: 'loop_fireball', loopV: 0.6, source: 'player',
+          onImpact: (pos) => {
+            this.explode(pos, 3.2, P * 2 * m, 'fire', { shake: 0.35, knock: 9, lift: 4, kind: 'charged' });
+            const g = this.groundAt(pos);
+            if (!g) return;
+            this.fields.add('blaze', g, { r: 2.4, dur: 3, dmg: P * 0.15, noGround: true });
+            const a0 = rand() * 6.28;
+            for (let i = 0; i < 5; i++) {
+              const a = a0 + (i / 5) * 6.28 + rv3(0.25), rr = randRange(1.5, 2.2);
+              const q = new THREE.Vector3(g.x + Math.cos(a) * rr, 0, g.z + Math.sin(a) * rr); q.y = G.world.ground(q.x, q.z, g.y + 2);
+              V.later(() => { V.sphere('fire', q.clone().setY(q.y + 0.25), { r0: 0.1, r1: 0.5, dur: 0.4, grow: 3, erodeAt: 0.15, rise: 1.2 }); V.pop(q.clone().setY(q.y + 0.25), 'fire', 0.9, 0.1); V.decal(q, 'scorch', 0.7, { dur: 6, glowDur: 1.2 }); V.chunks(q, 'ember', 3, { speed: 5 }); }, 110 + i * 35);
+            }
+          },
+        });
+        let ft = 0;
+        p.tick = (dt) => {
+          ft += dt * 46;
+          for (; ft >= 1; ft--) V.streaks.emit({ p: [p.pos.x, p.pos.y + 0.2, p.pos.z], v: [-p.vel.x * 0.12 + rv3(2.2), randRange(1.5, 4), -p.vel.z * 0.12 + rv3(2.2)], life: randRange(0.14, 0.26), w: 0.02, stretch: 0.03, minL: 0.05, maxL: 0.5, color: PAL.fire.core, color1: PAL.fire.glow, alpha: 1, alpha1: 0, grav: 12, drag: 1 });
+        };
+        break;
+      }
+      case 'wind': {
+        // the blade opens out as it leaves the staff and drags a wake through the grass
+        const p = this.projectile({ el, pos: origin, vel: dir.clone().multiplyScalar(24), r: 1.35, life: 1.4, dmg: P * 1.5 * (1 + 0.12 * R('w_edge')), pierce: 99, meshType: 'crescent', bladeR: 1.9, trail: 'wind', knock: 5, lift: 6, heavy: true, canInfuse: true, sweep: true, kind: 'charged', source: 'player' });
+        let wt = 0;
+        p.tick = (dt) => {
+          if (p.slashH) p.slashH.radius = 0.75 * (0.6 + 1.3 * Math.min(1, (p.age || 0) / 0.22));
+          if ((wt -= dt) > 0) return;
+          wt = 0.07;
+          const gy = G.world.ground(p.pos.x, p.pos.z, p.pos.y + 1);
+          if (p.pos.y - gy > 2.4) return;
+          G.world.grass.gust(p.pos.x, p.pos.z, 3, 1.4);
+          V.burst(tmp.set(p.pos.x, gy + 0.1, p.pos.z), 'dust', 1, { speed: 3, size: 0.7 });
+        };
         V.gustLines(origin.clone(), dir, 5, { spread: 0.8, fan: 0.15, len: 12, dur: 0.4, width: 0.05 });
         break;
+      }
       case 'frost': {
         const p = this.projectile({
-          el, pos: origin, vel: dir.clone().multiplyScalar(52), r: 0.42, life: 1.2, dmg: P * 2.4 * (1 + 0.12 * R('i_edge')), status: 2.5, meshType: 'shard', trail: 'frost', ribW: 2, knock: 4, heavy: true, lightI: 8, lightD: 7, source: 'player',
+          el, pos: origin, vel: dir.clone().multiplyScalar(52), r: 0.42, life: 1.2, dmg: P * 2.4 * (1 + 0.12 * R('i_edge')), status: 2.5, meshType: 'shard', trail: 'frost', ribW: 2, knock: 4, heavy: true, lightI: 5, lightD: 7, source: 'player',
           onImpact: (pos, e) => {
-            if (e) G.combat.hit(e, { dmg: p.dmg, el, pos: pos.clone(), dir: p.vel.clone().normalize(), knock: 5, lift: 2, status: 2.5, heavy: true, source: 'player' });
-            V.impact('frost', pos, { dir: p.vel.clone().normalize(), target: e, scale: 1.5 });
+            const d = p.vel.clone().normalize();
+            if (e) G.combat.hit(e, { dmg: p.dmg, el, pos: pos.clone(), dir: d, knock: 5, lift: 2, status: 2.5, heavy: true, source: 'player' });
+            V.impact('frost', pos, { dir: d, target: e, scale: 1.5 });
             A.play('impact_frost', { pos }); A.play('ice_spike', { pos });
             for (const o of this.enemiesIn(pos, 2.2)) if (o !== e) G.combat.hit(o, { dmg: P * 0.6, el, pos: o.center(), noReact: true, status: 1, source: 'player', hitstop: 0 });
             const g = this.groundAt(pos);
-            if (g) { this.fields.add('rime', g, { r: 2.3, dur: 4.5, noGround: true }); V.crystal(g, 1.1, { width: 0.8, life: 1.4 }); }
+            if (g) {
+              this.fields.add('rime', g, { r: 2.3, dur: 4.5, noGround: true });
+              // the lance stays planted at the angle it came in at, and the ground answers a beat later
+              V.crystal(g, 1.7, { width: 0.6, life: 1.5, tiltX: -d.z * 0.7, tiltZ: d.x * 0.7 });
+              for (let i = 0; i < 4; i++) {
+                const a = Math.atan2(d.z, d.x) + (i - 1.5) * 0.7, q = new THREE.Vector3(g.x + Math.cos(a) * 1.3, 0, g.z + Math.sin(a) * 1.3); q.y = G.world.ground(q.x, q.z, g.y + 2);
+                V.later(() => V.crystal(q, randRange(0.5, 0.8), { width: 0.35, life: 1.0, quiet: true, tiltX: -Math.sin(a) * 0.6, tiltZ: Math.cos(a) * 0.6 }), 70 + i * 30);
+              }
+            }
             this.touch('frost', g || pos, 2.2, 'charged');
           },
         });
-        if (p.mesh) p.mesh.scale.setScalar(2.4);
+        if (p.mesh) p.mesh.scale.setScalar(1.0);
+        let mt = 0;
+        p.tick = (dt) => { mt += dt * 30; for (; mt >= 1; mt--) V.norm.emit({ p: [p.pos.x, p.pos.y, p.pos.z], v: [rv3(0.3), randRange(-0.6, -0.1), rv3(0.3)], life: randRange(0.4, 0.7), size: 0.14, size1: 0.6, color: C85, color1: C60, alpha: 0.26, alpha1: 0, drag: 1.5, shape: 8 }); };
         break;
       }
       case 'storm': {
         const hitE = this.rayEnemies(origin, dir, 50, 0.7);
         const end = hitE ? hitE.e.center().clone() : aim.clone();
         if (!hitE && end.distanceTo(origin) > 50) end.copy(origin).addScaledVector(dir, 50);
-        V.lightning(origin, end, { width: 0.2, dur: 0.3, branches: 2, jag: 0.07 });
-        V.lightning(origin, end, { width: 0.06, dur: 0.2, branches: 0, jag: 0.14, segs: 18 });
-        V.flash(end, 0xffe070, 50, 14, 0.25);
+        // a thrown javelin: one straight hard line (hardly any jitter), then the forks
+        V.lightning(origin, end, { width: 0.16, dur: 0.24, branches: 0, jag: 0.02, segs: 8 });
+        V.lightning(origin, end, { width: 0.05, dur: 0.3, branches: 2, jag: 0.12, segs: 18 });
+        V.pop(end, 'storm', 2.6, 0.16); V.glint(end, 'storm', 3.4, 0.12, { rot: 0 });
+        V.flash(end, 0xffe070, 28, 12, 0.22);
         V.distort.ring(end, 3, 0.3, { amp: 0.035 });
         A.play('thunder', { pos: end, v: 0.6 });
         if (hitE) {
@@ -463,10 +519,15 @@ export class Spells {
       }
       case 'water':
         this.projectile({
-          el, pos: origin, vel: lob(23, 5), r: 0.45, life: 2.2, dmg: P * 1.6 * (1 + 0.12 * R('wa_pressure')), core: 'water', coreR: 0.42, corePulse: 0.12, orb: 0.3, trail: 'water', ribW: 1.8, grav: 14, heavy: true, source: 'player',
+          el, pos: origin, vel: lob(23, 5), r: 0.45, life: 2.2, dmg: P * 1.6 * (1 + 0.12 * R('wa_pressure')), core: 'water', coreR: 0.36, corePulse: 0.16, orb: 0.26, haloK: 0.35, trail: 'water', ribW: 1.4, grav: 14, heavy: true, source: 'player',
           onImpact: (pos) => {
             this.explode(pos, 3.4, P * 1.6 * (1 + 0.12 * R('wa_pressure')), 'water', { shake: 0.3, knock: 10, lift: 3, kind: 'charged' });
-            const g = this.groundAt(pos); if (g) this.fields.add('puddle', g, { r: 3, dur: 6, noGround: true });
+            const g = this.groundAt(pos);
+            if (!g) return;
+            this.fields.add('puddle', g, { r: 3, dur: 6, noGround: true });
+            // the water it threw up comes back down and the puddle spreads in rings
+            for (let i = 0; i < 2; i++) V.ring(g, PAL.water.core, 3.2 + i * 0.6, 0.6, { thick: 0.07, alpha: 0.6, delay: 0.14 + i * 0.16, r0: 0.6, ease: 2 });
+            V.later(() => { for (let i = 0; i < 14; i++) { const a = rand() * 6.28, rr = Math.sqrt(rand()) * 2.8; V.burst(tmp.set(g.x + Math.cos(a) * rr, g.y + 0.1, g.z + Math.sin(a) * rr), 'splash', 1, { speed: 2, size: 0.6 }); } }, 380);
           },
         });
         break;
@@ -482,10 +543,11 @@ export class Spells {
     const V = G.vfx, A = G.audio;
     const wind = WINDUP[el] ?? 0.15;
     A.play('charge_' + el, { pos: origin });
-    V.charge(el, () => player.staffTip(), wind, { big: el === 'arcane' || el === 'fire' ? 1.2 : 1 });
+    V.charge(el, () => player.gemPos() || player.staffTip(), wind, { big: el === 'arcane' || el === 'fire' ? 1.2 : 1, ground: player.root });
     player.castHold = Math.max(player.castHold, wind + 0.9);
     G.later(() => {
       if (player.dead || G.state !== 'play') return;
+      player.castRelease('heavy', el);
       this.heavyRelease(el, player.staffTip(), player.aimPoint(), P, player);
     }, wind * 1000);
   }
@@ -500,10 +562,11 @@ export class Spells {
         const rr = big ? 8.1 : 6;
         const c = feet.clone().add(new THREE.Vector3(0, 1, 0));
         V.cast('arcane', origin, dir, 'heavy');
-        // a translucent resonance dome sweeps outward, bending the air at its edge
-        V.sphere('arcane', c, { r0: 0.6, r1: rr, dur: 0.5, grow: 3.2, erodeAt: 0.25, squash: 0.55, alpha: 0.45, add: true });
+        // a low ripple rolls out along the ground (it passes under the camera instead of
+        // swallowing it) and a crown of star-needles is thrown outward on it
+        V.sphere('arcane', feet, { r0: 0.6, r1: rr, dur: 0.5, grow: 3.2, erodeAt: 0.25, squash: 0.17, alpha: 0.7, add: true });
         V.distort.ring(feet, rr * 1.35, 0.55, { flat: true, amp: 0.055, width: 0.1 });
-        V.distort.shell(c, rr, 0.45, { amp: 0.035, flat: 0.55 });
+        this.needleCrown(feet, rr, big ? 14 : 10);
         V.circle(feet, PAL.arcane.glow, 3.2 * (big ? 1.3 : 1), 0.6, { spin: 3 });
         V.ring(feet, PAL.arcane.core, rr + 0.5, 0.45, { thick: 0.3 });
         V.ring(feet, PAL.arcane.glow, rr - 1, 0.6, { thick: 0.12, y: 0.8 });
@@ -531,12 +594,11 @@ export class Spells {
       case 'fire': {
         A.play('heavy_fire', { pos: origin });
         V.cast('fire', origin, dir, 'heavy');
-        V.burst(origin, 'fire', 14, { speed: 3 });
         G.cameraRig.kick && G.cameraRig.kick(tmp.copy(dir).negate(), 0.18);
         const m = this.fireMul();
         this.projectile({
-          el, pos: origin, vel: dir.clone().multiplyScalar(27), r: 0.6, life: 2.6, dmg: P * 3.2 * m, core: 'fireball', coreR: 0.62, bigCore: true, coreSpeed: 3.2, corePulse: 0.05, orb: 0.5, trail: 'bigfire', grav: 3,
-          heavy: true, lightI: 22, lightD: 13, hazeR: 2.2, loop: 'loop_fireball', source: 'player',
+          el, pos: origin, vel: dir.clone().multiplyScalar(27), r: 0.6, life: 2.6, dmg: P * 3.2 * m, core: 'meteor', coreR: 0.56, coreStretch: 1.7, bigCore: true, corePulse: 0.05, orb: 0.5, haloK: 0.3, trail: 'bigfire', grav: 3,
+          heavy: true, lightI: 10, lightD: 11, hazeR: 1.5, loop: 'loop_fireball', source: 'player',
           onImpact: (pos) => {
             this.explode(pos, 4.8, P * 3.2 * m, 'fire', { big: true });
             // the blast always leaves burning ground (잔불); 불바다 makes it a real fire sea
@@ -576,7 +638,6 @@ export class Spells {
         V.burst(origin, 'wind', 14, { radius: 1.2, speed: 12, vx: flat.x * 10, vz: flat.z * 10 });
         V.sparks(tmp.copy(origin).setY(origin.y - 0.4), flat, 30 + gl * 8, { el: 'wind', spread: 0.45, speed: 26 * (1 + 0.2 * gl), grav: -1, drag: 1.5, life: 0.5, w: 0.045, stretch: 0.05, maxL: 3.5, alpha: 0.7 });
         for (let k = 1; k <= 3; k++) { const gp = feet.clone().addScaledVector(flat, k * range * 0.28); gp.y = G.world.ground(gp.x, gp.z, gp.y + 3); G.later(() => { V.decal(gp, 'swirl', 1.6 + k * 0.5, { dur: 2.2 }); V.burst(gp, 'dust', 5, { speed: 6 }); }, k * 60); }
-        V.circle(origin, PAL.wind.glow, 1.4, 0.3, { vertical: true, dir: flat, spin: -8 });
         A.play('blast_wind', { pos: feet.clone().addScaledVector(flat, 4) });
         G.cameraRig.kick && G.cameraRig.kick(flat, 0.2);
         G.world.grass.gust(feet.x + flat.x * 5, feet.z + flat.z * 5, 8, 2);
@@ -619,11 +680,13 @@ export class Spells {
             const h = G.world.h(p.x, p.z);
             if (h < -0.3) { G.world.addIceFloe(p.x, p.z); V.burst(p.setY(0.1), 'ice', 6); return; }
             p.y = G.world.ground(p.x, p.z, player.pos.y + 3);
-            const sc = 0.95 + i * 0.16;
+            // the line swells as it runs away from the caster: the spikes at the feet stay
+            // waist-high and melt first, so the row never walls off the view of what it hits
+            const sc = 0.62 + i * 0.21, life = 0.85 + i * 0.07;
             // main spike + a fan of smaller splinters, leaning away from the line
-            V.crystal(p, sc * 1.5, { width: sc * 0.7, life: 1.3 });
-            V.crystal(p.clone().addScaledVector(side, randRange(0.4, 0.8)), sc * 0.8, { width: sc * 0.45, life: 1.2, tiltX: side.z * 0.5, tiltZ: -side.x * 0.5, quiet: true });
-            V.crystal(p.clone().addScaledVector(side, -randRange(0.4, 0.8)), sc * 0.7, { width: sc * 0.4, life: 1.15, tiltX: -side.z * 0.5, tiltZ: side.x * 0.5, quiet: true });
+            V.crystal(p, sc * 1.5, { width: sc * 0.7, life });
+            V.crystal(p.clone().addScaledVector(side, randRange(0.4, 0.8)), sc * 0.8, { width: sc * 0.45, life: life - 0.1, tiltX: side.z * 0.5, tiltZ: -side.x * 0.5, quiet: true });
+            V.crystal(p.clone().addScaledVector(side, -randRange(0.4, 0.8)), sc * 0.7, { width: sc * 0.4, life: life - 0.15, tiltX: -side.z * 0.5, tiltZ: side.x * 0.5, quiet: true });
             if (big) { const sd = side.clone().multiplyScalar(i % 2 ? 1.3 : -1.3); V.crystal(p.clone().add(sd), sc * 0.9, { width: sc * 0.4, life: 1.1 }); }
             V.burst(p, 'ice', 5); V.burst(p, 'frostmist', 2);
             V.chunks(p, 'ice', 3, { speed: 6, up: 0.9, size: 0.1 });
@@ -689,18 +752,56 @@ export class Spells {
     }
   }
 
+  // 비전 집중 3: the third arcane bolt in a row on the same enemy (within 1.5 s of the last) rings
+  focusHit(e, dmg) {
+    if (G.time - (e.focusT ?? -9) > 1.5) e.focusN = 0;
+    e.focusT = G.time;
+    e.focusN = (e.focusN || 0) + 1;
+    if (e.focusN < 3) return;
+    e.focusN = 0;
+    const c = e.center(), V = G.vfx;
+    V.pop(c, 'arcane', 2.2, 0.16); V.puffRing(c, 'arcane', 2.6, 0.22); V.burst(c, 'glyph', 3, { spread: 0.4 });
+    G.audio.play('impact_arcane', { pos: c, pitch: 1.35, v: 0.8, gap: 0.02 });
+    G.combat.hit(e, { dmg, el: 'arcane', noReact: true, noStatus: true, pos: c, source: 'player', hitstop: 0.03, shake: 0.05, knock: 0 });
+  }
+
+  // star-needles flung outward along the ground from `c`, tilted up, gone after 0.4 s
+  needleCrown(c, r, n = 10) {
+    const V = G.vfx;
+    const list = [];
+    const a0 = rand() * 6.28;
+    for (let i = 0; i < n; i++) {
+      const a = a0 + (i / n) * 6.28;
+      const m = V.body('needle', 0.62);
+      const d = new THREE.Vector3(Math.cos(a), 0.42, Math.sin(a)).normalize();
+      m.quaternion.setFromUnitVectors(UP, d);
+      list.push({ m, d, a });
+    }
+    V.timer(0.4, (dt, k) => {
+      const e = 1 - (1 - Math.min(1, k)) ** 3;
+      for (const q of list) {
+        const rad = 0.8 + (r - 0.6) * e;
+        const x = c.x + Math.cos(q.a) * rad, z = c.z + Math.sin(q.a) * rad;
+        q.m.position.set(x, G.world.ground(x, z, c.y + 3) + 0.5 + e * 0.5, z);
+        q.m.scale.setScalar(0.62 * (k < 0.7 ? 1 : Math.max(0.05, 1 - (k - 0.7) / 0.3)));
+        q.m.rotateY(dt * 16);
+      }
+    }, () => { for (const q of list) { V.glint(q.m.position, 'arcane', 0.9, 0.1); V.releaseBody(q.m); } });
+  }
+
   // lightning bolt from the sky onto a ground point
   strike(tp, dmg, r, o = {}) {
     const V = G.vfx, A = G.audio;
     const sky = tp.clone().add(new THREE.Vector3(randRange(-3, 3), o.big ? 34 : 24, randRange(-3, 3)));
-    V.lightning(sky, tp, { width: o.big ? 0.5 : 0.3, dur: o.big ? 0.4 : 0.3, branches: o.big ? 4 : 2, jag: 0.06 });
-    if (o.big) V.lightning(sky.clone().add(new THREE.Vector3(2, 0, 1)), tp, { width: 0.2, dur: 0.3, branches: 1, jag: 0.1 });
+    V.lightning(sky, tp, { width: o.big ? 0.4 : 0.26, dur: o.big ? 0.4 : 0.3, branches: o.big ? 4 : 2, jag: 0.06 });
+    if (o.big) V.lightning(sky.clone().add(new THREE.Vector3(2, 0, 1)), tp, { width: 0.16, dur: 0.3, branches: 1, jag: 0.1 });
     V.strike(tp, r, { big: o.big, dim: o.dim });
     A.play('thunder', { pos: tp, gap: o.big ? 0 : 0.15 });
     G.cameraRig.shake(o.big ? 0.55 : 0.25);
     if (o.big && G.cameraRig.punchFov) G.cameraRig.punchFov(2.5);
     const gu = G.renderer.grade.uniforms;
-    if (!o.dim || o.big) { gu.uFlash.value = Math.max(gu.uFlash.value, o.big ? (o.dim ? 0.06 : 0.1) : 0.04); gu.uFlashColor.value.setRGB(1, 0.95, 0.8); }
+    // the full-screen flash is for the dark: by day it would only bleach the frame
+    if (!o.dim || o.big) { gu.uFlash.value = Math.max(gu.uFlash.value, (o.big ? (o.dim ? 0.035 : 0.06) : 0.025) * V.lightK()); gu.uFlashColor.value.setRGB(1, 0.95, 0.8); }
     G.world.grass.gust(tp.x, tp.z, 6, 2);
     this.touch('storm', tp, r, o.kind || 'heavy');
     if (o.charge) this.fields.add('charged', tp, { r: o.charge.r ?? r * 0.8, dur: o.charge.dur ?? 3, noGround: true });
@@ -879,6 +980,28 @@ export class Spells {
   // ============================================================
   // Ultimates (F)
   // ============================================================
+  // An ultimate opens with a short authored beat (well under 1.5 s in all): the song is
+  // gathered into the raised staff while the camera leans in (ULT_WINDUP), then ult() plays
+  // the release. The player keeps control throughout.
+  ultBegin(el, P, player) {
+    const V = G.vfx, A = G.audio;
+    const feet = player.pos.clone();
+    ultTitle(el, NODES[ULTS[el]].name);
+    A.play('ult_cast', { pos: feet });
+    A.play('charge_' + el, { pos: feet, v: 0.9, pitch: 0.7 });
+    const tip = () => player.gemPos() || player.staffTip();
+    // the song's circle is drawn on underfoot over the whole wind-up, bold enough for sunlit grass
+    V.circle(feet, PAL[el].glow, 2.9, ULT_WINDUP + 1.0, { spin: 1.4, alpha: 0.9, intensity: 0.85, bold: true, wipe: ULT_WINDUP, follow: player.root });
+    V.charge(el, tip, ULT_WINDUP, { big: 1.25 });
+    V.ultGather(el, feet, tip, ULT_WINDUP);
+    G.cameraRig.focus(ULT_WINDUP, { dist: -1.5, fov: -7, roll: 0.03, out: 0.4 });
+    G.later(() => {
+      if (player.dead || G.state !== 'play') return;
+      player.castRelease('ult', el);
+      this.ult(el, player.staffTip(), player.aimPoint(), P, player);
+    }, ULT_WINDUP * 1000);
+  }
+
   ult(el, origin, aim, P, player) {
     const V = G.vfx, A = G.audio;
     const feet = player.pos.clone();
@@ -886,21 +1009,17 @@ export class Spells {
     const tp = aim.clone();
     if (tp.distanceTo(feet) > 30) tp.copy(feet).addScaledVector(dir, 30);
     tp.y = G.world.ground(tp.x, tp.z, tp.y + 2);
-    const info = NODES[ULTS[el]];
-    G.hud.castName(info.name, [el], true);
-    A.play('ult_cast', { pos: origin });
-    // one rune circle + a light pillar instead of stacked additive layers (keeps the frame readable)
-    V.circle(feet, PAL[el].glow, 4.5, 1.2, { spin: 2.5, alpha: 0.5, intensity: 0.6 });
-    V.ring(feet, PAL[el].core, 9, 0.8, { thick: 0.12, alpha: 0.5 });
-    V.ultCast(el, feet, player.center());
-    V.distort.ring(feet, 14, 0.8, { flat: true, amp: 0.06, width: 0.08 });
-    V.distort.shell(player.center(), 6, 0.5, { amp: 0.04 });
-    V.burst(player.center(), 'star', 1, { el, size: 3.2 });
-    V.flash(player.center(), PAL[el].light, 50, 16, 0.5);
-    G.hitstop = Math.max(G.hitstop, 0.12);
+    // release beat: one held frame under a hard graphic accent, then the camera is thrown
+    // back out. Nothing here covers the caster or the enemies in front (no dome, no glow wall).
+    V.ultCast(el, feet, origin);
+    V.distort.ring(feet, 12, 0.7, { flat: true, amp: 0.05, width: 0.08 });
+    ultAccent(el);
+    A.play('heavy_' + el, { pos: origin, v: 0.85, pitch: 0.84 });
+    G.hitstop = Math.max(G.hitstop, 0.14); // authored freeze: not rate-limited like hit stop
     G.cameraRig.shake(0.3);
-    if (G.cameraRig.punchFov) G.cameraRig.punchFov(-4);
-    G.renderer.grade.uniforms.uImpact.value = Math.max(G.renderer.grade.uniforms.uImpact.value, 0.4);
+    G.cameraRig.punchFov(5);
+    G.cameraRig.kick(tmp.copy(dir).negate(), 0.4);
+    G.renderer.grade.uniforms.uImpact.value = Math.max(G.renderer.grade.uniforms.uImpact.value, 0.25);
     switch (el) {
       case 'arcane': {
         V.circle(tp, PAL.arcane.glow, 6, 3, { spin: 1.5, alpha: 0.4, intensity: 0.6 });
@@ -912,7 +1031,7 @@ export class Spells {
           const tgt = this.nearestEnemy(tp, 14) ;
           const aimP = tgt ? tgt.center() : tp.clone().add(new THREE.Vector3(randRange(-5, 5), 0.5, randRange(-5, 5)));
           const v = tmp.subVectors(aimP, s).normalize().multiplyScalar(34);
-          this.projectile({ el: 'arcane', pos: s, vel: v, r: 0.5, life: 2.5, dmg: P * 1.4, core: 'arcane', coreR: 0.45, orb: 0.3, trail: 'arcane', ribW: 2.4, heavy: true, knock: 4, homing: tgt, homingRate: 4, source: 'player',
+          this.projectile({ el: 'arcane', pos: s, vel: v, r: 0.5, life: 2.5, dmg: P * 1.4, meshType: 'needle', bodyScale: 1.3, trail: 'arcane', ribW: 2.4, heavy: true, knock: 4, homing: tgt, homingRate: 4, source: 'player',
             onImpact: (pp) => this.explode(pp, 2.3, P * 1.4, 'arcane', { shake: 0.12, lift: 2, knock: 5, kind: 'ult' }) });
           A.play('cast_arcane', { pos: s, gap: 0.04 });
         }, 150 + i * 140);
@@ -952,7 +1071,7 @@ export class Spells {
           V.distort.ring(tp, 22, 0.9, { flat: true, amp: 0.07, width: 0.08 });
           V.chunks(tp, 'rock', 26, { speed: 18, up: 0.85, size: 0.25 });
           V.chunks(tp, 'ember', 30, { speed: 16, up: 0.7 });
-          const gu = G.renderer.grade.uniforms; gu.uFlash.value = Math.max(gu.uFlash.value, 0.07); gu.uFlashColor.value.setRGB(1, 0.75, 0.45);
+          const gu = G.renderer.grade.uniforms; gu.uFlash.value = Math.max(gu.uFlash.value, 0.07 * V.lightK()); gu.uFlashColor.value.setRGB(1, 0.75, 0.45);
           A.play('ult_boom', { pos: tp, el: 'fire' });
           G.hitstop = Math.max(G.hitstop, 0.1);
           if (G.cameraRig.punchFov) G.cameraRig.punchFov(6);
@@ -999,8 +1118,8 @@ export class Spells {
       case 'frost': {
         V.ring(feet, PAL.frost.core, 13, 0.6, { thick: 0.2 });
         V.ring(feet, PAL.white.core, 12, 0.9, { thick: 0.08, y: 1 });
-        V.shock(player.center(), PAL.frost.core, 13, 0.6, { alpha: 0.5, flat: 0.4, pow: 3 });
-        V.sphere('frost', player.center(), { r0: 1, r1: 12, dur: 0.6, grow: 3, erodeAt: 0.2, squash: 0.4, alpha: 0.22, add: true });
+        // the cold front rolls out low along the ground (it passes under the camera)
+        V.sphere('frost', feet, { r0: 1, r1: 12, dur: 0.6, grow: 3, erodeAt: 0.2, squash: 0.12, alpha: 0.4, add: true });
         V.burst(player.center(), 'frostmist', 32, { spread: 6, size: 2 });
         V.burst(player.center(), 'snowflake', 60, { spread: 8 });
         V.decal(feet, 'frost', 12, { dur: 10, glowDur: 2.5 });
@@ -1008,14 +1127,21 @@ export class Spells {
         this.touch('frost', feet, 12, 'ult');
         this.fields.add('rime', feet, { r: 9, dur: 8, maxR: 10 });
         A.play('freeze', { pos: feet }); A.play('react_flashfreeze', { pos: feet }); A.play('shatter', { pos: feet, v: 0.5 });
-        for (let i = 0; i < 20; i++) { const a = (i / 20) * Math.PI * 2 + rand() * 0.2, r = randRange(4, 11); const p = feet.clone().add(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r)); p.y = G.world.ground(p.x, p.z, feet.y + 3); G.later(() => V.crystal(p, randRange(1.4, 3.0), { width: randRange(1.2, 2), life: 2.0 - r * 0.03, tiltX: Math.sin(a) * 0.35, tiltZ: -Math.cos(a) * 0.35 }), r * 25); }
+        // a ring of ice rises around the caster; none between the camera and the fight
+        const cf = G.cameraRig.forward;
+        for (let i = 0; i < 20; i++) {
+          const a = (i / 20) * Math.PI * 2 + rand() * 0.2, r = randRange(4, 11);
+          if (Math.cos(a) * cf.x + Math.sin(a) * cf.z < -0.25 && r < 9) continue;
+          const p = feet.clone().add(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r)); p.y = G.world.ground(p.x, p.z, feet.y + 3);
+          G.later(() => V.crystal(p, randRange(1.2, 2.5), { width: randRange(1.1, 1.8), life: 2.0 - r * 0.03, tiltX: Math.sin(a) * 0.35, tiltZ: -Math.cos(a) * 0.35 }), r * 25);
+        }
         const frozen = [];
         for (const e of this.enemiesIn(player.center(), 12)) {
           if (e.boss || !e.rig) G.combat.addChill(e, 3); else { G.combat.freeze(e, 4); frozen.push(e); }
         }
         G.later(() => {
           V.ring(player.pos, PAL.frost.core, 15, 0.5, { thick: 0.3 });
-          V.shock(player.center(), PAL.white.glow, 14, 0.45, { alpha: 0.45, flat: 0.5 });
+          V.shock(player.center(), PAL.white.glow, 14, 0.45, { alpha: 0.3, flat: 0.25 });
           V.distort.ring(player.pos, 18, 0.7, { flat: true, amp: 0.06 });
           G.cameraRig.shake(0.6); if (G.cameraRig.punchFov) G.cameraRig.punchFov(4);
           A.play('ult_boom', { pos: player.pos, el: 'frost' });
@@ -1083,7 +1209,9 @@ export class Spells {
     const ca = PAL[info.els[0]].glow, cb = PAL[info.els[1]].glow;
     V.circle(feet, ca, 2.6, 0.8, { spin: 3 });
     V.circle(feet, cb, 1.8, 0.8, { spin: -4, alt: true });
-    V.burst(origin, 'star', 1, { el: info.els[0], size: 4 });
+    // two glints, one per song, cross at the crystal
+    V.glint(origin, info.els[0], 2.6, 0.12); V.glint(origin, info.els[1], 2.0, 0.14, { rot: 0.9 });
+    V.pop(origin, info.els[1], 1.4, 0.14);
     G.hud.banner && G.hud.castName(info.name, info.els);
     const dir = tmp2.subVectors(aim, origin).normalize().clone();
     const flat = dir.clone().setY(0).normalize();
@@ -1504,14 +1632,20 @@ export class Spells {
     for (let k = 0; k < n; k++) {
       switch (p.trail) {
         case 'arcane':
-          V.burst(p.pos, 'trail', 1, { el: 'arcane', size: 0.28, vx, vy, vz, shape: rand() < 0.3 ? 4 : rand() < 0.3 ? 12 : 0 });
+          V.burst(p.pos, 'trail', 1, { el: 'arcane', size: 0.2, spread: 0.12, vx, vy, vz, shape: rand() < 0.7 ? 4 : 0 });
           break;
-        case 'fire': V.burst(p.pos, 'fire', 1, { spread: 0.1, speed: 0.6, size: 0.6, life: 0.5 }); if (rand() < 0.2) V.burst(p.pos, 'ember', 1, { speed: 1.5 }); break;
+        case 'fire':
+          // short licks torn off the comet (kept below white heat so the trail has colour), soot, embers
+          V.add.emit({ p: [p.pos.x + rv3(0.07), p.pos.y + rv3(0.07), p.pos.z + rv3(0.07)], v: [vx * 3 + rv3(0.6), vy * 3 + randRange(0.4, 1.4), vz * 3 + rv3(0.6)], life: randRange(0.16, 0.3), size: randRange(0.22, 0.4), size1: 0.06, color: FLAME_A, color2: FLAME_B, mid: 0.3, color1: PAL.fire.deep, alpha: 0.75, alpha1: 0, drag: 3, grav: -2, shape: 7 });
+          if (rand() < 0.3) V.norm.emit({ p: [p.pos.x, p.pos.y, p.pos.z], v: [rv3(0.4), randRange(0.3, 0.9), rv3(0.4)], life: randRange(0.4, 0.7), size: 0.16, size1: 0.5, color: SOOT_A, color1: SOOT_B, alpha: 0.38, alpha1: 0, drag: 1.5, shape: 8 });
+          if (rand() < 0.3) V.burst(p.pos, 'ember', 1, { speed: 1.5 });
+          break;
         case 'bigfire':
           if (p.age < 0.08) break;
-          V.burst(p.pos, 'fire', 1, { spread: 0.35, speed: 1, size: 1.15, alpha: 0.65 });
-          if (rand() < 0.12) V.burst(p.pos, 'smoke', 1, { size: 0.8 });
-          if (rand() < 0.15) V.burst(p.pos, 'ember', 1);
+          // torn flames close behind the head, then a dark smoke tail that gives the ball its outline
+          V.add.emit({ p: [p.pos.x + rv3(0.25), p.pos.y + rv3(0.25), p.pos.z + rv3(0.25)], v: [vx * 4 + rv3(1), vy * 4 + randRange(0.5, 2), vz * 4 + rv3(1)], life: randRange(0.2, 0.38), size: randRange(0.45, 0.8), size1: 0.12, color: FLAME_B, color1: PAL.fire.deep, alpha: 0.6, alpha1: 0, drag: 3, grav: -2.5, shape: 7 });
+          if (rand() < 0.45) V.norm.emit({ p: [p.pos.x + rv3(0.2), p.pos.y + rv3(0.2), p.pos.z + rv3(0.2)], v: [rv3(0.6), randRange(0.5, 1.4), rv3(0.6)], life: randRange(0.7, 1.2), size: 0.5, size1: 1.5, ease: 0.6, color: SOOT_A, color1: SOOT_B, alpha: 0.5, alpha1: 0, drag: 1.2, grav: -0.3, shape: 8, fadeIn: 0.1 });
+          if (rand() < 0.25) V.burst(p.pos, 'ember', 1);
           break;
         case 'plasma': V.burst(p.pos, 'fire', 1, { spread: 0.4, speed: 1 }); if (rand() < 0.2) V.burst(p.pos, 'electric', 1, { spread: 0.6, speed: 3 }); break;
         case 'wind':
@@ -1566,6 +1700,7 @@ export class Spells {
           p.hitSet.add(e);
           if (p.onImpact) { p.onImpact(p.pos.clone(), e); this.remove(p); return true; }
           G.combat.hit(e, { dmg: p.dmg, el: p.el, pos: p.pos.clone(), dir: p.vel.clone().normalize(), knock: p.knock, lift: p.lift, status: p.status, heavy: p.heavy, source: 'player' });
+          if (p.focus && e.alive) this.focusHit(e, p.focus);
           // an infused wind blade also delivers the element it picked up
           if (p.infused && e.alive) G.combat.hit(e, { dmg: p.dmg * 0.5, el: p.infused, noReact: true, pos: p.pos.clone(), status: 1, source: 'player', hitstop: 0, shake: 0, knock: 0 });
           this.impact(p, e);

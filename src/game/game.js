@@ -5,6 +5,8 @@ import { Input } from '../core/input.js';
 import { AudioEngine } from '../core/audio.js';
 import { Music } from '../core/music.js';
 import { Renderer } from '../render/renderer.js';
+import { suggestTier } from '../render/quality.js';
+import { preloadModels } from '../render/models.js';
 import { VFX } from '../render/vfx.js';
 import { World, LANTERNS } from '../world/world.js';
 import { POI, regionAt } from '../world/layout.js';
@@ -29,6 +31,7 @@ const DEV = new URLSearchParams(location.search).has('dev');
 const REAL_SAVE = 'ullimjigi_save_v1';
 const SAVE_KEY = DEV ? 'ullimjigi_save_dev' : REAL_SAVE;
 const LOAD_ERR = 'ullimjigi_load_error'; // a failed load's reason, shown on the title after the reload
+const HUB = ['map', 'journal', 'skills']; // pages of the hub screen: they share one frame and one tab bar
 // what is wrong with a parsed save, or '' when it has the shape loading expects
 function saveProblem(d) {
   const P = d && d.player;
@@ -70,7 +73,7 @@ export class Game {
   }
 
   loadSettings() {
-    try { Object.assign(G.settings, JSON.parse(localStorage.getItem(SET_KEY) || '{}')); } catch (_) {}
+    try { const s = JSON.parse(localStorage.getItem(SET_KEY) || '{}'); this.pickTier = !s.quality; Object.assign(G.settings, s); } catch (_) {}
   }
   saveSettings() { try { localStorage.setItem(SET_KEY, JSON.stringify(G.settings)); } catch (_) {} }
 
@@ -89,9 +92,13 @@ export class Game {
     this.progress(0.02, '골짜기의 노래를 조율하는 중…');
     await nextFrame();
     G.renderer = new Renderer(canvas);
+    G.renderer.dynamic = !TIMER; // a timer-driven loop says nothing about the display's frame rate
+    // first run: start on the tier the graphics card suggests
+    if (this.pickTier) { G.settings.quality = suggestTier(G.renderer.renderer.getContext()); G.renderer.applyQuality(); }
     G.scene = G.renderer.scene; G.camera = G.renderer.camera;
     G.vfx = new VFX(G.scene);
     await nextFrame();
+    await preloadModels(); // authored GLB models, needed by the world and the characters
     G.world = new World(G.scene, (p, t) => this.progress(p, t));
     G.atlas = new Atlas(G.world.terrain);
     this.progress(0.75, '사람들을 깨우는 중…');
@@ -128,7 +135,6 @@ export class Game {
     }
     ld.classList.add('ready'); // the loading star blooms
     $('.load-text').textContent = '클릭하여 시작';
-    $('.load-text').style.animation = 'nextBob 1.4s infinite';
     await new Promise((r) => ld.addEventListener('click', r, { once: true }));
     G.audio.init();
     G.music.setMood('title');
@@ -211,30 +217,64 @@ export class Game {
 
   // ------------------------------------------------------------ UI
   bindUI() {
+    const unfocus = (b) => b.parentNode.querySelectorAll('.focus').forEach((x) => x.classList.remove('focus'));
     document.querySelectorAll('.tbtn').forEach((b) => {
-      b.addEventListener('mouseenter', () => G.audio.play('ui_hover'));
-      b.addEventListener('click', (e) => { e.stopPropagation(); G.audio.play('ui_click'); this.onButton(b.dataset.act); });
+      b.addEventListener('mouseenter', () => { unfocus(b); if (!b.disabled) G.audio.play('ui_hover'); });
+      b.addEventListener('click', (e) => { e.stopPropagation(); b.blur(); G.audio.play('ui_click'); this.onButton(b.dataset.act); });
     });
-    $('#name-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onButton('name-ok'); e.stopPropagation(); });
-    document.querySelectorAll('.jr-tabs button').forEach((b) => b.addEventListener('click', () => { G.audio.play('page'); G.hud.drawJournal(b.dataset.tab); this.jTab = b.dataset.tab; }));
+    $('#name-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onButton('name-ok'); else if (e.key === 'Escape') this.onButton('name-cancel'); e.stopPropagation(); });
+    // hub tab bar: 'map' | 'skills' | 'journal:<tab>'
+    document.querySelectorAll('.hub-nav button').forEach((b) => {
+      b.addEventListener('mouseenter', () => { if (!b.classList.contains('on')) G.audio.play('ui_hover'); });
+      b.addEventListener('click', () => {
+        b.blur();
+        const [menu, tab] = b.dataset.nav.split(':');
+        if (tab) { this.jTab = tab; if (this.menu === 'journal') { G.audio.play('page'); G.hud.drawJournal(tab); return; } }
+        this.openMenu(menu);
+      });
+    });
+    // menu lists (title, pause) by keyboard: W / S or the arrows move, Enter chooses; Esc backs out on the title
+    window.addEventListener('keydown', (e) => {
+      const naming = !$('#name-entry').classList.contains('hidden');
+      if (e.code === 'Escape' && G.state === 'title') { if (this.menu === 'settings') this.onButton('settings-close'); else if (naming) this.onButton('name-cancel'); return; }
+      const list = G.state === 'title' && !this.menu && !naming && !$('#title-screen').classList.contains('hidden') ? $('.title-menu') : this.menu === 'pause' ? $('#pause .menu-list') : null;
+      if (!list) return;
+      const btns = [...list.querySelectorAll('.tbtn:not(:disabled)')];
+      let i = btns.findIndex((b) => b.classList.contains('focus'));
+      const dir = e.code === 'KeyS' || e.code === 'ArrowDown' ? 1 : e.code === 'KeyW' || e.code === 'ArrowUp' ? -1 : 0;
+      if (dir) {
+        i = i < 0 ? (dir > 0 ? 0 : btns.length - 1) : (i + dir + btns.length) % btns.length;
+        btns.forEach((b, k) => b.classList.toggle('focus', k === i));
+        G.audio.play('ui_hover'); e.preventDefault();
+      } else if ((e.code === 'Enter' || e.code === 'Space') && i >= 0) { e.preventDefault(); btns[i].click(); }
+    });
     // sliders show their value, so a change can be judged and undone
     const FMT = { sens: (v) => `${(v / 100).toFixed(1)}×`, ui: (v) => `${v}%` };
+    const applySetting = (k) => {
+      G.audio.applyVolumes();
+      if (k === 'quality') { G.renderer.applyQuality(); G.world.sky.applyQuality(); G.world.terrain.applyQuality(); G.world.grass.setQuality(G.settings.quality); }
+      if (k === 'ui') G.hud.applyScale();
+      this.saveSettings();
+    };
     document.querySelectorAll('[data-set]').forEach((el) => {
       const k = el.dataset.set;
+      if (el.classList.contains('seg')) { // one-of-several buttons
+        const mark = () => el.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === G.settings[k]));
+        el.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { b.blur(); G.audio.play('ui_click'); G.settings[k] = b.dataset.v; mark(); applySetting(k); }));
+        mark();
+        return;
+      }
       if (el.type === 'checkbox') el.checked = !!G.settings[k]; else el.value = G.settings[k];
       let out = null;
-      if (el.type === 'range') {
-        out = document.createElement('span'); out.className = 'set-val';
-        el.after(out); out.textContent = (FMT[k] || String)(+el.value);
-      }
+      // the filled part of the track follows the value (--p)
+      const show = () => { if (!out) return; out.textContent = (FMT[k] || String)(+el.value); el.style.setProperty('--p', `${((el.value - el.min) / (el.max - el.min)) * 100}%`); };
+      if (el.type === 'range') { out = document.createElement('span'); out.className = 'set-val'; el.after(out); show(); }
       el.addEventListener('input', () => {
-        if (out) out.textContent = (FMT[k] || String)(+el.value);
+        show();
         G.settings[k] = el.type === 'checkbox' ? el.checked : el.type === 'range' ? +el.value : el.value;
-        G.audio.applyVolumes();
-        if (k === 'quality') { G.renderer.applyQuality(); G.world.grass.setQuality(el.value); }
-        if (k === 'ui') G.hud.applyScale();
-        this.saveSettings();
+        applySetting(k);
       });
+      el.addEventListener('change', () => el.blur()); // keys go back to the game
     });
     // the mouse stays captured through dialogue and cutscenes (choices take keys, wheel or click);
     // only menus release it. Any key or click re-captures it (Input.wantLock).
@@ -268,6 +308,7 @@ export class Game {
       case 'settings': this.prevMenu = this.menu; this.openMenu('settings'); break;
       case 'settings-close': this.closeMenu(); if (G.state === 'play' && this.prevMenu === 'pause') this.openMenu('pause'); break;
       case 'resume': this.closeMenu(); break;
+      case 'map': this.closeMenu(); this.openMenu('map'); break;
       case 'journal': this.closeMenu(); this.openMenu('journal'); break;
       case 'skills': this.closeMenu(); this.openMenu('skills'); break;
       case 'skills-reset': G.hud.skillReset(); break;
@@ -296,19 +337,25 @@ export class Game {
 
   openMenu(name) {
     if (this.menu === name) return;
-    if (this.menu && name !== 'settings') this.closeMenu();
+    // between hub pages the menu stays open: no close sound, no re-capture of the mouse in between
+    const swap = HUB.includes(this.menu) && HUB.includes(name);
+    if (this.menu && name !== 'settings' && !swap) this.closeMenu();
     this.menu = name;
     this.ignoreUnlock = true;
     G.input.exitLock();
     G.paused = true;
-    G.audio.play(name === 'crossroads' ? (G.audio.S && G.audio.S.levelup_open ? 'levelup_open' : 'ui_open') : 'ui_open');
+    G.audio.play(swap ? 'page' : name === 'crossroads' ? (G.audio.S && G.audio.S.levelup_open ? 'levelup_open' : 'ui_open') : 'ui_open');
     $('#click-to-play').classList.add('hidden');
-    if (name === 'pause') $('#pause').classList.remove('hidden');
+    if (name === 'pause') { $('#pause').classList.remove('hidden'); $('#pause').querySelectorAll('.focus').forEach((b) => b.classList.remove('focus')); }
     if (name === 'settings') { $('#pause').classList.add('hidden'); $('#settings').classList.remove('hidden'); }
     $('#ui').classList.add('menu-open');
-    if (name === 'map') { G.hud.openMap(); $('#map').classList.remove('hidden'); }
-    if (name === 'journal') { G.hud.drawJournal(this.jTab || 'quests'); $('#journal').classList.remove('hidden'); }
-    if (name === 'skills') { $('#skills').classList.remove('hidden'); G.hud.openSkills(); }
+    if (HUB.includes(name)) {
+      $('#hub').classList.remove('hidden');
+      for (const m of HUB) $('#' + m).classList.toggle('hidden', m !== name);
+      if (name === 'map') { G.hud.hubState('map'); G.hud.openMap(); }
+      if (name === 'journal') G.hud.drawJournal(this.jTab || 'quests');
+      if (name === 'skills') G.hud.openSkills();
+    }
     if (name === 'crossroads') $('#crossroads').classList.remove('hidden');
   }
   // Level-up crossroads: opens once the player is safe (free play, out of combat, on the ground)
@@ -325,7 +372,7 @@ export class Game {
   }
   closeMenu() {
     if (!this.menu) return;
-    for (const id of ['#pause', '#settings', '#map', '#journal', '#skills', '#crossroads']) $(id).classList.add('hidden');
+    for (const id of ['#pause', '#settings', '#hub', '#map', '#journal', '#skills', '#crossroads']) $(id).classList.add('hidden');
     $('#ui').classList.remove('menu-open');
     this.menu = null;
     G.paused = false;
@@ -446,7 +493,7 @@ export class Game {
       atlas: G.atlas.save(),
     };
     if (!d.player.pos) delete d.player.pos;
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify(d)); } catch (e) { console.warn(e); }
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(d)); G.hud.saved(); } catch (e) { console.warn(e); G.hud.toast('여정을 기록하지 못했다 — 브라우저의 저장 공간이 가득 찼는지 확인하자.', 5000); }
     if (!auto) G.hud.toast('여정을 기록했다.');
   }
 
@@ -458,10 +505,10 @@ export class Game {
     G.vfx.burst(L.pos, 'fire', 30, { speed: 3 }); G.vfx.burst(L.pos, 'soul', 20, { el: 'gold' });
     G.vfx.ring(L.pos.clone().setY(L.pos.y - 2.2), 0xffd88a, 5, 0.8);
     G.vfx.flash(L.pos, 0xffb060, 60, 14, 0.8);
-    G.hud.banner('등석을 밝혔다', L.name, '쓰러지면 이곳에서 깨어납니다 · 지도에서 이곳으로 이동할 수 있습니다', '#ffc870', 3000, { minor: true });
+    G.hud.banner('등석을 밝혔다', L.name, '쓰러지면 이곳에서 깨어나며, 지도에서 빠르게 이동할 수 있다', '#ffc870', 3000, { minor: true });
     this.respawn = L;
     G.player.heal(G.player.maxHp);
-    if (G.story && G.story.once('lantern_first')) G.hud.hint(`${'<kbd>E</kbd>'} 밝힌 등석에서 쉬면 체력을 회복하고 시간을 보낼 수 있습니다 · ${'<kbd>M</kbd>'} 지도에서 등석을 눌러 빠르게 이동`, 8);
+    if (G.story && G.story.once('lantern_first')) G.hud.hint(`${'<kbd>E</kbd>'} 밝힌 등석에서 쉬면 체력을 회복하고 시간을 보낼 수 있다 · ${'<kbd>M</kbd>'} 지도에서 등석을 눌러 빠르게 이동`, 8);
     this.save(true);
   }
   async useLantern(L) {
@@ -517,9 +564,10 @@ export class Game {
     f.style.opacity = 0;
   }
 
-  async onMapClick(e) {
-    const L = G.hud.mapClick(e);
-    if (!L || G.mode !== 'free' || G.bossActive) return;
+  onMapClick(e) { return this.travel(G.hud.mapClick(e)); }
+  // fast travel to a lit waystone (a click on the map, or a row of the list beside it)
+  async travel(L) {
+    if (!L || !L.lit || this.menu !== 'map' || G.mode !== 'free' || G.bossActive) return;
     G.audio.play('magic_circle');
     this.closeMenu();
     const f = $('#fade'); f.style.transition = 'opacity 0.6s'; f.style.opacity = 1;
@@ -605,7 +653,11 @@ export class Game {
         else if (I.hit('KeyK')) G.hud.crTree();
         else ['Digit1', 'Digit2', 'Digit3'].forEach((k, i) => { if (I.hit(k)) G.hud.crPick(i); });
       } else if (this.menu) {
-        if (I.hit('Escape') || (this.menu === 'map' && I.hit('KeyM')) || (this.menu === 'journal' && (I.hit('Tab') || I.hit('KeyJ'))) || (this.menu === 'skills' && I.hit('KeyK'))) { const m = this.menu; this.closeMenu(); if (m === 'settings' && this.prevMenu === 'pause') this.openMenu('pause'); }
+        // a hub page's own key closes it; another page's key turns to that page
+        const key = { map: I.hit('KeyM'), journal: I.hit('Tab') || I.hit('KeyJ'), skills: I.hit('KeyK') };
+        if (I.hit('Escape') || key[this.menu]) { const m = this.menu; this.closeMenu(); if (m === 'settings' && this.prevMenu === 'pause') this.openMenu('pause'); }
+        else if (HUB.includes(this.menu)) { const to = HUB.find((m) => key[m]); if (to) this.openMenu(to); }
+        else if (this.menu === 'pause') { const to = HUB.find((m) => key[m]); if (to) { this.closeMenu(); this.openMenu(to); } }
       } else if (G.mode === 'free' && !G.player.dead) {
         if (I.hit('Escape')) this.openMenu('pause');
         else if (I.hit('KeyM')) this.openMenu('map');

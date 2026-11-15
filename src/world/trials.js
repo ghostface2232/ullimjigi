@@ -30,7 +30,7 @@ function finishTrial(id, name, pos) {
   G.audio.play('quest_done');
   G.vfx.burst(pos, 'soul', 40, { el: 'fire' });
   G.vfx.ring(pos, new THREE.Color(2.2, 1.7, 0.7), 6, 0.8, { thick: 0.18 });
-  G.later(() => G.hud.banner('시련', `${name} — 마침`, '울림이 깊어졌다', '#f1d48a', 4200, { minor: true }), 700);
+  G.later(() => G.hud.banner('시련', `${name} — 마침`, '울림이 한결 깊어졌다', '#f1d48a', 4200, { minor: true }), 700);
 }
 
 // ---------------------------------------------------------------- singing stones
@@ -173,7 +173,7 @@ class SingingStones {
     const d = Math.hypot(P.x - this.x, P.z - this.z);
     if (!this.started && d < 13 && G.mode === 'free') {
       this.started = true;
-      banner(this.name, '돌이 부르는 노래를 마법으로 두드려 따라 부르자');
+      banner(this.name, '돌이 들려주는 가락을 마법으로 따라 부르자');
       this.sing(1.2);
     }
     if (this.started && !this.done) {
@@ -212,9 +212,9 @@ const POSTS = [
   { x: 118, z: 104, h: 18, r: 2.4, goal: true },  // leap and glide from the post before
 ];
 const EMBER_HINT = [
-  '매끈해서 붙잡을 데가 없구나. …불길 위로는 뜨거운 바람이 솟는다지.',
-  '뜨거운 바람만으로는 모자라구나. 가장 높이 떴을 때 바람을 부려 보거라.',
-  '마지막 망대는 땅에서는 닿지 않겠구나. 바로 앞 기둥 위에서 바람을 타 보거라.',
+  '발톱 걸 데도 없이 매끈하구나. …그러고 보니, 불길 위로는 더운 바람이 솟지.',
+  '더운 바람만으론 한 뼘이 모자라는구나. 제일 높이 떴을 때, 바람을 한 번 더 부려 보거라.',
+  '마지막 기둥은 땅에서는 못 오른다. 방금 오른 기둥 꼭대기에서 바람을 타고 건너거라.',
 ];
 
 class EmberClimb {
@@ -266,7 +266,7 @@ class EmberClimb {
     if (this.done) return;
     const d = Math.hypot(P.x - this.cx, P.z - this.cz);
     // the climb is all gliding on hot air: it wakes once Borum has lent the wind (story flag 'glide')
-    if (!this.started && d < 30 && G.mode === 'free' && S && S.flag('glide')) { this.started = true; banner(this.name, '가장 높은 망대 꼭대기에 올라서자'); }
+    if (!this.started && d < 30 && G.mode === 'free' && S && S.flag('glide')) { this.started = true; banner(this.name, '가장 높은 망대의 꼭대기에 서자'); }
     if (!this.started) return;
     // standing on a post top lights its lamp; the last one ends the trial
     const pl = G.player;

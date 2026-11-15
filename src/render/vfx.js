@@ -1886,7 +1886,7 @@ export class VFX {
           // a crusted bomb swells on the crystal; once full its fuse spits
           const r = (0.05 + 0.13 * e) * beat;
           at.copy(c).addScaledVector(d, 0.1); at.y += 0.04 + r * 0.7;
-          ball.r = r;
+          if (ball) ball.r = r; // null when the mini-sphere pool is exhausted
           acc += dt * (6 + 16 * e);
           for (; acc >= 1; acc--) this.add.emit({ p: [at.x + rv(r * 0.5), at.y + r * 0.6, at.z + rv(r * 0.5)], v: [rv(0.25), randRange(0.8, 1.6), rv(0.25)], life: randRange(0.16, 0.28), size: randRange(0.1, 0.17) * (0.6 + e), size1: 0.03, color: EMBER_A, color2: EMBER_B, mid: 0.3, color1: PAL.fire.deep, alpha: 0.8, alpha1: 0, drag: 2, grav: -1.5, shape: 7 });
           acc2 += dt * (rd ? 34 : 5 * e);
@@ -1901,11 +1901,11 @@ export class VFX {
           at.copy(c).addScaledVector(d, 0.3);
           if (rd) roll += Math.sin(-roll) * Math.min(1, dt * 16); else roll += dt * (5 + 26 * e);
           so.roll = roll;
-          blade.radius = (0.2 + 0.45 * e) * beat;
-          blade.set(at, d);
+          const br = (0.2 + 0.45 * e) * beat;
+          if (blade) { blade.radius = br; blade.set(at, d); } // null when the slash pool is exhausted
           acc += dt * (rd ? 10 : 14 + 22 * e);
           for (; acc >= 1; acc--) {
-            const a = rand() * 6.28, r = blade.radius * randRange(0.9, 1.25), ca = Math.cos(a), sa = Math.sin(a), sp = 5 + 6 * e;
+            const a = rand() * 6.28, r = br * randRange(0.9, 1.25), ca = Math.cos(a), sa = Math.sin(a), sp = 5 + 6 * e;
             this.streaks.emit({ p: [at.x + (bx.x * ca + by.x * sa) * r, at.y + (bx.y * ca + by.y * sa) * r, at.z + (bx.z * ca + by.z * sa) * r], v: [(-bx.x * sa + by.x * ca) * sp, (-bx.y * sa + by.y * ca) * sp, (-bx.z * sa + by.z * ca) * sp], life: 0.14, w: 0.02, stretch: 0.04, minL: 0.1, maxL: 0.6, color: p.core, color1: p.glow, alpha: 0.75, alpha1: 0, drag: 1, grav: 0 });
           }
           break;
@@ -1943,7 +1943,7 @@ export class VFX {
           // a globe swells under the crystal, droplets circling in, the odd drip falling
           const r = (0.05 + 0.14 * e) * (1 + Math.sin(t * 9) * (rd ? 0.1 : 0.05));
           at.copy(c).addScaledVector(d, 0.1); at.y -= r * 0.3;
-          ball.r = r;
+          if (ball) ball.r = r; // null when the mini-sphere pool is exhausted
           acc += dt * (12 + 10 * e);
           for (; acc >= 1; acc--) { const a = t * 9 + rand() * 6.28, rr = r + 0.08 + 0.16 * (1 - e); this.add.emit({ p: [at.x + Math.cos(a) * rr, at.y + Math.sin(a * 2) * 0.05, at.z + Math.sin(a) * rr], v: [-Math.sin(a) * 1.6, 0, Math.cos(a) * 1.6], life: 0.16, size: 0.06, size1: 0.02, color: p.core, color1: p.glow, alpha: 0.9, alpha1: 0, shape: 9 }); }
           acc2 += dt * (2 + 5 * e);

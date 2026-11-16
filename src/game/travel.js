@@ -32,7 +32,9 @@ export class Travel {
   }
 
   canEnter() {
-    return G.state === 'play' && G.mode === 'free' && !G.player.dead && !G.game.menu && !G.game.busy;
+    // not while a sketch is settling over the view: its story wait would hang until travel ends
+    return G.state === 'play' && G.mode === 'free' && !G.player.dead && !G.game.menu && !G.game.busy
+      && !(G.sketches && G.sketches.busy);
   }
 
   enter() {
@@ -41,6 +43,8 @@ export class Travel {
     this.saved = { god: G.dev.god, unseen: G.dev.unseen };
     G.dev.god = true; G.dev.unseen = true;
     G.player.lockTarget = null;
+    // the sketch overlay sits outside #ui and is cleared by Story.update, which travel holds still
+    if (G.sketches) { G.sketches.hold = 0; G.sketches.show(null, 0); }
     document.body.classList.add('travel');
     G.audio.play('ui_open');
     this.flash('휠 · Z / X 시간   C 시계 멈춤   G 돌아가기', 4.5);

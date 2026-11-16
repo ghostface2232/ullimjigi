@@ -21,6 +21,7 @@ import { HUD } from './hud.js';
 import { Story } from './story.js';
 import { Skills } from './skills.js';
 import { Atlas } from './atlas.js';
+import { Travel } from './travel.js';
 import { fillName } from '../core/util.js';
 
 const SET_KEY = 'ullimjigi_settings';
@@ -113,6 +114,7 @@ export class Game {
     G.companion = new Companion();
     G.dialogue = new Dialogue();
     G.hud = new HUD();
+    G.travel = new Travel();
     G.player.teleport(POI.spawn.x, POI.spawn.z, 2.2);
     G.player.root.visible = false;
     G.world.grass.setQuality(G.settings.quality);
@@ -285,7 +287,10 @@ export class Game {
     $('#map-canvas').addEventListener('click', (e) => this.onMapClick(e));
     G.input.onLockChange = (locked) => {
       if (locked) $('#click-to-play').classList.add('hidden');
-      if (!locked && G.state === 'play' && !this.menu && G.mode === 'free' && !G.player.dead && !this.ignoreUnlock) this.openMenu('pause');
+      if (!locked && G.state === 'play' && !this.menu && G.mode === 'free' && !G.player.dead && !this.ignoreUnlock) {
+        // Esc releases the mouse before the page sees the key: in travel mode it only leaves travel
+        if (G.travel.on) { G.travel.exit(); this.escUsed(); } else if (!this.escRecent()) this.openMenu('pause');
+      }
       this.ignoreUnlock = false;
     };
   }
@@ -308,6 +313,7 @@ export class Game {
       case 'settings': this.prevMenu = this.menu; this.openMenu('settings'); break;
       case 'settings-close': this.closeMenu(); if (G.state === 'play' && this.prevMenu === 'pause') this.openMenu('pause'); break;
       case 'resume': this.closeMenu(); break;
+      case 'travel': this.closeMenu(); G.travel.enter(); break;
       case 'map': this.closeMenu(); this.openMenu('map'); break;
       case 'journal': this.closeMenu(); this.openMenu('journal'); break;
       case 'skills': this.closeMenu(); this.openMenu('skills'); break;
@@ -337,6 +343,7 @@ export class Game {
 
   openMenu(name) {
     if (this.menu === name) return;
+    if (G.travel) G.travel.exit();
     // between hub pages the menu stays open: no close sound, no re-capture of the mouse in between
     const swap = HUB.includes(this.menu) && HUB.includes(name);
     if (this.menu && name !== 'settings' && !swap) this.closeMenu();
@@ -367,11 +374,21 @@ export class Game {
   }
   crossroadsSafe() {
     const P = G.player;
-    return G.state === 'play' && !this.menu && G.mode === 'free' && !P.dead && !this.busy && !G.paused
+    return G.state === 'play' && !this.menu && !G.travel.on && G.mode === 'free' && !P.dead && !this.busy && !G.paused
       && !G.enemies.inCombat() && !G.bossActive && G.slowmo <= 0 && P.grounded && !P.swimming && P.blinkT <= 0;
+  }
+  // An Esc that closes a window must not also open the pause menu: neither the same press (held,
+  // or repeating after the mouse is captured again, which makes the browser release it) nor a
+  // second release right behind it.
+  escUsed() { this.escAt = performance.now(); }
+  escRecent(win = 0.8) {
+    const I = G.input, at = this.escAt ?? -1e9;
+    const samePress = I.keys.has('Escape') && (I.keyDownTime.Escape || 0) <= at;
+    return performance.now() - at < win * 1000 || samePress;
   }
   closeMenu() {
     if (!this.menu) return;
+    if (G.input.keys.has('Escape')) { G.input.consume('Escape'); this.escUsed(); }
     for (const id of ['#pause', '#settings', '#hub', '#map', '#journal', '#skills', '#crossroads']) $(id).classList.add('hidden');
     $('#ui').classList.remove('menu-open');
     this.menu = null;
@@ -658,8 +675,11 @@ export class Game {
         if (I.hit('Escape') || key[this.menu]) { const m = this.menu; this.closeMenu(); if (m === 'settings' && this.prevMenu === 'pause') this.openMenu('pause'); }
         else if (HUB.includes(this.menu)) { const to = HUB.find((m) => key[m]); if (to) this.openMenu(to); }
         else if (this.menu === 'pause') { const to = HUB.find((m) => key[m]); if (to) { this.closeMenu(); this.openMenu(to); } }
+      } else if (G.travel.on) {
+        if (I.hit('Escape') || I.hit('KeyG')) { if (I.hit('Escape')) this.escUsed(); G.travel.exit(); }
       } else if (G.mode === 'free' && !G.player.dead) {
-        if (I.hit('Escape')) this.openMenu('pause');
+        if (I.hit('Escape')) { if (!this.escRecent(0.25)) this.openMenu('pause'); }
+        else if (I.hit('KeyG')) G.travel.enter();
         else if (I.hit('KeyM')) this.openMenu('map');
         else if (I.hit('Tab') || I.hit('KeyJ')) this.openMenu('journal');
         else if (I.hit('KeyK')) this.openMenu('skills');
@@ -687,11 +707,12 @@ export class Game {
         G.enemies.update(dt * sm);
         G.npcs.update(dt);
         G.companion.update(dt);
-        if (G.story) G.story.update(dt);
+        if (G.story && !G.travel.on) G.story.update(dt);
       }
+      G.travel.update(raw);
       G.dialogue.update(raw);
       if (G.sketches) G.sketches.pump();
-      this.updateInteract();
+      if (G.travel.on) G.hud.prompt(null); else this.updateInteract();
       this.combatHold -= dt;
     }
     // camera

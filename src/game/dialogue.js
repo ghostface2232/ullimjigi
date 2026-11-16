@@ -59,7 +59,7 @@ export class Dialogue {
     // backlog + skip affordances
     this.log = [];
     this.keysEl = document.createElement('div'); this.keysEl.className = 'dlg-keys';
-    this.keysEl.innerHTML = '<span><kbd>L</kbd>지난 대사</span><span class="dlg-skip"><kbd>Esc</kbd>길게 눌러 빨리 넘기기<i></i></span>';
+    this.keysEl.innerHTML = '<span><kbd>L</kbd>지난 대사</span><span class="dlg-skip"><kbd>Space</kbd>길게 눌러 빨리 넘기기<i></i></span>';
     this.box.appendChild(this.keysEl);
     this.skipBar = this.keysEl.querySelector('.dlg-skip i');
     this.logEl = document.createElement('div'); this.logEl.id = 'dlg-log'; this.logEl.className = 'hidden';
@@ -238,9 +238,9 @@ export class Dialogue {
     this.updateCam(dt);
     if (!this.active && !this.cur && !this.choosing) return;
     if (I.pressed.has('KeyL')) { this.toggleLog(); I.consume('KeyL'); }
-    if (this.logOpen) { if (I.pressed.has('Escape')) this.toggleLog(false); I.consume('KeyE'); I.consume('Space'); I.mouse.pressed.delete(0); return; }
-    // hold Esc to fast-forward (stops at choices)
-    const held = I.heldFor('Escape');
+    if (this.logOpen) { if (I.pressed.has('Escape')) { this.toggleLog(false); I.consume('Escape'); G.game.escUsed(); } I.consume('KeyE'); I.consume('Space'); I.mouse.pressed.delete(0); return; }
+    // hold Space to fast-forward (a tap still advances; stops at choices)
+    const held = I.heldFor('Space');
     this.ffwd = held > 0.6;
     const hk = Math.round(Math.min(1, held / 0.6) * 50) * 2;
     if (this.skipK !== hk) { this.skipK = hk; this.skipBar.style.width = `${hk}%`; }

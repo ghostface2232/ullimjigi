@@ -197,7 +197,7 @@ export class Player {
     if (act) {
       const keys = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6'];
       keys.forEach((k, i) => { if (input.hit(k)) this.selectElement(ELEMENTS[i]); });
-      if (input.mouse.wheel) {
+      if (input.mouse.wheel && !(G.travel && G.travel.on)) {
         const list = ELEMENTS.filter((e) => this.unlocked.has(e));
         const i = list.indexOf(this.element);
         const n = list[(i + (input.mouse.wheel > 0 ? 1 : -1) + list.length) % list.length];

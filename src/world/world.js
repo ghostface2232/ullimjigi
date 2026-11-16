@@ -840,7 +840,7 @@ export class World {
     U.seeR.value = camD < 14 ? 2.1 : 0;
     this.weather.update(dt, camPos, playerPos);
     if (G.player) { this.fire.update(dt, camPos, playerPos); this.objects.update(dt, playerPos); this.puzzles.update(dt, playerPos); this.trials.update(dt, playerPos); }
-    this.sky.update(dt, playerPos, 1, camPos);
+    this.sky.update(dt, playerPos, G.travel && G.travel.on && G.travel.frozen ? 0 : 1, camPos);
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);
     this.props.update(G.camera, this.water.reflecting ? this.water.frustum : null);

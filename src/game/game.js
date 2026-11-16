@@ -289,7 +289,7 @@ export class Game {
       if (locked) $('#click-to-play').classList.add('hidden');
       if (!locked && G.state === 'play' && !this.menu && G.mode === 'free' && !G.player.dead && !this.ignoreUnlock) {
         // Esc releases the mouse before the page sees the key: in travel mode it only leaves travel
-        if (G.travel.on) G.travel.exit(); else this.openMenu('pause');
+        if (G.travel.on) { G.travel.exit(); this.escUsed(); } else if (!this.escRecent()) this.openMenu('pause');
       }
       this.ignoreUnlock = false;
     };
@@ -377,8 +377,18 @@ export class Game {
     return G.state === 'play' && !this.menu && !G.travel.on && G.mode === 'free' && !P.dead && !this.busy && !G.paused
       && !G.enemies.inCombat() && !G.bossActive && G.slowmo <= 0 && P.grounded && !P.swimming && P.blinkT <= 0;
   }
+  // An Esc that closes a window must not also open the pause menu: neither the same press (held,
+  // or repeating after the mouse is captured again, which makes the browser release it) nor a
+  // second release right behind it.
+  escUsed() { this.escAt = performance.now(); }
+  escRecent(win = 0.8) {
+    const I = G.input, at = this.escAt ?? -1e9;
+    const samePress = I.keys.has('Escape') && (I.keyDownTime.Escape || 0) <= at;
+    return performance.now() - at < win * 1000 || samePress;
+  }
   closeMenu() {
     if (!this.menu) return;
+    if (G.input.keys.has('Escape')) { G.input.consume('Escape'); this.escUsed(); }
     for (const id of ['#pause', '#settings', '#hub', '#map', '#journal', '#skills', '#crossroads']) $(id).classList.add('hidden');
     $('#ui').classList.remove('menu-open');
     this.menu = null;
@@ -666,9 +676,9 @@ export class Game {
         else if (HUB.includes(this.menu)) { const to = HUB.find((m) => key[m]); if (to) this.openMenu(to); }
         else if (this.menu === 'pause') { const to = HUB.find((m) => key[m]); if (to) { this.closeMenu(); this.openMenu(to); } }
       } else if (G.travel.on) {
-        if (I.hit('Escape') || I.hit('KeyG')) G.travel.exit();
+        if (I.hit('Escape') || I.hit('KeyG')) { if (I.hit('Escape')) this.escUsed(); G.travel.exit(); }
       } else if (G.mode === 'free' && !G.player.dead) {
-        if (I.hit('Escape')) this.openMenu('pause');
+        if (I.hit('Escape')) { if (!this.escRecent(0.25)) this.openMenu('pause'); }
         else if (I.hit('KeyG')) G.travel.enter();
         else if (I.hit('KeyM')) this.openMenu('map');
         else if (I.hit('Tab') || I.hit('KeyJ')) this.openMenu('journal');

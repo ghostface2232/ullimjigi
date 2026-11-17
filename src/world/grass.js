@@ -6,6 +6,8 @@ import * as THREE from 'three';
 import { U, noiseTexture } from '../render/materials.js';
 import { mulberry32, smoothstep } from '../core/util.js';
 import { tier } from '../render/quality.js';
+import { G } from '../core/context.js';
+import { POI } from './layout.js';
 
 const VS = /* glsl */ `
 attribute vec3 iOffset;
@@ -28,6 +30,7 @@ varying vec3 vColor;
 varying float vH;
 varying float vWave;
 varying float vCloud;
+varying float vFacing;
 varying vec2 vBlade;
 #include <common>
 #include <shadowmap_pars_vertex>
@@ -36,13 +39,17 @@ void main(){
   float h = position.y;
   float dist = length(iOffset.xz - uCam.xz);
   float thin = smoothstep(uFade * 0.28, uFade * 0.95, dist);
+  float keep = 1.0;
   #ifndef FLOWER
-    // distance LOD: drop a growing share of tufts, survivors widen to keep coverage
-    if (iParams.w > 1.0 - thin * 0.55) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }
+    // Distance LOD: shrink each retiring tuft over a band instead of popping it off.
+    keep = smoothstep(iParams.w - 0.07, iParams.w, 1.0 - thin * 0.55);
+    if (keep < 0.001) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }
   #endif
+  // Shrink tufts smoothly when a steep bank brings their blades through the lens.
+  keep *= smoothstep(0.35, 1.25, distance(iOffset + vec3(0.0, iParams.z * 0.5, 0.0), uCam));
   vec3 p = position;
   #ifndef FLOWER
-    p.xz *= iParams.y * (1.0 + thin * 0.9);
+    p.xz *= iParams.y * (1.0 + thin * 0.9) * keep;
   #else
     p.xz *= iParams.y;
   #endif
@@ -54,13 +61,13 @@ void main(){
   float c = cos(iParams.x), s = sin(iParams.x);
   p = vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z);
   vec3 wp = iOffset + p;
-  float fade = 1.0 - smoothstep(uFade * 0.8, uFade, dist);
+  float fade = (1.0 - smoothstep(uFade * 0.8, uFade, dist)) * keep;
   wp.y = iOffset.y + p.y * fade;
   // wind: rolling waves across the field, broken up by drifting gust noise
   vec2 wdir = vec2(0.88, 0.47);
   float gustN = texture2D(uNoiseTex, iOffset.xz * 0.006 - wdir * uTime * 0.02).g;
-  float wave = sin(dot(iOffset.xz, wdir) * 0.17 - uTime * 2.2 + gustN * 6.0) * 0.5 + 0.5;
-  wave = smoothstep(0.3, 1.0, wave) * (0.35 + gustN);
+  float wave = sin(dot(iOffset.xz, wdir) * 0.17 - uTime * 1.35 + gustN * 2.0) * 0.5 + 0.5;
+  wave = smoothstep(0.28, 0.92, wave) * (0.45 + gustN * 0.65);
   float flutter = sin(uTime * 3.6 + iOffset.x * 0.9 + iOffset.z * 0.7 + aBlade.x * 6.28);
   float hh = h * h;
   vec2 bend = (wdir * (0.1 + 0.55 * wave) + vec2(-wdir.y, wdir.x) * flutter * 0.06) * uWind * hh * iParams.z;
@@ -73,6 +80,7 @@ void main(){
     float bl = length(bd);
     bend += normalize(bd + vec2(0.0001)) * (1.0 - smoothstep(0.0, uBurns[i].z, bl)) * uBurns[i].w * h * 1.4;
   }
+  bend *= fade;
   wp.xz += bend;
   wp.y -= length(bend) * 0.4 * h;
   vWave = wave * uWind;
@@ -81,6 +89,12 @@ void main(){
   vColor *= 1.0 - uWet * 0.16;
   vH = h;
   vBlade = aBlade;
+  #ifdef FLOWER
+    vFacing = 1.0;
+  #else
+    vec3 bladeNormal = normalize(vec3(-sin(iParams.x + aBlade.y), 0.65, cos(iParams.x + aBlade.y)));
+    vFacing = 0.65 + 0.35 * abs(dot(bladeNormal, uSunW));
+  #endif
   vec2 q = iOffset.xz + uSunW.xz * ((160.0 - iOffset.y) / max(uSunW.y, 0.25));
   vCloud = 1.0 - uCloud.w * smoothstep(0.5, 0.64, texture2D(uNoiseTex, (q + uCloud.xy) * uCloud.z).r);
   vec4 worldPosition = vec4(wp, 1.0);
@@ -99,6 +113,7 @@ varying vec3 vColor;
 varying float vH;
 varying float vWave;
 varying float vCloud;
+varying float vFacing;
 varying vec2 vBlade;
 #include <common>
 #include <packing>
@@ -116,15 +131,15 @@ void main(){
     float up = 1.0;
   #else
     float bv = 0.84 + 0.3 * vBlade.x;
-    vec3 root = vColor * vec3(0.64, 0.72, 0.68);
-    vec3 tip = vColor * vec3(1.1, 1.08, 0.86) + vec3(0.02, 0.02, 0.0);
+    vec3 root = vColor * vec3(0.6, 0.73, 0.78);
+    vec3 tip = vColor * vec3(1.16, 1.1, 0.84) + vec3(0.015, 0.014, 0.0);
     vec3 base = mix(root, tip, smoothstep(0.0, 1.0, vH)) * bv;
     float up = 0.55 + 0.45 * vH;
   #endif
-  vec3 sunL = uSun * mix(uShadeTint, vec3(1.0), lit * up);
+  vec3 sunL = uSun * mix(uShadeTint, vec3(1.0), lit * up * vFacing);
   vec3 col = base * (uAmb * (0.75 + 0.25 * vH) + sunL);
   // wind sheen: blades bent by a passing wave catch the light
-  col += base * uSun * vWave * vH * vH * 0.45 * (0.3 + 0.7 * lit);
+  col += base * uSun * min(vWave, 1.3) * vH * vH * 0.3 * lit;
   // alpha of the scene target = how much screen-space occlusion a pixel takes (Renderer):
   // blades shading each other would only read as dirt
   gl_FragColor = vec4(col, 0.3);
@@ -143,14 +158,14 @@ function tuftGeometry(rnd) {
     const lean = 0.08 + rnd() * 0.14;
     const la = oa + (rnd() - 0.5) * 0.8;
     const lx = Math.cos(la) * lean, lz = Math.sin(la) * lean;
-    const hMul = 0.75 + rnd() * 0.25;
+    const hMul = (b === 0 ? 0.95 : b === 3 ? 0.55 : 0.7) + rnd() * 0.12;
     const w0 = 0.02 + rnd() * 0.007, w1 = w0 * 0.72;
     const r = rnd();
     const base = pos.length / 3;
     pos.push(ox - w0 * ca, 0, oz - w0 * sa, ox + w0 * ca, 0, oz + w0 * sa);
     pos.push(ox + lx * 0.3 - w1 * ca, 0.5 * hMul, oz + lz * 0.3 - w1 * sa, ox + lx * 0.3 + w1 * ca, 0.5 * hMul, oz + lz * 0.3 + w1 * sa);
     pos.push(ox + lx, hMul, oz + lz);
-    for (let k = 0; k < 5; k++) bl.push(r, 0);
+    for (let k = 0; k < 5; k++) bl.push(r, a);
     idx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3, base + 2, base + 4, base + 3);
   }
   const g = new THREE.BufferGeometry();
@@ -266,28 +281,59 @@ export class Grass {
     const fOff = [], fCol = [], fPar = [];
     let k = 0;
     const c = this.tmpC;
+    // Reuse the world's existing footprints. Query once per streamed chunk, never per
+    // frame; the collision grid already contains trees, rocks, walls and buildings.
+    const solids = [];
+    G.world?.col?.query(cx * S + S / 2, cz * S + S / 2, S * 0.71 + 1, (s) => solids.push(s));
+    const paving = U.paveTex.value?.image;
     for (let i = 0; i < n; i++) {
       const x = cx * S + rnd() * S, z = cz * S + rnd() * S;
       const g = T.grassAt(x, z);
-      if (g < 0.35 || rnd() > g * 1.2) continue;
+      if (g < 0.08) continue;
       const y = T.height(x, z);
+      const path = T.pathAt(x, z);
+      const paved = paving?.width === T.N && paving.data.length === T.N * T.N ? T.sampleGrid(paving.data, x, z) / 255 : 0;
+      // Paving and well-trodden paths have a clear open centre. Short little islands
+      // at the verge break its edge; they must never become another full-height lawn.
+      const verge = 1 - smoothstep(0.12, 0.74, Math.max(path, paved));
+      if (verge <= 0) continue;
+      let contact = 1;
+      for (const s of solids) {
+        if (s.h0 > y + 0.35 || s.h1 < y + 0.08) continue;
+        let d;
+        if (s.type === 'circle') d = Math.hypot(x - s.x, z - s.z) - s.r;
+        else {
+          const dx = x - s.x, dz = z - s.z;
+          const u = Math.abs(dx * s.cos - dz * s.sin) - s.hw;
+          const v = Math.abs(dx * s.sin + dz * s.cos) - s.hd;
+          d = Math.hypot(Math.max(0, u), Math.max(0, v)) + Math.min(0, Math.max(u, v));
+        }
+        contact = Math.min(contact, smoothstep(0.06, 0.75, d));
+        if (contact === 0) break;
+      }
+      if (contact === 0) continue;
+      const patch = T.noise2(x * 0.19, z * 0.19);
+      const clump = smoothstep(-0.45, 0.5, patch);
+      const yard = 1 - smoothstep(28, 48, Math.hypot(x - POI.village.x, z - POI.village.z));
+      const density = g * (0.55 + 0.45 * clump) * verge * (0.45 + 0.55 * contact) * (1 - yard * 0.45);
+      if (rnd() > density) continue;
       T.colorAt(x, z, c);
-      // per-tuft hue/brightness jitter + slow patchy drift towards yellow or teal
-      const patch = T.noise2(x * 0.05, z * 0.05);
-      const v = 0.84 + rnd() * 0.3;
-      const warm = Math.max(0, patch) * 0.22, cool = Math.max(0, -patch) * 0.14;
+      // Quiet colour families across several metres; the tips supply the fine detail.
+      const hue = T.noise2(x * 0.05, z * 0.05);
+      const v = 0.91 + rnd() * 0.16;
+      const warm = Math.max(0, hue) * 0.24, cool = Math.max(0, -hue) * 0.18;
       off[k * 3] = x; off[k * 3 + 1] = y - 0.04; off[k * 3 + 2] = z;
       col[k * 3] = c.r * v * (1.02 + warm);
       col[k * 3 + 1] = c.g * v * (1.04 + warm * 0.4);
       col[k * 3 + 2] = c.b * v * (0.95 + cool * 1.5 - warm * 0.4);
       par[k * 4] = rnd() * Math.PI * 2;
-      par[k * 4 + 1] = 0.8 + rnd() * 0.45;
-      par[k * 4 + 2] = (0.34 + rnd() * 0.3) * (0.6 + g * 0.5);
+      par[k * 4 + 1] = (0.9 + rnd() * 0.4) * (0.7 + 0.3 * verge);
+      par[k * 4 + 2] = (0.3 + rnd() * 0.22) * (0.72 + clump * 0.38) * (0.28 + verge * 0.72) * (0.55 + contact * 0.45) * (1 - yard * 0.55);
       par[k * 4 + 3] = rnd();
       k++;
       // wildflower patches
       const fp = T.noise3(x * 0.04 + 100, z * 0.04 - 30);
-      if (g > 0.55 && rnd() < 0.004 + 0.16 * smoothstep(0.3, 0.65, fp)) {
+      if (g > 0.55 && verge > 0.9 && contact > 0.8 && yard < 0.35 && rnd() < 0.004 + 0.16 * smoothstep(0.3, 0.65, fp)) {
         const pal = T.noise2(x * 0.013 - 50, z * 0.013 + 20) * 0.5 + 0.5;
         const fc = FLOWER_COLORS[Math.min(FLOWER_COLORS.length - 1, Math.floor(pal * FLOWER_COLORS.length + (rnd() - 0.5) * 0.9))] || FLOWER_COLORS[0];
         const fv = 0.9 + rnd() * 0.2;

@@ -104,7 +104,7 @@ noiseTexture();
 // ---------------------------------------------------------------------------
 // Foliage atlas (4x4 tiles) for the cards of props.js: alpha = the shapes, rgb = a tint
 // multiplier (what lies underneath is darker; a leaf has a lit and a shaded half and a midrib).
-//   row 0: broadleaf clumps
+//   row 0: two oak sprays, pointed birch/poplar, lobed maple
 //   row 1: needle sprays (two; the twig runs along u from the left edge) and needle tufts (two)
 //   row 2: the snow lying on those four
 //   row 3: willow strands (two; hanging from v = 0) and blossom clusters (two)
@@ -130,15 +130,30 @@ function makeLeafTexture(S = 2048) {
       g.restore();
     }
   };
-  const leaf = (ops, x, y, rot, L, W, tone, lw) => ops.push((g, A) => {
+  const leaf = (ops, x, y, rot, L, W, tone, lw, shape = 0) => ops.push((g, A) => {
     g.save();
     g.translate(x, y); g.rotate(rot); g.translate(-L * 0.35, 0);
-    g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(L * 0.42, -W, L, 0); g.quadraticCurveTo(L * 0.42, W, 0, 0); g.closePath();
+    g.beginPath(); g.moveTo(0, 0);
+    if (shape === 3) {
+      // Five pointed lobes; the broad centre stays a single readable painted plane.
+      for (const [u, v] of [[0.16, -0.52], [0.32, -0.3], [0.35, -1], [0.62, -0.55], [1, 0], [0.62, 0.55], [0.35, 1], [0.32, 0.3], [0.16, 0.52]]) g.lineTo(u * L, v * W);
+    } else if (shape === 1) {
+      g.bezierCurveTo(L * 0.12, -W * 0.65, L * 0.32, -W * 0.8, L * 0.36, -W * 0.5);
+      g.bezierCurveTo(L * 0.5, -W, L * 0.7, -W * 0.5, L, 0);
+      g.bezierCurveTo(L * 0.7, W * 0.5, L * 0.5, W, L * 0.36, W * 0.5);
+      g.bezierCurveTo(L * 0.32, W * 0.8, L * 0.12, W * 0.65, 0, 0);
+    } else {
+      g.quadraticCurveTo(L * 0.42, -W, L, 0); g.quadraticCurveTo(L * 0.42, W, 0, 0);
+    }
+    g.closePath();
     if (A) { g.fillStyle = '#fff'; g.fill(); } else {
-      const gr = g.createLinearGradient(0, -W * 0.5, 0, W * 0.5);
-      gr.addColorStop(0, grey(tone * 1.04)); gr.addColorStop(0.5, grey(tone)); gr.addColorStop(0.52, grey(tone * 0.88)); gr.addColorStop(1, grey(tone * 0.82));
+      const gr = g.createLinearGradient(0, W * 0.35, L, -W * 0.25);
+      gr.addColorStop(0, grey(tone * 0.78)); gr.addColorStop(0.38, grey(tone * 0.9));
+      gr.addColorStop(0.7, grey(tone)); gr.addColorStop(1, grey(tone * 1.06));
       g.fillStyle = gr; g.fill();
-      g.strokeStyle = grey(tone * 0.7); g.lineWidth = lw; g.stroke();
+      // A restrained central brush stroke, with no dark outline around every leaf.
+      g.strokeStyle = grey(tone * 0.96); g.lineWidth = lw * 0.45;
+      g.beginPath(); g.moveTo(L * 0.16, 0); g.quadraticCurveTo(L * 0.53, -W * 0.045, L * 0.86, 0); g.stroke();
     }
     g.restore();
   });
@@ -161,16 +176,22 @@ function makeLeafTexture(S = 2048) {
     }
     g.fill(); g.restore();
   });
-  // -- row 0: clumps of broad leaves
+  // Smaller overlapping leaves form a painted spray, with quiet cores and lighter tips.
+  // The texture carries micro-value, while clump normals carry the actual sun direction.
   for (let v = 0; v < 4; v++) {
-    const ops = [], n = 18 + v * 3;
-    for (let i = 0; i < n; i++) {
-      const under = i < n * 0.45;
-      const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * 0.26 * C;
-      const L = (0.17 + rnd() * 0.06) * C * (under ? 1.08 : 1), W = L * (0.42 + rnd() * 0.14);
-      const rot = a + (rnd() - 0.5) * 1.6;
-      const tone = under ? 132 + rnd() * 28 : 206 + rnd() * 48;
-      leaf(ops, C / 2 + Math.cos(a) * d, C / 2 + Math.sin(a) * d, rot, L, W, tone, C / 256);
+    const ops = [], phase = v * 0.73;
+    for (let j = 0; j < 5; j++) {
+      const angle = phase + j * 2.39996, scale = [1, 0.9, 0.85, 0.76, 0.7][j];
+      const cx = C * (0.5 + Math.cos(angle) * 0.18), cy = C * (0.5 + Math.sin(angle) * 0.16);
+      for (let i = 0; i < 18; i++) {
+        const a = i * 2.39996 + angle, d = Math.sqrt((i + 0.5) / 18) * C * 0.145 * scale;
+        const x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
+        const L = C * (0.075 + rnd() * 0.035) * scale;
+        const W = L * (v === 2 ? 0.38 : v === 3 ? 0.64 : 0.5);
+        const edge = Math.min(1, Math.hypot(x / C - 0.5, y / C - 0.5) / 0.36);
+        const tone = (i < 4 ? 166 : 186) + edge * 35 + rnd() * 7;
+        leaf(ops, x, y, a + (rnd() - 0.5) * 0.45, L, W, tone, C / 512, v === 3 ? 3 : v < 2 ? 1 : 0);
+      }
     }
     paint(v, ops);
   }
@@ -184,7 +205,8 @@ function makeLeafTexture(S = 2048) {
       const t = d / len, l = nl * (1 - 0.5 * t);
       for (const sd of [-1, 1]) {
         const na = ang + sd * (0.8 - 0.25 * t + (rnd() - 0.5) * 0.3), ll = l * (0.75 + rnd() * 0.45);
-        line(ops, x + ca * d, y + sa * d, x + ca * d + Math.cos(na) * ll, y + sa * d + Math.sin(na) * ll, C * 0.0115, tone * (0.84 + rnd() * 0.3));
+        const nx = x + ca * d, ny = y + sa * d, width = C * 0.006;
+        poly(ops, [[nx - Math.sin(na) * width, ny + Math.cos(na) * width], [nx + Math.cos(na) * ll, ny + Math.sin(na) * ll], [nx + Math.sin(na) * width, ny - Math.cos(na) * width]], tone * (0.92 + rnd() * 0.16));
       }
     }
     line(ops, x, y, x + ca * len * 0.9, y + sa * len * 0.9, C * 0.008, tone * 0.55);
@@ -205,14 +227,31 @@ function makeLeafTexture(S = 2048) {
   for (let v = 4; v < 8; v++) {
     const ops = [], twigs = [];
     if (v < 6) {
-      // spray: side twigs alternate along the main one, longest before the middle
-      const x0 = 0.04 * C, x1 = 0.86 * C, bow = (rnd() - 0.5) * 0.07 * C, n = 7;
-      for (let k = 0; k < n; k++) for (const sd of [-1, 1]) {
-        const t = 0.04 + ((k + (sd > 0 ? 0.5 : 0)) / n) * 0.8;
-        const len = C * 0.5 * Math.pow(Math.sin(Math.PI * (0.17 + 0.8 * t)), 0.9) * (0.85 + rnd() * 0.22);
-        twigs.push([x0 + (x1 - x0) * t, 0.5 * C + Math.sin(t * Math.PI) * bow, sd * (0.84 - 0.3 * t + (rnd() - 0.5) * 0.14), len, (176 + rnd() * 62) * (0.84 + 0.2 * t)]);
+      // Short overlapping needle sprays fill a fan. Long painted lances looked like
+      // giant grass blades close up, so detail stays small even on a broad branch sheet.
+      for (let band = -5; band <= 5; band++) {
+        const end = 0.86 + 0.045 * Math.cos(band * 1.7 + v);
+        for (let k = 0; k < 20; k++) {
+          const u = k / 19, x = C * (0.07 + (end - 0.07) * u);
+          const y = C * (0.5 + band * 0.077 * (0.6 + u * 0.4));
+          const tone = 177 + u * 35 + (5 - Math.abs(band)) * 3;
+          for (const side of [-1, 1]) {
+            const angle = side * (0.7 + rnd() * 0.2), L = C * (0.065 + rnd() * 0.025);
+            leaf(ops, x, y + side * C * 0.009, angle, L, L * 0.25, tone, C / 1024);
+            // Fine tips feather the outer edge while the overlapping bases stay quiet.
+            for (let n = 0; n < 3; n++) {
+              const nx = x + C * n * 0.015, ny = y + side * C * 0.012;
+              line(ops, nx, ny, nx + C * 0.037, ny + side * C * (0.025 + n * 0.004), C * 0.003, tone + 8);
+            }
+          }
+        }
       }
-      twigs.push([x0, 0.5 * C, 0, x1 - x0 + 0.08 * C, 226]);
+      paint(v, ops);
+      const cap = [];
+      for (let k = 0; k < 3; k++) blob(cap, C * (0.28 + k * 0.17), C * (0.5 + Math.sin(k * 2 + v) * 0.025),
+        C * 0.205, C * (0.3 + k * 0.015), 0, 242 + k * 4, 0.86);
+      paint(v + 4, cap);
+      continue;
     } else {
       // tuft: twigs of every length all round a centre (a ragged ball, not a star)
       const n = 17 + (v - 6) * 2;
@@ -247,9 +286,9 @@ function makeLeafTexture(S = 2048) {
       const a = rnd() * Math.PI * 2, d = (0.1 + rnd() * 0.2) * C, L = (0.2 + rnd() * 0.06) * C;
       leaf(ops, C / 2 + Math.cos(a) * d, C / 2 + Math.sin(a) * d, a + (rnd() - 0.5), L, L * 0.44, 118 + rnd() * 30, C / 256);
     }
-    const n = 11 + (v - 14) * 2;
+    const n = 22 + (v - 14) * 3;
     for (let i = 0; i < n; i++) {
-      const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * 0.31 * C, fr = (0.07 + rnd() * 0.03) * C;
+      const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * 0.31 * C, fr = (0.042 + rnd() * 0.018) * C;
       const x = C / 2 + Math.cos(a) * d, y = C / 2 + Math.sin(a) * d, r0 = rnd() * 6.3, tone = i < n * 0.4 ? 178 + rnd() * 22 : 224 + rnd() * 31;
       for (let k = 0; k < 5; k++) {
         const pa = r0 + k * 1.2566;
@@ -457,9 +496,16 @@ const DISSOLVE_VERT = `
           _up = (modelViewMatrix * vec4(instanceMatrix[1].xyz, 0.0)).xyz;
         #endif
         if (aCard.z < 100.0) {
-          float _cr = _fr * 6.2831853 + sin(uTime * (1.1 + _fr * 1.7) + _fr * 47.0) * 0.13 * uWind;
+          float _cr = _fr * 6.2831853 + sin(uTime * (1.1 + _fr * 1.7) + _fr * 47.0) * 0.075 * uWind;
           float _cc = cos(_cr), _sn = sin(_cr);
-          mvPosition.xy += vec2(aCard.x * _cc - aCard.y * _sn, aCard.x * _sn + aCard.y * _cc) * aCard.z * _cs * _keep;
+          vec2 _corner = vec2(aCard.x * _cc - aCard.y * _sn, aCard.x * _sn + aCard.y * _cc);
+          mvPosition.xy += _corner * aCard.z * _cs * _keep;
+          #ifndef FLAT_SHADED
+            // Preserve the clump's outward normal, then bend across the expanded card.
+            // Reusing vNormal gives soft volume within the card without another varying/map.
+            if (floor(aCard.w) < 4.0 || floor(aCard.w) >= 14.0)
+              vNormal = normalize(transformedNormal) + vec3(_corner * 0.38, 0.0);
+          #endif
         } else {
           vec3 _sd = cross(normalize(_up), normalize(mvPosition.xyz));
           _sd /= max(length(_sd), 0.25);
@@ -503,8 +549,18 @@ const WIND_VERT = `
   #endif
   float _h = max(position.y - uSwayBase, 0.0);
   float _sw = sin(uTime * 1.35 + _ip.x * 0.15 + _ip.z * 0.11) * 0.6 + sin(uTime * 2.7 + _ip.x * 0.37) * 0.25;
+  #ifdef LEAF_CARDS
+    // A shared travelling front carries the branches; small leaf flutter follows it.
+    // Same phase for both LODs, and the same direction as the meadow's wind.
+    float _front = sin(dot(_ip.xz, vec2(0.88, 0.47)) * 0.17 - uTime * 1.35);
+    _sw = _front * 0.7 + sin(uTime * 2.1 + _ip.x * 0.31 + _ip.z * 0.23) * 0.12;
+  #endif
   transformed.x += _sw * uWind * _h * uSway;
-  transformed.z += cos(uTime * 1.1 + _ip.z * 0.2) * uWind * _h * uSway * 0.6;
+  #ifdef LEAF_CARDS
+    transformed.z += _sw * uWind * _h * uSway * 0.534;
+  #else
+    transformed.z += cos(uTime * 1.1 + _ip.z * 0.2) * uWind * _h * uSway * 0.6;
+  #endif
 `;
 
 // Key-light response (the sky's SunLight). Its shadow-map term and the cloud
@@ -541,7 +597,7 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
     #if defined( TOON_SOFT )
       float g = smoothstep( -0.16, 0.56, ndl + _ndlOff );
     #elif defined( TOON_FOLIAGE )
-      float g = smoothstep( -0.28, 0.3, ndl + _ndlOff );
+      float g = smoothstep( -0.18, 0.42, ndl + _ndlOff );
     #elif defined( SURF_LAYER )
       float g = smoothstep( -0.14, 0.42, ndl );
     #elif defined( USE_GRADIENTMAP )
@@ -566,11 +622,11 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
     #ifdef TOON_FOLIAGE
       float tr = pow( clamp( dot( -geometryViewDir, directLight.direction ), 0.0, 1.0 ), 3.0 );
       float leaf = _leafM >= 0.0 ? _leafM : smoothstep( 0.0, 0.06, material.diffuseColor.g - material.diffuseColor.r );
-      reflectedLight.directDiffuse += directLight.color * material.diffuseColor * vec3( 1.0, 1.05, 0.7 ) * tr * leaf * 0.32 * ( 0.3 + 0.7 * _dirShadow * _cloudSh );
+      reflectedLight.directDiffuse += directLight.color * material.diffuseColor * vec3( 1.08, 1.03, 0.78 ) * tr * leaf * 0.24 * ( 0.2 + 0.8 * _dirShadow * _cloudSh );
       #ifdef LEAF_CARDS
         // foliage cards seen from their far side (looking up into a crown): the sun that
         // reaches them comes through the leaves
-        reflectedLight.directDiffuse += directLight.color * material.diffuseColor * vec3( 1.0, 1.1, 0.5 ) * ( clamp( -ndl - _ndlOff, 0.0, 1.0 ) * _isCard * 0.55 * _dirShadow * _cloudSh );
+        reflectedLight.directDiffuse += directLight.color * material.diffuseColor * vec3( 1.08, 1.04, 0.72 ) * ( clamp( -ndl - _ndlOff, 0.0, 1.0 ) * _isCard * 0.28 * _dirShadow * _cloudSh );
       #endif
     #endif
   } else {
@@ -592,7 +648,7 @@ function toonLightsBegin() {
 const LIGHTS_PRE = `
   _cloudSh = cloudShadowAt( vDWP );
   #ifdef TOON_FOLIAGE
-    _ndlOff = ( _dn( vDWP * 1.9 ) - 0.5 ) * 0.9;
+    _ndlOff = ( _dn( vDWP * 0.85 ) - 0.5 ) * 0.26;
   #endif
   #ifdef TOON_SOFT
     _ndlOff = ( _dn( vDWP * 0.3 ) - 0.5 ) * 0.25;

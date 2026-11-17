@@ -5,6 +5,7 @@
 // Everything is generated in code; geometry is built once per character type
 // and shared between instances (each instance gets its own bones/materials).
 import * as THREE from 'three';
+import { G } from '../core/context.js';
 import { toon, outlineMat, U } from '../render/materials.js';
 
 const V3 = THREE.Vector3;
@@ -1289,6 +1290,7 @@ export function setWorldQuat(o, q, w = 1) {
 // bones: consecutive bones (bones[k+1] child of bones[k]); tail: end offset in
 // the last bone's space. Rest shape comes from the bones' animated rotations
 // at the time of step() (shape memory `stiff`).
+const chainWind = new V3();
 export class Chain {
   constructor(bones, tail, o = {}) {
     this.bones = bones;
@@ -1325,6 +1327,7 @@ export class Chain {
     if (this.p[0].distanceToSquared(this.t[0]) > 4) this.reset();
     for (let k = 0; k < this.n - 1; k++) this.len[k] = this.t[k].distanceTo(this.t[k + 1]);
     const tmp = _t;
+    const air = this.drag > 0 && dt > 0 ? G.wind?.sample(this.t[0], chainWind) : null;
     for (let remaining = Math.min(Math.max(dt, 0), 0.1); remaining > 1e-6;) {
       const h = Math.min(remaining, 1 / 120), ratio = this.prevH ? h / this.prevH : 1;
       remaining -= h;
@@ -1335,7 +1338,9 @@ export class Chain {
         Q.copy(P);
         P.add(tmp);
         P.y -= this.grav * h * h;
-        if (wind && this.drag > 0) P.addScaledVector(wind, this.drag * h * h * (k / (this.n - 1)));
+        const drag = this.drag * h * h * (k / (this.n - 1));
+        if (wind && drag > 0) P.addScaledVector(wind, drag);
+        if (air) P.addScaledVector(air, drag * 1.8);
         const s = mix(this.stiff, this.stiffTip, (k - 1) / Math.max(1, this.n - 2));
         P.lerp(this.t[k], 1 - Math.pow(1 - s, (h * 60) ** 2));
       }

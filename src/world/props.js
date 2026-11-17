@@ -1072,10 +1072,10 @@ export class Props {
     this.scene = scene; this.T = terrain; this.col = colliders;
     this.quality = quality;
     // lodFade: near and far models cross-fade with a dither across the LOD band (update())
-    const tree = toon(0xffffff, { vertexColors: true, sway: 0.028, swayBase: 2.4, rim: 0.35, tex: 'bark', leafy: true, lodFade: true, cards: true });
-    const fir = toon(0xffffff, { vertexColors: true, sway: 0.02, swayBase: 1.6, rim: 0.3, tex: 'bark', leafy: true, lodFade: true, cards: true });
-    const shrub = toon(0xffffff, { vertexColors: true, sway: 0.05, swayBase: 0, rim: 0.3, tex: 'bark', leafy: true, lodFade: true, cards: true });
-    const ground = toon(0xffffff, { vertexColors: true, sway: 0.09, swayBase: 0.05, rim: 0.25, side: THREE.DoubleSide, lodFade: true });
+    const tree = toon(0xffffff, { vertexColors: true, sway: 0.045, swayBase: 0.18, rim: 0.35, tex: 'bark', leafy: true, lodFade: true, cards: true });
+    const fir = toon(0xffffff, { vertexColors: true, sway: 0.034, swayBase: 0.18, rim: 0.3, tex: 'bark', leafy: true, lodFade: true, cards: true });
+    const shrub = toon(0xffffff, { vertexColors: true, sway: 0.21, swayBase: 0, rim: 0.3, tex: 'bark', leafy: true, lodFade: true, cards: true });
+    const ground = toon(0xffffff, { vertexColors: true, sway: 0.18, swayBase: 0.05, rim: 0.25, side: THREE.DoubleSide, lodFade: true });
     const solid = toon(0xffffff, { vertexColors: true, rim: 0.3, tex: 'bark', lodFade: true });
     const rockMat = rockMaterial({ lodFade: true });
     const small = toon(0xffffff, { vertexColors: true, rim: 0.3, lodFade: true });
@@ -1431,7 +1431,7 @@ function treeGeometry(kind, seed, far = false, opts = {}) {
 // far model on SHADOW_LAYER, like the scattered trees' (the near model's foliage is all cards,
 // which cast nothing).
 export function makeTree(kind = 'oak', seed = 1, opts = {}) {
-  const mat = toon(0xffffff, { vertexColors: true, sway: opts.sway ?? 0.018, swayBase: opts.swayBase ?? 3, rim: 0.35, tex: 'bark', leafy: true, cards: true });
+  const mat = toon(0xffffff, { vertexColors: true, sway: opts.sway ?? 0.036, swayBase: opts.swayBase ?? 0.18, rim: 0.35, tex: 'bark', leafy: true, cards: true });
   const m = new THREE.Mesh(treeGeometry(kind, seed, false, opts), mat);
   m.receiveShadow = true;
   const sh = new THREE.Mesh(treeGeometry(kind, seed, true, opts), mat);

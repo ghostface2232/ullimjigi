@@ -1,6 +1,6 @@
 // Instanced grass tufts (and wildflower patches) streamed in chunks around
 // the camera. Thin curved blades with a dark-root → light-tip gradient,
-// per-blade tint, rolling wind waves (bend + sheen), player push-away,
+// per-blade tint, rolling wind waves (bend + sheen), body and spell push-away,
 // sun shadows, cloud shadows, distance thinning and fade in the shaders.
 import * as THREE from 'three';
 import { U, noiseTexture } from '../render/materials.js';
@@ -8,6 +8,7 @@ import { mulberry32, smoothstep } from '../core/util.js';
 import { tier } from '../render/quality.js';
 import { G } from '../core/context.js';
 import { POI } from './layout.js';
+import { WIND_GLSL, WIND_CONTACT_GLSL, windUniforms, windContactUniforms } from './wind.js';
 
 const VS = /* glsl */ `
 attribute vec3 iOffset;
@@ -15,11 +16,10 @@ attribute vec3 iColor;
 attribute vec4 iParams; // rot, width scale, height, hash
 attribute vec2 aBlade;  // x: per-blade random, y: part (flowers: 0 stem, 1 petal, 2 centre)
 uniform float uTime;
-uniform vec3 uPlayer;
 uniform vec3 uCam;
 uniform float uFade;
-uniform float uWind;
-uniform vec4 uBurns[4];
+${WIND_GLSL}
+${WIND_CONTACT_GLSL}
 uniform sampler2D uBurnMap;
 uniform vec4 uHeightP;
 uniform float uWet;
@@ -62,28 +62,19 @@ void main(){
   p = vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z);
   vec3 wp = iOffset + p;
   float fade = (1.0 - smoothstep(uFade * 0.8, uFade, dist)) * keep;
-  wp.y = iOffset.y + p.y * fade;
-  // wind: rolling waves across the field, broken up by drifting gust noise
-  vec2 wdir = vec2(0.88, 0.47);
-  float gustN = texture2D(uNoiseTex, iOffset.xz * 0.006 - wdir * uTime * 0.02).g;
-  float wave = sin(dot(iOffset.xz, wdir) * 0.17 - uTime * 1.35 + gustN * 2.0) * 0.5 + 0.5;
-  wave = smoothstep(0.28, 0.92, wave) * (0.45 + gustN * 0.65);
-  float flutter = sin(uTime * 3.6 + iOffset.x * 0.9 + iOffset.z * 0.7 + aBlade.x * 6.28);
-  float hh = h * h;
-  vec2 bend = (wdir * (0.1 + 0.55 * wave) + vec2(-wdir.y, wdir.x) * flutter * 0.06) * uWind * hh * iParams.z;
-  vec2 d = wp.xz - uPlayer.xz;
-  float pd = length(d);
-  float push = (1.0 - smoothstep(0.2, 1.3, pd)) * step(abs(wp.y - uPlayer.y), 2.5);
-  bend += normalize(d + vec2(0.0001)) * push * hh * 0.8 * iParams.z;
-  for (int i = 0; i < 4; i++) {
-    vec2 bd = wp.xz - uBurns[i].xy;
-    float bl = length(bd);
-    bend += normalize(bd + vec2(0.0001)) * (1.0 - smoothstep(0.0, uBurns[i].z, bl)) * uBurns[i].w * h * 1.4;
-  }
-  bend *= fade;
-  wp.xz += bend;
-  wp.y -= length(bend) * 0.4 * h;
-  vWave = wave * uWind;
+  // Roll the same front through blades and wildflower stems.
+  vec2 wdir = uWindFlow.xy;
+  vec2 air = windStrength(iOffset, uTime);
+  float flutter = sin(uTime * 4.2 + iOffset.x * 0.9 + iOffset.z * 0.7 + aBlade.x * 6.28);
+  vec2 bend = wdir * (0.17 * air.x + 0.82 * air.y) + vec2(-wdir.y, wdir.x) * flutter * 0.11 * air.x;
+  bend += windContact(iOffset) * 1.6;
+  // Tilt about the root with increasing leverage toward the tip, keeping blade length.
+  vec2 slope = bend * h;
+  float rise = inversesqrt(1.0 + dot(slope, slope));
+  float stem = p.y * fade * rise;
+  wp.xz += slope * stem;
+  wp.y = iOffset.y + stem;
+  vWave = air.y;
   vColor = mix(iColor, vec3(0.13, 0.1, 0.08), burnK * 0.9);
   vColor = mix(vColor, vec3(1.4, 0.45, 0.08), burnS.g * 0.5 * aBlade.x);
   vColor *= 1.0 - uWet * 0.16;
@@ -209,16 +200,12 @@ export class Grass {
     this.chunks = new Map();
     this.base = tuftGeometry(mulberry32(777));
     this.flowerBase = flowerGeometry();
-    this.burns = [new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4()];
-    this.burnI = 0;
     this.uni = THREE.UniformsUtils.merge([THREE.UniformsLib.lights, THREE.UniformsLib.fog, {
-      uTime: { value: 0 }, uPlayer: { value: new THREE.Vector3() }, uCam: { value: new THREE.Vector3() },
-      uFade: { value: this.radius }, uWind: { value: 1 }, uSun: { value: new THREE.Color(1, 1, 1) }, uAmb: { value: new THREE.Color(0.5, 0.5, 0.5) },
-      uBurns: { value: this.burns },
+      uCam: { value: new THREE.Vector3() }, uFade: { value: this.radius },
+      uSun: { value: new THREE.Color(1, 1, 1) }, uAmb: { value: new THREE.Color(0.5, 0.5, 0.5) },
     }]);
     this.uni.uTime = U.time;
-    this.uni.uWind = U.wind;
-    this.uni.uBurns = { value: this.burns };
+    Object.assign(this.uni, windUniforms, windContactUniforms);
     this.uni.uCloud = U.cloud;
     this.uni.uSunW = U.sunDir;
     this.uni.uShadeTint = U.shadeTint;
@@ -250,8 +237,7 @@ export class Grass {
 
   // Wind burst that flattens grass (used by wind spells / explosions)
   gust(x, z, radius = 5, strength = 1) {
-    const b = this.burns[this.burnI++ % 4];
-    b.set(x, z, radius, strength);
+    G.wind?.impact(x, this.terrain.height(x, z), z, radius, strength * 1.65);
   }
 
   instanced(base, off, col, par, k, cx, cz, cy, mat) {
@@ -353,12 +339,10 @@ export class Grass {
     return { mesh, flowers };
   }
 
-  update(dt, camPos, playerPos, sky) {
+  update(_dt, camPos, _playerPos, sky) {
     this.uni.uCam.value.copy(camPos);
-    this.uni.uPlayer.value.copy(playerPos);
     this.uni.uSun.value.copy(sky.sun.color).multiplyScalar(sky.sun.intensity * 0.34);
     this.uni.uAmb.value.copy(sky.hemi.color).multiplyScalar(sky.hemi.intensity * 0.4);
-    for (const b of this.burns) b.w = Math.max(0, b.w - dt * 1.5);
     const S = this.chunk, R = this.radius;
     const ccx = Math.floor(camPos.x / S), ccz = Math.floor(camPos.z / S);
     const rc = Math.ceil(R / S);

@@ -243,8 +243,11 @@ export class Player {
         if (Math.random() < 0.9) G.vfx.burst(tmp2.copy(this.pos).setY(this.pos.y + 1), 'trail', 3, { el: this.element, spread: 0.4, size: 0.5, life: 0.4 });
       } else if (this.gliding) {
         const gs = G.skills && G.skills.has('w_tailwind') ? 11.3 : 9;
-        this.vel.x = damp(this.vel.x, move.x * gs + (moving ? 0 : Math.sin(this.yaw) * 5), 2.5, dt);
-        this.vel.z = damp(this.vel.z, move.z * gs + (moving ? 0 : Math.cos(this.yaw) * 5), 2.5, dt);
+        const drift = G.wind?.sample(this.pos, tmp2);
+        const k = drift ? 1.2 / Math.max(1.2 / 0.17, drift.length()) : 0;
+        const dx = (drift?.x ?? 0) * k, dz = (drift?.z ?? 0) * k;
+        this.vel.x = damp(this.vel.x, move.x * gs + (moving ? 0 : Math.sin(this.yaw) * 5) + dx, 2.5, dt);
+        this.vel.z = damp(this.vel.z, move.z * gs + (moving ? 0 : Math.cos(this.yaw) * 5) + dz, 2.5, dt);
       } else {
         this.vel.x = damp(this.vel.x, move.x * speed, accel, dt);
         this.vel.z = damp(this.vel.z, move.z * speed, accel, dt);

@@ -3,6 +3,7 @@
 // outline hulls for characters, and a global aerial-perspective fog.
 import * as THREE from 'three';
 import { CLOUD_SHADOW } from './clouds.js';
+import { WIND_GLSL, WIND_CONTACT_GLSL, windUniforms, windContactUniforms } from '../world/wind.js';
 
 export const U = {
   time: { value: 0 },
@@ -488,6 +489,9 @@ const DISSOLVE_VERT = `
       #endif
       if (aCard.z < 0.0) vCard.w = smoothstep(0.3, 0.7, 1.0 - _keep);
       if (aCard.z > 0.0) {
+        #ifndef WIND_SWAY
+          vec2 _windAir = windStrength(vDWP, uTime);
+        #endif
         float _fr = fract(aCard.w);
         float _cs = length(modelMatrix[0].xyz);
         vec3 _up = modelViewMatrix[1].xyz;
@@ -496,7 +500,7 @@ const DISSOLVE_VERT = `
           _up = (modelViewMatrix * vec4(instanceMatrix[1].xyz, 0.0)).xyz;
         #endif
         if (aCard.z < 100.0) {
-          float _cr = _fr * 6.2831853 + sin(uTime * (1.1 + _fr * 1.7) + _fr * 47.0) * 0.075 * uWind;
+          float _cr = _fr * 6.2831853 + sin(uTime * (2.3 + _fr * 2.1) + _fr * 47.0 - position.y * 0.85) * 0.12 * _windAir.x;
           float _cc = cos(_cr), _sn = sin(_cr);
           vec2 _corner = vec2(aCard.x * _cc - aCard.y * _sn, aCard.x * _sn + aCard.y * _cc);
           mvPosition.xy += _corner * aCard.z * _cs * _keep;
@@ -510,7 +514,9 @@ const DISSOLVE_VERT = `
           vec3 _sd = cross(normalize(_up), normalize(mvPosition.xyz));
           _sd /= max(length(_sd), 0.25);
           float _lo = aCard.y * 0.5 + 0.5;
-          mvPosition.xyz += _sd * (aCard.x * (aCard.z - 100.0) * _cs * _keep + sin(uTime * (0.8 + _fr * 0.9) + _fr * 40.0) * 0.16 * uWind * _lo * _lo);
+          vec2 _strand = uWindFlow.xy * (_windAir.x * (0.2 + 0.13 * sin(uTime * 2.8 + _fr * 40.0 - position.y)));
+          mvPosition.xyz += _sd * aCard.x * (aCard.z - 100.0) * _cs * _keep;
+          mvPosition.xyz += (viewMatrix * vec4(_strand.x, 0.0, _strand.y, 0.0)).xyz * _lo * _lo * _keep;
         }
         gl_Position = projectionMatrix * mvPosition;
       }
@@ -543,24 +549,25 @@ const RIM_FRAG = `
 const WIND_VERT = `
   vec3 transformed = vec3(position);
   #ifdef USE_INSTANCING
-    vec3 _ip = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
+    vec3 _ip = (modelMatrix * instanceMatrix[3]).xyz;
+    mat3 _basis = mat3(modelMatrix) * mat3(instanceMatrix);
   #else
-    vec3 _ip = vec3(modelMatrix[3][0], modelMatrix[3][1], modelMatrix[3][2]);
+    vec3 _ip = modelMatrix[3].xyz;
+    mat3 _basis = mat3(modelMatrix);
   #endif
-  float _h = max(position.y - uSwayBase, 0.0);
-  float _sw = sin(uTime * 1.35 + _ip.x * 0.15 + _ip.z * 0.11) * 0.6 + sin(uTime * 2.7 + _ip.x * 0.37) * 0.25;
-  #ifdef LEAF_CARDS
-    // A shared travelling front carries the branches; small leaf flutter follows it.
-    // Same phase for both LODs, and the same direction as the meadow's wind.
-    float _front = sin(dot(_ip.xz, vec2(0.88, 0.47)) * 0.17 - uTime * 1.35);
-    _sw = _front * 0.7 + sin(uTime * 2.1 + _ip.x * 0.31 + _ip.z * 0.23) * 0.12;
-  #endif
-  transformed.x += _sw * uWind * _h * uSway;
-  #ifdef LEAF_CARDS
-    transformed.z += _sw * uWind * _h * uSway * 0.534;
-  #else
-    transformed.z += cos(uTime * 1.1 + _ip.z * 0.2) * uWind * _h * uSway * 0.6;
-  #endif
+  vec2 _windAir = windStrength(_ip, uTime);
+  float _h = max(position.y - uSwayBase, 0.0) * length(_basis[1]);
+  float _flex = min(_h * (0.28 + _h * 0.23), 11.0);
+  float _flutter = sin(dot(position.xz, vec2(0.8, 1.2)) + uTime * 3.8 - position.y * 1.1);
+  vec2 _dir = uWindFlow.xy;
+  vec2 _bend = (_dir * _windAir.x + vec2(-_dir.y, _dir.x) * _flutter * _windAir.y * 0.27) * _flex * uSway;
+  // The understory yields at contact height while taller trunks remain anchored.
+  if (uSwayBase < 0.1) {
+    vec3 _near = _ip + _basis * position;
+    vec2 _brush = windContact(vec3(_near.x, _ip.y, _near.z));
+    _bend += _brush * min(_flex, 1.1) * (0.48 + _flutter * 0.15);
+  }
+  transformed += windLocalOffset(_basis, vec3(_bend.x, 0.0, _bend.y));
 `;
 
 // Key-light response (the sky's SunLight). Its shadow-map term and the cloud
@@ -1153,9 +1160,8 @@ export function patch(m, opts = {}) {
     sh.uniforms.uRim = rim;
     sh.uniforms.uRimColor = U.rimColor;
     sh.uniforms.uTime = U.time;
-    sh.uniforms.uWind = U.wind;
-    sh.uniforms.uSway = sway;
-    sh.uniforms.uSwayBase = swayBase;
+    if (hasSway || cards) Object.assign(sh.uniforms, windUniforms);
+    if (hasSway) Object.assign(sh.uniforms, windContactUniforms, { uSway: sway, uSwayBase: swayBase });
     sh.uniforms.uNoiseTex = U.noise;
     sh.uniforms.uCloud = U.cloud;
     sh.uniforms.uSunW = U.sunDir;
@@ -1193,7 +1199,9 @@ export function patch(m, opts = {}) {
     sh.fragmentShader = defs + cdef + 'uniform float uRim;\nuniform vec3 uRimColor;\nuniform vec3 uSkyRefl;\nfloat _isCard = 0.0;\n#ifdef LEAF_CARDS\nvarying vec4 vCard;\nuniform sampler2D uLeafTex;\n#endif\n' + DISSOLVE_PARS + fs;
     // (leafy card foliage moves out of the camera's way in the vertex stage: seeFade there too)
     const vsee = cards && isToon && opts.leafy ? '#define LEAF_SEE\n' + SEE_PARS : '';
-    sh.vertexShader = cdef + vsee + '#ifdef LEAF_CARDS\nattribute vec4 aCard;\nvarying vec4 vCard;\n#endif\nuniform float uTime;\nuniform float uWind;\nuniform float uSway;\nuniform float uSwayBase;\nvarying vec3 vDWP;\n' + sh.vertexShader.replace('#include <project_vertex>', DISSOLVE_VERT);
+    let windCode = hasSway || cards ? WIND_GLSL : '';
+    if (hasSway) windCode += WIND_CONTACT_GLSL + '#define WIND_SWAY\nuniform float uSway;\nuniform float uSwayBase;\n';
+    sh.vertexShader = cdef + vsee + windCode + '#ifdef LEAF_CARDS\nattribute vec4 aCard;\nvarying vec4 vCard;\n#endif\nuniform float uTime;\nvarying vec3 vDWP;\n' + sh.vertexShader.replace('#include <project_vertex>', DISSOLVE_VERT);
     if (lodFade) {
       // per-instance cross-fade between a near and a far model: > 0 dithers this instance out
       // by that fraction, < 0 keeps only that fraction; the two use the same pattern so they

@@ -14,6 +14,7 @@
 //             the camera travel since it was drawn, and turns those terms into colour there, so
 //             the palette follows the hour at once.
 import * as THREE from 'three';
+import { G } from '../core/context.js';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { mulberry32 } from '../core/util.js';
 import { tier } from './quality.js';
@@ -491,6 +492,8 @@ export class Clouds {
 
   // Draw the next band of the dome map (all of it when the view has jumped).
   render(renderer, camPos) {
+    const drift = G.wind?.cloudOffset;
+    if (drift) { this.wind.x = drift.x; this.wind.y = drift.y; }
     if (!this.ready) this.init(renderer);
     const prev = renderer.getRenderTarget();
     const b = this.back, f = this.front;

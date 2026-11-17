@@ -12,6 +12,7 @@ import { toon, fresnelMat, glowMat, U } from '../render/materials.js';
 import { mulberry32 } from '../core/util.js';
 import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
 import { model } from '../render/models.js';
+import { WIND_GLSL, windUniforms } from './wind.js';
 
 export const MAT = {
   stone: toon(0xb8ad9a, { flat: true, rim: 0.2, tex: 'stone' }),
@@ -1017,12 +1018,62 @@ export function lampPost(rnd = Math.random) {
   void rnd;
   return g;
 }
+// The bake already carries RGBA paint. Negative alpha on these opaque cloth
+// vertices stores the free length below the seam and survives the merge.
+const clothMaterials = new WeakSet();
+function clothSway(mat) {
+  if (clothMaterials.has(mat)) return mat;
+  clothMaterials.add(mat);
+  const compile = mat.onBeforeCompile, key = mat.customProgramCacheKey;
+  mat.onBeforeCompile = (sh, renderer) => {
+    compile.call(mat, sh, renderer);
+    Object.assign(sh.uniforms, windUniforms);
+    sh.vertexShader = WIND_GLSL + sh.vertexShader.replace('#include <begin_vertex>', `
+      #include <begin_vertex>
+      #ifdef USE_COLOR_ALPHA
+        if (color.a < 0.0) {
+          float hem = -color.a;
+          vec3 w = (modelMatrix * vec4(position, 1.0)).xyz;
+          float air = windStrength(w, uWindFlow.w).x;
+          float fold = sin(uWindFlow.w * 4.7 - hem * 5.0 + dot(w.xz, vec2(1.1, 0.8)));
+          float lean = min(1.8, air * (0.68 + 0.34 * fold));
+          vec2 dir = uWindFlow.xy;
+          vec2 slope = dir * lean + vec2(-dir.y, dir.x) * fold * air * 0.16;
+          float hang = inversesqrt(1.0 + dot(slope, slope));
+          vec2 billow = slope * (hem * hang);
+          vec3 displacement = vec3(billow.x, hem * (1.0 - hang), billow.y);
+          transformed += windLocalOffset(mat3(modelMatrix), displacement);
+          #ifndef FLAT_SHADED
+            vec3 tilt = mat3(viewMatrix) * vec3(0.0, 1.0, 0.0);
+            vec3 airView = mat3(viewMatrix) * vec3(dir.x, 0.0, dir.y);
+            vNormal = normalize(vNormal - tilt * dot(vNormal, airView) * lean);
+          #endif
+          vColor.a = 0.4;
+        }
+      #endif
+    `);
+  };
+  mat.customProgramCacheKey = () => key.call(mat) + '|wind-cloth';
+  mat.needsUpdate = true;
+  return mat;
+}
+
+function clothHem(geo, scale = 1) {
+  geo.computeBoundingBox();
+  const pos = geo.attributes.position, col = geo.attributes.color;
+  for (let i = 0; i < pos.count; i++) {
+    const length = (geo.boundingBox.max.y - pos.getY(i)) * scale;
+    if (length > 0.008) col.setW(i, -length);
+  }
+  return geo;
+}
+
 // Bunting between points (world or local): sagging cord with pennants, one mesh.
 export function bunting(points, rnd = Math.random, o = {}) {
   const g = new THREE.Group(); g.userData.noShadow = true;
   const cols = o.cols ?? [0xd8503e, 0xf0c050, 0x4f7ab8, 0xf2ece0, 0x5a9a4a];
   const pos = [], col = [];
-  const push = (p, c) => { pos.push(p.x, p.y, p.z); col.push(c.r, c.g, c.b, 0.4); };
+  const push = (p, c, hem = 0.4) => { pos.push(p.x, p.y, p.z); col.push(c.r, c.g, c.b, hem); };
   const c = new THREE.Color(), cord = hc(0x4a3a2a);
   for (let s = 0; s < points.length - 1; s++) {
     const a = points[s], b = points[s + 1];
@@ -1034,7 +1085,10 @@ export function bunting(points, rnd = Math.random, o = {}) {
       const t0 = (i + 0.15) / n, t1 = (i + 0.85) / n;
       const p0 = at(t0), p1 = at(t1), pm = at((t0 + t1) / 2).add(new THREE.Vector3(0, -0.42, 0)).addScaledVector(side, (rnd() - 0.5) * 0.05);
       c.set(cols[(i + s) % cols.length]);
-      push(p0, c); push(p1, c); push(pm, c);
+      const u = p0.clone().lerp(pm, 0.5), v = p1.clone().lerp(pm, 0.5);
+      push(p0, c); push(p1, c); push(u, c, -0.21);
+      push(u, c, -0.21); push(p1, c); push(v, c, -0.21);
+      push(u, c, -0.21); push(v, c, -0.21); push(pm, c, -0.42);
       // cord segment as a thin quad
       const q0 = at(i / n), q1 = at((i + 1) / n);
       push(q0, cord); push(q1, cord); push(q1.clone().add(new THREE.Vector3(0, -0.03, 0)), cord);
@@ -1045,7 +1099,7 @@ export function bunting(points, rnd = Math.random, o = {}) {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
   geo.computeVertexNormals();
-  const m = new THREE.Mesh(geo, MAT.paintDS); m.castShadow = false; m.receiveShadow = true;
+  const m = new THREE.Mesh(geo, clothSway(MAT.paintDS)); m.castShadow = false; m.receiveShadow = true;
   g.add(m);
   return g;
 }
@@ -1061,7 +1115,9 @@ export function washingLine(len = 4.5, rnd = Math.random) {
       const cw = 0.4 + rnd() * 0.5, ch = 0.5 + rnd() * 0.45, sz = rnd() < 0.5 ? -0.25 : 0.25;
       const col = cols[Math.floor(rnd() * cols.length)], ry = (rnd() - 0.5) * 0.2;
       for (const { geo, mat, key } of P['cloth' + (k++ % 3)]) {
-        const m = mesh(key === 'cloth' ? tintedPart(geo, col) : geo, mat, x + cw / 2, 2.09, sz, g, { ry });
+        const cloth = key === 'cloth';
+        const part = cloth ? clothHem(tintedPart(geo, col).clone(), ch) : geo;
+        const m = mesh(part, cloth ? clothSway(mat) : mat, x + cw / 2, 2.09, sz, g, { ry });
         m.scale.set(cw, ch, 1);
       }
       x += cw + 0.15 + rnd() * 0.3;
@@ -1081,7 +1137,7 @@ export function washingLine(len = 4.5, rnd = Math.random) {
     const pp = cg.attributes.position;
     for (let i = 0; i < pp.count; i++) pp.setZ(i, Math.sin((pp.getX(i) / cw + 0.5) * Math.PI) * 0.04 + (pp.getY(i) < 0 ? 0.03 : 0));
     cg.computeVertexNormals();
-    mesh(cg, MAT.paintDS, x + cw / 2, 2.08 - ch / 2, sz, g, { ry: (rnd() - 0.5) * 0.2 });
+    mesh(clothHem(cg), clothSway(MAT.paintDS), x + cw / 2, 2.08 - ch / 2, sz, g, { ry: (rnd() - 0.5) * 0.2 });
     x += cw + 0.15 + rnd() * 0.3;
   }
   return g;
@@ -1214,7 +1270,12 @@ export function stoneWall(len = 4, rnd = Math.random, o = {}) {
 // Authored tower (bd_moratower.glb): the model, then what moves or glows (star, chimes) and the annex.
 function authoredMoraTower(P) {
   const g = new THREE.Group(), H = 15;
-  bdAdd(P, 'body', g);
+  const body = bdAdd(P, 'body', g);
+  const cloth = bmat().cloth;
+  for (const piece of body) if (piece.material === cloth) {
+    piece.geometry = clothHem(piece.geometry.clone());
+    clothSway(cloth);
+  }
   bdPlants(P, g, mulberry32(99));
   const star = new THREE.Mesh(crystalGeometry('prism', { double: true, sides: 5, radius: 0.5, seed: 41 }), crystalMaterial({ color: 0xffe2a0, glow: 0xffc860, intensity: 1.5 }));
   star.scale.setScalar(0.5); star.position.set(2.4, H + 1 + 8.3, 0); g.add(star);
@@ -1337,7 +1398,8 @@ export function moraTower() {
   const an = house({ w: 5, d: 4.2, h: 2.8, roof: MAT.roofMora, wall: MAT.plaster, seed: 5, chimney: true, porch: false, woodpile: true, dormer: false, shutterCol: 0x3a3f86 });
   an.position.set(-2, 0, -6.2); an.rotation.y = Math.PI; g.add(an);
   // banners
-  const ban = new THREE.Mesh(new THREE.PlaneGeometry(1, 3, 1, 6), MAT.clothBlue);
+  const banner = clothHem(tinted(new THREE.PlaneGeometry(1, 3, 1, 6), 0x4a6fb0));
+  const ban = new THREE.Mesh(banner, clothSway(MAT.paintDS));
   ban.position.set(3.7, 10, 2.2); ban.rotation.y = 1.0; g.add(ban);
   // hanging crystal chimes
   const chimes = [];

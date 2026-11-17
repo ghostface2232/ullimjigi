@@ -198,7 +198,7 @@ export class Wildfire {
   update(dt, camPos, playerPos) {
     const W = G.world;
     const rain = W.weather ? W.weather.rain : 0;
-    const wind = W.weather ? W.weather.windVec : { x: 0.88, z: 0.47, s: 0.5 };
+    const wind = G.wind;
     this.acc += dt;
     const tmp = new THREE.Vector3();
     while (this.acc >= TICK) {
@@ -210,6 +210,9 @@ export class Wildfire {
           if (this.timer[i] <= 0) { fresh.push(-1 - i); fv.push(0); continue; }
           if (this.vigor[i] < VIGOR_MIN) continue; // a dying flame burns out where it is
           const cx = i % N, cz = Math.floor(i / N);
+          this.cellPos(i, tmp);
+          wind.sample(tmp, tmp);
+          const strength = Math.min(1, Math.hypot(tmp.x, tmp.z) * 0.15);
           for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
             if (!dx && !dz) continue;
             const ix = cx + dx, iz = cz + dz; if (ix < 0 || iz < 0 || ix >= N || iz >= N) continue;
@@ -217,8 +220,8 @@ export class Wildfire {
             if (this.state[j] !== 0) continue;
             const f = this.fuel[j]; if (f < 0.12) continue;
             const dl = Math.hypot(dx, dz);
-            const down = (dx * wind.x + dz * wind.z) / dl;           // -1 upwind … 1 downwind
-            const bias = Math.max(0.15, 1 + down * (0.6 + 1.6 * wind.s));
+            const down = (dx * wind.flow.x + dz * wind.flow.y) / dl; // -1 upwind … 1 downwind
+            const bias = Math.max(0.15, 1 + down * (0.6 + 1.6 * strength));
             // uphill spreads faster (flames lean into the slope)
             const up = clamp((this.T.h[j] - this.T.h[i]) * 0.4, -0.4, 0.8);
             const p = 0.04 * f * bias * (1 + up) * (1 - rain) / dl;

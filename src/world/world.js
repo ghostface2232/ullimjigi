@@ -9,7 +9,7 @@ import { Water } from './water.js';
 import { Grass } from './grass.js';
 import { Weather } from './weather.js';
 import { Wildfire } from './wildfire.js';
-import { Env } from './env.js';
+import { Wind, WindEnv } from './wind.js';
 import { WorldObjects } from './objects.js';
 import { Puzzles } from './puzzles.js';
 import { Trials } from './trials.js';
@@ -68,12 +68,13 @@ export class World {
     this.terrain = new Terrain(1337);
     scene.add(this.terrain.mesh);
     onProgress(0.3, '하늘을 칠하는 중…');
+    G.wind = new Wind();
     this.sky = new Sky(scene);
     this.water = new Water(scene, this.terrain);
     this.grass = new Grass(scene, this.terrain, this.water);
     this.weather = new Weather(scene);
     this.fire = new Wildfire(scene, this.terrain);
-    G.env = new Env(this);
+    G.env = new WindEnv(this);
     onProgress(0.45, '숲을 가꾸는 중…');
     this.props = new Props(scene, this.terrain, this.col, G.settings.quality);
     this.dressCliffs();
@@ -846,15 +847,19 @@ export class World {
   // ------------------------------------------------------------
   update(dt, camPos, playerPos) {
     U.time.value = G.time;
-    U.wind.value = 1 + Math.sin(G.time * 0.3) * 0.35 + Math.sin(G.time * 1.1) * 0.15;
     // thin out leaves between the camera and the player (forests); off for far cameras (cutscenes)
     U.seeA.value.copy(camPos);
     U.seeB.value.set(playerPos.x, playerPos.y + 1.3, playerPos.z);
     const camD = camPos.distanceTo(U.seeB.value);
     U.seeR.value = camD < 14 ? 2.1 : 0;
     this.weather.update(dt, camPos, playerPos);
+    G.wind.update(dt, this.sky.hour, this.weather.windS, playerPos);
+    U.wind.value = G.wind.flow.z;
     if (G.player) { this.fire.update(dt, camPos, playerPos); this.objects.update(dt, playerPos); this.puzzles.update(dt, playerPos); this.trials.update(dt, playerPos); }
     this.sky.update(dt, playerPos, G.travel && G.travel.on && G.travel.frozen ? 0 : 1, camPos);
+    // Match the legacy foliage cloud shadows to the visible cloud transport.
+    U.cloud.value.x = G.wind.cloudOffset.x * 0.36;
+    U.cloud.value.y = G.wind.cloudOffset.y * 0.36;
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);
     this.props.update(G.camera, this.water.reflecting ? this.water.frustum : null);

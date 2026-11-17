@@ -338,15 +338,19 @@ export class HUD {
     d.style.color = EL_INFO[el]?.css ?? '#fff';
     // each number drifts a little to its own side as it rises, so a burst of hits fans out
     d.style.setProperty('--dx', `${Math.round((Math.random() - 0.5) * 36)}px`);
-    if (crit) d.innerHTML = `<i>${ICON.spark}</i>${n}`; else d.textContent = n;
-    this.addFloat(d, pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.8, 0.3 + Math.random() * 0.5, (Math.random() - 0.5) * 0.8)), 1000);
+    if (crit) d.innerHTML = `<i>${ICON.spark}</i><span>${n}</span>`; else d.textContent = n;
+    // spread sideways rather than upwards: the nameplate stands just above a short enemy's centre
+    this.addFloat(d, pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.9, 0.05 + Math.random() * 0.4, (Math.random() - 0.5) * 0.9)), 1000);
   }
-  reaction(pos, info) {
+  // A reaction's name stands just above the struck enemy's nameplate (found from the hit position
+  // when the caller does not pass the target), so it never lands on the plate or the numbers.
+  reaction(pos, info, target) {
     const d = document.createElement('div');
     d.className = 'dmg react';
     d.style.color = info.color;
     d.textContent = info.name;
-    this.addFloat(d, pos.clone().add(new THREE.Vector3(0, 1.3, 0)), 1400);
+    target ||= G.enemies && G.enemies.list.find((e) => e.alive && e.center().distanceToSquared(pos) < 0.01);
+    this.addFloat(d, pos.clone().add(new THREE.Vector3(0, 1.3, 0)), 1400, target);
   }
   floatText(pos, text, color = '#fff', cls = 'info') {
     const d = document.createElement('div');
@@ -355,14 +359,21 @@ export class HUD {
     d.textContent = text;
     this.addFloat(d, pos.clone().add(new THREE.Vector3(0, 0.8, 0)), 1200);
   }
-  addFloat(el, pos, ms) {
+  addFloat(el, pos, ms, plateOf = null) {
     this.el.dmg.appendChild(el);
-    const f = { el, pos, t: ms / 1000 };
+    const f = { el, pos, t: ms / 1000, plateOf };
     this.floats.push(f);
     this.placeFloat(f);
     if (this.floats.length > 60) { const o = this.floats.shift(); o.el.remove(); }
   }
   placeFloat(f) {
+    // riding on a nameplate: its top edge as placed this frame (after stacking)
+    const b = f.plateOf && this.barPool.get(f.plateOf);
+    if (b && b._sx !== undefined) {
+      if (!f.vis) { f.vis = true; f.el.style.display = ''; }
+      this.at(f.el, b._sx, b._sy - b._sh - 16 * Math.max(1, this.uiScale || 1));
+      return;
+    }
     const p = this.project(f.pos);
     if (f.vis !== p.vis) { f.vis = p.vis; f.el.style.display = p.vis ? '' : 'none'; }
     if (p.vis) this.at(f.el, p.x, p.y);
@@ -542,6 +553,14 @@ export class HUD {
     this.el.stamina.classList.toggle('tired', P.exhausted);
     const sp = this.project(v3.set(P.pos.x, P.pos.y + 1.2, P.pos.z));
     if (showSt) this.at(this.el.stamina, sp.x + 70, sp.y - 30);
+    // the HUD steps aside when nothing needs it (styles.css #hud.calm / #hud.fight): calm after a few
+    // seconds out of a fight with health, mana, stamina and cooldowns all full
+    const fight = this.inCombat();
+    const still = G.mode === 'free' && !fight && P.hp >= P.maxHp && P.mana >= P.maxMana && sf >= 0.995 && P.cd.heavy <= 0 && P.cd.weave <= 0 && !P.lockTarget;
+    this.calmT = still ? (this.calmT || 0) + dt : 0;
+    const calm = this.calmT > 4;
+    if (this.calm !== calm) { this.calm = calm; this.el.hud.classList.toggle('calm', calm); }
+    if (this.fight !== fight) { this.fight = fight; this.el.hud.classList.toggle('fight', fight); }
     // cooldowns
     this.coolSlot(this.el.weaveSlot, this.el.weaveT, P.cd.weave, WEAVE_CD);
     this.coolSlot(this.el.heavySlot, this.el.heavyT, P.cd.heavy, P.cd.heavyMax || 0);
@@ -629,6 +648,7 @@ export class HUD {
         b._fill = b.querySelector('.efill'); b._ghost = b.querySelector('.eghost'); b._st = b.querySelector('.st'); b._ar = b.querySelector('.armor');
       }
       this.at(b, p.x, p.y);
+      b._sx = p.x; b._sy = p.y; b._sh = bh; // where reaction names ride (placeFloat)
       if (b._full !== full) { b._full = full; b.classList.toggle('brief', !full); }
       // health in half-percent steps: the bar (and its trailing ghost) is only written when it moves
       const hp = Math.round(clamp(e.hp / e.maxHp, 0, 1) * 200) / 2;

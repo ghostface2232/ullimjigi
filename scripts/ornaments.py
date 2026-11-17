@@ -5,33 +5,92 @@ import math, random, urllib.parse
 G = '#f1d48a'
 def uri(svg): return 'url("data:image/svg+xml,' + urllib.parse.quote(svg, safe=" =:/,.'-()") + '")'
 
+# Motif system (see docs/ART_DIRECTION.md "Interface"): resonance rings, a bell crest, sound-wave
+# filigree, staff-crystal facets and staff lines. Everything is gilt line work, mirrored so that
+# focus and importance are always marked on both sides, never by a bar down one edge.
+
+def wave(x0, x1, y, amp, period, decay, step=1.0):
+    """A sound wave leaving x0 toward x1 (either direction), its amplitude dying away."""
+    pts, n = [], int(abs(x1 - x0) / step)
+    for i in range(n + 1):
+        t = i / n
+        x = x0 + (x1 - x0) * t
+        d = abs(x - x0)
+        pts.append(f"{x:.1f} {y + amp * math.exp(-decay * t) * math.sin(2 * math.pi * d / period):.2f}")
+    return 'M' + ' L'.join(pts)
+
+def facet(cx, cy, r, inner=True, fill=G):
+    """The staff crystal: a lozenge outline with a bright core."""
+    s = f"<path d='M{cx} {cy - r} L{cx + r * 0.72} {cy} L{cx} {cy + r} L{cx - r * 0.72} {cy}Z' fill='none' stroke='{fill}' stroke-width='1.1' stroke-linejoin='round'/>"
+    if inner:
+        k = r * 0.48
+        s += f"<path d='M{cx} {cy - k} L{cx + k * 0.72} {cy} L{cx} {cy + k} L{cx - k * 0.72} {cy}Z' fill='#fff6d6'/>"
+    return s
+
+def fade(gid, w, mid=0.5, lo=0.0, hi=0.95, span=0.32):
+    return (f"<linearGradient id='{gid}' gradientUnits='userSpaceOnUse' x1='0' y1='0' x2='{w}' y2='0'>"
+            f"<stop offset='0' stop-color='{G}' stop-opacity='{lo}'/><stop offset='{mid - span:.2f}' stop-color='{G}' stop-opacity='{hi}'/>"
+            f"<stop offset='{mid + span:.2f}' stop-color='{G}' stop-opacity='{hi}'/><stop offset='1' stop-color='{G}' stop-opacity='{lo}'/></linearGradient>")
+
+# corner: a rounded gilt angle, two resonance arcs spreading from the corner crystal, and a
+# short sound wave running out along each edge
 corner_body = (
   f"<g fill='none' stroke='{G}' stroke-linecap='round' stroke-linejoin='round'>"
-  "<path d='M3 40 V11 Q3 3 11 3 H40' stroke-width='1.5'/>"
-  "<path d='M9 30 V15 Q9 9 15 9 H30' stroke-width='0.9' opacity='.65'/>"
-  "<path d='M40 3 H58' stroke-width='1' opacity='.45'/><path d='M3 40 V58' stroke-width='1' opacity='.45'/>"
-  "<path d='M15 9 C21 9 23 14 20 17 C18 19 15 17 16 15' stroke-width='1'/>"
-  "<path d='M9 15 C9 21 14 23 17 20' stroke-width='1' opacity='.8'/>"
-  "<path d='M22 3 q4 -3 8 0' stroke-width='.9' opacity='.7'/><path d='M3 22 q-3 4 0 8' stroke-width='.9' opacity='.7'/>"
+  "<path d='M3 46 V13 Q3 3 13 3 H46' stroke-width='1.4'/>"
+  "<path d='M21 8 A13 13 0 0 1 8 21' stroke-width='1'/>"
+  "<path d='M28 8.5 A20 20 0 0 1 8.5 28' stroke-width='.8' opacity='.55'/>"
+  f"<path d='{wave(30, 58, 3, 2.2, 9, 2.6, 0.7)}' stroke-width='.9' opacity='.75'/>"
   "</g>"
-  f"<path d='M6 0.8 L11.2 6 L6 11.2 L0.8 6Z' fill='{G}'/>"
-  "<path d='M6 3.8 L8.2 6 L6 8.2 L3.8 6Z' fill='#fff6d6'/>"
-  f"<circle cx='40' cy='3' r='1.3' fill='{G}'/><circle cx='3' cy='40' r='1.3' fill='{G}'/>"
+  # the same wave down the side edge (x and y swapped)
+  f"<g fill='none' stroke='{G}' stroke-linecap='round' stroke-width='.9' opacity='.75' transform='matrix(0 1 1 0 0 0)'><path d='{wave(30, 58, 3, 2.2, 9, 2.6, 0.7)}'/></g>"
+  f"<path d='M6.5 0.8 L10.6 6.5 L6.5 12.2 L2.4 6.5Z' fill='{G}'/>"
+  "<path d='M6.5 4 L8.3 6.5 L6.5 9 L4.7 6.5Z' fill='#fff6d6'/>"
+  f"<circle cx='46' cy='3' r='1.2' fill='{G}'/><circle cx='3' cy='46' r='1.2' fill='{G}'/>"
 )
 def corner(tf): return uri(f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 60'><g transform='{tf}'>{corner_body}</g></svg>")
 
+# rule: the crystal in the middle, a sound wave dying away on each side over a faint string
 rule = uri(
   "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 16'>"
-  "<defs><linearGradient id='g' gradientUnits='userSpaceOnUse' x1='0' y1='0' x2='320' y2='0'><stop offset='0' stop-color='#f1d48a' stop-opacity='0'/>"
-  "<stop offset='.4' stop-color='#f1d48a' stop-opacity='.9'/><stop offset='.6' stop-color='#f1d48a' stop-opacity='.9'/>"
-  "<stop offset='1' stop-color='#f1d48a' stop-opacity='0'/></linearGradient></defs>"
-  "<path d='M6 8 H138 M182 8 H314' stroke='url(#g)' stroke-width='1.5'/>"
-  f"<g fill='none' stroke='{G}' stroke-width='1.1' stroke-linecap='round'>"
-  "<path d='M138 8 q6 -6 12 -2'/><path d='M138 8 q6 6 12 2'/><path d='M182 8 q-6 -6 -12 -2'/><path d='M182 8 q-6 6 -12 2'/>"
-  "<path d='M160 1 L167 8 L160 15 L153 8Z'/></g>"
-  f"<path d='M160 4.5 L163.5 8 L160 11.5 L156.5 8Z' fill='{G}'/>"
-  f"<circle cx='148' cy='8' r='1.3' fill='{G}'/><circle cx='172' cy='8' r='1.3' fill='{G}'/>"
+  f"<defs>{fade('g', 320, span=0.22)}</defs>"
+  "<path d='M8 8 H146 M174 8 H312' stroke='url(#g)' stroke-width='.7' opacity='.7'/>"
+  f"<path d='{wave(150, 8, 8, 4.2, 15, 2.4)} M{wave(170, 312, 8, 4.2, 15, 2.4)[1:]}' fill='none' stroke='url(#g)' stroke-width='1.2' stroke-linecap='round'/>"
+  + facet(160, 8, 7) +
   "</svg>")
+
+# crest on the top edge of every framed sheet: a small bell sounding, rings on either side,
+# then the wave running out
+bell = (f"<path d='M60 4.2 C56 4.2 54 8 53.6 13.2 L52.4 17.6 Q52 18.8 53.4 18.8 H66.6 Q68 18.8 67.6 17.6 L66.4 13.2 C66 8 64 4.2 60 4.2Z' fill='url(#b)' stroke='#2a1e0c' stroke-width='.7'/>"
+        f"<circle cx='60' cy='3.2' r='1.5' fill='{G}'/><circle cx='60' cy='20.6' r='1.6' fill='#fff6d6'/>"
+        "<path d='M56 8.6 Q57 7 58.6 6.6' stroke='#fff6d6' stroke-width='.8' fill='none' stroke-linecap='round' opacity='.8'/>")
+arcs = ''.join(f"<path d='M{60 + s * dx} {12 - h} Q{60 + s * (dx + h * 0.55)} 12 {60 + s * dx} {12 + h}' />" for s in (1, -1) for dx, h in ((11, 4.5), (15.5, 7)))
+crest = uri(
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 24'>"
+  f"<defs><linearGradient id='b' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#fff4cf'/><stop offset='.6' stop-color='{G}'/><stop offset='1' stop-color='#b58a3c'/></linearGradient>"
+  f"{fade('g', 120, span=0.3)}</defs>"
+  f"<g fill='none' stroke='{G}' stroke-width='1' stroke-linecap='round'>{arcs}</g>"
+  f"<path d='{wave(22, 0, 12, 2.6, 8, 2.2, 0.6)} M{wave(98, 120, 12, 2.6, 8, 2.2, 0.6)[1:]}' fill='none' stroke='url(#g)' stroke-width='1' stroke-linecap='round'/>"
+  + bell + "</svg>")
+
+# row caps: a crystal with a short tail pointing inward, one at each end of whatever is focused
+def cap(flip):
+    tf = "translate(24 0) scale(-1 1)" if flip else ""
+    return uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 16'>"
+               f"<g transform='{tf}'><path d='M12 8 H23' stroke='{G}' stroke-width='1' stroke-linecap='round' opacity='.8'/>"
+               + facet(7, 8, 6.4) + "</g></svg>")
+
+# minimap bezel: a gilt ring with tick marks and four crystals on the diagonals
+bt = []
+for i in range(72):
+    a = i / 72 * 2 * math.pi
+    if i % 9 == 0 and i % 18 != 0: continue  # leave the diagonals to the crystals
+    r0, r1 = (91, 96) if i % 18 == 0 else (93.5, 96)
+    bt.append(f"M{100 + math.cos(a) * r0:.1f} {100 + math.sin(a) * r0:.1f} L{100 + math.cos(a) * r1:.1f} {100 + math.sin(a) * r1:.1f}")
+bezel = uri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'>"
+  f"<g fill='none' stroke='{G}'><circle cx='100' cy='100' r='98' stroke-width='1.2' opacity='.7'/><circle cx='100' cy='100' r='90' stroke-width='.6' opacity='.35'/>"
+  f"<path d='{' '.join(bt)}' stroke-width='.8' opacity='.6'/></g>"
+  + ''.join(facet(round(100 + math.cos(a) * 94, 1), round(100 + math.sin(a) * 94, 1), 5.2) for a in (math.pi / 4, 3 * math.pi / 4, 5 * math.pi / 4, 7 * math.pi / 4))
+  + "</svg>")
 
 random.seed(7)
 dots = []
@@ -117,6 +176,7 @@ VARS = {
   'orn-rule': rule, 'pat-stars': stars, 'orn-rune': rune, 'orn-rune-soft': soft,
   'orn-rune-bright': bright, 'orn-star': star, 'orn-spark': spark,
   'orn-staff': staff(), 'orn-ripple': ripple,
+  'orn-crest': crest, 'orn-cap-l': cap(False), 'orn-cap-r': cap(True), 'orn-bezel': bezel,
 }
 print(":root {")
 for k, v in VARS.items(): print(f"  --{k}: {v};")

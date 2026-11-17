@@ -14,6 +14,9 @@
 @font-face { font-family: 'Hahmlet'; src: url('/fonts/Hahmlet-Regular.woff2') format('woff2'); font-weight: 400; font-display: swap; }
 @font-face { font-family: 'Hahmlet'; src: url('/fonts/Hahmlet-Medium.woff2') format('woff2'); font-weight: 500; font-display: swap; }
 @font-face { font-family: 'Hahmlet'; src: url('/fonts/Hahmlet-SemiBold.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+/* numerals: HeirOfLight's "1" is a bare stem that reads as a Roman "I" in small counters, so digits
+   (and the signs that sit beside them) come from Hahmlet, whose "1" has a flag and a foot */
+@font-face { font-family: 'Numeral'; src: url('/fonts/Hahmlet-SemiBold.woff2') format('woff2'); font-weight: 100 900; font-display: swap; unicode-range: U+0025, U+002B, U+002D, U+002E, U+002F, U+0030-0039; }
 
 :root {
   --ui: 1;                      /* interface scale, set by HUD.applyScale */
@@ -35,7 +38,7 @@
   --display: 'HeirOfLight', 'ForgedBlade', 'Batang', serif;
   --text: 'Hahmlet', 'ForgedBlade', 'Batang', serif;
   --uif: 'ForgedBlade', 'Malgun Gothic', sans-serif;
-  --num: 'HeirOfLight', 'ForgedBlade', serif;
+  --num: 'Numeral', 'HeirOfLight', 'ForgedBlade', serif;
   --serif: var(--text); --title: var(--display); --blade: var(--uif); --sans: var(--uif); --latin: var(--num);
   --t-micro: 11.5px; --t-s: 13px; --t-m: 14.5px; --t-l: 16.5px; --t-xl: 21px;
   --d-s: 22px; --d-m: 30px; --d-l: 46px;
@@ -47,6 +50,10 @@
   --sh-chip: 0 4px 14px rgba(0, 0, 0, 0.42);
   --sh-panel: 0 28px 70px rgba(0, 0, 0, 0.62);
   --e-out: cubic-bezier(0.16, 1, 0.3, 1); --e-back: cubic-bezier(0.2, 0.9, 0.3, 1.35); --e-in: cubic-bezier(0.5, 0, 0.9, 0.4);
+  /* materials: lacquer sheet, a gilt hairline that fades out at both ends, a centred glow (focus) */
+  --lacquer: linear-gradient(180deg, rgba(24, 30, 58, 0.94), rgba(9, 11, 24, 0.94));
+  --gilt-h: linear-gradient(90deg, transparent, var(--gold-line) 18%, var(--gold) 50%, var(--gold-line) 82%, transparent);
+  --glow-c: radial-gradient(ellipse 58% 140% at 50% 50%, rgba(241, 212, 138, 0.24), rgba(241, 212, 138, 0.06) 62%, transparent 78%);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -83,15 +90,19 @@ kbd [data-ico] { font-size: 1.25em; }
 .tbtn:active:not(:disabled) { transform: scale(0.97); }
 .tbtn:disabled { opacity: 0.34; cursor: default; }
 .menu-list { display: flex; flex-direction: column; gap: 2px; }
-.menu-list .tbtn { display: flex; align-items: center; gap: 14px; height: 46px; padding: 0 16px 0 18px; min-width: 300px; text-align: left; font-size: 18px; text-shadow: var(--ts); }
-.menu-list .tbtn > [data-ico] { font-size: 18px; color: var(--gold); opacity: 0.55; transition: opacity 0.16s, transform 0.2s var(--e-out); }
-.menu-list .tbtn > span { flex: 1; transition: transform 0.2s var(--e-out); }
+.menu-list .tbtn { display: flex; align-items: center; gap: 14px; height: 46px; padding: 0 34px; min-width: 330px; text-align: left; font-size: 18px; text-shadow: var(--ts); }
+.menu-list .tbtn > [data-ico] { font-size: 18px; color: var(--gold); opacity: 0.55; transition: opacity 0.16s, filter 0.2s; }
+.menu-list .tbtn > span { flex: 1; transition: letter-spacing 0.24s var(--e-out); }
 .menu-list .tbtn > kbd { opacity: 0.55; font-size: 12px; }
-.menu-list .tbtn::before { content: ''; position: absolute; inset: 0; border-radius: var(--r-1); background: linear-gradient(90deg, rgba(241, 212, 138, 0.2), rgba(241, 212, 138, 0.04) 70%, transparent); box-shadow: inset 2px 0 0 var(--gold); opacity: 0; transform: scaleX(0.92); transform-origin: left; transition: opacity 0.16s, transform 0.22s var(--e-out); }
+/* focus: light gathers in the middle of the row between two gilt hairlines, and a crystal settles
+   at each end (both sides alike; never a bar down one edge) */
+.menu-list .tbtn::before, .menu-list .tbtn::after { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.18s, transform 0.3s var(--e-out); }
+.menu-list .tbtn::before { background: var(--gilt-h) center top / 100% 1px no-repeat, var(--gilt-h) center bottom / 100% 1px no-repeat, var(--glow-c); transform: scaleX(0.7); }
+.menu-list .tbtn::after { inset: 0 -4px; background: var(--orn-cap-l) left center / 22px 15px no-repeat, var(--orn-cap-r) right center / 22px 15px no-repeat; transform: scaleX(0.86); }
 .menu-list .tbtn:not(:disabled):is(:hover, .focus, :focus-visible) { color: var(--gold-hi); }
-.menu-list .tbtn:not(:disabled):is(:hover, .focus, :focus-visible)::before { opacity: 1; transform: none; }
-.menu-list .tbtn:not(:disabled):is(:hover, .focus, :focus-visible) > [data-ico] { opacity: 1; }
-.menu-list .tbtn:not(:disabled):is(:hover, .focus, :focus-visible) > span { transform: translateX(4px); }
+.menu-list .tbtn:not(:disabled):is(:hover, .focus, :focus-visible)::before, .menu-list .tbtn:not(:disabled):is(:hover, .focus, :focus-visible)::after { opacity: 1; transform: none; }
+.menu-list .tbtn:not(:disabled):is(:hover, .focus, :focus-visible) > [data-ico] { opacity: 1; filter: drop-shadow(0 0 5px rgba(241, 212, 138, 0.7)); }
+.menu-list .tbtn:not(:disabled):is(:hover, .focus, :focus-visible) > span { letter-spacing: 0.08em; }
 .menu-list .tbtn > * { position: relative; }
 .menu-list .tbtn.ghost { color: var(--ink-2); }
 .tbtn.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 20px; font-size: var(--t-m); border-radius: var(--r-1);
@@ -124,8 +135,10 @@ kbd [data-ico] { font-size: 1.25em; }
 .title-sub-en { font: 400 12px/1 var(--display); letter-spacing: 0.46em; color: var(--gold); margin-bottom: 16px; text-shadow: var(--ts); }
 .title-main { font: 700 104px/1 var(--display); letter-spacing: 0.06em; color: #fff8e6; }
 .title-sub { font: 400 24px/1 var(--display); letter-spacing: 0.42em; margin-top: 4px; color: var(--ink); text-shadow: var(--ts); }
-.title-menu { margin: 56px 0 0 -18px; }
-.title-note { margin: 16px 0 0; max-width: 420px; padding: 10px 14px; font: 400 var(--t-s)/1.6 var(--text); color: #ffd9b0; text-wrap: pretty; background: rgba(60, 20, 10, 0.5); box-shadow: inset 2px 0 0 var(--danger); border-radius: 0 var(--r-1) var(--r-1) 0; }
+.title-menu { margin: 56px 0 0 -34px; }
+/* a problem note: a framed slip with a warning crystal leading the line */
+.title-note { position: relative; margin: 16px 0 0; max-width: 420px; padding: 10px 16px 11px 38px; font: 400 var(--t-s)/1.6 var(--text); color: #ffd9b0; text-wrap: pretty; background: radial-gradient(ellipse 80% 140% at 50% 0%, rgba(120, 40, 24, 0.5), rgba(40, 12, 10, 0.62)); border-radius: var(--r-2); box-shadow: inset 0 0 0 1px rgba(255, 120, 100, 0.42), 0 6px 18px rgba(0, 0, 0, 0.4); animation: panelIn 0.34s var(--e-out); }
+.title-note::before { content: ''; position: absolute; left: 16px; top: 15px; width: 9px; height: 9px; transform: rotate(45deg); background: linear-gradient(135deg, #ffd0c4, var(--danger)); box-shadow: 0 0 0 2px rgba(40, 12, 10, 0.9), 0 0 8px rgba(255, 107, 92, 0.7); }
 .title-hint { position: absolute; left: 9vw; right: 9vw; bottom: 34px; display: flex; gap: 22px; align-items: center; font-size: var(--t-s); color: var(--ink-2); letter-spacing: 0.04em; text-shadow: var(--ts); animation: fadeIn 1.6s 0.9s both; }
 .title-hint span + span::before { content: ''; display: inline-block; width: 5px; height: 5px; margin: 0 22px 2px 0; transform: rotate(45deg); background: var(--gold); opacity: 0.7; }
 .title-hint span:last-child { margin-left: auto; } .title-hint span:last-child::before { content: none; }
@@ -150,6 +163,11 @@ kbd [data-ico] { font-size: 1.25em; }
 #hud { position: absolute; inset: 0; }
 #hud.dlg :is(#quest-tracker, #crosshair, #spellbar, #compass, #vitals, #enemy-bars, #stamina, #prompt, #hint, #boss-bar, #minimap, #save-mark) { opacity: 0 !important; }
 #quest-tracker, #crosshair, #spellbar, #compass, #vitals, #boss-bar, #minimap { transition: opacity 0.4s; }
+/* the HUD steps aside: calm (out of a fight, full health and mana, nothing changing) dims what is
+   not needed; in a fight the tracker keeps only its title */
+#hud.calm :is(#vitals, #spellbar) { opacity: 0.42; transition-duration: 1.6s; }
+#hud.calm #minimap { opacity: 0.8; transition-duration: 1.6s; }
+#hud.fight .qt-obj { display: none; }
 
 /* ---- vitals: level emblem (its rim is the XP bar), hearts, mana ---- */
 #vitals { position: absolute; left: var(--edge); top: 28px; display: grid; grid-template-columns: 56px auto; column-gap: 14px; row-gap: 10px; align-items: center; justify-items: start; }
@@ -160,6 +178,9 @@ kbd [data-ico] { font-size: 1.25em; }
 .xp-fill { fill: none; stroke: var(--gold); stroke-width: 2.6; stroke-dasharray: 100; stroke-dashoffset: 100; transition: stroke-dashoffset 0.6s var(--e-out); }
 .lv-cap { position: absolute; left: 0; right: 0; top: 13px; text-align: center; font: 500 9px/1 var(--uif); letter-spacing: 0.1em; color: var(--gold); }
 .xp-lv { position: absolute; left: 0; right: 0; top: 23px; text-align: center; font: 700 21px/1 var(--num); color: var(--ink-0); }
+/* two faint resonance rings spread from the emblem */
+.lv::before, .lv::after { content: ''; position: absolute; border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 1px rgba(241, 212, 138, 0.3), 0 0 0 2px rgba(7, 9, 20, 0.35); }
+.lv::before { inset: 1px; } .lv::after { inset: -6px; opacity: 0.45; }
 .lv.up { animation: lvUp 1s var(--e-out); }
 @keyframes lvUp { 0% { transform: scale(1.5); filter: brightness(2.2) drop-shadow(0 0 18px var(--gold)); } }
 .vit { display: flex; flex-direction: column; gap: 9px; }
@@ -175,6 +196,9 @@ kbd [data-ico] { font-size: 1.25em; }
 
 #mana { display: flex; align-items: center; gap: 10px; }
 .mana-track { position: relative; width: 200px; height: 9px; border-radius: 2px; background: linear-gradient(180deg, rgba(2, 4, 10, 0.9), rgba(12, 16, 32, 0.84)); box-shadow: 0 0 0 1px rgba(8, 10, 20, 0.9), 0 0 0 2px rgba(241, 212, 138, 0.34), 0 3px 8px rgba(0, 0, 0, 0.5); transition: width 0.6s var(--e-out), box-shadow 0.3s; }
+/* a crystal cap at each end of the gauge, tails pointing in */
+.mana-track::before { content: ''; position: absolute; inset: -4px -17px; pointer-events: none; background: var(--orn-cap-l) left center / 20px 13px no-repeat, var(--orn-cap-r) right center / 20px 13px no-repeat; filter: drop-shadow(0 0 1px rgba(7, 9, 20, 0.9)); }
+#mana { gap: 22px; margin-left: 14px; }
 .mana-fill, .mana-ghost { position: absolute; left: 0; top: 0; bottom: 0; width: 100%; border-radius: 2px; }
 .mana-ghost { background: rgba(214, 238, 255, 0.5); transition: width 0.6s ease 0.28s; }
 .mana-fill { background: linear-gradient(180deg, rgba(255, 255, 255, 0.4) 0 1px, rgba(255, 255, 255, 0.14) 1px 45%, transparent 45%, rgba(0, 20, 60, 0.18)), linear-gradient(90deg, #2f6fe0, #58b6ff 62%, #c4ecff); z-index: 1; }
@@ -214,8 +238,10 @@ kbd [data-ico] { font-size: 1.25em; }
 
 /* ---- compass ---- */
 #compass { position: absolute; top: 22px; left: 50%; transform: translateX(-50%); width: clamp(240px, calc(100vw / var(--ui) - 880px), 520px); height: 44px; overflow: hidden; -webkit-mask-image: linear-gradient(90deg, transparent, #000 16%, #000 84%, transparent); mask-image: linear-gradient(90deg, transparent, #000 16%, #000 84%, transparent);
-  background: linear-gradient(180deg, rgba(7, 9, 20, 0.72), rgba(7, 9, 20, 0.5) 62%, transparent); }
-#compass::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 1px; background: var(--gold-line); }
+  /* a lacquered band with gilt hairlines on both edges (a fading scrim read as a smudge on a bright sky) */
+  background: linear-gradient(180deg, rgba(20, 25, 50, 0.8), rgba(8, 10, 22, 0.8)); }
+#compass::before, #compass::after { content: ''; position: absolute; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent 6%, var(--gold-line) 30%, var(--gold) 50%, var(--gold-line) 70%, transparent 94%); }
+#compass::before { top: 0; } #compass::after { bottom: 0; }
 .compass-strip, .compass-markers { position: absolute; inset: 0; }
 .compass-strip span { position: absolute; top: 5px; transform: translateX(-50%); font: 700 15px/1 var(--display); color: var(--gold-hi); -webkit-text-stroke: 3px rgba(7, 9, 20, 0.82); paint-order: stroke fill; }
 .compass-strip span.tick { top: 1px; width: 2px; height: 6px; background: rgba(241, 234, 219, 0.75); box-shadow: 0 0 0 1px rgba(7, 9, 20, 0.55); }
@@ -227,14 +253,18 @@ kbd [data-ico] { font-size: 1.25em; }
 .cm.tower { color: var(--arcane); width: 14px; height: 14px; margin-left: -7px; top: 25px; }
 .cm.quest { color: var(--gold); top: 22px; width: 19px; height: 19px; margin-left: -9.5px; z-index: 2; }
 .cm .dist { position: absolute; left: calc(100% + 3px); top: 4px; font: 700 13px/1 var(--num); color: var(--ink-0); white-space: nowrap; -webkit-text-stroke: 3px rgba(7, 9, 20, 0.85); paint-order: stroke fill; }
-.compass-center { position: absolute; left: 50%; top: -5px; width: 10px; height: 10px; margin-left: -5px; transform: rotate(45deg); background: var(--gold-hi); box-shadow: 0 0 6px var(--gold); }
+/* the heading: a crystal notch hanging from the top hairline */
+.compass-center { position: absolute; left: 50%; top: -6px; z-index: 3; width: 11px; height: 11px; margin-left: -5.5px; transform: rotate(45deg); background: linear-gradient(135deg, #fffaf0, var(--gold) 70%); box-shadow: 0 0 0 1px rgba(7, 9, 20, 0.8), 0 0 8px var(--gold); }
 
 /* ---- quest tracker ---- */
-#quest-tracker { position: absolute; right: var(--edge); top: 28px; width: 330px; padding: 12px 14px 14px 46px; isolation: isolate; }
-#quest-tracker::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: var(--r-1); background: linear-gradient(90deg, rgba(7, 9, 20, 0.7), rgba(7, 9, 20, 0.46) 62%, rgba(7, 9, 20, 0)); box-shadow: inset 2px 0 0 var(--gold); }
-.qt-ico { position: absolute; left: 16px; top: 13px; font-size: 18px; color: var(--gold); filter: drop-shadow(0 0 5px rgba(241, 212, 138, 0.6)); }
-.qt-title { font: 500 17px/1.3 var(--uif); color: var(--gold-hi); letter-spacing: 0.03em; text-shadow: var(--ts); }
-.qt-obj { margin-top: 5px; font: 500 var(--t-m)/1.55 var(--text); color: var(--ink); text-shadow: var(--ts); text-wrap: pretty; }
+/* no box: a soft scrim with no edges, the quest crystal, the title over a gilt hairline that fades
+   out at both ends, then the objective */
+#quest-tracker { position: absolute; right: var(--edge); top: 26px; width: 330px; padding: 12px 18px 14px 48px; isolation: isolate; transition: opacity 0.4s; }
+#quest-tracker::before { content: ''; position: absolute; inset: -14px -24px -18px -10px; z-index: -1; pointer-events: none; background: radial-gradient(ellipse 52% 50% at 54% 50%, rgba(7, 9, 20, 0.66), rgba(7, 9, 20, 0.34) 64%, transparent); }
+.qt-ico { position: absolute; left: 14px; top: 11px; font-size: 22px; color: var(--gold); filter: drop-shadow(0 0 1px #000) drop-shadow(0 0 6px rgba(241, 212, 138, 0.65)); }
+.qt-title { position: relative; padding-bottom: 7px; font: 700 18px/1.3 var(--display); color: var(--gold-hi); letter-spacing: 0.06em; -webkit-text-stroke: var(--rim); paint-order: stroke fill; }
+.qt-title::after { content: ''; position: absolute; left: -6px; right: 12px; bottom: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--gold-line) 14%, rgba(241, 212, 138, 0.7) 40%, var(--gold-line) 74%, transparent); }
+.qt-obj { margin-top: 7px; font: 500 var(--t-m)/1.55 var(--text); color: var(--ink-0); -webkit-text-stroke: var(--rim); paint-order: stroke fill; text-wrap: pretty; }
 .qt-obj.flash { animation: objFlash 1.3s var(--e-out); }
 .qt-ico.flash { animation: chipPop 0.7s var(--e-out); }
 @keyframes objFlash { 0% { color: var(--gold-hi); transform: translateX(14px); opacity: 0; } 30% { opacity: 1; transform: none; } 60% { color: var(--gold-hi); } }
@@ -274,7 +304,9 @@ kbd [data-ico] { font-size: 1.25em; }
    top, an inner hairline in its colour, a dark gap and an outer gold hairline (the panel frame's
    double line, in the round). States only swap the ring variables. */
 #spellbar { position: absolute; right: var(--edge); bottom: 30px; display: flex; flex-direction: column; align-items: flex-end; gap: 20px; }
-#elements { display: flex; gap: 10px; align-items: center; padding-right: 8px; }
+#elements { position: relative; display: flex; gap: 10px; align-items: center; padding-right: 8px; }
+/* the gems are strung on one gilt string, like notes on a staff line */
+#elements::before { content: ''; position: absolute; left: -18px; right: -6px; top: 50%; height: 1px; background: linear-gradient(90deg, transparent, var(--gold-line) 20%, var(--gold-line) 80%, transparent); }
 .el { --ring: rgba(241, 212, 138, 0.3); width: 40px; height: 40px; border-radius: 50%; position: relative; display: flex; align-items: center; justify-content: center;
   background: radial-gradient(circle at 50% 26%, color-mix(in srgb, currentColor 26%, #1d2442), #080b18 74%);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 42%, transparent), inset 0 -6px 10px rgba(0, 0, 0, 0.35), 0 0 0 2px rgba(7, 9, 20, 0.82), 0 0 0 3px var(--ring), 0 4px 10px rgba(0, 0, 0, 0.45);
@@ -422,11 +454,15 @@ kbd [data-ico] { font-size: 1.25em; }
 /* damage numbers: element colour inside a dark rim, a hard drop for depth; each pops in, then rises
    and drifts to its own side (--dx, set per number). Crits are larger and carry a star. */
 .dmg { font: 700 calc(22px * var(--uiw))/1 var(--num); color: #fff; white-space: nowrap; -webkit-text-stroke: 3.5px rgba(7, 9, 20, 0.88); paint-order: stroke fill; text-shadow: 0 2px 0 rgba(7, 9, 20, 0.5); transform: translate(-50%, -50%); animation: dmgPop 0.92s ease-out forwards; }
-.dmg.crit { font-size: calc(32px * var(--uiw)); -webkit-text-stroke-width: 4px; text-shadow: 0 2px 0 rgba(7, 9, 20, 0.5), 0 0 16px color-mix(in srgb, currentColor 55%, transparent); animation-name: critPop; animation-duration: 0.98s; }
-.dmg.crit i { display: inline-block; width: 0.56em; height: 0.56em; margin-right: 0.05em; vertical-align: 0.36em; color: #fff3cc; filter: drop-shadow(0 0 1px rgba(7, 9, 20, 0.95)) drop-shadow(0 0 1px rgba(7, 9, 20, 0.95)) drop-shadow(0 0 5px rgba(255, 220, 140, 0.9)); }
+/* a crit: the number, larger, with its star standing clear at the upper left (it used to sit
+   inside the digits' rim and blur into them) */
+.dmg.crit { display: flex; align-items: flex-start; gap: 0.14em; font-size: calc(32px * var(--uiw)); -webkit-text-stroke-width: 4px; text-shadow: 0 2px 0 rgba(7, 9, 20, 0.5), 0 0 16px color-mix(in srgb, currentColor 55%, transparent); animation-name: critPop; animation-duration: 0.98s; }
+.dmg.crit i { flex: none; width: 0.5em; height: 0.5em; margin-top: -0.12em; color: #fff3cc; -webkit-text-stroke: 0; filter: drop-shadow(0 0 1px rgba(7, 9, 20, 0.95)) drop-shadow(0 0 1px rgba(7, 9, 20, 0.95)) drop-shadow(0 0 5px rgba(255, 220, 140, 0.9)); }
 .dmg.crit i svg { width: 100%; height: 100%; display: block; }
 .dmg.small { font-size: calc(15px * var(--uiw)); -webkit-text-stroke-width: 3px; }
-.dmg.react { font: 700 calc(25px * var(--uiw))/1 var(--display); letter-spacing: 0.08em; -webkit-text-stroke-width: 4px; text-shadow: 0 2px 0 rgba(7, 9, 20, 0.5), 0 0 18px color-mix(in srgb, currentColor 50%, transparent); animation: reactPop 1.4s ease-out forwards; }
+.dmg.react { font: 700 calc(25px * var(--uiw))/1 var(--display); letter-spacing: 0.08em; padding-bottom: 6px; -webkit-text-stroke-width: 4px; text-shadow: 0 2px 0 rgba(7, 9, 20, 0.5), 0 0 18px color-mix(in srgb, currentColor 50%, transparent); animation: reactPop 1.4s ease-out forwards; }
+/* a reaction's name rides on a short resonance line in its own colour, fading out at both ends */
+.dmg.react::after { content: ''; position: absolute; left: -10%; right: -10%; bottom: 0; height: 2px; background: linear-gradient(90deg, transparent, currentColor 30%, currentColor 70%, transparent); box-shadow: 0 0 8px currentColor; opacity: 0.85; }
 .dmg.player { color: #ff7a70; font-size: calc(19px * var(--uiw)); }
 .dmg.heal { color: #9dffa6; }
 .dmg.info { font: 500 calc(15px * var(--uiw))/1 var(--uif); -webkit-text-stroke-width: 3px; }
@@ -460,23 +496,34 @@ kbd [data-ico] { font-size: 1.25em; }
 .bark b { display: block; margin-bottom: 1px; font: 500 calc(12px * var(--uiw))/1.4 var(--uif); color: var(--gold); letter-spacing: 0.04em; }
 
 /* ---- prompts, tips, toasts, companion ---- */
-#prompt { position: absolute; left: 50%; top: 63%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; height: 40px; padding: 0 20px 0 7px; background: var(--glass); border-radius: var(--r-pill); box-shadow: inset 0 0 0 1px var(--gold-line), var(--sh-chip); animation: promptIn 0.22s var(--e-out); white-space: nowrap; }
-@keyframes promptIn { from { opacity: 0; transform: translate(-50%, 8px); } }
-.pk { min-width: 26px; height: 26px; margin: 0; border-radius: 50%; font-size: 13px; font-weight: 700; color: #22190a; background: radial-gradient(circle at 40% 32%, #fff6d6, #e6c173 60%, #a37c34); box-shadow: 0 0 0 1px #3a2c10, 0 0 10px rgba(241, 212, 138, 0.45); }
-.pt { font: 500 var(--t-l)/1 var(--uif); letter-spacing: 0.02em; }
-.pt em { font-style: normal; color: var(--gold-hi); margin-left: 10px; padding-left: 12px; box-shadow: inset 1px 0 0 var(--gold-line); }
+/* interaction prompt: a lacquered pill, the key as a gold coin, gilt hairlines above and below that
+   fade out toward both ends */
+#prompt { position: absolute; left: 50%; top: 63%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; height: 42px; padding: 0 24px 0 8px; border-radius: var(--r-pill); white-space: nowrap; animation: promptIn 0.26s var(--e-back);
+  background: var(--gilt-h) center top / 86% 1px no-repeat, var(--gilt-h) center bottom / 86% 1px no-repeat, radial-gradient(ellipse 70% 120% at 50% 50%, rgba(26, 32, 62, 0.92), rgba(9, 11, 24, 0.88)); box-shadow: inset 0 0 0 1px rgba(241, 212, 138, 0.18), var(--sh-chip); }
+@keyframes promptIn { from { opacity: 0; transform: translate(-50%, 8px) scale(0.96); } }
+.pk { min-width: 28px; height: 28px; margin: 0; border-radius: 50%; font-size: 13px; font-weight: 700; color: #22190a; background: radial-gradient(circle at 40% 32%, #fff6d6, #e6c173 60%, #a37c34); box-shadow: 0 0 0 1px #3a2c10, 0 0 0 3px rgba(9, 11, 24, 0.9), 0 0 0 4px rgba(241, 212, 138, 0.4), 0 0 12px rgba(241, 212, 138, 0.45); }
+.pt { display: flex; align-items: center; font: 500 var(--t-l)/1 var(--uif); letter-spacing: 0.02em; }
+.pt em { display: inline-flex; align-items: center; gap: 10px; font-style: normal; color: var(--gold-hi); margin-left: 10px; }
+.pt em::before { content: ''; width: 5px; height: 5px; transform: rotate(45deg); background: var(--gold); opacity: 0.8; }
 
-#hint { position: absolute; left: var(--edge); top: 27%; max-width: min(390px, calc(40vw / var(--ui))); padding: 13px 20px 14px 20px; font: 500 15.5px/1.6 var(--uif); text-align: left; text-wrap: pretty;
-  background: linear-gradient(90deg, rgba(12, 15, 32, 0.94), rgba(9, 12, 26, 0.74)); border-radius: 0 var(--r-2) var(--r-2) 0; box-shadow: inset 2px 0 0 var(--gold), var(--sh-chip); animation: hintIn 0.42s var(--e-out); }
-#hint::before { content: ''; position: absolute; left: -4px; top: 17px; width: 9px; height: 9px; transform: rotate(45deg); background: var(--gold-hi); box-shadow: 0 0 8px var(--gold); }
+/* a tip: a small lacquered card in the double gilt frame, its crystal crest on the top edge */
+#hint { position: absolute; left: var(--edge); top: 27%; max-width: min(390px, calc(40vw / var(--ui))); padding: 17px 22px 15px; font: 500 15.5px/1.6 var(--uif); text-align: left; text-wrap: pretty;
+  background: radial-gradient(ellipse 90% 60% at 50% 0%, rgba(120, 140, 220, 0.14), transparent 70%), var(--lacquer); border-radius: var(--r-2);
+  box-shadow: inset 0 0 0 1px var(--gold-line), 0 0 0 3px rgba(9, 11, 24, 0.8), 0 0 0 4px var(--gold-faint), var(--sh-chip); animation: hintIn 0.42s var(--e-out); }
+#hint::before { content: ''; position: absolute; left: 50%; top: -6px; width: 11px; height: 11px; margin-left: -5.5px; transform: rotate(45deg); background: linear-gradient(135deg, #fffaf0, var(--gold) 70%); box-shadow: 0 0 0 2px rgba(9, 11, 24, 0.9), 0 0 10px var(--gold); }
+#hint::after { content: ''; position: absolute; left: 22px; right: 22px; top: 0; height: 1px; background: var(--gilt-h); opacity: 0.8; }
 #hint b { font-weight: 500; color: var(--gold-hi); }
 #hint small { display: block; margin-top: 5px; font: 400 var(--t-s)/1.6 var(--text); color: var(--ink-2); }
 #hint small b { color: var(--gold); }
 @keyframes hintIn { from { opacity: 0; transform: translateX(-18px); } }
 
 #toasts { position: absolute; left: var(--edge); bottom: 244px; display: flex; flex-direction: column-reverse; align-items: flex-start; gap: 6px; }
-.toast { position: relative; max-width: 460px; padding: 8px 18px 9px 30px; font: 500 var(--t-m)/1.5 var(--uif); text-wrap: pretty; background: linear-gradient(90deg, rgba(9, 12, 26, 0.9), rgba(9, 12, 26, 0.62)); border-radius: var(--r-1) 18px 18px var(--r-1); box-shadow: inset 1px 0 0 var(--gold), 0 3px 10px rgba(0, 0, 0, 0.35); animation: toastIn 0.36s var(--e-out); }
-.toast::before { content: ''; position: absolute; left: 12px; top: 16px; width: 6px; height: 6px; transform: rotate(45deg); background: var(--gold); }
+/* a notice: a lacquered slip, gilt hairlines above and below fading out toward both ends, a crystal
+   leading the line */
+.toast { position: relative; max-width: 460px; padding: 8px 22px 9px 34px; font: 500 var(--t-m)/1.5 var(--uif); text-wrap: pretty; border-radius: var(--r-2);
+  background: var(--gilt-h) center top / 100% 1px no-repeat, linear-gradient(90deg, transparent, var(--gold-faint) 30%, var(--gold-faint) 70%, transparent) center bottom / 100% 1px no-repeat, radial-gradient(ellipse 80% 140% at 50% 50%, rgba(18, 22, 46, 0.9), rgba(9, 11, 24, 0.8));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35); animation: toastIn 0.36s var(--e-out); }
+.toast::before { content: ''; position: absolute; left: 15px; top: 15px; width: 7px; height: 7px; transform: rotate(45deg); background: linear-gradient(135deg, #fffaf0, var(--gold) 70%); box-shadow: 0 0 6px rgba(241, 212, 138, 0.7); }
 .toast b { font-weight: 500; color: var(--gold-hi); }
 .toast small { color: var(--ink-2); }
 .toast.out { animation: toastOut 0.45s var(--e-in) forwards; }
@@ -516,13 +563,17 @@ kbd [data-ico] { font-size: 1.25em; }
 .bn-desc { font: 500 var(--t-l)/1.6 var(--text); color: var(--ink); text-shadow: var(--ts); text-wrap: balance; animation: fadeIn 0.5s 0.25s both; }
 .bn-desc:empty { display: none; }
 .bn-desc small { color: var(--ink-2); }
+/* a reward moment: one light sweep crosses the name as it lands (once, never looping) */
+#banner:not(.minor, .compact) .bn-big { position: relative; }
+#banner:not(.minor, .compact) .bn-big::after { content: ''; position: absolute; top: -20%; bottom: -20%; left: 0; width: 34%; pointer-events: none; background: linear-gradient(100deg, transparent, rgba(255, 250, 235, 0.32), transparent); transform: translateX(-120%) skewX(-12deg); animation: bnSweep 1.25s var(--e-out) 0.35s both; }
+@keyframes bnSweep { to { transform: translateX(320%) skewX(-12deg); opacity: 0; } }
 #banner.out { animation: bannerOut 0.5s var(--e-in) forwards; }
 @keyframes bannerIn { from { opacity: 0; } }
 @keyframes bnBig { from { opacity: 0; transform: translateY(8px) scale(1.04); filter: blur(6px); letter-spacing: 0.3em; } }
 @keyframes bannerOut { to { opacity: 0; transform: translateX(-50%) translateY(-8px); } }
 /* frequent notices and anything shown mid-fight: one slim ribbon under the compass */
-#banner:is(.minor, .compact) { top: 76px; width: max-content; max-width: calc(70vw / var(--ui)); padding: 9px 56px 10px; white-space: nowrap; animation: ribbonIn 0.4s var(--e-out);
-  background: linear-gradient(90deg, transparent, rgba(7, 9, 20, 0.82) 16%, rgba(7, 9, 20, 0.82) 84%, transparent); }
+#banner:is(.minor, .compact) { top: 80px; width: max-content; max-width: calc(70vw / var(--ui)); padding: 9px 64px 10px; white-space: nowrap; animation: ribbonIn 0.4s var(--e-out);
+  background: var(--orn-cap-l) 22px 15px / 22px 15px no-repeat, var(--orn-cap-r) calc(100% - 22px) 15px / 22px 15px no-repeat, linear-gradient(90deg, transparent, rgba(9, 11, 24, 0.86) 16%, rgba(14, 18, 38, 0.9) 50%, rgba(9, 11, 24, 0.86) 84%, transparent); }
 #banner:is(.minor, .compact).out { animation: ribbonOut 0.45s var(--e-in) forwards; }
 #banner:is(.minor, .compact) .bn-small { display: inline; font-size: 12px; letter-spacing: 0.24em; padding: 0; margin-right: 14px; animation: none; vertical-align: 2px; }
 #banner:is(.minor, .compact) .bn-big { display: inline; font-size: 21px; letter-spacing: 0.06em; padding: 0; margin: 0; animation: none; text-shadow: var(--ts); }
@@ -534,6 +585,8 @@ kbd [data-ico] { font-size: 1.25em; }
 /* ---- minimap ---- */
 #minimap { position: absolute; left: 30px; bottom: 26px; width: 192px; height: 192px; border-radius: 50%; }
 #minimap canvas { width: 100%; height: 100%; display: block; border-radius: 50%; }
+/* the bezel: a gilt ring with tick marks and four crystals on the diagonals */
+#minimap::after { content: ''; position: absolute; inset: -13px; pointer-events: none; background: var(--orn-bezel) center / contain no-repeat; }
 
 /* ================= DIALOGUE ================= */
 #letterbox .lb-top, #letterbox .lb-bot { position: absolute; left: 0; right: 0; height: 0; background: #000; transition: height 0.7s var(--e-out); z-index: 5; }
@@ -556,13 +609,19 @@ kbd [data-ico] { font-size: 1.25em; }
 /* choices stand above the box at its right edge, so the box never changes height */
 .dlg-choices { position: absolute; right: 0; bottom: calc(100% + 18px); width: 480px; max-width: 100%; display: flex; flex-direction: column; gap: 7px; }
 .dlg-choices:empty { display: none; }
-.dlg-choice { pointer-events: auto; cursor: pointer; position: relative; display: flex; align-items: center; gap: 14px; min-height: 46px; padding: 9px 20px 9px 12px; text-align: left; font: 500 17.5px/1.45 var(--text); color: var(--ink);
-  background: linear-gradient(90deg, rgba(9, 12, 26, 0.94), rgba(12, 16, 34, 0.82)); border-radius: var(--r-1); box-shadow: inset 0 0 0 1px rgba(241, 212, 138, 0.22), var(--sh-chip);
-  animation: choiceIn 0.34s var(--e-out) both; animation-delay: calc(var(--i, 0) * 55ms); transition: color 0.14s, background-color 0.14s, box-shadow 0.14s, transform 0.18s var(--e-out); }
-.dlg-choice kbd { flex: none; margin: 0; font-size: 12px; transition: color 0.14s, background-color 0.14s; }
-.dlg-choice:is(:hover, .sel) { color: var(--gold-hi); background: linear-gradient(90deg, rgba(58, 46, 20, 0.96), rgba(22, 24, 40, 0.9)); box-shadow: inset 0 0 0 1px var(--gold), inset 3px 0 0 var(--gold), 0 0 20px rgba(241, 212, 138, 0.2); transform: translateX(-8px); }
-.dlg-choice:is(:hover, .sel) kbd { color: #2a1f0a; background: linear-gradient(180deg, #fff0c4, #e3bf6c); }
-.dlg-choice:active { transform: translateX(-8px) scale(0.985); }
+/* each choice a lacquered pill; the chosen one turns to cream-gilt with dark ink, lifts a little,
+   and a crystal settles at each end */
+.dlg-choice { pointer-events: auto; cursor: pointer; position: relative; display: flex; align-items: center; gap: 14px; min-height: 48px; padding: 9px 26px 9px 10px; text-align: left; font: 500 17.5px/1.45 var(--text); color: var(--ink);
+  background: radial-gradient(ellipse 80% 140% at 50% 50%, rgba(22, 27, 54, 0.95), rgba(9, 11, 24, 0.92)); border-radius: var(--r-pill); box-shadow: inset 0 0 0 1px rgba(241, 212, 138, 0.26), var(--sh-chip);
+  animation: choiceIn 0.34s var(--e-out) both; animation-delay: calc(var(--i, 0) * 55ms); transition: color 0.14s, background 0.16s, box-shadow 0.16s, transform 0.22s var(--e-back); }
+.dlg-choice kbd { flex: none; margin: 0; width: 28px; height: 28px; border-radius: 50%; font-size: 12px; transition: color 0.14s, background 0.14s, box-shadow 0.14s; }
+.dlg-choice::before, .dlg-choice::after { content: ''; position: absolute; top: 50%; width: 27px; height: 18px; margin-top: -9px; pointer-events: none; opacity: 0; transition: opacity 0.16s, transform 0.26s var(--e-out); }
+.dlg-choice::before { left: -26px; background: var(--orn-cap-l) center / contain no-repeat; transform: translateX(-6px); }
+.dlg-choice::after { right: -26px; background: var(--orn-cap-r) center / contain no-repeat; transform: translateX(6px); }
+.dlg-choice:is(:hover, .sel) { color: #241a08; background: radial-gradient(ellipse 70% 160% at 50% 0%, #fffaf0, #f3dda0 55%, #dcb764); box-shadow: inset 0 0 0 1px #fff6dc, 0 0 0 1px rgba(60, 42, 8, 0.6), 0 0 0 3px rgba(9, 11, 24, 0.75), 0 0 0 4px rgba(241, 212, 138, 0.55), 0 0 26px rgba(241, 212, 138, 0.35); transform: scale(1.02); }
+.dlg-choice:is(:hover, .sel)::before, .dlg-choice:is(:hover, .sel)::after { opacity: 1; transform: none; }
+.dlg-choice:is(:hover, .sel) kbd { color: #fff2cc; background: radial-gradient(circle at 40% 30%, #3a3050, #141022); box-shadow: inset 0 0 0 1px rgba(60, 42, 8, 0.7); }
+.dlg-choice:active { transform: scale(0.99); }
 @keyframes choiceIn { from { opacity: 0; transform: translateX(26px); } }
 .dlg-keys { position: absolute; left: 0; right: 0; top: calc(100% + 16px); height: calc(9vh / var(--ui)); display: flex; align-items: center; justify-content: center; gap: 28px; font-size: 12.5px; color: var(--ink-3); letter-spacing: 0.02em; }
 .dlg-keys kbd { font-size: 10.5px; margin-left: 0; }
@@ -591,7 +650,7 @@ kbd [data-ico] { font-size: 1.25em; }
 .hub-nav button [data-ico] { font-size: 17px; opacity: 0.7; transition: opacity 0.16s; }
 .hub-nav button kbd { font-size: 10.5px; margin: 0 -2px 0 0; opacity: 0.7; }
 .hub-nav button:is(:hover, :focus-visible) { color: var(--ink-0); background: rgba(255, 255, 255, 0.06); }
-.hub-nav button.on { color: var(--gold-hi); background: linear-gradient(180deg, rgba(241, 212, 138, 0.04), rgba(241, 212, 138, 0.18)); }
+.hub-nav button.on { color: var(--gold-hi); background: radial-gradient(ellipse 62% 110% at 50% 100%, rgba(241, 212, 138, 0.26), rgba(241, 212, 138, 0.05) 70%, transparent); }
 .hub-nav button.on [data-ico] { opacity: 1; color: var(--gold); }
 .hub-nav button::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; background: var(--gold); box-shadow: 0 0 8px var(--gold); transform: scaleX(0); transition: transform 0.26s var(--e-out); }
 .hub-nav button.on::after { transform: none; }
@@ -616,8 +675,9 @@ kbd [data-ico] { font-size: 1.25em; }
 .mk-way .ico { width: 17px; height: 17px; flex: none; color: #ffc870; }
 .mk-way span:nth-child(2) { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mk-way em { font: 700 13px/1 var(--num); font-style: normal; color: var(--ink-2); }
-.mk-way:is(:hover, :focus-visible, .hot) { color: var(--gold-hi); background: linear-gradient(90deg, rgba(241, 212, 138, 0.2), rgba(241, 212, 138, 0.03)); box-shadow: inset 2px 0 0 var(--gold); }
-.mk-way:active { background: rgba(241, 212, 138, 0.3); }
+.mk-way:is(:hover, :focus-visible, .hot) { color: var(--gold-hi); background: var(--gilt-h) center top / 100% 1px no-repeat, var(--gilt-h) center bottom / 100% 1px no-repeat, var(--glow-c); box-shadow: none; }
+.mk-way:is(:hover, :focus-visible, .hot) .ico { filter: drop-shadow(0 0 5px currentColor); }
+.mk-way:active { background: var(--gilt-h) center top / 100% 1px no-repeat, var(--gilt-h) center bottom / 100% 1px no-repeat, rgba(241, 212, 138, 0.22); }
 .mk-way.here { color: var(--ink-2); cursor: default; }
 .mk-none { padding: 12px 0; color: var(--ink-3); font: 400 var(--t-s)/1.6 var(--text); }
 .mk { display: flex; align-items: center; gap: 12px; min-height: 34px; }
@@ -645,7 +705,9 @@ kbd [data-ico] { font-size: 1.25em; }
 .jq p { margin-top: 5px; color: var(--ink-2); text-wrap: pretty; }
 .jq .obj { display: flex; align-items: baseline; gap: 9px; margin-top: 9px; color: #d3efff; font-weight: 500; }
 .jq .obj::before { content: ''; flex: none; width: 6px; height: 6px; transform: translateY(-2px) rotate(45deg); background: var(--mana); box-shadow: 0 0 6px var(--mana); }
-.jq.main { box-shadow: inset 0 0 0 1px rgba(241, 212, 138, 0.3), inset 3px 0 0 var(--gold); background: linear-gradient(90deg, rgba(241, 212, 138, 0.1), rgba(255, 255, 255, 0.03) 60%); }
+/* the main story: a gilt frame all round, light from the top centre and a crystal crest on its top edge */
+.jq.main { margin-top: 8px; box-shadow: inset 0 0 0 1px rgba(241, 212, 138, 0.42), 0 0 0 3px rgba(9, 11, 24, 0.6), 0 0 0 4px rgba(241, 212, 138, 0.12); background: radial-gradient(ellipse 70% 90% at 50% 0%, rgba(241, 212, 138, 0.13), transparent 70%), rgba(255, 255, 255, 0.03); }
+.jq.main::before { content: ''; position: absolute; left: 50%; top: -5px; width: 9px; height: 9px; margin-left: -4.5px; transform: rotate(45deg); background: linear-gradient(135deg, #fffaf0, var(--gold) 70%); box-shadow: 0 0 0 2px rgba(14, 18, 38, 0.95), 0 0 8px var(--gold); }
 .jq.done { background: none; box-shadow: inset 0 -1px 0 rgba(241, 212, 138, 0.08); padding-top: 11px; padding-bottom: 12px; margin-bottom: 0; }
 .jq.done > .ico { color: var(--ink-3); top: 14px; }
 .jq.done h3 { color: var(--ink-2); font-size: var(--t-l); }
@@ -653,7 +715,11 @@ kbd [data-ico] { font-size: 1.25em; }
 .jq.unk h3 { color: var(--ink-3); }
 /* spell book */
 .jstat { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.jsp { display: grid; grid-template-columns: 56px 1fr; gap: 0 18px; padding: 18px 20px 14px; margin-bottom: 10px; background: rgba(255, 255, 255, 0.035); border-radius: var(--r-1); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 22%, transparent), inset 3px 0 0 var(--c); }
+/* a song's page: framed in a hairline of its colour, its light rising from the sigil's corner and a
+   top edge in its colour that fades out toward both ends */
+.jsp { position: relative; display: grid; grid-template-columns: 56px 1fr; gap: 0 18px; padding: 18px 20px 14px; margin-bottom: 12px; border-radius: var(--r-2);
+  background: linear-gradient(90deg, transparent, var(--c) 30%, var(--c) 70%, transparent) center top / 100% 1px no-repeat, radial-gradient(circle at 48px 46px, color-mix(in srgb, var(--c) 14%, transparent), transparent 220px), rgba(255, 255, 255, 0.03);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 24%, transparent); }
 .jsp .ic { width: 56px; height: 56px; padding: 13px; border-radius: 50%; color: var(--c); background: radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--c) 24%, #1c2340), #090c1a 76%); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 50%, transparent); }
 .jsp .ic svg { width: 100%; height: 100%; filter: drop-shadow(0 0 4px currentColor); }
 .jsp h4 { display: flex; align-items: baseline; gap: 12px; font: 700 21px/1.3 var(--display); letter-spacing: 0.06em; color: var(--c); }
@@ -838,7 +904,11 @@ kbd [data-ico] { font-size: 1.25em; }
 .cr-tag { font: 500 12px/1 var(--uif); letter-spacing: 0.08em; padding: 5px 11px; border-radius: var(--r-pill); background: rgba(255, 255, 255, 0.08); color: var(--ink-2); }
 .cr-card.tech .cr-tag { background: color-mix(in srgb, var(--c) 34%, rgba(0, 0, 0, 0.3)); color: #fff; box-shadow: 0 0 12px -2px var(--c); }
 .cr-card.k-ult .cr-tag { background: linear-gradient(180deg, #fff0c4, #d9b25a); color: #1c1507; }
-.cr-icon { width: 78px; height: 78px; margin: 16px 0 12px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--c) 34%, #1c2340), #0a0d1c 78%); box-shadow: inset 0 0 0 1.5px var(--c), 0 0 0 4px rgba(7, 9, 20, 0.7), 0 0 24px -4px var(--c); }
+.cr-icon { position: relative; width: 78px; height: 78px; margin: 16px 0 12px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--c) 34%, #1c2340), #0a0d1c 78%); box-shadow: inset 0 0 0 1.5px var(--c), 0 0 0 4px rgba(7, 9, 20, 0.7), 0 0 24px -4px var(--c); }
+/* the sigil's resonance: two rings in its colour spreading outward */
+.cr-icon::before, .cr-icon::after { content: ''; position: absolute; border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 40%, transparent); }
+.cr-icon::before { inset: -11px; } .cr-icon::after { inset: -20px; opacity: 0.45; }
+.cr-card.k-ult .cr-icon::before, .cr-card.k-ult .cr-icon::after { border-radius: 18px; }
 .cr-icon > svg { width: 40px; height: 40px; filter: drop-shadow(0 0 6px currentColor); }
 .cr-icon .pair { display: inline-flex; gap: 2px; }
 .cr-icon .pair > span { width: 28px; height: 28px; display: inline-flex; filter: drop-shadow(0 0 5px currentColor); }

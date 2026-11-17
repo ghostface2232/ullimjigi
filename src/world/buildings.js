@@ -2171,13 +2171,14 @@ export function weaponRack(rnd = Math.random) {
 // The random draws per drum follow the code-built versions (arch: offset then turn; pillar: tint then turn).
 function ruinColumn(p, x, y0, h, rnd, arch) {
   for (let k = 0; k < Math.ceil(h / 1.2); k++) {
-    const dh = Math.min(1.2, h - k * 1.2) - 0.05;
+    const dh = Math.min(1.2, h - k * 1.2);
     if (dh < 0.1) break;
     const a = rnd(), b = rnd();
     const [m] = authored('ruin', arch ? ['drumA', 'drumB', 'drumC'][k % 3] : (a < 0.5 ? 'drumA' : k % 2 ? 'drumC' : 'drumB'), p);
-    m.position.set(x + (arch ? (a - 0.5) * 0.05 : 0), y0 + k * 1.2 + dh / 2, 0);
+    m.position.set(x, y0 + k * 1.2 + dh / 2, 0);
     m.scale.y = dh / 1.15;
-    m.rotation.y = b * TAU;
+    // Tenfold rotation keeps carved flutes aligned while preserving random draws.
+    m.rotation.y = Math.floor(b * 10) * TAU / 10;
   }
 }
 export function ruinArch(rnd = Math.random) {

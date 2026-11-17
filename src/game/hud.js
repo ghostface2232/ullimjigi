@@ -27,9 +27,11 @@ function heartSVG(q) {
   ];
   let fill = '';
   for (let i = 0; i < 4; i++) if (i < q) fill += quads[i];
-  return `<svg viewBox="0 0 26 24"><path d="${HEART_PATH}" fill="rgba(12,10,24,.86)" stroke="#fff4dc" stroke-width="1.7" stroke-linejoin="round"/>
+  // dark rim for any backdrop, the filled quarters, a glint on the upper lobe, then a fine cream edge
+  return `<svg viewBox="0 0 26 24"><path d="${HEART_PATH}" fill="rgba(10,10,24,.8)" stroke="rgba(7,9,20,.9)" stroke-width="3.4" stroke-linejoin="round"/>
     <g clip-path="url(#heartClip)" fill="url(#heartFill)">${fill}</g>
-    ${q ? '<path d="M6.3 6.6c1.2-1.5 3.1-1.3 4.1.3" stroke="rgba(255,255,255,.75)" stroke-width="1.3" fill="none" stroke-linecap="round"/>' : ''}</svg>`;
+    ${q ? '<ellipse cx="7" cy="7.3" rx="1.9" ry=".9" transform="rotate(-40 7 7.3)" fill="#fff" fill-opacity=".55"/>' : ''}
+    <path d="${HEART_PATH}" fill="none" stroke="#ffe9d8" stroke-opacity="${q ? 0.9 : 0.45}" stroke-width="1.1" stroke-linejoin="round"/></svg>`;
 }
 // 'verb — target' labels: the part after the dash is set apart
 const dashed = (t) => { const i = t.indexOf(' — '); return i < 0 ? [t, ''] : [t.slice(0, i), t.slice(i + 3)]; };
@@ -44,7 +46,7 @@ export class HUD {
   constructor() {
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     defs.setAttribute('width', 0); defs.setAttribute('height', 0); defs.style.position = 'absolute';
-    defs.innerHTML = `<defs><clipPath id="heartClip"><path d="${HEART_PATH}"/></clipPath><linearGradient id="heartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff7d8c"/><stop offset="1" stop-color="#f03653"/></linearGradient></defs>`;
+    defs.innerHTML = `<defs><clipPath id="heartClip"><path d="${HEART_PATH}"/></clipPath><linearGradient id="heartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff8d98"/><stop offset=".55" stop-color="#ec3a55"/><stop offset="1" stop-color="#b81f3f"/></linearGradient></defs>`;
     document.body.appendChild(defs);
     fillIcons();
     this.el = {
@@ -334,7 +336,9 @@ export class HUD {
     const d = document.createElement('div');
     d.className = 'dmg' + (crit ? ' crit' : '') + (small ? ' small' : '');
     d.style.color = EL_INFO[el]?.css ?? '#fff';
-    d.textContent = crit ? `${n}!` : n;
+    // each number drifts a little to its own side as it rises, so a burst of hits fans out
+    d.style.setProperty('--dx', `${Math.round((Math.random() - 0.5) * 36)}px`);
+    if (crit) d.innerHTML = `<i>${ICON.spark}</i>${n}`; else d.textContent = n;
     this.addFloat(d, pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.8, 0.3 + Math.random() * 0.5, (Math.random() - 0.5) * 0.8)), 1000);
   }
   reaction(pos, info) {
@@ -366,7 +370,8 @@ export class HUD {
   alertMark(e) {
     const d = document.createElement('div');
     d.className = 'alert-mark'; d.innerHTML = ICON.alert;
-    this.addFloat(d, e.center().add(new THREE.Vector3(0, e.height * 0.7, 0)), 900);
+    // anchored where the nameplate is (styles.css lifts it above the plate), not on top of it
+    this.addFloat(d, e.center().setY(e.pos.y + e.height + 0.5), 900);
   }
   playerHurt(n) {
     G.renderer.grade.uniforms.uHurt.value = 1;

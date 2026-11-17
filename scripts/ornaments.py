@@ -43,7 +43,7 @@ for i in range(26):
 spark = lambda x, y, s, o: f"<path d='M{x} {y-s} L{x+s*0.22} {y-s*0.22} L{x+s} {y} L{x+s*0.22} {y+s*0.22} L{x} {y+s} L{x-s*0.22} {y+s*0.22} L{x-s} {y} L{x-s*0.22} {y-s*0.22}Z' fill='#f6e6b8' fill-opacity='{o}'/>"
 stars = uri("<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'>" + ''.join(dots)
   + spark(38, 52, 3.2, .16) + spark(118, 124, 2.6, .12)
-  + "<path d='M38 52 L71 30 L96 44' stroke='#f1d48a' stroke-opacity='.05' fill='none'/></svg>")
+  + "</svg>")  # no constellation line: repeated every tile it read as a grid of chevrons
 
 # rune circle watermark
 ticks = []

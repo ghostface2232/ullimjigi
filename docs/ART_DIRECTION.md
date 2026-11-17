@@ -31,6 +31,12 @@ Three pillars, in priority order:
 - The Silence (고요) and its creatures: the same vocabulary *broken* — hollowed, chipped, ash-grey,
   with emissive seams where a remembered colour leaks through. Menacing by design, never gory.
 - Bevel every hard edge that catches light. Real thickness on plates, tiles, boards, cloth hems.
+- **Never assemble a model from lightly tweaked primitives** (ellipsoids, boxes, cylinders, cones)
+  stacked or intersected. Bodies are one continuous, anatomically designed form with edge flow that
+  follows the form; armour, clothing, fur and architecture are designed components that conform to
+  it, with every junction resolved (tucked, strapped, jointed — never clipping or floating). Sculpt
+  high, retopologise, bake high → low. Test: in a clay render, if you can see where one primitive
+  ends and the next begins, the model fails.
 
 ## Colour script
 

@@ -96,8 +96,8 @@ function altMap(key, variant) {
   return ALT.get(id);
 }
 // Surface response of an authored model on a toon material: the baked maps drive the detail
-// layer hooks of the toon shader (_rough / _specK / _cav), the light ramp becomes a soft
-// half-lambert so the sculpt reads, smooth and metallic texels mirror the sky, and the
+// layer hooks of the toon shader (_rough / _specK / _cav). The sculpt keeps the shared
+// two-band ramp, smooth and metallic texels mirror the sky, and the
 // albedo's alpha is a glow mask lit with `glow` (a Color shared with the tier-coloured glow
 // material). o: { spec (highlight strength), metal (extra on metallic texels), ao, glowK, bump,
 // glowAlb (0..1: the glow takes the painted colour: lit eyes and marks), glowBoost (extra light
@@ -110,11 +110,10 @@ export function surfaced(m, tex, o = {}) {
   m.userData.surf = u;
   return extendMat(m, 'surfaced', u, (sh) => {
     sh.fragmentShader = 'uniform sampler2D uOrm;\nuniform vec4 uSurfP;\nuniform vec3 uGlowC;\nuniform vec2 uGlowA;\n' + sh.fragmentShader
-      .replace('float g = texture2D( gradientMap, vec2( clamp( ndl * 0.5 + 0.5, 0.0, 1.0 ), 0.5 ) ).r;', 'float g = smoothstep( -0.3, 0.7, ndl );')
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
   vec4 _mo = texture2D( uOrm, vMapUv );
   float _mGlow = 1.0 - texture2D( map, vMapUv ).a;
-  _rough = clamp( _mo.g, 0.06, 1.0 ); _cav = mix( 1.0, _mo.r, uSurfP.z ); _specK = uSurfP.x * ( 1.0 + _mo.b * uSurfP.y );
+  _rough = clamp( _mo.g, 0.18, 1.0 ); _cav = mix( 1.0, _mo.r, uSurfP.z ); _specK = uSurfP.x * ( 1.0 + _mo.b * uSurfP.y );
   diffuseColor.rgb *= 1.0 - 0.5 * _mo.b;`)
       .replace('#include <opaque_fragment>', `{
   vec3 _sv = normalize( vViewPosition );
@@ -127,7 +126,11 @@ export function surfaced(m, tex, o = {}) {
   vec3 _tint = mix( vec3( 1.0 ), diffuseColor.rgb / max( max( diffuseColor.r, diffuseColor.g ), max( diffuseColor.b, 0.05 ) ), 0.85 );
   outgoingLight += _env * _tint * ( _mo.b * _gl * uSurfP.y * 0.35 * _cav );
   outgoingLight += uSkyRefl * ( ( 0.04 + 0.96 * _fr ) * _gl * _gl * _cav * _specK * 0.4 );
-  outgoingLight = mix( outgoingLight, mix( uGlowC, uGlowC * diffuseColor.rgb, uGlowA.x ) * ( uSurfP.w * ( 1.0 + uGlowA.y * smoothstep( 0.86, 1.0, _mGlow ) ) ), _mGlow );
+  // Keep the painted seam's edge, with only the full-intensity core feeding bloom.
+  float _glowEdge = smoothstep(0.02, 0.95, _mGlow);
+  vec3 _seam = mix(uGlowC, uGlowC * diffuseColor.rgb, uGlowA.x) * uSurfP.w;
+  outgoingLight = mix(outgoingLight, _seam, _glowEdge);
+  outgoingLight += _seam * uGlowA.y * smoothstep(0.86, 1.0, _mGlow);
 }
 #include <opaque_fragment>`);
   });

@@ -2,7 +2,7 @@
 // animation, faces, expressions and gestures. See characters.js for the contract.
 import * as THREE from 'three';
 import { G } from '../core/context.js';
-import { toon, addOutline, glowMat, ghostMat } from '../render/materials.js';
+import { toon, addOutline, glowMat, ghostMat, characterMaterial, characterOutline } from '../render/materials.js';
 import { damp, clamp, lerp, rand } from '../core/util.js';
 import { Sculpt, tube, blob, sheet, prof, sstep, mix, TAU, instance, bodyMat, faceMat, crackMat, ghostSkinMat, ik2, setWorldQuat, rotateTowards, Chain, Spring, SkelDef, clothMat, SURF, faceMat2, olMat, skinMat, eyeMat } from './charkit.js';
 import * as HB from './humanoid.js';
@@ -557,7 +557,8 @@ export class HumanRig extends Rig {
     const M = (this.M = {});
     const F2 = T.built.face;      // authored, sculpted head
     if (T.v2) {
-      M.skin = skinMat({ tex: T.built.tex.skin }); M.eye = eyeMat(c.eyeColor ?? 0x3a5a7a, { iris: c.irisR, pupil: c.pupilR, soft: c.eyeSoft });
+      M.skin = skinMat({ tex: T.built.tex.skin, rim: 0.12 }); M.eye = eyeMat(c.eyeColor ?? 0x3a5a7a, { iris: c.irisR, pupil: c.pupilR, soft: c.eyeSoft });
+      M.skin.normalScale.setScalar(0.55);
       this.faceU = { v2: true };
     } else if (F2) {
       const sp = F2.spec, F = T.face || HB.faceParams(c, T.L);
@@ -584,12 +585,18 @@ export class HumanRig extends Rig {
       u.uFaceX.value.set(F.fringeY, F.noseY, F.lip, F.lowLash);
       this.faceU = u;
     } else this.faceU = null;
-    M.main = clothMat({ rim: o.rim ?? 0.34, tex: T.v2 ? T.built.tex.main : null });
+    M.main = clothMat({ rim: o.rim ?? 0.28, relief: 0.75, tex: T.v2 ? T.built.tex.main : null });
     M.main.userData.cloth.uHairC.value.set(T.L.HC.x, T.L.HC.y, T.L.HC.z, T.L.hr);
+    if (T.v2) {
+      const head = { x: T.L.HC.x, y: T.L.HC.y, z: T.L.HC.z, w: T.L.hr };
+      characterMaterial(M.skin, 'skin', head);
+      characterMaterial(M.main, 'cloth', head);
+    }
     if (o.mats) Object.assign(M, o.mats);
     this.mats = Object.values(M).filter((m) => m.isMeshToonMaterial);
     this.glowMats = Object.values(M).filter((m) => !m.isMeshToonMaterial);
     const I = instance(body, T.def, T.built, M, { outline: o.outline ?? (c.outline ? (T.v2 ? 0.0024 : 0.0048) : 0), outlineTint: !o.mats, main: 'main' });
+    if (T.v2 && I.outline && I.outline.geometry.attributes.olw) I.outline.material = characterOutline(I.outline.material);
     this.B = I.by; this.mesh = I.mesh; this.skeleton = I.skeleton; this.outline = I.outline;
     this.meshes = I.meshes;
     if (F2) {

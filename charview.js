@@ -5,6 +5,7 @@ import { G } from './src/core/context.js';
 import { U, toon } from './src/render/materials.js';
 import * as HR from './src/game/humanrig.js';
 import { preloadModels } from './src/render/models.js';
+import { Renderer } from './src/render/renderer.js';
 
 await preloadModels();
 
@@ -23,24 +24,41 @@ for (const load of [() => import('./src/game/creatures.js'), () => import('./src
 }
 
 const q = new URLSearchParams(location.search);
-const W = +(q.get('w') || 960), H = +(q.get('h') || 540);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(W, H); renderer.setPixelRatio(1);
+const pipelineOn = q.has('pipeline');
+const W = pipelineOn ? innerWidth : +(q.get('w') || 960), H = pipelineOn ? innerHeight : +(q.get('h') || 540);
+G.settings.quality = q.get('q') || 'high';
+const pipeline = pipelineOn ? new Renderer(document.createElement('canvas')) : null;
+const renderer = pipeline ? pipeline.renderer : new THREE.WebGLRenderer({ antialias: true });
+if (!pipeline) { renderer.setSize(W, H); renderer.setPixelRatio(1); }
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NeutralToneMapping; renderer.toneMappingExposure = 0.92;
-renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
+if (!pipeline) renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 document.body.appendChild(renderer.domElement);
-const scene = new THREE.Scene();
+const scene = pipeline ? pipeline.scene : new THREE.Scene();
 scene.background = new THREE.Color(0x9cc4e0);
-const cam = new THREE.PerspectiveCamera(30, W / H, 0.05, 200);
+const cam = pipeline ? pipeline.camera : new THREE.PerspectiveCamera(30, W / H, 0.05, 200);
+cam.fov = 30; cam.near = 0.05; cam.far = 200; cam.updateProjectionMatrix();
 G.scene = scene; G.camera = cam;
+if (pipeline) G.renderer = pipeline;
 const sun = new SunLight(0xffffff, 2.5);   // the game's key light, so the toon and skin shading match
 const sd = new THREE.Vector3(0.45, 0.8, 0.55).normalize();
 sun.position.copy(sd); sun.castShadow = true;
 sun.shadow.bias = -0.00022; sun.shadow.normalBias = 0.05; sun.shadow.radius = 3.2; sun.shadow.camera.far = 40;
 scene.add(sun);
 U.sunDir.value.copy(sd);
-scene.add(new THREE.HemisphereLight(0xbfd8ff, 0x7a8a5a, 1.2));
+const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x7a8a5a, 1.2);
+scene.add(hemi);
+function light(night = false) {
+  scene.background.set(night ? 0x142139 : 0x9cc4e0);
+  sun.color.set(night ? 0xb4caff : 0xffffff); sun.intensity = night ? 0.45 : 2.5;
+  hemi.color.set(night ? 0x6b83b4 : 0xbfd8ff); hemi.groundColor.set(night ? 0x424452 : 0x7a8a5a); hemi.intensity = night ? 0.4 : 1.2;
+  U.rimColor.value.copy(sun.color).multiplyScalar(night ? 0.22 : 0.9);
+  U.skyRefl.value.set(night ? 0x45577e : 0xa4bfdf);
+  U.cloud.value.w = 0;
+}
+light(q.has('night'));
+if (pipeline) pipeline.grade.uniforms.uSat.value = +(q.get('sat') || 1.12);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), toon(0x7fa860, { noAO: true }));
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
 
@@ -111,7 +129,13 @@ function step(n = 1, dt = 1 / 30) {
     for (const r of rigs) { const s = typeof r.state === 'function' ? r.state(t) : r.state; r.update(dt, s); }
   }
 }
-function render() { renderer.render(scene, cam); }
+function render() {
+  if (pipeline) {
+    renderer.info.autoReset = false; renderer.info.reset();
+    pipeline.render(1 / 60);
+    renderer.info.autoReset = true;
+  } else renderer.render(scene, cam);
+}
 let tris = 0;
 const info = {};
 for (const r of rigs) {
@@ -137,8 +161,11 @@ function look(x, y, z, dist, yaw = 0, el = 0, fov = 30) {
 // post the canvas to the local capture receiver (dev tooling)
 async function shot(name) {
   render();
+  // Pass an explicit receiver belonging to this viewer's operator; no shared capture port.
+  const receiver = q.get('receiver');
+  if (!receiver) return renderer.domElement.toDataURL('image/png');
   const blob = await new Promise((r) => renderer.domElement.toBlob(r, 'image/jpeg', 0.93));
-  await fetch('http://127.0.0.1:5197/' + name + '.jpg', { method: 'POST', mode: 'no-cors', body: blob });
+  await fetch(receiver.replace(/\/$/, '') + '/' + name + '.jpg', { method: 'POST', mode: 'no-cors', body: blob });
   return name;
 }
 function setSun(x, y, z) { sd.set(x, y, z).normalize(); sun.position.copy(sd); U.sunDir.value.copy(sd); }
@@ -235,7 +262,7 @@ motion.step = (n = 1, dt = 1 / 60) => {
   }
   render(); return motion.trace.at(-1);
 };
-window.V = { THREE, G, C, rigs, scene, cam, step, render, frame, info, buildMs, sim, look, shot, setSun, renderer, motion, setAll(s) { for (const r of rigs) r.state = s; } };
+window.V = { THREE, G, C, rigs, scene, cam, step, render, frame, info, buildMs, sim, look, shot, setSun, light, renderer, pipeline, motion, setAll(s) { for (const r of rigs) r.state = s; } };
 step(10);
 render();
 if (q.has('motion')) { motion.start(q.get('motion')); motion.step(Math.max(0, Math.min(600, +(q.get('frame') || 0)))); }

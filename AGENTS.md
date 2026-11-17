@@ -111,6 +111,12 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 지형만 빨리 보려면 개발 서버에서 `/terrainview.html`(인자 `x`·`y`·`z`·`lx`·`ly`·`lz`·`h`·`fov`·`q`)을 여세요. `__tv.shot(name, [x, y, z], [lx, ly, lz], hour)`가 캔버스를 캡처해 로컬 수신기로 보냅니다.
 
 ### 렌더 파이프라인과 품질 단계
+- `Renderer.render`는 첫 플레이 프레임과 품질 변경 뒤 첫 프레임에서 기존 `VFX.prewarm()`을 시작합니다. 월드의 최종 조명·안개와 HDR 목표가 준비된 시점에 견본을 컴파일하여, `VFX.update`의 1초 뒤 조명 검사와 첫 시전이 겹치지 않게 합니다. 이후 조명 구성 변화 감지는 기존 `VFX.rewarm`이 계속 맡습니다.
+- 캐릭터 마무리 응답은 `materials.js`의 `characterMaterial`이 맡습니다. `HumanRig`의 작성 모델(v2) 재질 설정에서 피부·의상에 한 번만 적용합니다. 얼굴의 확산광은 스킨 변환을 거친 머리 정면·가로축을 따라가고, 얼굴 영역에서만 그림자 맵의 자기 그림자를 완화합니다. 눈 재질과 catchlight는 그대로 유지합니다. 머리카락은 기존 UV 가닥 방향의 이방성 하이라이트를 쓰되 밴드 경계를 화면 미분으로 부드럽게 합니다. 이 확장은 `customProgramCacheKey`에 포함되므로 compile/prewarm 전에 적용해야 합니다.
+- 캐릭터의 정점 색 외곽선은 `characterOutline`이 공유 재질을 복제·캐시하여 거리별 두께를 보정합니다(가까이서 0.65배, 멀리서 최대 2.8배). 공유된 `olMat` 재질을 직접 고치지 마세요. 일반 hull도 같은 거리 보정을 씁니다. 지형·식생 이외 툰 재질의 림은 해 방향을 따르고, 두 명암 밴드 사이에 얇은 따뜻한 전이색을 넣습니다.
+- 블룸은 1.35~1.65 선형 밝기에서 부드럽게 추출합니다. r186 `UnrealBloomPass`의 호환용 3배 이득과 합계 3인 밉 가중치를 정규화하고, 가우스 탭도 합계 1로 맞춥니다. `bloom.strength`는 빛을 퍼뜨리는 비율이며 `grade`의 `uBloomScatter`가 광원 본체에서 같은 비율을 빼므로 두 값을 따로 조정하지 마세요. 4× MSAA와 기존 패스 수는 유지하며, 상시 색수차는 없고 피격 연출에서만 켭니다.
+- AO는 기존 반해상도 10샘플이며 깊이 차이가 큰 경계를 넘지 않도록 블러·업샘플을 제한합니다. 대응하는 깊이 표본이 없으면 오클루전을 적용하지 않습니다. `TIERS`의 `aoRadius`·`aoStrength`·`sharp`가 접촉 범위·강도·대비 제한 선명화를 정합니다. 낮음·보통은 깊이 효과와 선명화를 추가하지 않습니다. 빛줄기는 구름 그림자 강도(`U.cloud.w`)를 반영합니다. 공기 원근은 4~32m에서 서서히 시작하고 먼 색의 채도 감쇠를 줄이며, `fog*` 유니폼 이름과 하늘이 공급하는 색은 유지합니다.
+- 캐릭터 뷰어에 `?pipeline`을 붙이면 실제 게임의 HDR·MSAA·블룸·AO·색보정 파이프라인을 사용합니다(크기는 브라우저 뷰포트). `&q=high`·`&sat=0.80`·`&night`로 품질·채도·밤 조명을 비교할 수 있고, `V.light(true/false)`로 조명을 바꿉니다. `V.shot`은 `receiver` 주소를 명시했을 때만 전송하고, 없으면 PNG data URL을 돌려줍니다.
 - 해의 빛은 three.js의 `SunLight`(캐스케이드 2단)입니다. 방향은 `sun.position`(빛 쪽 방향 벡터), 그림자 도달 거리는 `sun.shadow.camera.far`(`tier().shadowDist`)입니다. `DirectionalLight`용 셰이더 청크(`directionalShadowMap` 등)는 쓰이지 않으니, 그림자를 읽는 커스텀 셰이더는 `getSunShadow( sunShadowMap[ 0 ], sunLightShadows[ 0 ], 0 )`를 쓰세요(예: `grass.js`).
 - 장면 타깃의 **알파는 오클루전 마스크**입니다(불투명 표면 1, 풀 0.3). 새 불투명 커스텀 셰이더는 알파 1을 쓰세요.
 - 표면 층은 `toon(..., { tex })`의 종류로 고릅니다(`materials.js`의 `SURF_OF`: 층 번호, 타일 크기, 요철 세기). 새 층은 `surfaces.js`의 `surf()`에 높이·색·거칠기 함수를 더하고 `LAYERS`를 늘리세요. 주기 노이즈(`vn`·`fbm`·`voro`의 `per`)만 써야 타일이 이어집니다.

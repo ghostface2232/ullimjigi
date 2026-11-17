@@ -12,6 +12,20 @@ export const SHADOW_LAYER = 5;
 // Bloom that stops after compositing its mips. The grade pass adds the result while it
 // already reads the frame, instead of a separate full-resolution additive blend.
 class BloomPass extends UnrealBloomPass {
+  constructor(...args) {
+    super(...args);
+    // r186's compatibility gain is 3, and its five mip weights sum to 3.
+    // Normalize both: strength now means the fraction scattered out of the bright source.
+    this.compositeMaterial.fragmentShader = this.compositeMaterial.fragmentShader.replace('3.0 * bloomStrength', 'bloomStrength / 3.0');
+    this.highPassUniforms.smoothWidth.value = 0.3;
+    // The bilinear Gaussian taps must conserve DC energy through every downsample.
+    for (const m of this.separableBlurMaterials) {
+      const u = m.uniforms;
+      const sum = u.centerWeight.value + 2 * u.gaussianWeights.value.reduce((a, b) => a + b, 0);
+      u.centerWeight.value /= sum;
+      u.gaussianWeights.value = u.gaussianWeights.value.map(w => w / sum);
+    }
+  }
   get texture() { return this.renderTargetsHorizontal[0].texture; }
   render(renderer, writeBuffer, readBuffer) {
     renderer.getClearColor(this._oldClearColor);
@@ -83,7 +97,7 @@ void main(){
   float z = -P.z;
   float ao = 1.0;
   #ifdef AO
-  if (z < uAo.w) {
+  if (z > 0.0 && z < uAo.w) {
     // normal from the nearer neighbour on each axis, so silhouettes do not bend it
     vec3 Pr = viewPos(vUv + vec2(uPx.x, 0.0)), Pl = viewPos(vUv - vec2(uPx.x, 0.0));
     vec3 Pu = viewPos(vUv + vec2(0.0, uPx.y)), Pd = viewPos(vUv - vec2(0.0, uPx.y));
@@ -135,7 +149,7 @@ void main(){
       }
       if (uCloud.w > 0.0) {
         vec2 q = pw.xz + uSunW.xz * ((160.0 - pw.y) / max(uSunW.y, 0.25));
-        lit *= 1.0 - smoothstep(0.5, 0.64, texture2D(uNoiseTex, (q + uCloud.xy) * uCloud.z).r) * step(pw.y, 160.0);
+        lit *= 1.0 - uCloud.w * smoothstep(0.5, 0.64, texture2D(uNoiseTex, (q + uCloud.xy) * uCloud.z).r) * step(pw.y, 160.0);
       }
       // nearer air counts for more, so the gaps between nearby crowns show as beams
       acc += lit * exp(-max(pw.y, 0.0) * uShaft.z - t * 0.011) * (t1 - t0);
@@ -158,7 +172,7 @@ varying vec2 vUv;
 void main(){
   vec4 c = texture2D(tFx, vUv);
   vec2 acc = c.rg * 0.2;
-  float ws = 0.2, tol = c.b * 0.06 + 2e-5;
+  float ws = 0.2, tol = c.b * 0.025 + 1.5e-5;
   for (int i = 1; i <= 4; i++) {
     float w0 = 0.2 - 0.04 * float(i);
     for (int s = -1; s <= 1; s += 2) {
@@ -182,7 +196,7 @@ uniform sampler2D tDiffuse, tBloom, tDistort, tDepth, tFx;
 uniform vec2 uFxRes, uPx, uNF;
 uniform vec3 uAoTint, uShaftColor, uGlareColor;
 uniform vec4 uDof, uSunScr;
-uniform float uSharp;
+uniform float uSharp, uBloomScatter;
 uniform float uDistort, uTime, uImpact, uHurt, uLowHp, uSat, uVignette, uFlash, uMono, uAspect, uSlowmo;
 uniform vec3 uFlashColor;
 varying vec2 vUv;
@@ -197,7 +211,7 @@ void main(){
   vec2 c = uv - 0.5;
   vec2 off = vec2(0.0);
   if (uDistort > 0.5) off = clamp(texture2D(tDistort, uv).xy, vec2(-0.08), vec2(0.08));
-  float ca = 0.0012 + uImpact * 0.010;
+  float ca = uImpact * 0.010;
   vec2 ur = uv - c * ca + off * 1.08, ug = uv + off, ub = uv + c * ca + off * 0.92;
   vec3 sc;
   sc.r = texture2D(tDiffuse, ur).r;
@@ -230,7 +244,9 @@ void main(){
   {
     float nb = (texture2D(tDiffuse, ug + vec2(uPx.x, 0.0)).g + texture2D(tDiffuse, ug - vec2(uPx.x, 0.0)).g
       + texture2D(tDiffuse, ug + vec2(0.0, uPx.y)).g + texture2D(tDiffuse, ug - vec2(0.0, uPx.y)).g) * 0.25;
-    sc += clamp(mid.g - nb, -0.05, 0.05) * uSharp * (1.0 - soft);
+    // Relative contrast limit: dark edges and bright seams cannot acquire ringing halos.
+    float detail = clamp(mid.g - nb, -0.035, 0.035);
+    sc *= 1.0 + clamp(detail / max(mid.g, 0.08), -0.12, 0.12) * uSharp * (1.0 - soft);
   }
   #endif
   #ifdef FX
@@ -240,10 +256,11 @@ void main(){
     vec2 b0 = (floor(st) + 0.5) * ipx;
     vec4 s00 = texture2D(tFx, b0), s10 = texture2D(tFx, b0 + vec2(ipx.x, 0.0));
     vec4 s01 = texture2D(tFx, b0 + vec2(0.0, ipx.y)), s11 = texture2D(tFx, b0 + ipx);
-    float zn = min(zc / uNF.y, 1.0), tol = zn * 0.04 + 1e-5;
+    float zn = min(zc / uNF.y, 1.0), tol = zn * 0.018 + 1.5e-5;
     vec4 w = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y)
-      * (1.0 / (1.0 + abs(vec4(s00.b, s10.b, s01.b, s11.b) - zn) / tol)) + 1e-4;
-    vec2 fx = (s00.rg * w.x + s10.rg * w.y + s01.rg * w.z + s11.rg * w.w) / (w.x + w.y + w.z + w.w);
+      * max(vec4(0.0), 1.0 - abs(vec4(s00.b, s10.b, s01.b, s11.b) - zn) / tol);
+    float ws = w.x + w.y + w.z + w.w;
+    vec2 fx = ws > 1e-5 ? (s00.rg * w.x + s10.rg * w.y + s01.rg * w.z + s11.rg * w.w) / ws : vec2(1.0, 0.0);
     // occlusion cools and darkens what it shades; glowing pixels are left alone
     float lsc = dot(sc, vec3(0.2126, 0.7152, 0.0722));
     float occ = (1.0 - fx.r) * (1.0 - smoothstep(0.9, 2.2, lsc)) * clamp(mid.a, 0.0, 1.0);
@@ -256,7 +273,9 @@ void main(){
     #endif
   }
   #endif
-  vec3 col = sc;
+  // Scatter, rather than duplicate, the bright source. Matches bloom's soft extraction.
+  float bloomGate = smoothstep(1.35, 1.65, dot(mid.rgb, vec3(0.2126, 0.7152, 0.0722)));
+  vec3 col = sc * (1.0 - uBloomScatter * bloomGate);
   if (uSunScr.z > 0.001) {
     // looking into the sun: a veil of glare around it and faint ghosts along the line
     // through the centre of the lens
@@ -282,7 +301,7 @@ void main(){
   float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
   col = mix(vec3(l), col, uSat * (1.0 - uMono));
   // painterly split tone: cool shadows, warm highlights
-  col *= mix(vec3(0.95, 0.99, 1.07), vec3(1.04, 1.0, 0.95), smoothstep(0.02, 0.9, l));
+  col *= mix(vec3(0.97, 0.99, 1.035), vec3(1.025, 1.0, 0.975), smoothstep(0.02, 0.9, l));
   // gentle shadow lift (soft, low-contrast BotW look)
   col += vec3(0.006, 0.008, 0.014) * (1.0 - smoothstep(0.0, 0.25, l));
   float d = length(c * vec2(uAspect, 1.0) * vec2(0.8, 1.0));
@@ -301,7 +320,7 @@ void main(){
   float hurt = uHurt * 0.75 + uLowHp * (0.28 + 0.14 * sin(uTime * 6.0));
   col = mix(col, vec3(0.55, 0.02, 0.04) * (0.6 + l), clamp(edge * hurt, 0.0, 0.85));
   col += uFlashColor * uFlash;
-  gl_FragColor = vec4(col, 1.0);
+  gl_FragColor = vec4(max(col, vec3(0.0)), 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
   // 8-bit output: break up banding in the sky and fog gradients
@@ -348,7 +367,7 @@ export class Renderer {
     // distortion objects live in their own scene and render into a half-res float target
     this.distortScene = new THREE.Scene();
     this.distortRT = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: false });
-    this.bloom = new BloomPass(new THREE.Vector2(256, 256), 0.42, 0.5, 1.35);
+    this.bloom = new BloomPass(new THREE.Vector2(256, 256), 0.28, 0.18, 1.35);
     const fxRT = () => new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: false });
     this.fxA = fxRT(); this.fxB = fxRT();
     this.fxMat = fsMat({
@@ -373,9 +392,9 @@ export class Renderer {
         uSunScr: { value: new THREE.Vector4(0.5, 0.5, 0, 0) }, uGlareColor: { value: new THREE.Color(1, 0.9, 0.7) },
         // amount, focus distance (m), far range (× focus), largest blur radius (screen heights)
         uDof: { value: new THREE.Vector4(0, 4, 0.9, 0.012) },
-        uSharp: { value: 0.5 },
+        uSharp: { value: 0.3 }, uBloomScatter: { value: this.bloom.strength },
         uDistort: { value: 0 }, uTime: { value: 0 }, uImpact: { value: 0 }, uHurt: { value: 0 }, uLowHp: { value: 0 },
-        uSat: { value: 1.12 }, uVignette: { value: 0.32 }, uFlash: { value: 0 }, uFlashColor: { value: new THREE.Color(1, 1, 1) },
+        uSat: { value: 1.12 }, uVignette: { value: 0.2 }, uFlash: { value: 0 }, uFlashColor: { value: new THREE.Color(1, 1, 1) },
         uMono: { value: 0 }, uAspect: { value: 1 },
         // 0..1 slow-motion look (perfect dodge): desaturate, cool tint, pulsing vignette
         uSlowmo: { value: 0 },
@@ -396,9 +415,12 @@ export class Renderer {
 
   applyQuality() {
     const T = tier(), r = this.renderer;
+    this.effectsWarm = false;
     r.shadowMap.enabled = T.shadowMap > 0;
     const fx = T.ao || T.shafts, depth = fx || T.dof;
     this.fxOn = fx;
+    this.fxMat.uniforms.uAo.value.set(T.aoRadius, T.aoStrength, 90, 170);
+    this.grade.uniforms.uSharp.value = T.sharp;
     const def = (m, d) => { if (JSON.stringify(m.defines) !== JSON.stringify(d)) { m.defines = d; m.needsUpdate = true; } };
     const fd = {};
     if (T.ao) fd.AO = 1;
@@ -408,7 +430,7 @@ export class Renderer {
     if (depth) gd.USE_DEPTH = 1;
     if (fx) gd.FX = 1;
     if (T.dof) gd.DOF = 1;
-    if (T.dpr >= 1.5) gd.SHARP = 1;
+    if (T.sharp > 0) gd.SHARP = 1;
     gd.FX_DEBUG = this.debugFx | 0; // dev: 1 shows the occlusion buffer, 2 the shafts (set, then applyQuality())
     def(this.grade, gd);
     if (!this.sceneRT || !!this.sceneRT.depthTexture !== depth) this.buildSceneTarget(depth);
@@ -492,7 +514,7 @@ export class Renderer {
       f.uShaft.value.w = sh._cascadeData[1].y;
       shaft = sky.shaft;
     }
-    f.uShaft.value.y = shaft > 0 ? 0.018 : 0;
+    f.uShaft.value.y = shaft > 0 ? 0.012 : 0;
     if (sky) {
       g.uShaftColor.value.copy(sky.sun.color).multiplyScalar(sky.sun.intensity * 0.3 * shaft);
       g.uAoTint.value.copy(U.shadeTint.value).multiplyScalar(1.15);
@@ -511,7 +533,15 @@ export class Renderer {
   render(dt) {
     const r = this.renderer, u = this.grade.uniforms, cam = this.camera;
     this.pace(dt);
+    // The world's final lights/fog are now present. Start the existing HDR template
+    // compilation before the first playable frame (and after a quality switch), rather
+    // than waiting for VFX.update's one-second lighting check during the first spell.
+    if (!this.effectsWarm && G.state === 'play' && G.vfx) {
+      this.effectsWarm = true;
+      G.vfx.prewarm();
+    }
     u.uTime.value = G.realTime;
+    u.uBloomScatter.value = this.bloom.strength;
     u.uNF.value.set(cam.near, cam.far);
     // depth of field: dialogue and cutscene shots focus on what the camera looks at
     const rig = G.cameraRig;

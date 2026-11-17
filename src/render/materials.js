@@ -340,12 +340,14 @@ THREE.ShaderChunk.fog_fragment = /* glsl */ `
     float _k = abs( _dy ) > 1e-3 ? ( 1.0 - exp( - _dy ) ) / _dy : 1.0;
     _od += fogHeight.x * exp( - _b * _h0 ) * _fd * _k;
   }
+  // Keep portrait and interaction distance clear; layer the air behind the subject.
+  _od *= smoothstep( 4.0, 32.0, _fd );
   vec3 _f = 1.0 - exp( - _od * vec3( 0.84, 0.96, 1.14 ) );
   float _sun = pow( max( dot( _rd, fogSunDir ), 0.0 ), 7.0 );
   vec3 _fc = mix( fogColor, fogFarColor.rgb, fogFarColor.w * smoothstep( 30.0, 380.0, _fd ) );
   _fc += fogSunColor * _sun;
   float _lum = dot( gl_FragColor.rgb, vec3( 0.2126, 0.7152, 0.0722 ) );
-  gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3( _lum ), min( _f.g * 0.45, 0.4 ) );
+  gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3( _lum ), min( _f.g * 0.24, 0.24 ) );
   gl_FragColor.rgb = mix( gl_FragColor.rgb, _fc, _f );
 }
 #endif`;
@@ -471,7 +473,14 @@ const RIM_FRAG = `
     vec3 _vd = normalize(vViewPosition);
     float _r = 1.0 - clamp(dot(normal, _vd), 0.0, 1.0);
     float _lit = clamp(dot(reflectedLight.directDiffuse, vec3(0.6)), 0.0, 1.0);
-    outgoingLight += uRimColor * smoothstep(0.5, 1.0, _r) * uRim * (0.35 + 0.65 * _lit);
+    #ifdef SHAPED_RIM
+      vec3 _nw = inverseTransformDirection(normal, viewMatrix);
+      float _key = smoothstep(-0.2, 0.65, dot(_nw, uSunW));
+      // A narrow sun-facing edge, rather than an ambient halo around the whole silhouette.
+      outgoingLight += uRimColor * smoothstep(0.62, 0.94, _r) * uRim * (0.12 + 0.88 * _key) * (0.3 + 0.7 * _lit);
+    #else
+      outgoingLight += uRimColor * smoothstep(0.5, 1.0, _r) * uRim * (0.35 + 0.65 * _lit);
+    #endif
     #ifdef SURF_SPEC
       // the sky in smooth and wet surfaces, strongest at grazing angles
       float _gl = 1.0 - _rough;
@@ -537,6 +546,10 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
     #endif
     float lit = g * _dirShadow * _cloudSh;
     vec3 irr = directLight.color * mix( uShadeTint, vec3( 1.0 ), lit ) * mix( 1.0, _cav, 0.55 );
+    #ifdef SHAPED_RIM
+      // Thin warm transition between the cool shadow band and the lit paint.
+      irr += directLight.color * vec3(0.12, 0.038, 0.009) * (4.0 * g * (1.0 - g) * _dirShadow * _cloudSh);
+    #endif
     reflectedLight.directDiffuse += irr * BRDF_Lambert( material.diffuseColor );
     if ( _specK > 0.0 ) {
       vec3 hv = normalize( directLight.direction + geometryViewDir );
@@ -1063,6 +1076,7 @@ export function patch(m, opts = {}) {
     const isToon = fs.includes('#include <lights_toon_pars_fragment>');
     let defs = '';
     if (isToon) {
+      if (!isTerrain && !foliage) defs += '#define SHAPED_RIM\n';
       // rock props are lit like the cliffs they stand against (the terrain's soft ramp)
       if (isTerrain || texKind === 'rock') defs += '#define TOON_SOFT\n';
       else if (foliage) defs += '#define TOON_FOLIAGE\n';
@@ -1106,7 +1120,69 @@ export function patch(m, opts = {}) {
       sh.fragmentShader = cl + TERRAIN_FRAG_PARS + sh.fragmentShader.replace('#include <color_fragment>', TERRAIN_FRAG);
     }
   };
-  m.customProgramCacheKey = () => `toon6|${hasSway}|${isTerrain}|${isCliff}|${foliage}|${texKind}|${!!opts.noAO}|${!!opts.leafy}|${!!opts.noMoss}|${lodFade}|${cards}`;
+  m.customProgramCacheKey = () => `toon7|${hasSway}|${isTerrain}|${isCliff}|${foliage}|${texKind}|${!!opts.noAO}|${!!opts.leafy}|${!!opts.noMoss}|${lodFade}|${cards}`;
+  return m;
+}
+
+// Final material response for authored people. Kept here so the rig only selects materials;
+// skin, eyes and cloth retain charkit's maps, expressions and prewarm cache contract.
+export function characterMaterial(m, kind, head) {
+  const base = m.onBeforeCompile, key = m.customProgramCacheKey;
+  const portrait = { value: new THREE.Vector4(head.x, head.y, head.z, head.w) };
+  m.onBeforeCompile = (sh, r) => {
+    base.call(m, sh, r);
+    if (kind === 'skin') {
+      sh.uniforms.uPortraitHead = portrait;
+      sh.vertexShader = 'uniform vec4 uPortraitHead;\nvarying vec3 vPortraitP, vPortraitF, vPortraitR;\n' + sh.vertexShader
+        .replace('#include <defaultnormal_vertex>', `#include <defaultnormal_vertex>
+  vec3 _pf = vec3(0.0, 0.0, 1.0), _pr = vec3(1.0, 0.0, 0.0);
+  #ifdef USE_SKINNING
+    _pf = (skinMatrix * vec4(_pf, 0.0)).xyz;
+    _pr = (skinMatrix * vec4(_pr, 0.0)).xyz;
+  #endif
+  vPortraitF = normalMatrix * _pf; vPortraitR = normalMatrix * _pr;
+  vPortraitP = (position - uPortraitHead.xyz) / max(uPortraitHead.w, 0.01);`);
+      sh.fragmentShader = 'varying vec3 vPortraitP, vPortraitF, vPortraitR;\nvec3 _portraitLocal = vec3(0.0);\n' + sh.fragmentShader
+        .replace('reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );', 'vec3 _localIrr = irradiance * BRDF_Lambert( material.diffuseColor ); reflectedLight.directDiffuse += _localIrr; _portraitLocal += _localIrr;')
+        .replace('float _ndl = dot(normal, sunLights[0].direction);', `
+  // Broad facial planes follow the skinned head, never the camera. Nose/cheek relief
+  // remains in the sheen; it cannot chop the diffuse face into tiny shadow islands.
+  float _faceK = smoothstep(-0.9, -0.5, vPortraitP.y) * (1.0 - smoothstep(0.7, 1.1, vPortraitP.y)) * smoothstep(-0.2, 0.25, vPortraitP.z);
+  vec3 _faceN = normalize(normalize(vPortraitF) + normalize(vPortraitR) * clamp(vPortraitP.x, -1.0, 1.0) * 0.42 + normalize(cross(vPortraitF, vPortraitR)) * 0.12);
+  float _ndl = dot(normalize(mix(normal, _faceN, _faceK * 0.9)), sunLights[0].direction);`)
+        .replace('float _sh = _dirShadow * _cloudSh;', 'float _sh = mix(_dirShadow, 1.0, _faceK * 0.8) * _cloudSh;')
+        .replace('vec3 _base = reflectedLight.directDiffuse / mix(uShadeTint, vec3(1.0), _g * _sh);', 'vec3 _base = sunLights[0].color * BRDF_Lambert(diffuseColor.rgb) * mix(1.0, _cav, 0.55);')
+        .replace('sunLights[0].color * _spec + reflectedLight.indirectDiffuse', 'sunLights[0].color * _spec + _portraitLocal + reflectedLight.indirectDiffuse')
+        .replace('smoothstep(-0.3, 0.62, _ndl) * mix(0.16, 1.0, _sh)', '(0.88 * smoothstep(-0.18, 0.18, _ndl) + 0.12 * smoothstep(0.25, 0.85, _ndl)) * _sh')
+        .replace('vec3(0.3, 0.07, 0.03) * exp(-pow((_ndl - 0.02) / 0.3, 2.0))', 'vec3(0.18, 0.045, 0.018) * exp(-pow((_ndl - 0.02) / 0.18, 2.0))')
+        .replace('26.0) * 0.07 * _sh', '26.0) * 0.035 * _sh');
+    } else if (kind === 'cloth') {
+      sh.fragmentShader = sh.fragmentShader
+        .replace('float g = 0.6 * smoothstep( -0.14, 0.1, ndl ) + 0.4 * smoothstep( -0.1, 0.85, ndl );', 'float g = texture2D(gradientMap, vec2(clamp(ndl * 0.5 + 0.5, 0.0, 1.0), 0.5)).r;')
+        // A designed, soft anisotropic band; derivatives keep its edge calm at distance.
+        .replace('(pow(_s1, 9.0) * 0.2 + pow(_s1, 40.0) * 0.14)', '(smoothstep(0.82 - fwidth(_s1), 0.97 + fwidth(_s1), _s1) * 0.22 + pow(_s1, 40.0) * 0.08)');
+    }
+  };
+  m.customProgramCacheKey = () => key.call(m) + '|portrait2|' + kind;
+  return m;
+}
+
+// charkit's welded, vertex-tinted hulls are shared materials: derive once, never mutate
+// the cache. Grow sublinearly with distance to avoid heavy close-up lines or vanishing ink.
+const portraitOutlineCache = new WeakMap();
+export function characterOutline(source) {
+  if (portraitOutlineCache.has(source)) return portraitOutlineCache.get(source);
+  const m = source.clone(), base = source.onBeforeCompile, key = source.customProgramCacheKey;
+  m.onBeforeCompile = (sh, r) => {
+    base.call(source, sh, r);
+    sh.vertexShader = sh.vertexShader.replace('vec3 transformed = position +', `
+      float _outlineD = max(-(modelViewMatrix * vec4(position, 1.0)).z, 0.1);
+      float _outlineScale = clamp(_outlineD * 0.18, 0.65, 2.8);
+      vec3 transformed = position +`)
+      .replace('* uOutline * olw;', '* uOutline * olw * _outlineScale;');
+  };
+  m.customProgramCacheKey = () => key.call(source) + '|portrait-distance1';
+  portraitOutlineCache.set(source, m);
   return m;
 }
 
@@ -1119,9 +1195,12 @@ export function outlineMat(color = 0x1a1410, width = 0.025) {
   const w = { value: width };
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uOutline = w;
-    sh.vertexShader = 'uniform float uOutline;\n' + sh.vertexShader.replace('#include <begin_vertex>', 'vec3 transformed = position + normalize(normal) * uOutline;');
+    sh.vertexShader = 'uniform float uOutline;\n' + sh.vertexShader.replace('#include <begin_vertex>', `
+      float _outlineD = max(-(modelViewMatrix * vec4(position, 1.0)).z, 0.1);
+      float _outlineScale = clamp(_outlineD * 0.18, 0.65, 2.8);
+      vec3 transformed = position + normalize(normal) * uOutline * _outlineScale;`);
   };
-  m.customProgramCacheKey = () => 'outline';
+  m.customProgramCacheKey = () => 'outline-distance';
   outlineCache.set(key, m);
   return m;
 }

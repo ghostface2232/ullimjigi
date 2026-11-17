@@ -410,7 +410,7 @@ function pavingParts() {
   const srcMat = parts[0].material;
   const mat = toon(0xffffff, { nocache: true, rim: 0.12, noAO: true, noMoss: true });
   mat.map = srcMat.map; mat.normalMap = srcMat.normalMap; mat.aoMap = srcMat.aoMap;
-  mat.normalScale.set(1, -1); mat.aoMapIntensity = 0.65;
+  mat.normalScale.set(1, -1); mat.aoMapIntensity = 0.9;
   for (const t of [mat.map, mat.normalMap, mat.aoMap]) if (t) t.anisotropy = 8;
   const patch = mat.onBeforeCompile, key = mat.customProgramCacheKey();
   mat.onBeforeCompile = (sh) => {
@@ -429,7 +429,8 @@ function pavingParts() {
 }
 
 // groundAt is local to the parent, including its placement offset. A tangent plane fitted
-// over each footprint follows the terrain; the buried riser hides the joint without colliders.
+// over each footprint follows the terrain. The authored low grout apron fills the recessed
+// joint in the same draw, without colliders or a separate terrain material.
 function pavingBatch(parent, entries, groundAt, tint = 0xffffff) {
   const kit = pavingParts();
   if (!kit) {
@@ -447,21 +448,27 @@ function pavingBatch(parent, entries, groundAt, tint = 0xffffff) {
   const dummy = new THREE.Object3D(), up = new THREE.Vector3(0, 1, 0), normal = new THREE.Vector3();
   const yaw = new THREE.Quaternion(), weights = { morphTargetInfluences: Array(13).fill(0) };
   const color = new THREE.Color(tint), rnd = mulberry32(6021);
+  // Restrained warm/cool dressings break up ring-wise repetition without a patchwork floor.
+  const tones = [[1.06, 1.015, 0.94], [0.88, 0.93, 0.97], [1.0, 0.94, 0.93],
+    [0.93, 0.99, 0.92], [0.91, 0.88, 0.83], [1.025, 1.025, 1.01]];
   entries.forEach((e, i) => {
     const kind = e.kind, meta = kit.parts[kind].userData;
     const w = e.w || meta.width, d = e.d || meta.depth;
     const dx = Math.max(0.15, w / 2), dz = Math.max(0.15, d / 2);
     normal.set((groundAt(e.x - dx, e.z) - groundAt(e.x + dx, e.z)) / (2 * dx), 1,
       (groundAt(e.x, e.z - dz) - groundAt(e.x, e.z + dz)) / (2 * dz)).normalize();
-    dummy.position.set(e.x, groundAt(e.x, e.z) + (rnd() - 0.5) * 0.003, e.z);
+    dummy.position.set(e.x, groundAt(e.x, e.z) + (rnd() - 0.5) * 0.002, e.z);
     dummy.quaternion.setFromUnitVectors(up, normal);
-    yaw.setFromAxisAngle(up, (e.ry || 0) + (rnd() - 0.5) * 0.002);
+    yaw.setFromAxisAngle(up, (e.ry || 0) + (rnd() - 0.5) * 0.0008);
     dummy.quaternion.multiply(yaw);
     dummy.scale.set(w / meta.width, 1, d / meta.depth); dummy.updateMatrix();
     m.setMatrixAt(i, dummy.matrix);
     weights.morphTargetInfluences.fill(0); weights.morphTargetInfluences[kind] = 1; m.setMorphAt(i, weights);
-    uv[i * 2] = (kind % 4) / 4; uv[i * 2 + 1] = -Math.floor(kind / 4) / 4;
-    m.setColorAt(i, color.clone().multiplyScalar(0.975 + rnd() * 0.05));
+    // Full flags at both sites share the surface pool independently of their authored shape.
+    const tile = kind < 10 ? Math.floor(rnd() * 10) : kind;
+    uv[i * 2] = (tile % 4) / 4; uv[i * 2 + 1] = -Math.floor(tile / 4) / 4;
+    const tone = tones[Math.floor(rnd() * tones.length)];
+    m.setColorAt(i, color.clone().multiply(new THREE.Color().setRGB(...tone)));
   });
   m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; m.morphTexture.needsUpdate = true;
   m.computeBoundingBox(); m.computeBoundingSphere(); parent.add(m);
@@ -488,7 +495,7 @@ export function pavingPlaza(groundAt = () => 0) {
     const a = side * Math.PI / 2 + 0.1;
     for (let j = -1; j <= 1; j++) {
       const x = j * 0.60, z = 3.14;
-      entries.push({ kind: j ? 11 : 12, x: x * Math.cos(a) + z * Math.sin(a), z: z * Math.cos(a) - x * Math.sin(a), ry: a, w: 0.574, d: 0.40 });
+      entries.push({ kind: j ? 11 : 12, x: x * Math.cos(a) + z * Math.sin(a), z: z * Math.cos(a) - x * Math.sin(a), ry: a, w: 0.585, d: 0.40 });
     }
   }
   pavingBatch(g, entries, groundAt);
@@ -514,10 +521,10 @@ function riftPaving(g, groundAt, authored = false) {
   const rows = authored ? 3 : 12, start = authored ? -11.48 : -10;
   for (let i = 0; i < rows; i++) {
     const z = start + i * 0.94;
-    for (let col = -1; col <= 1; col++) entries.push({ kind: i === 0 ? 12 : 9, x: col * 1.21, z, w: 1.18, d: 0.912 });
-    for (const side of [-1, 1]) entries.push({ kind: 10, x: side * 1.99, z, ry: Math.PI / 2, w: 0.912, d: 0.32 });
+    for (let col = -1; col <= 1; col++) entries.push({ kind: 9, x: col * 1.21, z, w: 1.195, d: 0.925 });
+    for (const side of [-1, 1]) entries.push({ kind: 10, x: side * 1.99, z, ry: Math.PI / 2, w: 0.925, d: 0.335 });
   }
-  pavingBatch(g, entries, groundAt, 0xaeb2c0);
+  pavingBatch(g, entries, groundAt, 0x9aa3c5);
 }
 function lathe(profile, seg, mat, x, y, z, p, o) { return mesh(new THREE.LatheGeometry(profile.map(([a, b]) => new THREE.Vector2(a, b)), seg), mat, x, y, z, p, o); }
 

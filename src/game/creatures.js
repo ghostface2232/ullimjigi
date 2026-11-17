@@ -970,7 +970,7 @@ class CatRig extends CreatureRig {
       main: bodyMat(0xffffff, { vertexColors: true, rim: 0.4 }),
     };
     // the painted eyes are lit by their own colour (their glow mask stays under the bloom boost)
-    super(T, M, { main: 'fur', outline: 0.004, dress: { glow: new THREE.Color(1, 1, 1), mat: { fur: { spec: 0.35 }, main: { spec: 1.4, glowAlb: 1 } } } });
+    super(T, M, { main: 'fur', outline: 0.0013, dress: { glow: new THREE.Color(1, 1, 1), mat: { fur: { spec: 0.25 }, main: { spec: 1.1, glowAlb: 1 } } } });
     const B = this.B;
     this.p = { head: B.head, torso: B.chest, hips: B.hips };
     this.t = rand() * 10;

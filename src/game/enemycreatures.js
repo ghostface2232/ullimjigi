@@ -233,13 +233,13 @@ class OozeRig extends CreatureRig {
     const C = OOZE[variant];
     const glow = glowBasic(C.glow, 2.4);
     const M = {
-      skin: jelly(sheen(bodyMat(C.body, { rim: 1.5, emissive: C.emi, transparent: true, vertexColors: true }), { size: 0.045, soft: 0.02, k: 0.9, fres: 0.45 }), { clear: 0.52, dense: 0.97, glow: 0.35, color: C.glow, h: 0.75 }),
+      skin: jelly(sheen(bodyMat(C.body, { rim: 1.0, emissive: C.emi, transparent: true, vertexColors: true }), { size: 0.035, soft: 0.045, k: 0.4, fres: 0.22 }), { clear: 0.48, dense: 0.96, glow: 0.16, color: C.glow, h: 0.75 }),
       in: bodyMat(0xffffff, { vertexColors: true, rim: 0.4 }),
       glow,
     };
     if (variant === 'frost') M.ice = sheen(bodyMat(0xffffff, { vertexColors: true, rim: 1.3, emissive: 0x1c4466 }), { color: 0xdff6ff, size: 0.1, k: 0.9, fres: 0.5 });
     M.ash = M.ember = M.in; M.flame = M.drop = glow;
-    super(oozeType(variant), M, { main: 'skin', outline: 0, dress: { mat: { skin: { spec: 1.6, ao: 0.25 }, in: { spec: 0.9 }, ice: { spec: 1.6 } } } });
+    super(oozeType(variant), M, { main: 'skin', outline: 0, dress: { mat: { skin: { spec: 0.8, ao: 0.15 }, in: { spec: 0.7 }, ice: { spec: 1.3 } } } });
     this.root.scale.setScalar(size);
     M.skin.depthWrite = true;
     this.meshes.forEach((m) => { if (m.material === M.skin) m.renderOrder = 1; });
@@ -268,7 +268,10 @@ class OozeRig extends CreatureRig {
     B.top.position.set(this.rest.top.x + lx * 0.2, this.rest.top.y + y * 0.1, this.rest.top.z + lz * 0.2);
     rot(B.top, lz * 1.2 + Math.sin(t * 3.1) * 0.05, 0, -lx * 1.2 + Math.sin(t * 2.3) * 0.05);
     B.core.rotation.y += dt * 2;
-    B.core.position.y = this.rest.core.y + Math.sin(t * 3) * 0.04;
+    // Keep the inner heart below the face as it turns through the jelly.
+    B.core.scale.setScalar(0.48);
+    B.core.position.y = this.rest.core.y - 0.15 + Math.sin(t * 3) * 0.02;
+    B.core.position.z = this.rest.core.z - 0.04;
     for (let i = 0; i < 5; i++) B['drip' + i].scale.setScalar(0.8 + Math.sin(t * 3 + i) * 0.25);
     B.face.scale.setScalar(1 - this.hurtW * 0.15);
     this.root.updateMatrixWorld(true);
@@ -376,7 +379,7 @@ class MothRig extends CreatureRig {
       wing: model('mn_moth') ? bodyMat(0xffffff, { vertexColors: true, rim: 0.9 }) : wingMat(glow.color),   // the authored wings are painted
       glow,
     };
-    super(mothType(), M, { main: 'body', outline: 0.004 });
+    super(mothType(), M, { main: 'body', outline: 0.0018, dress: { mat: { body: { spec: 0.55 }, wing: { spec: 0.2 } } } });
     this.t = rand() * 5;
     this.height = 0.4;
     this.p = { head: this.B.head, torso: this.B.body, hips: this.B.body };

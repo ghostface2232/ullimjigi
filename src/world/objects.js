@@ -145,6 +145,16 @@ export class WorldObjects {
       scene.add(im);
       this.meshes[k] = im;
     }
+    // A bounded plank pool gives broken crates recognizable wooden fragments.
+    this.debris = [];
+    const plankGeo = new THREE.BoxGeometry(0.55, 0.065, 0.13);
+    const plankMat = toon(0x9c7048, { tex: 'wood' });
+    this.planks = new THREE.InstancedMesh(plankGeo, plankMat, 48);
+    this.planks.count = 0; this.planks.castShadow = true;
+    this.planks.frustumCulled = false; this.planks.userData.noBake = true;
+    this.planks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(this.planks);
+    G.vfx.keep(plankMat, plankGeo);
     this.place();
     this.rollLoop = null;
     this.dirty = true;
@@ -204,10 +214,11 @@ export class WorldObjects {
     const b = {
       kind, s, r: K.r * s, h: K.h * s, mass: K.mass * s * s * s,
       pos: new THREE.Vector3(x, y, z), vel: new THREE.Vector3(), home: new THREE.Vector3(x, y, z),
-      rot: new THREE.Quaternion().setFromAxisAngle(UP, Math.random() * 6.28), yaw: 0,
+      rot: new THREE.Quaternion().setFromAxisAngle(UP, Math.random() * 6.28), ang: new THREE.Vector3(), yaw: 0,
       asleep: true, alive: true, hp: kind === 'crate' ? 3 : 1, fuse: 0, burn: 0, respawn: 0, stillT: 0, wetT: 0, wreck: null,
     };
     b.target = this.W.addTarget({ id: 'prop', ground: true, kind, pos: new THREE.Vector3(x, y + b.h * 0.5, z), r: b.r + 0.2, baseHit: (el, src) => this.hit(b, el, src) });
+    b.homeRot = b.rot.clone();
     this.list.push(b);
     return b;
   }
@@ -224,6 +235,7 @@ export class WorldObjects {
     const push = (PUSH[el] ?? 2) * (o.power ?? 1) / Math.sqrt(b.mass);
     this.wake(b);
     b.vel.x += dx * push; b.vel.z += dz * push;
+    if (b.kind !== 'boulder') { b.ang.x += dz * push * 0.45; b.ang.z -= dx * push * 0.45; b.ang.y += (dx - dz) * push * 0.08; }
     if (el === 'wind' || o.power > 1.4) b.vel.y += push * (b.kind === 'boulder' ? 0.15 : 0.35);
     if (b.kind === 'barrel') {
       if ((el === 'fire' || el === 'storm') && b.wetT <= 0) {
@@ -231,16 +243,16 @@ export class WorldObjects {
         // hit reaches this barrel first with the normal fuse, the chain hit follows right after
         const fuse = o.chain ? 0.28 : 1.1;
         if (b.fuse <= 0) this.light(b, fuse);
-        else if (fuse < b.fuse) b.fuse = fuse;
+        else if (fuse < b.fuse) { b.fuse = fuse; b.fuseAt = G.time; }
       } else if (el === 'water' && b.fuse > 0) { b.fuse = 0; b.wetT = 12; G.vfx.burst(this.center(b), 'smoke', 6, { size: 1, alpha: 0.35, color: new THREE.Color(0.9, 0.92, 0.95) }); G.audio.play('fizzle', { pos: b.pos }); }
       else if (el === 'water') b.wetT = 12;
     } else if (b.kind === 'crate') {
       if (el === 'fire' && b.burn <= 0) b.burn = 3.2;
-      else if (el !== 'fire') { b.hp -= el === 'wind' || el === 'arcane' || el === 'storm' ? 1.5 : 1; if (b.hp <= 0) this.breakCrate(b); }
+      else if (el !== 'fire') { b.hp -= 1; if (b.hp <= 0) this.breakCrate(b); }
     }
   }
   light(b, fuse) {
-    b.fuse = fuse;
+    b.fuse = fuse; b.fuseAt = G.time;
     G.audio.play('fuse_hiss', { pos: b.pos });
     if (G.vfx.flash) G.vfx.flash(this.tipOf(b), 0xffb050, 9, 5, 0.3);
     if (G.story && G.story.once('barrel1')) G.hud.hint('<b>화약 통</b> — 불이나 번개에 닿으면 잠시 뒤 터진다. 적 사이로 굴려 보내거나, 물로 적셔 불씨를 끌 수 있다', 7);
@@ -265,7 +277,13 @@ export class WorldObjects {
   breakCrate(b, burnt = false) {
     b.alive = false; b.respawn = 240;
     const c = this.center(b);
-    this.splinters(c, 8, 5, burnt);
+    this.splinters(c, burnt ? 8 : 3, 5, burnt);
+    if (!burnt) for (let i = 0; i < 8; i++) {
+      if (this.debris.length >= 48) this.debris.shift();
+      const a = i / 8 * Math.PI * 2 + Math.random() * 0.4;
+      this.debris.push({ pos: c.clone(), vel: new THREE.Vector3(Math.cos(a) * (2 + Math.random() * 3), 3 + Math.random() * 3, Math.sin(a) * (2 + Math.random() * 3)),
+        rot: b.rot.clone(), spin: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(12), t: 0, scale: 0.7 + Math.random() * 0.6 });
+    }
     b.wreck = this.wreckOf(b, burnt);
     G.audio.play('crate_break', { pos: c });
     if (!burnt) {
@@ -277,9 +295,20 @@ export class WorldObjects {
   }
   hide(b) { b.target.r = -99; this.dirty = true; }
   wake(b) { b.asleep = false; b.stillT = 0; }
-  center(b) { return tmp2.set(b.pos.x, b.pos.y + b.h * 0.5, b.pos.z).clone(); }
+  support(b) {
+    if (b.kind === 'boulder') return b.r * this.sink;
+    const e = m4.makeRotationFromQuaternion(b.rot).elements;
+    if (b.kind === 'barrel') return Math.abs(e[5]) * b.h * 0.5 + Math.hypot(e[1], e[9]) * b.r;
+    return Math.abs(e[5]) * b.h * 0.5 + (Math.abs(e[1]) + Math.abs(e[9])) * b.r;
+  }
+  center(b) { return new THREE.Vector3(b.pos.x, b.pos.y + this.support(b), b.pos.z); }
+  origin(b, out) {
+    out.copy(b.pos).y += this.support(b);
+    if (b.kind !== 'boulder') out.sub(tmp2.set(0, b.h * 0.5, 0).applyQuaternion(b.rot));
+    return out;
+  }
   // where the keg's fuse burns
-  tipOf(b) { return tmp2.copy(this.fuseTip).multiplyScalar(b.s).applyQuaternion(b.rot).add(b.pos).clone(); }
+  tipOf(b) { const origin = this.origin(b, new THREE.Vector3()); return origin.add(tmp2.copy(this.fuseTip).multiplyScalar(b.s).applyQuaternion(b.rot)); }
   // flying bits of wood (the debris pools have no wood of their own: rock chunks in wood tones)
   splinters(c, n, speed, burnt) {
     if (!G.vfx.chunks) return;
@@ -293,7 +322,9 @@ export class WorldObjects {
     if (gy < W.water.level + 0.05 || b.pos.y - gy > 1.2) return null;
     const q = new THREE.Quaternion();
     if (Math.abs(gy - W.terrain.height(x, z)) < 0.1) q.setFromUnitVectors(UP, W.terrain.normal(x, z, tmp));
-    return { pos: new THREE.Vector3(x, gy, z), rot: q.multiply(b.rot), burnt };
+    tmp2.set(0, 0, 1).applyQuaternion(b.rot);
+    q.multiply(q1.setFromAxisAngle(UP, Math.atan2(tmp2.x, tmp2.z)));
+    return { pos: new THREE.Vector3(x, gy, z), rot: q, burnt };
   }
   // spells that land near objects without a direct target hit (area magic)
   onSpell(el, pos, r) {
@@ -316,7 +347,7 @@ export class WorldObjects {
         continue;
       }
       // fuse / burning
-      if (b.fuse > 0) {
+      if (b.fuse > 0 && b.fuseAt !== G.time) {
         b.fuse -= dt;
         // the burning end: a flickering point of light, sparks spitting from it, a thread of smoke
         const tip = this.tipOf(b);
@@ -343,7 +374,7 @@ export class WorldObjects {
       const px = b.pos.x - P.pos.x, pz = b.pos.z - P.pos.z, pd = Math.hypot(px, pz);
       const minD = b.r + 0.42;
       if (pd < minD && P.pos.y < b.pos.y + b.h - 0.2 && P.pos.y + 1.7 > b.pos.y && !P.climbing) {
-        const nx = px / (pd || 1), nz = pz / (pd || 1);
+        const nx = pd > 1e-4 ? px / pd : 1, nz = pd > 1e-4 ? pz / pd : 0;
         // separate
         P.pos.x = b.pos.x - nx * minD; P.pos.z = b.pos.z - nz * minD;
         const into = P.vel.x * nx + P.vel.z * nz;
@@ -363,20 +394,30 @@ export class WorldObjects {
     for (let i = 0; i < this.list.length; i++) {
       const a = this.list[i]; if (!a.alive || a.asleep) continue;
       for (let j = 0; j < this.list.length; j++) {
-        const c = this.list[j]; if (i === j || !c.alive) continue;
+        const c = this.list[j]; if (i === j || !c.alive || (j < i && !c.asleep)) continue;
         const dx = c.pos.x - a.pos.x, dz = c.pos.z - a.pos.z, d = Math.hypot(dx, dz), m = a.r + c.r;
-        if (d >= m || d < 1e-4 || Math.abs(a.pos.y - c.pos.y) > Math.max(a.h, c.h)) continue;
-        const nx = dx / d, nz = dz / d, rel = (a.vel.x - c.vel.x) * nx + (a.vel.z - c.vel.z) * nz;
-        const push = (m - d) * 0.5;
-        a.pos.x -= nx * push; a.pos.z -= nz * push; c.pos.x += nx * push; c.pos.z += nz * push;
+        if (d >= m || Math.abs(a.pos.y - c.pos.y) > Math.max(a.h, c.h)) continue;
+        const nx = d > 1e-4 ? dx / d : 1, nz = d > 1e-4 ? dz / d : 0;
+        const rel = (a.vel.x - c.vel.x) * nx + (a.vel.z - c.vel.z) * nz;
+        const invA = 1 / a.mass, invC = 1 / c.mass, sum = invA + invC;
+        const push = Math.max(0, m - d - 0.005) * 0.8;
+        a.pos.x -= nx * push * invA / sum; a.pos.z -= nz * push * invA / sum;
+        c.pos.x += nx * push * invC / sum; c.pos.z += nz * push * invC / sum;
         if (rel > 0) {
-          const imp = rel * 1.2 / (1 / a.mass + 1 / c.mass);
+          const imp = rel * (rel > 1 ? 1.18 : 1) / sum;
           a.vel.x -= nx * imp / a.mass; a.vel.z -= nz * imp / a.mass;
           c.vel.x += nx * imp / c.mass; c.vel.z += nz * imp / c.mass;
-          this.wake(c);
+          if (rel > 0.2 || push > 0.02) this.wake(c);
           if (rel > 3) G.audio.play(a.kind === 'boulder' || c.kind === 'boulder' ? 'boulder_thud' : 'crate_knock', { pos: a.pos, gap: 0.1 });
         }
       }
+    }
+    // Pair separation can move a sleeping body. Keep targets and ground contact
+    // synchronized, and don't leave either body pushed through a static wall.
+    for (const b of this.list) if (b.alive) {
+      if (!b.asleep) W.col.resolve(b.pos, b.r, b.h);
+      if (!b.asleep) b.pos.y = Math.max(b.pos.y, W.ground(b.pos.x, b.pos.z, b.pos.y + 0.5));
+      b.target.pos.copy(this.center(b));
     }
     // rumble for the fastest rolling boulder
     if (fastest && !this.rollLoop && G.audio.ready) this.rollLoop = G.audio.loop('loop_roll', { pos: fastest.b.pos, v: 0.9, max: 60 });
@@ -384,18 +425,52 @@ export class WorldObjects {
       if (!fastest) { this.rollLoop.stop(0.6); this.rollLoop = null; }
       else { this.rollLoop.set(fastest.b.pos); this.rollLoop.vol(clamp(fastest.sp / 10, 0.2, 1.1)); }
     }
+    this.updateDebris(dt);
     this.writeInstances();
   }
 
+  updateDebris(dt) {
+    const h = Math.min(dt, 0.05);
+    for (let i = this.debris.length - 1; i >= 0; i--) {
+      const d = this.debris[i]; d.t += dt;
+      if (d.t > 4.5) { this.debris.splice(i, 1); continue; }
+      d.vel.y -= GRAV * h; d.pos.addScaledVector(d.vel, h);
+      const floor = this.W.ground(d.pos.x, d.pos.z, d.pos.y + 0.5) + 0.08;
+      if (d.pos.y < floor) {
+        d.pos.y = floor; d.vel.y = d.vel.y < -1.5 ? -d.vel.y * 0.18 : 0;
+        d.vel.x *= Math.exp(-9 * h); d.vel.z *= Math.exp(-9 * h); d.spin.multiplyScalar(Math.exp(-10 * h));
+      }
+      const speed = d.spin.length();
+      if (speed > 0.001) d.rot.premultiply(q1.setFromAxisAngle(tmp.copy(d.spin).normalize(), speed * h)).normalize();
+    }
+    for (let i = 0; i < this.debris.length; i++) {
+      const d = this.debris[i], scale = d.scale * Math.min(1, (4.5 - d.t) * 2);
+      m4.compose(d.pos, d.rot, sc.setScalar(scale)); this.planks.setMatrixAt(i, m4);
+    }
+    this.planks.count = this.debris.length;
+    if (this.debris.length) this.planks.instanceMatrix.needsUpdate = true;
+  }
+
   step(b, dt) {
+    // Keep collision steps short even after a hitch, without introducing a
+    // persistent accumulator that wakes settled props during pause/resume.
+    const count = Math.max(1, Math.ceil(Math.min(dt, 0.12) / (1 / 60)));
+    for (let i = 0; i < count && b.alive && !b.asleep; i++) this.integrate(b, Math.min(dt, 0.12) / count);
+  }
+
+  integrate(b, dt) {
     const W = this.W, K = KIND[b.kind];
     b.vel.y -= GRAV * dt;
     const g0 = W.ground(b.pos.x, b.pos.z, b.pos.y + 0.5);
     const onGround = b.pos.y <= g0 + 0.05;
     if (onGround) {
-      const n = W.terrain.normal(b.pos.x, b.pos.z, tmp);
-      if (K.roll) { b.vel.x += n.x * GRAV * 0.71 * dt; b.vel.z += n.z * GRAV * 0.71 * dt; }
-      else if (n.y < 0.8) { b.vel.x += n.x * GRAV * 0.5 * dt; b.vel.z += n.z * GRAV * 0.5 * dt; }
+      const n = Math.abs(g0 - W.terrain.height(b.pos.x, b.pos.z)) < 0.15 ? W.terrain.normal(b.pos.x, b.pos.z, tmp) : tmp.copy(UP);
+      const slope = Math.hypot(n.x, n.z), moving = Math.hypot(b.vel.x, b.vel.z) > 0.2;
+      const threshold = K.roll ? 0.055 : 0.55;
+      if (slope > threshold || (moving && K.roll)) {
+        const k = GRAV * (K.roll ? 0.714 : 1) * Math.max(0, slope - threshold * (moving ? 0.65 : 1)) / Math.max(slope, 0.001);
+        b.vel.x += n.x * n.y * k * dt; b.vel.z += n.z * n.y * k * dt;
+      }
       const f = Math.exp(-K.fric * dt);
       b.vel.x *= f; b.vel.z *= f;
     }
@@ -407,14 +482,24 @@ export class WorldObjects {
       const nx = b.pos.x - bx, nz = b.pos.z - bz, nl = Math.hypot(nx, nz);
       if (nl > 1e-4) {
         const ux = nx / nl, uz = nz / nl, vn = b.vel.x * ux + b.vel.z * uz;
-        if (vn < 0) { b.vel.x -= ux * vn * 1.4; b.vel.z -= uz * vn * 1.4; if (-vn > 3) G.audio.play(b.kind === 'boulder' ? 'boulder_thud' : 'crate_knock', { pos: b.pos, gap: 0.12 }); }
+        if (vn < 0) {
+          const bounce = -vn > 1.5 ? 1.22 : 1;
+          b.vel.x -= ux * vn * bounce; b.vel.z -= uz * vn * bounce;
+          b.ang.multiplyScalar(0.6);
+          if (-vn > 3) G.audio.play(b.kind === 'boulder' ? 'boulder_thud' : 'crate_knock', { pos: b.pos, gap: 0.12 });
+        }
       }
     }
     // ground contact
-    const g = W.ground(b.pos.x, b.pos.z, b.pos.y + 0.5);
+    let g = W.ground(b.pos.x, b.pos.z, b.pos.y + 0.5);
+    // A heightmap cliff is a wall until the body actually clears its lip.
+    if (g - g0 > 0.45 && g > b.pos.y + 0.4) {
+      b.pos.x = ox; b.pos.z = oz; b.vel.x *= -0.2; b.vel.z *= -0.2;
+      b.ang.multiplyScalar(0.5); g = g0;
+    }
     if (b.pos.y < g) {
       b.pos.y = g;
-      if (b.vel.y < -4) { b.vel.y *= -0.25; if (b.kind === 'boulder') { G.audio.play('boulder_thud', { pos: b.pos, gap: 0.12 }); G.vfx.burst(b.pos, 'dust', 6, { speed: 3, size: 0.8 }); G.cameraRig.shake(clamp(0.25 - b.pos.distanceTo(G.player.pos) / 120, 0, 0.2)); } }
+      if (b.vel.y < -4) { b.vel.y *= -(K.roll ? 0.22 : 0.16); b.ang.multiplyScalar(0.65); if (b.kind === 'boulder') { G.audio.play('boulder_thud', { pos: b.pos, gap: 0.12 }); G.vfx.burst(b.pos, 'dust', 6, { speed: 3, size: 0.8 }); G.cameraRig.shake(clamp(0.25 - b.pos.distanceTo(G.player.pos) / 120, 0, 0.2)); } }
       else b.vel.y = 0;
     }
     // water: wood floats, stone sinks and is lost
@@ -423,9 +508,26 @@ export class WorldObjects {
       if (b.kind === 'boulder') { b.vel.multiplyScalar(Math.exp(-3 * dt)); if (b.pos.y < wl - 2.5) { b.alive = false; b.respawn = 60; this.hide(b); } }
       else { b.vel.y += (wl - b.h * 0.3 - b.pos.y) * 30 * dt; b.vel.multiplyScalar(Math.exp(-1.5 * dt)); if (b.kind === 'barrel') b.wetT = 20; }
     }
-    // rolling: spin the stone around the axis perpendicular to travel
-    const mx = b.pos.x - ox, mz = b.pos.z - oz, dist = Math.hypot(mx, mz);
-    if (K.roll && dist > 1e-4) { tmp.set(mz, 0, -mx).normalize(); q1.setFromAxisAngle(tmp, dist / b.r); b.rot.premultiply(q1); }
+    // Angular momentum persists in flight; rolling contact converges to v/r.
+    if (K.roll && onGround) {
+      const k = 1 - Math.exp(-14 * dt);
+      b.ang.x += (b.vel.z / b.r - b.ang.x) * k;
+      b.ang.z += (-b.vel.x / b.r - b.ang.z) * k;
+    }
+    b.ang.multiplyScalar(Math.exp(-(onGround ? K.roll ? 0.5 : 4.5 : 0.2) * dt));
+    const angular = Math.min(18, b.ang.length());
+    if (angular > 0.001) { tmp.copy(b.ang).normalize(); q1.setFromAxisAngle(tmp, angular * dt); b.rot.premultiply(q1).normalize(); }
+    if (!K.roll && onGround && Math.hypot(b.vel.x, b.vel.z) < 0.6 && b.ang.lengthSq() < 0.4) {
+      // Settle to the nearest authored face, retaining its heading instead of
+      // forcing a toppled crate upright. Barrels may rest on either end or side.
+      let best = -1, ax = 0, ay = 1, az = 0;
+      for (let axis = 0; axis < 3; axis++) for (const sign of [-1, 1]) {
+        tmp.set(axis === 0 ? sign : 0, axis === 1 ? sign : 0, axis === 2 ? sign : 0).applyQuaternion(b.rot);
+        if (tmp.y > best) { best = tmp.y; ax = tmp.x; ay = tmp.y; az = tmp.z; }
+      }
+      q1.setFromUnitVectors(tmp.set(ax, ay, az), UP).multiply(b.rot);
+      b.rot.slerp(q1, 1 - Math.exp(-8 * dt)).normalize();
+    }
     // crush enemies in the way
     const sp = Math.hypot(b.vel.x, b.vel.z);
     if (sp > 3.5) {
@@ -446,17 +548,17 @@ export class WorldObjects {
       }
     }
     // settle
-    if (sp < 0.25 && Math.abs(b.vel.y) < 0.5 && onGround) { b.stillT += dt; if (b.stillT > 1.2) { b.asleep = true; b.vel.set(0, 0, 0); } }
+    if (sp < 0.18 && b.ang.lengthSq() < 0.025 && Math.abs(b.vel.y) < 0.3 && onGround && b.pos.y >= wl) { b.stillT += dt; if (b.stillT > 1.2) { b.asleep = true; b.vel.set(0, 0, 0); b.ang.set(0, 0, 0); } }
     else b.stillT = 0;
     // lost far from home (fell off the map / into a gorge)
     if (b.pos.distanceTo(b.home) > 140 || b.pos.y < -20) { b.alive = false; b.respawn = 30; this.hide(b); }
-    b.target.pos.set(b.pos.x, b.pos.y + b.h * 0.5, b.pos.z);
+    b.target.pos.copy(this.center(b));
     this.dirty = true;
   }
 
   reset(b) {
     b.alive = true; b.asleep = true; b.fuse = 0; b.burn = 0; b.wetT = 0; b.hp = b.kind === 'crate' ? 3 : 1; b.wreck = null;
-    b.pos.copy(b.home); b.vel.set(0, 0, 0);
+    b.pos.copy(b.home); b.vel.set(0, 0, 0); b.ang.set(0, 0, 0); b.rot.copy(b.homeRot); b.stillT = 0;
     b.target.r = b.r + 0.2; b.target.pos.set(b.pos.x, b.pos.y + b.h * 0.5, b.pos.z);
     this.dirty = true;
   }
@@ -494,11 +596,11 @@ export class WorldObjects {
       const k = lod === 2 && M[b.kind + 'Far'] ? b.kind + 'Far' : b.kind, im = M[k];
       const i = n[k]++;
       // boulder origin at its centre; barrels/crates stand on their base
-      const cy = b.kind === 'boulder' ? b.pos.y + b.r * this.sink : b.pos.y;
       // fuse: the barrel shivers and swells a little
       const swell = b.fuse > 0 ? 1 + Math.sin(G.time * 40) * 0.03 : 1;
       sc.set(b.s * swell, b.s * swell, b.s * swell);
-      m4.compose(tmp.set(b.pos.x, cy, b.pos.z), b.rot, sc);
+      this.origin(b, tmp);
+      m4.compose(tmp, b.rot, sc);
       im.setMatrixAt(i, m4);
       if (b.kind === 'boulder') continue;
       if (b.fuse > 0) {

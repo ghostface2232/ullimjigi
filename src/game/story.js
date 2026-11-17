@@ -727,7 +727,7 @@ export class Story {
     if (!this.flag('f_boss')) {
       await this.bossFight(() => {
         const lv = G.enemies.levelFor(1) + 1;
-        const b = G.enemies.spawn('bruteFrost', V(S.pos.x, 0, S.pos.z + 2.2), lv, { elite: true, name: '서리무덤 파수꾼', leash: 999, hpMul: 2.6, brk: true });
+        const b = G.enemies.spawn('bruteFrost', V(S.pos.x, 0, S.pos.z + 2.2), lv, { elite: true, name: '서리무덤 파수꾼', leash: 999, hpMul: 5.5, brk: true });
         b.aggro();
         G.vfx.burst(b.center(), 'frostmist', 30, { size: 2 }); G.vfx.burst(b.center(), 'hush', 20, { size: 1.5 });
         G.audio.play('boss_roar', { pos: b.pos });

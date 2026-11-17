@@ -151,6 +151,60 @@ export class Colliders {
     return found;
   }
 
+  // Read-only body clearance for navigation. Match resolve's step/top rules without
+  // moving a probe or treating a roof above the body as an obstacle.
+  navBlocked(x, y, z, radius, height = 1.8) {
+    let blocked = false;
+    this.query(x, z, radius + 0.05, (c) => {
+      if (blocked || y > c.h1 - 0.05 || y + height < c.h0) return;
+      if (!c.noTop && y > this.topAt(c, x, z) - 0.45) return;
+      if (c.type === 'circle') {
+        blocked = Math.hypot(x - c.x, z - c.z) < c.r + radius;
+      } else {
+        const dx = x - c.x, dz = z - c.z;
+        const lx = dx * c.cos - dz * c.sin, lz = dx * c.sin + dz * c.cos;
+        const ox = Math.max(0, Math.abs(lx) - c.hw), oz = Math.max(0, Math.abs(lz) - c.hd);
+        blocked = ox * ox + oz * oz < radius * radius;
+      }
+    });
+    return blocked;
+  }
+
+  // Segment visibility through static cover, including oriented boxes. Callers
+  // also test terrain; this is shared by ranged AI and target selection.
+  navSight(from, to, radius = 0.1) {
+    const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+    let blocked = false;
+    this.query((from.x + to.x) * 0.5, (from.z + to.z) * 0.5, Math.hypot(dx, dz) * 0.5 + radius, (c) => {
+      if (blocked) return;
+      let enter = 0, exit = 1;
+      const slab = (p, d, lo, hi) => {
+        if (Math.abs(d) < 1e-8) return p >= lo && p <= hi;
+        let t0 = (lo - p) / d, t1 = (hi - p) / d;
+        if (t0 > t1) [t0, t1] = [t1, t0];
+        enter = Math.max(enter, t0); exit = Math.min(exit, t1);
+        return enter <= exit;
+      };
+      if (!slab(from.y, dy, c.h0 - radius, c.h1 + radius)) return;
+      const px = from.x - c.x, pz = from.z - c.z;
+      if (c.type === 'box') {
+        if (!slab(px * c.cos - pz * c.sin, dx * c.cos - dz * c.sin, -c.hw - radius, c.hw + radius)
+          || !slab(px * c.sin + pz * c.cos, dx * c.sin + dz * c.cos, -c.hd - radius, c.hd + radius)) return;
+      } else {
+        const r = c.r + radius, a = dx * dx + dz * dz;
+        if (a < 1e-8) { if (px * px + pz * pz > r * r) return; }
+        else {
+          const b = px * dx + pz * dz, disc = b * b - a * (px * px + pz * pz - r * r);
+          if (disc < 0) return;
+          const root = Math.sqrt(disc);
+          enter = Math.max(enter, (-b - root) / a); exit = Math.min(exit, (-b + root) / a);
+        }
+      }
+      blocked = enter <= exit;
+    });
+    return !blocked;
+  }
+
   // ---- walkable platforms ----
   addPlatform(p) { this.platforms.push(p); return p; }
   removePlatform(p) { const i = this.platforms.indexOf(p); if (i >= 0) this.platforms.splice(i, 1); }

@@ -45,7 +45,6 @@ export class Player {
     this.sprinting = false; this.gliding = false; this.swimming = false;
     this.blinkT = 0; this.blinkDir = new THREE.Vector3(); this.airBlink = 1; this.blinkAt = -99; this.dodgeCD = 0; this.dodged = false;
     this.shiftT = 0;
-    this.stepT = 0;
     this.regenT = 0; this.lastHurt = -99;
     this.aimZoom = false;
     this.lastSafe = new THREE.Vector3();
@@ -70,6 +69,10 @@ export class Player {
     if (this.gliding) { this.gliding = false; if (this.glideCircle) { this.glideCircle.end(); this.glideCircle = null; } }
     if (yaw !== undefined) { this.yaw = yaw; G.cameraRig.faceYaw(yaw); }
     this.root.position.copy(this.pos);
+    this.rig.prevPos = null; this.rig.vel.set(0, 0, 0); this.rig.acc.set(0, 0, 0);
+    this.rig.prevYaw = this.yaw; this.rig.yawRate = 0; this.rig.prevGrounded = true;
+    for (const f of this.rig.feet) f.init = false;
+    for (const ch of this.rig.chains) ch.init = false;
     this.lastSafe.copy(this.pos);
     G.cameraRig.initialized = false;
   }
@@ -136,6 +139,9 @@ export class Player {
     out.set(this.pos.x + fx * 0.65 + rx * 0.22, this.pos.y + 1.45, this.pos.z + fz * 0.65 + rz * 0.22);
     const gem = this.gemPos(tmp2);
     if (gem) {
+      // A committed release always originates at the visible crystal, including
+      // an interrupted unstow. The idle carry can still use the soft aim blend.
+      if (this.rig.flickT < 0.02 && this.rig.w.cast > 0.9) return out.copy(gem);
       const ahead = (gem.x - this.pos.x) * fx + (gem.z - this.pos.z) * fz;
       out.lerp(gem, clamp((ahead + 0.1) / 0.4, 0, 1));
     }
@@ -358,12 +364,9 @@ export class Player {
       if (hv > 0.5) this.yaw = angleDamp(this.yaw, Math.atan2(this.vel.x, this.vel.z), this.grounded ? 12 : 5, dt);
     }
 
-    // --- footsteps
+    // --- movement effects (footsteps are emitted by the solved foot contacts below)
     const hs = Math.hypot(this.vel.x, this.vel.z);
-    if (this.grounded && hs > 1) {
-      this.stepT -= dt * hs * 0.36;
-      if (this.stepT <= 0) { this.stepT = 1; G.audio.play('step', { pos: this.pos, surface: W.terrain.surfaceAt(this.pos.x, this.pos.z), gap: 0.1 }); if (this.sprinting) G.vfx.burst(this.pos, 'dust', 1, { speed: 1.5, size: 0.35 }); }
-    }
+    const motionSpeed = dt > 0 ? Math.min(hs, Math.hypot(this.pos.x - this.root.position.x, this.pos.z - this.root.position.z) / dt) : hs;
     if (this.swimming && hs > 0.5 && Math.random() < dt * 8) G.vfx.burst(this.pos.clone().setY(0.05), 'trail', 2, { el: 'frost', spread: 0.5, size: 0.3 });
 
     // --- visuals
@@ -371,12 +374,19 @@ export class Player {
     this.root.rotation.y = this.yaw;
     const aimPitch = aiming ? clamp(-cr.pitch * 0.8 + 0.1, -0.6, 0.6) : 0;
     this.rig.update(dt, {
-      speed: this.swimming ? hs : this.grounded ? hs : 0, grounded: this.grounded, vy: this.vel.y,
+      speed: motionSpeed, grounded: this.grounded, vy: this.vel.y,
+      dash: this.blinkT > 0, moveYaw: moving ? Math.atan2(move.x, move.z) : undefined,
       cast: this.castHold > 0 && !this.climbing, aimPitch, glide: this.gliding, swim: this.swimming, talk: this.talking,
       charge: this.charge ? Math.min(1, (performance.now() / 1000 - this.charge.t0) / CHARGE_T) : 0,
       climb: !!this.climbing || !!this.mantle, climbPhase: this.climbPhase, climbMove: this.climbMove, mantle: this.mantle ? this.mantle.t / this.mantle.dur : 0,
       dead: this.dead,
     });
+    if (this.grounded && !this.climbing && !this.mantle && !this.swimming && this.blinkT <= 0) {
+      for (const f of this.rig.footPlants) {
+        G.audio.play('step', { pos: f.plant, surface: W.terrain.surfaceAt(f.plant.x, f.plant.z), gap: 0.08 });
+        if (this.sprinting) G.vfx.burst(f.plant, 'dust', 1, { speed: 1.5, size: 0.35 });
+      }
+    }
     if (this.rig.p.gem) {
       const c = PAL[this.element].core;
       this.rig.p.gem.material.color.setRGB(c.r * 0.8, c.g * 0.8, c.b * 0.8);
@@ -590,8 +600,8 @@ export class Player {
 
   onLand(vy) {
     const fall = -vy;
+    this.rig.landImpact(vy);
     if (fall > 6) { G.audio.play('land', { v: Math.min(1, fall / 20) }); G.vfx.burst(this.pos, 'dust', Math.min(10, Math.floor(fall / 2)), { speed: 3, size: 0.6 }); }
-    if (fall > 8) this.rig.p.hips.position.y -= 0.12;
     if (fall > 24 && !this.gliding) {
       const dmg = Math.min(12, Math.floor((fall - 24) / 3) + 2);
       this.damage(dmg, { fall: true });

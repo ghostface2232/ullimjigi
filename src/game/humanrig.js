@@ -462,7 +462,7 @@ const CAST = {
   // storm: thrust up at the sky, chopped down when the bolt lands (C2 at `beat` seconds after the release)
   heavy_storm: { rec: 0.5, tf: 0.05, beat: 0.35,
     A: CP({ h: [-0.25, 1.02, 0.2], d: [0, 0.92, 0.38], l: [0.26, 1.08, 0.16], cy: 0.1, cx: 0.1, hy: -0.08 }),
-    C: CP({ h: [-0.2, 1.74, 0.12], d: [0, 0.98, 0.16], l: [0.32, 1.0, 0.08], cy: 0.15, cx: -0.1, hy: 0.035 }),
+    C: CP({ h: [-0.2, 1.4, 0.42], d: [0, 0.2, 1], l: [0.32, 1.0, 0.08], cy: 0.15, cx: -0.1, hy: 0.035 }),
     F: CP({ h: [-0.2, 1.78, 0.1], d: [0, 0.99, 0.1], l: [0.34, 0.98, 0.06], cy: 0.15, cx: -0.12, hy: 0.045 }),
     C2: CP({ h: [-0.15, 1.1, 0.48], d: [0.05, -0.06, 1], l: [0.3, 1.0, -0.08], cy: 0.34, cx: 0.28, hy: -0.1, open: 0 }) },
   // water: both hands on the staff, pushed out from the chest
@@ -693,6 +693,8 @@ export class HumanRig extends Rig {
     this.moveDir = new V3(0, 0, 1);
     this.feet = [0, 1].map((k) => ({ side: k ? -1 : 1, n: k ? 'R' : 'L', plant: new V3(), pos: new V3(), from: new V3(), to: new V3(), planted: false, stepping: 0, stepDur: 0.22, pitch: 0, init: false, lift: 0, yaw: 0, sg0: 0, p0: 0, tilt: 0, x0: 0, l0: 0 }));
     this.pelvisDrop = 0;
+    this.footPlants = []; // contacts from this update, consumed by Player after posing
+    this.drive = new Spring(180, 20); this.bank = new Spring(140, 18);
     this.land = new Spring(160, 16); this.landImpulse = 0;
     this.prevGrounded = true; this.prevVy = 0; this.airT = 0;
     this.castK = 0; this.castKind = 'bolt'; this.castV = 0; this.castSp = new Spring(260, 18);
@@ -774,7 +776,17 @@ export class HumanRig extends Rig {
     this.castKind = kind; this.flickT = 0; this.castSp.v -= kind === 'heavy' ? 14 : kind === 'ult' ? 10 : 11;
     const C = this.cast;
     C.clip = this.castClip(kind, el); C.el = el; C.wt = -1; C.rt = 0;
-    if (this.person) this.w.cast = Math.max(this.w.cast, 0.75);       // the staff is on the aim at once
+    if (this.person && this.hold === 'staff') {
+      // Spells sample staffTip immediately, before the next animation update.
+      // Commit the contact pose now so the projectile leaves the visible crystal.
+      this.w.cast = 1; this.w.climb = this.w.swim = 0;
+      const staff = this.p.staff;
+      if (staff && (staff.parent !== this.B.handR || this.stowK < 1)) {
+        this.B.handR.add(staff); staff.position.set(-0.004, -this.L.hand * 0.36, 0.004); staff.quaternion.identity();
+        this.stowed = false; this.stowK = 1;
+      }
+      this.update(0, { ...this.lastState, cast: true, climb: false, swim: false });
+    }
   }
   // start of a spell's anticipation: the pose reaches its contact after `dur` seconds and holds there until flick()
   windup(kind, dur = 0.15, el = null) {
@@ -816,9 +828,19 @@ export class HumanRig extends Rig {
   }
   lookAt(p) { this.lookPoint = p ? (this.lookPoint || new V3()).copy(p) : null; }
 
+  landImpact(vy) {
+    const imp = clamp(-vy / 22, 0.12, 1);
+    this.land.v = Math.min(this.land.v, -(2 + 7 * imp)); this.landImpulse = imp;
+    this.landPending = true;
+    if (this.person) { this.ikW = 1; for (const f of this.feet) f.init = false; }
+    if (this.person) this.gust(_v1.set(0, 1, 0), imp * 0.45);
+  }
+
   // ---------------------------------------------------------------- update
   update(dt, s = {}) {
     dt = Math.min(Math.max(dt, 0), 0.1);
+    this.lastState = s;
+    this.footPlants.length = 0;
     this.t += dt;
     const W = this.w;
     const root = this.root;
@@ -832,6 +854,9 @@ export class HumanRig extends Rig {
       this.prevPos.copy(_v1); this.vel.set(0, 0, 0); this.acc.set(0, 0, 0);
       for (const f of this.feet) f.init = false;
       for (const ch of this.chains) ch.init = false;
+      this.prevYaw = yaw; this.yawRate = 0;
+      this.drive.x = this.drive.v = this.bank.x = this.bank.v = 0;
+      this.land.x = this.land.v = 0;
     }
     if (this.prevPos && dt > 0) {
       _v2.subVectors(_v1, this.prevPos).multiplyScalar(1 / dt);
@@ -869,19 +894,20 @@ export class HumanRig extends Rig {
     W.shock = damp(W.shock, s.shock ? 1 : 0, 20, dt);
     W.panic = damp(W.panic, s.panic ? 1 : 0, 10, dt);
     W.dead = damp(W.dead, s.dead ? 1 : 0, 6, dt);
-    W.dash = damp(W.dash, speed > 16 ? 1 : 0, speed > 16 ? 30 : 8, dt);
+    const dashing = s.dash ?? speed > 16;
+    W.dash = damp(W.dash, dashing ? 1 : 0, dashing ? 45 : 12, dt);
     W.hurt = Math.max(0, W.hurt - dt * 3);
     const spn = Math.min(speed, 12) / this.s;
     const P = this.person;
-    W.gait = damp(W.gait, spn > 0.35 && grounded ? 1 : 0, 8, dt);
+    W.gait = damp(W.gait, spn > 0.2 && grounded ? 1 : 0, spn > 0.2 ? 18 : 10, dt);
     W.run = damp(W.run, P ? sstep(2.3, 4.0, spn) : sstep(2.6, 5.2, spn), P ? 7 : 5, dt);
     const sprint = P ? (W.sprint = damp(W.sprint, sstep(6.6, 8.6, spn), 6, dt)) : sstep(6.5, 9, spn);
     if (!grounded) this.airT += dt; else this.airT = 0;
     // landing impact
     if (grounded && !this.prevGrounded && !s.swim) {
-      const imp = clamp(-this.prevVy / 14, 0.15, 1);
-      this.land.v -= 6 * imp + 1.5; this.landImpulse = imp;
+      if (!this.landPending) this.landImpact(this.prevVy);
     }
+    this.landPending = false;
     this.prevGrounded = grounded; this.prevVy = s.vy ?? 0;
     this.land.step(0, dt);
     this.castSp.step(0, dt); this.hurtSp.step(0, dt);
@@ -903,7 +929,7 @@ export class HumanRig extends Rig {
     }
     if (W.gait > 0.01) this.phase = (this.phase + dt * freq) % 1;
     const ph = this.phase * TAU;
-    const gw = W.gait * (1 - W.air) * (1 - W.glide) * (1 - W.swim) * (1 - W.sit) * (1 - lie);
+    const gw = W.gait * (1 - W.air) * (1 - W.glide) * (1 - W.swim) * (1 - W.climb) * (1 - W.dash) * (1 - W.sit) * (1 - lie);
     const run = W.run;
     const hold = this.hold;
     const idle = 1 - W.gait;
@@ -1239,7 +1265,7 @@ export class HumanRig extends Rig {
       }
       B.handR.getWorldQuaternion(_q1);
       _v2.set(0, 0, 1).applyQuaternion(_q1);
-      rotateTowards(B.handR, _v2, _v1, 0.9 * (1 - lie) * (1 - W.shock) * (1 - W.panic) * (1 - W.climb));
+      rotateTowards(B.handR, _v2, _v1, (P && ct > 0.5 ? 1 : 0.9) * (1 - lie) * (1 - W.shock) * (1 - W.panic) * (1 - W.climb));
       B.handR.updateMatrixWorld(true);
     }
 
@@ -1252,7 +1278,7 @@ export class HumanRig extends Rig {
     }
     // --- legs: planted-foot IK when standing / walking
     const upright = Math.abs(root.rotation.x) < 0.2 && Math.abs(root.rotation.z) < 0.2;
-    const ikTarget = grounded && upright && W.swim < 0.5 && W.glide < 0.5 && lie < 0.2 && W.sit < 0.5 && W.kneel < 0.5 && W.dash < 0.5 && this.lod < 2 ? 1 : 0;
+    const ikTarget = grounded && !s.climb && !s.dash && upright && W.swim < 0.5 && W.glide < 0.5 && lie < 0.2 && W.sit < 0.5 && W.kneel < 0.5 && W.dash < 0.5 && this.lod < 2 ? 1 : 0;
     this.ikW = damp(this.ikW, ikTarget, ikTarget ? 10 : 14, dt);
     if (this.ikW > 0.01 && vis) { if (P) this.legIK2(dt, speed, freq, duty, gw); else this.legIK(dt, speed, spn, freq, duty, gw, run); }
     else { for (const f of this.feet) f.init = false; this.pelvisDrop = damp(this.pelvisDrop, 0, 8, dt); }
@@ -1278,10 +1304,16 @@ export class HumanRig extends Rig {
       const stow = W.climb > 0.5 || W.swim > 0.5, g = this.p.staff;
       if (stow !== !!this.stowed) {
         this.stowed = stow; this.stowK = 0;
-        if (stow) { B.chest.add(g); g.position.set(0.03, -0.12, -0.15); g.quaternion.setFromAxisAngle(_v1.set(1, 0, 0), -Math.PI / 2).premultiply(_q1.setFromAxisAngle(_v1.set(0, 0, 1), 0.45)); }
-        else { B.handR.add(g); g.position.set(-0.004, -this.L.hand * 0.36, 0.004); g.quaternion.identity(); }
+        (stow ? B.chest : B.handR).attach(g);
+        this.stowFrom = { pos: g.position.clone(), quat: g.quaternion.clone() };
       }
-      if (this.stowK < 1) { this.stowK = Math.min(1, (this.stowK ?? 1) + dt * 7); g.scale.setScalar(0.25 + 0.75 * ease(this.stowK)); }
+      if (this.stowK < 1) {
+        this.stowK = Math.min(1, this.stowK + dt / 0.22);
+        if (stow) { _v2.set(0.03, -0.12, -0.15); _q2.setFromAxisAngle(_v1.set(1, 0, 0), -Math.PI / 2).premultiply(_q1.setFromAxisAngle(_v1.set(0, 0, 1), 0.45)); }
+        else { _v2.set(-0.004, -this.L.hand * 0.36, 0.004); _q2.identity(); }
+        g.position.lerpVectors(this.stowFrom.pos, _v2, ease(this.stowK));
+        g.quaternion.slerpQuaternions(this.stowFrom.quat, _q2, ease(this.stowK));
+      }
     }
     // --- face
     if (this.faceU && this.lod < 2) this.updateFace(dt, s, typing);
@@ -1401,7 +1433,7 @@ export class HumanRig extends Rig {
     if (C.two > 0.01) for (let i = 0; i < 3; i++) T.l[i] = mix(T.l[i], T.h[i] + T.d[i] * 0.4, C.two);     // the left hand holds the staff too
     // smooth what the clips say (clips can be cut short by the next release at any time)
     const cur = C.cur;
-    if (!C.init || a < 0.05) { cpMix(cur, T, T, 0); C.init = true; }
+    if (!C.init || a < 0.05 || C.rt === 0) { cpMix(cur, T, T, 0); C.init = true; }
     else cpMix(cur, cur, T, 1 - Math.exp(-dt * 34));
     C.toes = damp(C.toes, clamp(cur.hy / 0.045, 0, 1), 14, dt);
     // body
@@ -1420,6 +1452,14 @@ export class HumanRig extends Rig {
   bodyPose(q, dt, s, ph, duty, gw, spn, speed, accF) {
     const st = this.style, W = this.w, t = this.t, I = this.idle, c = this.c;
     const run = W.run, sprint = W.sprint, idle = 1 - W.gait;
+    // Acceleration compresses the supporting leg; braking carries the chest back
+    // past rest for a short settling beat. Input can lead the hips into a turn.
+    const drive = this.drive.step(clamp(accF * 0.012, -0.19, 0.19), dt) * (1 - W.air) * (1 - W.climb) * (1 - W.swim);
+    q.hipsPY -= Math.abs(drive) * 0.1;
+    q.hipsPZ -= drive * 0.07; q.spinex += drive * 0.45; q.chestx += drive * 0.55; q.headx -= drive * 0.55;
+    const intent = s.moveYaw === undefined || s.cast ? 0 : wrapA(s.moveYaw - this.prevYaw);
+    q.chesty += clamp(intent * 0.15, -0.2, 0.2) * gw;
+    q.heady += clamp(intent * 0.3, -0.35, 0.35) * gw;
     // which way the body travels in its own frame (the player backs away and sidesteps while aiming)
     const vl = Math.hypot(this.velL.x, this.velL.z);
     const fz = vl > 0.3 ? this.velL.z / vl : 1, fx = vl > 0.3 ? this.velL.x / vl : 0;
@@ -1505,7 +1545,7 @@ export class HumanRig extends Rig {
       q.fingL += (0.35 * run + 0.5 * sprint) * gw; q.fingR += (0.35 * run + 0.5 * sprint) * gw; q.thumbL += 0.3 * run * gw; q.thumbR += 0.3 * run * gw;
     } else { this.lean.z = damp(this.lean.z, 0, 9, dt); this.lean.x = damp(this.lean.x, 0, 9, dt); }
     // lean into turns: the whole column banks, the head turns first
-    const bank = clamp(this.yawRate * speed * 0.016, -0.32, 0.32) * gw;
+    const bank = this.bank.step(clamp(this.yawRate * speed * 0.018, -0.34, 0.34), dt) * gw;
     q.hipsz -= bank * 0.35; q.spinez -= bank * 0.45; q.chestz -= bank * 0.2; q.headz += bank * 0.35;
     q.heady += clamp(this.yawRate * 0.09, -0.4, 0.4); q.chesty += clamp(this.yawRate * 0.03, -0.15, 0.15);
     // --- held things
@@ -1549,7 +1589,10 @@ export class HumanRig extends Rig {
     let fw, y;
     if (p >= 0) { fw = bd * (1 - cp) + (ah - bh) * sp; y = bh + (ah - bh) * cp + bd * sp; }       // on the ball of the foot
     else { fw = -hb * (1 - cp) + ah * sp; y = ah * cp - hb * sp; }                                  // on the heel
-    return out.set(f.pos.x + Math.sin(f.yaw) * fw, f.pos.y + y, f.pos.z + Math.cos(f.yaw) * fw);
+    _e1.set(f.slopePitch || 0, f.yaw, f.roll || 0, 'YXZ');
+    out.set(0, y, fw).applyEuler(_e1).add(f.pos);
+    _e1.order = 'XYZ';
+    return out;
   }
   legIK2(dt, speed, freq, duty, gw) {
     const root = this.root, s = this.s, rs = root.scale.x, k = s * rs, B = this.B, st = this.style, W = this.w;
@@ -1569,7 +1612,7 @@ export class HumanRig extends Rig {
     const toeOut = (0.13 - 0.06 * gw) * (st.base ?? 1);
     const lean = this.idle.sideV ?? 0;                          // standing weight: +1 on the left leg
     const cs = this.hold === 'staff' && this.castPose ? sstep(0.2, 0.8, W.cast) : 0;
-    const moving = gw > 0.35 && speed > 0.25;
+    const moving = gw > 0.12 && speed > 0.2;
     const turning = Math.abs(this.yawRate) > 1.2;
     let stepping = this.feet.some((f) => f.stepping > 0);
     // the ground under the body rises or falls along the way: lean and stride follow it
@@ -1583,12 +1626,15 @@ export class HumanRig extends Rig {
       const restX = e[12] + sideX * rx + fwdX * rz, restZ = e[14] + sideZ * rx + fwdZ * rz;
       if (!f.init) {
         const fw = B['foot' + f.n].getWorldPosition(_v1);
-        f.pos.set(fw.x, groundAt(fw.x, fw.z, ry), fw.z); f.plant.copy(f.pos); f.planted = true; f.stepping = 0; f.init = true; f.yaw = yaw + sd * toeOut; f.pitch = 0; f.tilt = 0;
+        f.pos.set(fw.x, groundAt(fw.x, fw.z, ry), fw.z); f.plant.copy(f.pos); f.planted = true; f.stepping = 0; f.init = true; f.yaw = yaw + sd * toeOut; f.pitch = 0; f.tilt = 0; f.slopePitch = f.roll = 0;
       }
       if (moving) {
         const pk = (this.phase + (sd > 0 ? 0 : 0.5)) % 1;
         if (pk < duty) {
-          if (!f.planted) { f.plant.set(f.pos.x, groundAt(f.pos.x, f.pos.z, ry), f.pos.z); f.planted = true; f.yaw = yaw + sd * toeOut * (1 - run); }
+          if (!f.planted) {
+            f.plant.set(f.pos.x, groundAt(f.pos.x, f.pos.z, ry), f.pos.z); f.planted = true; f.yaw = yaw + sd * toeOut * (1 - run);
+            if (this.ikW > 0.8) this.footPlants.push(f);
+          }
           f.pos.copy(f.plant);
           const ss = pk / duty;
           f.pitch = strike * (1 - sstep(0, mix(0.22, 0.16, run), ss)) + mix(0.78, 1.0, run) * sstep(mix(0.5, 0.28, run), 1, ss) * (0.3 + 0.7 * fwd);
@@ -1613,7 +1659,10 @@ export class HumanRig extends Rig {
           const xs = f.x0 * (2 * t3 - 3 * t2 + 1) + s0 * (t3 - 2 * t2 + tq) + (ahead + over) * (3 * t2 - 2 * t3) - over * tr * tr;
           const ls = f.l0 * (1 - ease(u));
           const hump = Math.pow(Math.sin(Math.PI * Math.pow(u, mix(1, 0.74, run))), 0.85);
-          f.pos.set(restX + mx * xs - mz * ls, mix(f.from.y, ly, ease(u)) + liftH * hump, restZ + mz * xs + mx * ls);
+          const sx = restX + mx * xs - mz * ls, sz = restZ + mz * xs + mx * ls;
+          // Clear stair noses during swing, without snapping to a new surface at contact.
+          const clearance = groundAt(sx, sz, ry);
+          f.pos.set(sx, Math.max(mix(f.from.y, ly, ease(u)), clearance) + liftH * hump, sz);
           const flick = (0.2 + 0.6 * run) * Math.sin(Math.PI * Math.min(1, u / 0.5)) * fwd;
           f.pitch = mix(f.p0 + flick, strike, sstep(0.25, 0.88, u));
           f.yaw += wrapA(yaw + sd * toeOut * (1 - run) - f.yaw) * Math.min(1, dt * 14);
@@ -1629,7 +1678,7 @@ export class HumanRig extends Rig {
           f.pos.set(mix(f.from.x, f.to.x, ee), mix(f.from.y, f.to.y, ee) + 0.06 * k * Math.sin(Math.PI * sg), mix(f.from.z, f.to.z, ee));
           f.pitch = mix(f.p0, 0, sstep(0, 0.5, sg)) + Math.sin(Math.PI * sg) * 0.3;
           f.yaw += wrapA(yaw + sd * toeOut - f.yaw) * ee * 0.5;
-          if (f.stepping === 0) { f.plant.copy(f.to); f.planted = true; f.yaw = yaw + sd * toeOut; }
+          if (f.stepping === 0) { f.plant.copy(f.to); f.planted = true; f.yaw = yaw + sd * toeOut; if (speed > 0.2 && this.ikW > 0.8) this.footPlants.push(f); }
         } else if (!f.planted) { f.from.copy(f.pos); f.p0 = f.pitch; f.stepping = 1; f.stepDur = 0.17; stepping = true; }
         else {
           f.pos.copy(f.plant);
@@ -1640,6 +1689,15 @@ export class HumanRig extends Rig {
           if ((!stepping || cs > 0.5) && (err > 0.085 * k || twist > 0.6 || (turning && (err > 0.06 * k || twist > 0.25)))) { f.from.copy(f.plant); f.p0 = 0; f.stepping = 1; f.stepDur = cs > 0.5 ? 0.13 : turning ? 0.18 : err > 0.2 * k ? 0.24 : 0.36; f.planted = false; stepping = true; }
         }
       }
+      // Fit a small sole-sized plane to the same walkable surface as collision.
+      // A stair edge is a height discontinuity, not a steep ramp to roll onto.
+      const sn = Math.sin(f.yaw), cn = Math.cos(f.yaw), r = 0.09 * k;
+      const hf = groundAt(f.pos.x + sn * r, f.pos.z + cn * r, ry), hb = groundAt(f.pos.x - sn * r, f.pos.z - cn * r, ry);
+      const hl = groundAt(f.pos.x + cn * r, f.pos.z - sn * r, ry), hr = groundAt(f.pos.x - cn * r, f.pos.z + sn * r, ry);
+      const hc = groundAt(f.pos.x, f.pos.z, ry), dh = hf - hb, ds = hl - hr;
+      const onGround = f.planted && f.stepping === 0;
+      f.slopePitch = damp(f.slopePitch || 0, onGround && Math.abs(hf + hb - 2 * hc) < 0.025 * k && Math.abs(dh) < 0.15 * k ? clamp(-Math.atan2(dh, 2 * r), -0.6, 0.6) : 0, 24, dt);
+      f.roll = damp(f.roll || 0, onGround && Math.abs(hl + hr - 2 * hc) < 0.025 * k && Math.abs(ds) < 0.15 * k ? clamp(Math.atan2(ds, 2 * r), -0.45, 0.45) : 0, 24, dt);
     }
     // pelvis: low enough for the supporting legs to reach their ankles (a swinging foot only counts at a walk)
     const hipsB = B.hips;
@@ -1653,7 +1711,9 @@ export class HumanRig extends Rig {
       drop = Math.max(drop, need);
     }
     const tgt = -Math.max(0, Math.min(drop, 0.5 * k));
-    this.pelvisDrop = tgt < this.pelvisDrop ? damp(this.pelvisDrop, tgt, 40, dt) : damp(this.pelvisDrop, tgt, 12, dt);
+    // Reach is a hard constraint. Smooth the recovery upward, never the correction
+    // downward: easing into an unreachable plant makes the ankle skate.
+    this.pelvisDrop = tgt < this.pelvisDrop ? tgt : damp(this.pelvisDrop, tgt, 12, dt);
     hipsB.position.y += (this.pelvisDrop * this.ikW) / k;
     hipsB.updateMatrixWorld(true);
     for (const f of this.feet) {
@@ -1663,8 +1723,9 @@ export class HumanRig extends Rig {
       // knees point where the foot points, a little outwards
       _v3.set(_v1.x + Math.sin(f.yaw) + sideX * f.side * 0.05, _v1.y - 0.2, _v1.z + Math.cos(f.yaw) + sideZ * f.side * 0.05);
       ik2(th, sh, ft.position, _v2, _v3, this.ikW);
-      _e1.set(f.pitch + f.tilt, f.yaw, 0, 'YXZ');
-      setWorldQuat(ft, _q1.setFromEuler(_e1), this.ikW);
+      _e1.set(f.slopePitch || 0, f.yaw, f.roll || 0, 'YXZ');
+      _q1.setFromEuler(_e1).multiply(_q2.setFromAxisAngle(_v4.set(1, 0, 0), f.pitch + f.tilt));
+      setWorldQuat(ft, _q1, this.ikW);
       _e1.order = 'XYZ';
       B['toe' + f.n].rotation.x = -Math.max(0, f.pitch + f.tilt) * (f.planted ? 0.95 : 0.3) * this.ikW;
       ft.updateMatrixWorld(true);

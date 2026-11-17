@@ -597,8 +597,11 @@ export class CreatureRig extends Rig {
     const e = root.matrixWorld.elements;
     _v1.set(e[12], e[13], e[14]);
     const yaw = Math.atan2(e[8], e[10]);
-    if (!this.prevPos) this.prevPos = _v1.clone();
-    if (_v1.distanceToSquared(this.prevPos) > 4) { this.prevPos.copy(_v1); for (const c of this.chains) c.init = false; }
+    if (!this.prevPos || _v1.distanceToSquared(this.prevPos) > 4) {
+      this.prevPos = (this.prevPos || new V3()).copy(_v1);
+      this.prevYaw = yaw; this.vel.set(0, 0, 0); this.acc.set(0, 0, 0); this.yawRate = 0;
+      for (const c of this.chains) c.init = false;
+    }
     if (dt > 0) {
       _v2.subVectors(_v1, this.prevPos).multiplyScalar(1 / dt);
       if (_v2.lengthSq() > 3600) _v2.set(0, 0, 0);
@@ -779,6 +782,7 @@ class FoxRig extends CreatureRig {
     this.glanceT = 3; this.glance = 0; this.glanceTo = 0;
     this.lean = new V3();
     this.wind = new V3();
+    this.stridePhase = 0; this.travel = 0;
     this.t = rand() * 10;
   }
   update(dt, s = {}) {
@@ -789,11 +793,15 @@ class FoxRig extends CreatureRig {
     const vl = this.velL;
     const spd = Math.hypot(vl.x, vl.z);
     const fly = sstep(0.4, 5, spd);          // 0 hover .. 1 dashing through the air
+    this.travel = damp(this.travel, sstep(0.2, 1.6, spd), 9, dt);
+    this.stridePhase = (this.stridePhase + dt * mix(1.8, 3.4, fly) * this.travel) % 1;
+    const stride = this.stridePhase * TAU, bound = sstep(2.8, 6.5, spd);
+    const accel = this.acc.x * Math.sin(this.prevYaw) + this.acc.z * Math.cos(this.prevYaw);
     // body attitude: nose into motion, bank into turns, rise/fall pitch
-    this.lean.x = damp(this.lean.x, clamp(vl.z * 0.05 - vl.y * 0.06, -0.35, 0.35), 4, dt);
+    this.lean.x = damp(this.lean.x, clamp(vl.z * 0.05 - vl.y * 0.06 + accel * 0.008, -0.35, 0.35), 6, dt);
     this.lean.z = damp(this.lean.z, clamp(-this.yawRate * 0.12 - vl.x * 0.04, -0.4, 0.4), 4, dt);
     const bob = Math.sin(t * 2.2);
-    this.body.position.y = bob * 0.06;
+    this.body.position.y = bob * 0.06 * (1 - this.travel * 0.65) + Math.cos(stride * 2) * 0.018 * this.travel;
     rot(B.hips, this.lean.x * 0.6 + Math.sin(t * 2.2 - 0.6) * 0.04, 0, this.lean.z + Math.sin(t * 1.3) * 0.05);
     rot(B.spine, Math.sin(t * 2.2 - 1.2) * 0.05 + fly * 0.08, Math.sin(t * 1.1) * 0.04, 0);
     rot(B.chest, -Math.sin(t * 2.2 - 1.8) * 0.05 + this.lean.x * 0.3, -Math.sin(t * 1.1) * 0.04, 0);
@@ -816,7 +824,7 @@ class FoxRig extends CreatureRig {
     if (this.earT <= 0) { this.earT = 1.5 + rand() * 3.5; this.earSp[rand() < 0.5 ? 0 : 1].v += 14 + rand() * 10; }
     for (let k = 0; k < 2; k++) {
       const sd = k ? -1 : 1, ear = k ? B.earR : B.earL;
-      const tw = this.earSp[k].step(0, dt);
+      const tw = this.earSp[k].step(clamp(-accel * 0.3 + this.yawRate * sd, -4, 4), dt);
       rot(ear, -fly * 0.7 + (s.talk ? 0.15 : 0) + tw * 0.04 + Math.sin(t * 3 + k) * 0.03, sd * (tw * 0.05), sd * (-0.1 - fly * 0.3 + this.hurtSp.x * 0.05));
     }
     // blink
@@ -825,18 +833,21 @@ class FoxRig extends CreatureRig {
     this.blink = Math.max(0, this.blink - dt / 0.15);
     const bl = this.blink > 0 ? 1 - Math.sin(this.blink * Math.PI) * 0.9 : 1;
     B.eyeL.scale.set(1, bl, 1); B.eyeR.scale.set(1, bl, 1);
-    // legs: idle air-treading, stretched leap pose when flying fast
+    // Diagonal trot grows into a gathered/reaching bound. Feet continue cycling
+    // through fast flight instead of freezing into a stretched silhouette.
     const tr = t * 2.6;
     for (let k = 0; k < 2; k++) {
       const n = k ? 'R' : 'L', ph = k ? Math.PI : 0;
       const a = Math.sin(tr + ph), b = Math.cos(tr + ph);
-      rot(B['fArm' + n], mix(0.25 + a * 0.22, -0.9, fly), 0, 0);
-      rot(B['fFore' + n], mix(-0.35 - Math.max(0, b) * 0.5, -0.3, fly), 0, 0);
-      rot(B['fPaw' + n], mix(0.5 + Math.max(0, -b) * 0.3, 0.9, fly), 0, 0);
-      rot(B['hThigh' + n], mix(0.1 - a * 0.2, 0.9, fly), 0, 0);
-      rot(B['hShin' + n], mix(0.25 + Math.max(0, b) * 0.3, 0.2, fly), 0, 0);
-      rot(B['hFoot' + n], mix(-0.2, 0.5, fly), 0, 0);
-      rot(B['hPaw' + n], mix(0.45, 0.8, fly), 0, 0);
+      const fp = stride + ph * (1 - bound * 0.85), hp = fp + Math.PI * (1 - bound * 0.6);
+      const fs = Math.cos(fp), hs = Math.cos(hp), reach = 0.45 + 0.45 * fly;
+      rot(B['fArm' + n], mix(0.25 + a * 0.22, -0.2 - fs * reach, this.travel), 0, 0);
+      rot(B['fFore' + n], mix(-0.35 - Math.max(0, b) * 0.5, -0.3 - Math.max(0, Math.sin(fp)) * 0.85, this.travel), 0, 0);
+      rot(B['fPaw' + n], mix(0.5 + Math.max(0, -b) * 0.3, 0.65 + Math.sin(fp - 0.5) * 0.25, this.travel), 0, 0);
+      rot(B['hThigh' + n], mix(0.1 - a * 0.2, 0.25 - hs * reach, this.travel), 0, 0);
+      rot(B['hShin' + n], mix(0.25 + Math.max(0, b) * 0.3, 0.3 + Math.max(0, Math.sin(hp)) * 0.65, this.travel), 0, 0);
+      rot(B['hFoot' + n], mix(-0.2, 0.15 - Math.sin(hp - 0.5) * 0.3, this.travel), 0, 0);
+      rot(B['hPaw' + n], mix(0.45, 0.6 + Math.sin(hp - 0.7) * 0.2, this.travel), 0, 0);
     }
     // hit flinch
     const hk = this.hurtSp.x * 0.06;

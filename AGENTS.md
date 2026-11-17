@@ -305,7 +305,7 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 ```
 `http://127.0.0.1:<포트>/json`에서 페이지의 `webSocketDebuggerUrl`을 얻어(Node 24의 내장 `WebSocket`으로 충분) `Page.navigate`, `Runtime.evaluate`(`awaitPromise`), `Page.captureScreenshot`을 보냅니다. 화면 크기는 연결마다 `Emulation.setDeviceMetricsOverride`로 다시 정해야 합니다. **포트와 프로필 폴더는 작업자마다 따로 쓰세요**: 한 인스턴스의 탭을 여럿이 몰면 서로의 페이지를 갈아치웁니다.
 
-자동화 브라우저 창이 숨겨져 있어 스크린숏이 안 될 때는 캔버스를 직접 내보낼 수도 있습니다: 렌더 직후 같은 스크립트에서 `canvas.toBlob(...)`으로 만든 JPEG를 로컬 수신기(POST 본문을 파일로 저장하는 작은 HTTP 서버)에 `fetch(url, { method: 'POST', mode: 'no-cors', body: blob })`로 보내고 그 파일을 읽습니다(`terrainview`의 `__tv.shot`이 이 방식). 숨겨진 창은 해상도가 낮고 흐리게 나오니 품질 판단에는 쓰지 마세요. 게임에서는 `__G.paused = true` 뒤 `__G.renderer.render(0.016)`을 몇 번 부르거나 `__G.game.update(1/60, 1/60)`을 반복해 시뮬레이션을 진행시킵니다.
+자동화 브라우저 창이 숨겨져 있어 스크린숏이 안 될 때는 캔버스를 직접 내보낼 수도 있습니다: 렌더 직후 같은 스크립트에서 `canvas.toBlob(...)`으로 만든 JPEG를 로컬 수신기(POST 본문을 파일로 저장하는 작은 HTTP 서버)에 `fetch(url, { method: 'POST', mode: 'no-cors', body: blob })`로 보내고 그 파일을 읽습니다(`terrainview`의 `__tv.shot`이 이 방식). 숨겨진 창은 해상도가 낮고 흐리게 나오니 품질 판단에는 쓰지 마세요. 게임의 고정 프레임은 아래 Round 1 검증의 `step`처럼 시계·적중 정지·입력 프레임을 함께 갱신하세요. `game.update()`만 반복하면 게임 시계가 멈춰 지연 효과를 놓칩니다.
 
 ### 개발용 프리셋
 주소에 `?dev=<프리셋>`을 붙이면 타이틀을 건너뜁니다.
@@ -361,7 +361,8 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 번들이 약 1.3MB(gzip 386KB) 한 덩어리입니다. 필요하면 코드 분할을 검토하세요.
 - 그래픽 품질 단계는 `render/quality.js`의 `TIERS`가 정합니다. '낮음'은 그림자와 깊이 효과를 끄고 풀·소품 수를 줄이지만, 표면 층·잎 카드 셰이더는 끄지 않습니다. 저사양 대응이 필요하면 여기부터 보세요.
 - 캐릭터·적·소품·건물은 블렌더 스크립트로 만든 GLB 모델입니다(`public/models/`, 스크립트는 git에 들어가지 않는 `ref/blender/`). 모델이 없으면 코드로 만든 기존 형상으로 대신합니다. 아직 옛 수준인 것: 울음탈, 흩어진 바위 `pr_rocks`(다시 굽는 스크립트는 고쳐 둠, `ref/blender/README.md`), 시련의 노래하는 돌과 들불 기둥, 사람형 적의 동작(예전 경로).
-- 마법 연출에서 개별 재설계가 안 된 것: 엮기 11종, 반응 17종, 땅의 흔적, 궁극기의 본체. UI에는 기술별 아이콘, 대화 초상이 없습니다.
+- 복합 마법의 Round 1 시각 레시피: 엮기 11종, 반응 17종과 프리즘, 흔적 9종과 변화, 궁극기 본체 6종을 `vfx.js`·`fields.js`·`spells.js`에서 수정했습니다. 고정 프레임 화면과 프로그램 수 검증은 아래 기록을 보세요. 실제 GPU 시간은 리드의 단독 실기기 측정이 남았습니다. UI에는 기술별 아이콘, 대화 초상이 없습니다. 발소리 타이머(`player.js`)가 새 걸음 박자와 맞지 않습니다.
+
 - 텍스처 메모리가 크게 늘었습니다(몬스터 약 430MB, 캐릭터 약 360MB, 압축 없는 계산값). 저사양 대응이 필요하면 `TIERS`에 캐릭터·몬스터 텍스처 절반 해상도를 두는 것부터 보세요. `World.bakeStatics`는 인덱스를 풀어 합쳐서 건물 정점 버퍼가 큽니다(약 70MB 추산).
 - 지형은 2m 격자 높이맵이라 절벽의 오버행·바위 메시가 없습니다. 바깥 땅(r > 226m)에는 나무가 배치되어 있지 않습니다.
 - 적이 넘어졌다 일어나는 동작은 몸 전체를 기울이는 방식이며 별도의 일어서기 애니메이션은 없습니다.
@@ -374,3 +375,61 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 - 카메라는 이동 선행 시선·마우스 조작 후 1.6초 유예한 탐험 회전·지형/정적 충돌체 검사·충돌 후 완만한 붐 복귀를 씁니다. 대화가 소유한 샷에만 삼분 구도/눈높이 보정을 더합니다.
 - /charview.html?set=player&motion=slope&frame=120 으로 고정 프레임을 열 수 있습니다. V.motion.start(name) → V.motion.step(n, 1/60) → V.motion.trace로 flat·slope·stairs·transition·landing·jump·dodge·cast·glide·swim·climb·mantle을 재현합니다. 발 목표뿐 아니라 실제 발목 오차와 접촉 시각도 기록합니다. 성능 측정 용도가 아닙니다.
 - 시전 발사 프레임은 대기 자세의 가상 조준점 보간을 건너뛰고 보이는 수정을 원점으로 씁니다. 손으로 지팡이를 되찾는 중에도 flick이 손잡이와 방향을 확정합니다.
+
+### 복합 마법 시각 레시피와 검증 (Round 1)
+- `VFX.react`는 적중 프레임의 가는 읽힘 → 35~100ms 뒤 속성별 본체/파편 → 낮은 바닥 흔적 순서입니다. 증발은 세 개의 수직 김줄기, 과부하는 주황 심과 세 갈래 방전, 초전도는 끊어진 육각 전류, 순간 빙결은 안으로 닫히는 눈꽃, 파쇄는 바깥으로 날아가는 불투명 파편입니다. 지연된 레시피에는 호출자의 공용 벡터 대신 복사한 좌표를 넘깁니다.
+- `VFX.fieldSurface(kind, pos, r, dur)`는 12×12 사각 격자를 `ground()`에 맞춘 풀 메시입니다. 12개 활성 흔적과 바뀔 때 사라지는 4개를 위한 16칸만 있고, 가득 차면 새 메시를 만들지 않습니다. 종류는 유니폼이므로 변화마다 프로그램이 생기지 않습니다. `prewarm()`에 포함됩니다. `dur <= 0`이면 `end()`까지 유지되므로, 흔적 합치기로 시간이 늘어날 때도 남습니다. 반경이 늘어나면 `resize(r)`를 부릅니다.
+- 물웅덩이는 낮은 광택과 가는 물결, 서리는 여섯 방향의 결정 부채, 불길은 세 개의 불씨 이음선, 전류는 꺾인 가지로 읽힙니다. `Fields.visuals`는 세 섬에 세부를 모으고 공유 방출 예산을 지킵니다. 김은 무릎 아래의 작은 덩이로, 큰 흰 구름은 쓰지 않습니다. 표면 풀은 최대 16드로우·4,608삼각형이며 실제 GPU 비용은 별도 검증합니다.
+- 엮기/궁극기의 나선 칼날은 `tornado(..., { graphic: true })`입니다(기존 고유 마법에는 기본 모양 유지). `orbitLines`는 가는 분리된 초승달, `steamBurst`는 세 압력 줄기와 낮은 왕관, `constellation`은 비전 궁극기 위쪽의 불투명 별 창입니다. `beam(..., { graphic: true })`는 넓은 후광 대신 좁은 심과 짧은 적중 고리를 씁니다. 조명 풀은 여전히 4개입니다.
+
+개발 서버에서 다음을 실행하면 모든 효과를 같은 어깨 카메라로 확인할 수 있습니다. 각 사례는 새로고침한 `?dev=skills&god&unseen`에서 실행하세요. 실제 궁극기의 준비 자세까지 보려면 `skills.learn`/`player.castUlt()` 경로를 쓰고, 아래 `ult`는 본체만 바로 검사합니다.
+
+```js
+const G = window.__G;
+const { WEAVE } = await import('/src/game/spells.js');
+const { REACTIONS } = await import('/src/game/combat.js');
+const { FIELDS, FIELD_MIX } = await import('/src/game/fields.js');
+const p = G.player, origin = p.staffTip();
+const at = p.pos.clone().addScaledVector(G.cameraRig.forward, 12);
+at.y = G.world.ground(at.x, at.z, p.pos.y + 3);
+// Choose one case (iterate the exported keys for the complete checklist).
+G.spells.weave('fire', 'frost', origin, at, p.power(), p);
+// G.vfx.react('superconduct', at.clone().setY(at.y + 1));
+// G.spells.fields.add('shockwater', at, { r: 3, dur: 6 });
+// const f = G.spells.fields.add('rime', at, { r: 3, dur: 6 });
+// G.spells.fields.mix(f, 'storm', 'heavy', 'player');
+// G.spells.ult('fire', origin, at, p.power(), p);
+
+// Pause the automatic loop. Suppress intermediate renders on SwiftShader.
+G.paused = true;
+const draw = G.renderer.render;
+G.renderer.render = () => {};
+const step = n => { for (let i = 0; i < n; i++) {
+  const raw = 1/60;
+  let dt = raw;
+  if (G.hitstop > 0) { G.hitstop -= raw; dt *= 0.04; }
+  G.realTime += raw; G.dt = dt; G.time += dt;
+  G.paused = false; G.game.update(dt, raw); G.input.endFrame(); G.paused = true;
+} };
+const shot = () => {
+  draw.call(G.renderer, 1/60);
+  return document.querySelector('canvas#game').toDataURL('image/png');
+};
+// Save after cumulative steps 1, 6, 18, 42, 90, 150, 270 as appropriate.
+// For each case: record renderer.renderer.info.programs.length before/after
+// draw(), then repeat the cast after all residue has expired. Pool length = 4.
+// Restore when finished:
+// G.renderer.render = draw; G.paused = false;
+```
+
+수동 프레임은 `Game.loop`가 맡는 시계 갱신까지 위처럼 함께 실행해야 합니다. `game.update()`만 반복하면 `G.time`이 멈춰 `G.later`의 엮기 폭발·궁극기 후속타가 발동하지 않습니다. CDP 연결마다 `Emulation.setDeviceMetricsOverride`도 다시 적용하세요.
+
+Round 1 검증: 자기 Vite(HMR 꺼짐·자기 캐시·strictPort)와 자기 헤드리스 Chrome 프로필에서 높은 품질·960×600으로 68장면/209프레임을 저장했습니다. 엮기 11, 반응 17+프리즘, 흔적 9, 변화 23(바람/물 소용돌이·비전 해체 포함), 궁극기 6, 복합 장면 1입니다. 처음 전 장면을 돌린 뒤 반복 시전은 프로그램 136→136, 최종 새 페이지의 추가 8장면 반복도 136→136이며 오류 0건·조명 풀 4개였습니다. 초기 관측의 별도 구름 프로그램과 양면 깊이 프로그램 증가는 기록에 보존했습니다. 후자는 VFX의 버리지 않는 MeshDepthMaterial 견본으로 사전 컴파일하고 최종 새 페이지에서 포함 여부를 확인했습니다. 변하는 날씨는 최종 추가 장면에서 고정했습니다. 캡처/수치는 작업 증거 폴더의 review.html, sequences.json, verification-report.md에 있습니다. 잘못된 시계로 찍은 초기 프레임은 superseded-clock-check로 분리했고 평가에 쓰지 않습니다.
+
+물 위의 바닥 효과는 호수 바닥으로 가라앉지 않도록 제공된 수면 높이를 보존합니다. 서리밭이 다른 흔적으로 변하면 전용 결정도 조용히 줄어 풀로 돌아갑니다. 비전 궁극기의 별 창은 어깨 카메라에서 보이는 지면 위 3.5m에 배치합니다. 소용돌이의 불/물 변화도 graphic 나선과 분리된 초승달을 사용합니다.
+
+코드 검증: 렌더 프리미티브 기록기로 67사례(기본 64+도감의 소용돌이/비전 변화 3), 표면의 지면 오차 6.71×10⁻⁸m, 무기한 수명·반경 변경·종료·16칸 포화 시 거절·재사용, 수면 높이 보존과 결정 회수 검증이 통과했습니다. 고정 난수로 0.7초 동안 증기 폭발+과부하+불길을 겹친 직접 입자/스트릭 요청은 228→40, 구체 7→4, 큰 껍질 2→0, 충격 구체 2→0입니다. 새 표면 요청은 2개입니다. 프리미티브 내부 방출과 실제 GPU 비용을 포함한 값은 아닙니다. 실제 복합 캡처의 전체 렌더 드로우는 675~693개였고 그림자·후처리까지 포함합니다. 큰 반투명 껍질을 빼고 표면을 얇은 한 층으로 제한해 겹침을 줄였습니다. SwiftShader와 공유 머신의 시간은 GPU 성능 증거로 쓰지 않았습니다. 5~8ms 목표와 전후 실기기 비교는 리드가 단독 GPU에서 확인해야 합니다. 마지막 불/물·서리 후반·플라스마 엮기의 정점 프레임도 다시 확인했고 반복 프로그램은 137→137입니다. 큰 마무리에는 explode의 graphic 경로로 중앙을 비우며, 과한 화면 굴절을 줄였습니다. 그림자 패스는 안개가 없는 프로그램 키를 쓰므로 양면 깊이 견본은 안개 유무 두 키를 모두 보존합니다(GLSL이 같아도 캐시 키가 달랐음). 최종 빌드는 npx vite build --configLoader native, 공백 검사는 git diff --check로 통과했습니다.
+
+ART_DIRECTION 자체 평가(저장 프레임·채도 0.80/흑백 보기 기준, 외부 리뷰 아님): 실루엣 8, 형태 8, 표면 7, 색·명도 7, 통일감 8, 움직임 8, 비용 7. 가장 약한 항목은 표면(7)입니다. 물웅덩이의 선과 광택은 읽히지만 시점에 따른 반사 변화가 약합니다. 다음 라운드는 이 표면의 시점 반응과 풀/비탈 경계 마스크를 다듬습니다. 비용 점수는 풀 상한과 방출·겹침 감소를 기준으로 한 잠정 평가이며 실기기 GPU 목표 달성을 뜻하지 않습니다.
+
+비전 궁극기의 반복 적중도 graphic 경로를 사용합니다. 비전은 반 크기의 섬광과 여섯 별 파편만 쓰며 화염 측면 줄기를 만들지 않습니다. 별 창의 리본 폭은 0.75m이고, 겹쳐 적을 가리던 구체·굴절 껍질을 없앴습니다. 최종 비전 단독 새 인스턴스 검증은 프로그램 137→137, 콘솔 오류 0건입니다.

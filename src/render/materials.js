@@ -2,6 +2,7 @@
 // drifting cloud shadows, rim lighting, foliage translucency and wind sway,
 // outline hulls for characters, and a global aerial-perspective fog.
 import * as THREE from 'three';
+import { CLOUD_SHADOW } from './clouds.js';
 
 export const U = {
   time: { value: 0 },
@@ -11,6 +12,10 @@ export const U = {
   noise: { value: null },
   // Cloud shadows: xy = drift offset (m), z = world scale (1/m), w = strength (0 = off)
   cloud: { value: new THREE.Vector4(0, 0, 1 / 900, 0.5) },
+  // Terrain/water use the sky's shaped cloud columns and exact drift. A blank column
+  // is unshadowed until Clouds.render publishes the first layout.
+  cloudLayout: { value: (() => { const t = new THREE.DataTexture(new Uint8Array(4), 1, 1); t.needsUpdate = true; return t; })() },
+  cloudWind: { value: new THREE.Vector3() },
   // World-space direction towards the key light (sun or moon)
   sunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3).normalize() },
   // Fraction of the key light that still reaches surfaces facing away from it
@@ -598,6 +603,7 @@ const LIGHTS_PRE = `
 // (turf, earth, rock, sand, snow, paving) blended by the splat map and by their heights.
 const TERRAIN_VERT_PARS = `varying vec3 vWPos;\nvarying vec3 vWNrm;\n`;
 const TERRAIN_FRAG_PARS = `
+${CLOUD_SHADOW}
 uniform sampler2D uBurnTex;
 uniform sampler2D uGroundTex;
 uniform sampler2D uSplatTex;
@@ -700,7 +706,7 @@ const TERRAIN_FRAG = `
     rockC *= 1.0 + _beds * (bedT - 0.5) * 0.3;
     rockC = mix(rockC, rockC * vec3(1.1, 1.0, 0.86), _beds * smoothstep(0.55, 0.75, unit) * 0.6);
     float up = smoothstep(-0.2, 0.7, _wn.y);
-    rockC *= (0.98 + 0.16 * up) * mix(vec3(0.99, 0.99, 1.01), vec3(1.06, 1.01, 0.93), up);
+    rockC *= mix(vec3(0.86, 0.92, 1.02), vec3(1.08, 1.04, 0.95), up);
     // (snow, ash and wet sand lie on rock too)
     rockC = mix(rockC, gc, max(sp.b, max(sp.g, sp.a * 0.5)));
     vec3 col = mix(gc, rockC, rockK);
@@ -713,13 +719,19 @@ const TERRAIN_FRAG = `
     // roads: the edge is drawn here from the distance to the road, so it is as crisp as the
     // pixel, ragged with noise; trampled grass along it, packed earth in the middle
     float pd = texture2D(uPathTex, guv0).r * uHeightP.w;
-    float pf = 1.0 - smoothstep(1.6, 3.3, pd + (texture2D(uNoiseTex, p * 0.045).r - 0.5) * 1.6 + (texture2D(uNoiseTex, p * 0.31).g - 0.5) * 0.5);
+    float pf = 1.0 - smoothstep(1.6, 3.3, pd + (texture2D(uNoiseTex, p * 0.045).r - 0.5) * 1.1 + (texture2D(uNoiseTex, p * 0.31).g - 0.5) * 0.32);
     float over = max(max(sp.a, sp.g), pv);
     float road = smoothstep(0.3, 0.8, pf) * (1.0 - over);
     col = mix(col, uPal[7], smoothstep(0.05, 0.4, pf) * (1.0 - smoothstep(0.45, 0.85, pf)) * 0.45 * (1.0 - sp.b) * (1.0 - over));
     float gN = texture2D(uNoiseTex, p * 0.0045 + 0.13).g;
     vec3 dirtC = mix(mix(uPal[4], uPal[5], gN * 0.45), uPal[6], smoothstep(0.75, 1.0, pf) * smoothstep(0.4, 0.75, texture2D(uNoiseTex, p * 0.075).b) * 0.5);
     col = mix(col, dirtC, road * 0.94);
+    // Packed centres remain quiet; the warm shoulder makes the route legible through turf.
+    col = mix(col, dirtC * vec3(1.05, 1.02, 0.93), road * smoothstep(0.82, 1.0, pf) * 0.2);
+    // Sand dries above the waterline. This is only shading: collision and scatter masks
+    // keep their original heights and weights, including the old valley grid.
+    float shoreWet = (1.0 - smoothstep(-0.15, 0.7, vWPos.y)) * sp.b;
+    col *= mix(vec3(1.0), vec3(0.72, 0.82, 0.84), shoreWet);
     diffuseColor.rgb *= col;
     // layer weights: grass, earth, sand, snow; what is left is rock (slopes) or bare / laid stone
     _wG = sp.r * (1.0 - road) * (1.0 - rockK);
@@ -743,10 +755,11 @@ const TERRAIN_FRAG = `
     vec2 pr = R * p;
     float stroke = texture2D(uNoiseTex, pr * vec2(0.05, 0.16)).b;
     float macro = texture2D(uNoiseTex, p * 0.0037 + 0.31).g;
-    float k = 0.94 + 0.1 * (stroke - 0.5) + 0.14 * (macro - 0.5);
+    float calm = smoothstep(24.0, 130.0, length(cameraPosition - vWPos));
+    float k = 0.97 + mix(0.07, 0.02, calm) * (stroke - 0.5) + 0.18 * (macro - 0.5);
     // macro hue drift: warm/olive vs. cool/teal patches (mostly on greens)
     float green = smoothstep(0.02, 0.12, diffuseColor.g - max(diffuseColor.r, diffuseColor.b));
-    vec3 hue = mix(vec3(1.06, 1.02, 0.86), vec3(0.9, 1.0, 1.08), macro);
+    vec3 hue = mix(vec3(1.1, 1.03, 0.85), vec3(0.86, 0.99, 1.1), smoothstep(0.25, 0.75, macro));
     diffuseColor.rgb *= mix(vec3(1.0), hue, green * 0.8) * k;
   }
 `;
@@ -766,7 +779,7 @@ const TERRAIN_SURF = `
     GROUND(0.0, p / 4.0, _wG, X, Z, 1.0)
     GROUND(1.0, p / 3.0, _wD, X, Z, 1.0)
     GROUND(3.0, p / 3.0, _wS, X, Z, 0.0)
-    GROUND(4.0, p / 4.0, _wN, X, Z, 1.0)
+    GROUND(4.0, p / 4.0, _wN, X, Z, 0.0)
     GROUND(10.0, p / 2.8, _wPave, X, Z, 1.0)
     GROUND(12.0, p / 5.0, _wBare, X, Z, 1.0)
     if (_wRock > 0.004) {
@@ -792,13 +805,38 @@ const TERRAIN_SURF = `
       BEDS(13.0, 26.0, beds * farK)
     }
     float iw = 1.0 / max(ws, 1e-5);
-    diffuseColor.rgb *= ws > 0.0 ? alb * iw * 2.0 : vec3(1.0);
+    vec3 surface = ws > 0.0 ? alb * iw * 2.0 : vec3(1.0);
+    // Let the mass carry the distant cliff. Close relief stays intact, while high-frequency
+    // albedo contrast settles with distance instead of covering every wall in equal detail.
+    float farSurface = smoothstep(35.0, 150.0, length(cameraPosition - vWPos));
+    surface = mix(surface, vec3(1.0), _wRock * (0.5 + farSurface * 0.22) + farSurface * _wG * 0.25);
+    diffuseColor.rgb *= surface;
     // (rock: the relief comes and goes over a face, strong in one stretch and worn nearly
     // smooth in the next, and is read more gently from afar, or a far wall is all one grain)
     float rf = _wRock * (1.0 - mix(0.15, 0.75, texture2D(uNoiseTex, p * 0.013 + vWPos.y * 0.021 + 0.7).r) * (0.45 + 0.55 * smoothstep(40.0, 150.0, length(cameraPosition - vWPos))));
-    vec3 pn = normalize(wn + dW * iw * 1.15 * (1.0 - _wRock + rf));
-    normal = normalize((viewMatrix * vec4(pn, 0.0)).xyz);
+    vec3 pn = normalize(wn + dW * iw * 1.15 * (1.0 - _wRock + rf * 0.5));
     if (ws > 0.0) { _rough = rgh * iw; _cav = cav * iw; _specK = 1.0; }
+    _cav = mix(_cav, 1.0, _wRock * (0.45 + farSurface * 0.2));
+    if (_wN > 0.004) {
+      // Wind-carved sastrugi: broken, wandering 4-8 m ribs over a broad drift. This changes
+      // shading only. One noise lookup and screen derivatives supply the surface gradient.
+      vec4 drift = texture2D(uNoiseTex, p * vec2(0.009, 0.004));
+      float phase = dot(p, vec2(0.94, 0.34)) * 1.15 + (drift.r - 0.5) * 6.0;
+      float rib = pow(0.5 + 0.5 * sin(phase), 2.0);
+      float snowH = rib * (0.08 + 0.18 * smoothstep(0.28, 0.7, drift.g)) + (drift.b - 0.5) * 0.45;
+      vec3 dx = dFdx(vWPos), dy = dFdy(vWPos), rx = cross(dy, wn), ry = cross(wn, dx);
+      float det = dot(dx, rx);
+      vec3 grad = (dFdx(snowH) * rx + dFdy(snowH) * ry) / (abs(det) < 1e-5 ? 1e-5 : det);
+      pn = normalize(pn - grad * _wN * (1.0 - smoothstep(65.0, 180.0, length(cameraPosition - vWPos))));
+      // Let the actual key light read the drift normals even in the soft terrain ramp.
+      float form = smoothstep(0.35, 0.98, dot(pn, uSunW));
+      diffuseColor.rgb *= mix(vec3(1.0), mix(vec3(0.68, 0.8, 1.0), vec3(1.01, 1.0, 0.96), form), _wN);
+      diffuseColor.rgb = mix(diffuseColor.rgb, min(diffuseColor.rgb, vec3(0.8)), _wN);
+      _rough = mix(_rough, 0.9, _wN); _specK *= 1.0 - _wN * 0.88;
+    }
+    normal = normalize((viewMatrix * vec4(pn, 0.0)).xyz);
+    float shoreline = _wS * (1.0 - smoothstep(-0.15, 0.7, vWPos.y));
+    _rough = mix(_rough, 0.32, shoreline);
     if (_wRock > 0.05) {
       // moss: on whatever faces the sky at the scale of the relief (the tops of ledges and
       // blocks, never the risers), in damp stretches of country, thicker under grass tops
@@ -1113,6 +1151,9 @@ export function patch(m, opts = {}) {
     }
     if (hasSway) sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', WIND_VERT);
     if (isTerrain) {
+      sh.uniforms.uCloudLayout = U.cloudLayout;
+      sh.uniforms.uCloudWind = U.cloudWind;
+      sh.fragmentShader = sh.fragmentShader.replace('_cloudSh = cloudShadowAt( vDWP );', '_cloudSh = landscapeCloudShadow(vDWP, uSunW, uCloud.w);');
       // (the define has to come before the declarations that test it)
       const cl = isCliff ? '#define CLIFF_SKIN\n' : '';
       sh.vertexShader = cl + TERRAIN_VERT_PARS + (isCliff ? 'attribute vec2 aEdge;\nvarying vec2 vEdge;\n' : '')

@@ -45,18 +45,36 @@ void main(){
   float hb = exp(-max(y, 0.0) * 5.0);
   col += uSunColor * pow(sdp, 3.0) * hb * 0.5 * uSunVis;
   col *= mix(vec3(1.0), vec3(0.93, 0.97, 1.06), (1.0 - sdp) * hb * 0.5);
-  col = mix(col, uBottom, smoothstep(0.0, -0.25, y));
+  col = mix(col, uBottom, 1.0 - smoothstep(-0.25, 0.0, y));
   // sun halo and disk
   col += uSunColor * (pow(sdp, 16.0) * 0.25 + pow(sdp, 180.0) * 0.8) * uSunVis;
   col += uSunColor * smoothstep(0.99955, 0.9998, sd) * 8.0 * uSunVis;
   // moon
   float md = max(dot(d, uMoonDir), 0.0);
-  col += vec3(0.8, 0.88, 1.0) * (smoothstep(0.9993, 0.99965, md) * 2.5 + pow(md, 64.0) * 0.18) * uNight;
+  col += vec3(0.46, 0.62, 0.92) * pow(md, 96.0) * 0.08 * uNight;
+  if (md > 0.9994 && uNight > 0.01) {
+    vec3 right = normalize(cross(uMoonDir, vec3(0.0, 1.0, 0.0)));
+    vec3 up = cross(right, uMoonDir);
+    vec2 m = vec2(dot(d, right), dot(d, up)) / 0.028;
+    float radius = length(m), aa = max(fwidth(radius), 0.005);
+    float disk = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, radius);
+    vec3 mn = vec3(m, sqrt(max(1.0 - dot(m, m), 0.0)));
+    float phase = smoothstep(-0.08, 0.12, dot(mn, normalize(vec3(0.7, 0.18, 0.7))));
+    float mare = texture2D(uNoiseTex, m * 0.32 + 0.37).g;
+    vec3 moon = vec3(0.64, 0.76, 0.9) * (0.8 + 0.2 * mare) * (0.08 + 1.2 * phase);
+    col = mix(col, moon, disk * uNight);
+  }
   // stars + milky way
   if (uNight > 0.01 && y > 0.0) {
-    vec3 sp = d * 260.0; vec3 cell = floor(sp); float h = hash(cell);
-    if (h > 0.985) { vec3 f = fract(sp) - 0.5; float s = smoothstep(0.12, 0.0, length(f));
-      col += vec3(0.9, 0.95, 1.0) * s * uNight * (0.55 + 0.45 * sin(uTime * 2.0 + h * 90.0)) * smoothstep(0.0, 0.2, y) * 1.6; }
+    vec2 sp = vec2(atan(d.z, d.x) / 6.2831853 + 0.5, asin(clamp(y, -1.0, 1.0)) / 3.1415927 + 0.5) * vec2(1000.0, 500.0);
+    float h = hash(vec3(floor(sp), 19.0));
+    float starAA = max(length(fwidth(sp)) * 0.5, 0.04);
+    if (h > 0.996) {
+      float r = mix(0.12, 0.24, fract(h * 317.0));
+      float s = 1.0 - smoothstep(r - starAA, r + starAA, length(fract(sp) - 0.5));
+      vec3 st = mix(vec3(0.66, 0.8, 1.0), vec3(1.0, 0.84, 0.67), fract(h * 137.0));
+      col += st * s * uNight * (0.92 + 0.08 * sin(uTime * 0.7 + h * 90.0)) * smoothstep(0.02, 0.22, y) * 1.3;
+    }
     float mw = smoothstep(0.35, 0.0, abs(d.x * 0.6 + d.z * 0.8 - 0.1)) * smoothstep(0.0, 0.5, y);
     col += vec3(0.25, 0.28, 0.45) * mw * texture2D(uNoiseTex, d.xz * 1.6).g * uNight * 0.6;
   }
@@ -67,7 +85,7 @@ void main(){
       // the map's edge, a little tightened: soft, but not smeared
       float a = smoothstep(0.02, 0.84, cl.a);
       // two soft tones: sunlit white over a pale shade that gathers at the base
-      float tone = smoothstep(0.08, 0.5, k.r) * (0.8 + 0.2 * smoothstep(0.0, 0.5, k.g));
+      float tone = smoothstep(0.18, 0.78, k.r) * (0.6 + 0.4 * smoothstep(0.05, 0.65, k.g));
       vec3 cc = mix(uCloudShade, uCloud, tone);
       // thin edges glow when the sun is behind them
       cc += uSunColor * pow(sdp, 8.0) * cl.a * (1.0 - cl.a) * 2.2 * uSunVis;
@@ -82,7 +100,8 @@ void main(){
   gl_FragColor = vec4(col, 1.0);
 }`;
 
-// Distant mountain silhouettes (two rings), hazed towards the horizon color.
+// Three depth-separated ranges share one mesh and one draw call. Broad foothills support
+// the middle ridges; only the far skyline gets the sharp alpine accents.
 const RANGE_VS = `
 attribute float aH;
 attribute float aLayer;
@@ -122,8 +141,9 @@ void main(){
 function rangeGeometry() {
   const noise = createNoise2D(9001);
   const rings = [
-    { r: 1080, h0: 90, h1: 300, k: 2.2, off: 0 },
-    { r: 1360, h0: 150, h1: 440, k: 1.6, off: 40 },
+    { r: 980, h0: 35, h1: 140, k: 1.6, off: 17 },
+    { r: 1330, h0: 90, h1: 250, k: 2.2, off: 0 },
+    { r: 1740, h0: 140, h1: 380, k: 1.6, off: 40 },
   ];
   const pos = [], hs = [], ls = [], idx = [];
   const N = 240, ROWS = 4;
@@ -132,18 +152,20 @@ function rangeGeometry() {
     for (let i = 0; i <= N; i++) {
       const a = (i / N) * Math.PI * 2;
       const cx = Math.cos(a), sz = Math.sin(a);
-      const rg = ridged(noise, cx * R.k + R.off, sz * R.k - R.off, 5);
-      const peak = Math.pow(clamp(rg, 0, 1), 1.35);
+      const rg = ridged(noise, cx * R.k + R.off, sz * R.k - R.off, li === 0 ? 3 : 5);
+      // Rounded shoulders carry the silhouette; sharper ridges are secondary accents.
+      const shoulder = noise(cx * R.k + R.off + 7, sz * R.k - R.off - 13) * 0.5 + 0.5;
+      const peak = clamp(shoulder * 0.68 + rg * 0.32, 0, 1);
       // the southern horizon is open sea: the ranges sink away there
       const top = (R.h0 + (R.h1 - R.h0) * peak) * (1 - 0.92 * smoothstep(0.25, 0.8, sz));
       const rr = R.r + (noise(cx * 3 + 11 + li, sz * 3) * 50);
       for (let j = 0; j <= ROWS; j++) {
         const t = j / ROWS;
-        const y = lerp(-60, top, t);
+        const y = lerp(-140, top, t);
         // slopes lean back so ridges read as volumes rather than walls
-        const back = (1 - t) * -40 + t * 30;
+        const back = (1 - t) * (-90 + noise(cx * 5 + R.off, sz * 5 + t * 0.7) * 90) + t * 30;
         pos.push(cx * (rr + back), y, sz * (rr + back));
-        hs.push(Math.max(0, y) / R.h1); ls.push(li);
+        hs.push(Math.max(0, y) / R.h1); ls.push(li / (rings.length - 1));
       }
     }
     for (let i = 0; i < N; i++) for (let j = 0; j < ROWS; j++) {
@@ -165,15 +187,17 @@ function rangeGeometry() {
 
 // Keyframes: hour -> palette (sRGB hex)
 const KEYS = [
-  { h: 0, top: 0x060b20, hor: 0x1a2546, bot: 0x0c1226, sun: 0x8fa6ff, sunI: 0.35, hemiS: 0x31406e, hemiG: 0x1a1e2a, hemiI: 0.55, fog: 0x18223c, cloud: 0x2a3456, shade: 0x151b30, rim: 0.25, night: 1 },
-  { h: 4.5, top: 0x101a3a, hor: 0x3d3f66, bot: 0x151a30, sun: 0x9aaaff, sunI: 0.3, hemiS: 0x3d4a78, hemiG: 0x221f2c, hemiI: 0.6, fog: 0x2b3050, cloud: 0x3d3f60, shade: 0x22263e, rim: 0.3, night: 0.9 },
+  { h: 0, top: 0x0b1630, hor: 0x304367, bot: 0x162239, sun: 0xb4c9ed, sunI: 0.65, hemiS: 0x60758f, hemiG: 0x303b41, hemiI: 0.85, fog: 0x27374f, cloud: 0x485b79, shade: 0x273650, rim: 0.25, night: 1 },
+  { h: 4.5, top: 0x101a3a, hor: 0x3d3f66, bot: 0x151a30, sun: 0xb1c7ee, sunI: 0.5, hemiS: 0x667b9e, hemiG: 0x343747, hemiI: 0.8, fog: 0x2b3050, cloud: 0x3d3f60, shade: 0x22263e, rim: 0.3, night: 0.9 },
   { h: 6, top: 0x3e5b9a, hor: 0xf4ab7e, bot: 0x6a5a6a, sun: 0xffb27a, sunI: 1.3, hemiS: 0x9aa3c8, hemiG: 0x6a5a50, hemiI: 1.0, fog: 0xe0ab94, cloud: 0xffd0b8, shade: 0xa87890, rim: 0.8, night: 0.15 },
   { h: 8, top: 0x2f74d6, hor: 0xb4dcf4, bot: 0x9ab0c0, sun: 0xfff0dc, sunI: 2.5, hemiS: 0xbfd8ff, hemiG: 0x7a8a5a, hemiI: 1.25, fog: 0xc6dbeb, cloud: 0xffffff, shade: 0xc0d2ee, rim: 1, night: 0 },
-  { h: 12.5, top: 0x1e66cc, hor: 0x9ed6f6, bot: 0x9ab0c0, sun: 0xfffaf0, sunI: 2.8, hemiS: 0xc4ddff, hemiG: 0x7d8f58, hemiI: 1.3, fog: 0xbcd6ec, cloud: 0xffffff, shade: 0xc8dbf5, rim: 1, night: 0 },
-  { h: 16.5, top: 0x4478cc, hor: 0xf0d8b0, bot: 0x9a9aa0, sun: 0xffe2b4, sunI: 2.4, hemiS: 0xc8d4f0, hemiG: 0x857f55, hemiI: 1.2, fog: 0xcfd9e2, cloud: 0xfff4e0, shade: 0xbcb0c4, rim: 1, night: 0 },
-  { h: 18.6, top: 0x33447e, hor: 0xff9a60, bot: 0x5a4450, sun: 0xff8a4a, sunI: 1.4, hemiS: 0x9a88b0, hemiG: 0x5a4640, hemiI: 0.95, fog: 0xd08a70, cloud: 0xffb890, shade: 0x80567a, rim: 0.9, night: 0.1 },
-  { h: 20, top: 0x141c44, hor: 0x5a4a78, bot: 0x1a1a2e, sun: 0xa0a8ff, sunI: 0.35, hemiS: 0x4a5080, hemiG: 0x252230, hemiI: 0.62, fog: 0x3a3a5e, cloud: 0x4a4468, shade: 0x2a2640, rim: 0.4, night: 0.75 },
-  { h: 24, top: 0x060b20, hor: 0x1a2546, bot: 0x0c1226, sun: 0x8fa6ff, sunI: 0.35, hemiS: 0x31406e, hemiG: 0x1a1e2a, hemiI: 0.55, fog: 0x18223c, cloud: 0x2a3456, shade: 0x151b30, rim: 0.25, night: 1 },
+  { h: 12.5, top: 0x397dcc, hor: 0xb0d6e7, bot: 0x9ab0c0, sun: 0xfffaf0, sunI: 2.8, hemiS: 0xc4ddff, hemiG: 0x7d8f58, hemiI: 1.3, fog: 0xbcd6ec, cloud: 0xf3f1e5, shade: 0x829ac1, rim: 1, night: 0 },
+  { h: 16.5, top: 0x4478b8, hor: 0xe9c99c, bot: 0x8492a0, sun: 0xffe1ab, sunI: 2.35, hemiS: 0xafbeda, hemiG: 0x686d45, hemiI: 1.0, fog: 0xaebeca, cloud: 0xffead0, shade: 0x849aba, rim: 1, night: 0 },
+  { h: 17.4, top: 0x4776b0, hor: 0xebbc87, bot: 0x777b91, sun: 0xffca83, sunI: 2.25, hemiS: 0xa1acd0, hemiG: 0x62633f, hemiI: 0.82, fog: 0x9cadbd, cloud: 0xffdfae, shade: 0x778aaa, rim: 0.95, night: 0 },
+  { h: 18.6, top: 0x3b5790, hor: 0xf0ad70, bot: 0x656b87, sun: 0xffb367, sunI: 2.0, hemiS: 0x9399bf, hemiG: 0x58533b, hemiI: 0.72, fog: 0x9faebd, cloud: 0xffc391, shade: 0x667ba1, rim: 0.9, night: 0 },
+  { h: 19.4, top: 0x293c73, hor: 0xc58e99, bot: 0x454961, sun: 0xb2c2e7, sunI: 0.5, hemiS: 0x7e92bb, hemiG: 0x434252, hemiI: 0.74, fog: 0x7586a5, cloud: 0xbba1bc, shade: 0x5c6b8c, rim: 0.6, night: 0.55 },
+  { h: 20, top: 0x141c44, hor: 0x5a4a78, bot: 0x1a1a2e, sun: 0xb2bee8, sunI: 0.55, hemiS: 0x6b769d, hemiG: 0x30313f, hemiI: 0.82, fog: 0x3a3a5e, cloud: 0x4a4468, shade: 0x2a2640, rim: 0.4, night: 0.75 },
+  { h: 24, top: 0x0b1630, hor: 0x304367, bot: 0x162239, sun: 0xb4c9ed, sunI: 0.65, hemiS: 0x60758f, hemiG: 0x303b41, hemiI: 0.85, fog: 0x27374f, cloud: 0x485b79, shade: 0x273650, rim: 0.25, night: 1 },
 ];
 const cA = new THREE.Color(), cB = new THREE.Color(), cT = new THREE.Color();
 function lerpHex(a, b, t, out) { cA.set(a); cB.set(b); return out.copy(cA).lerp(cB, t); }
@@ -199,6 +223,9 @@ export class Sky {
       uLightDir: U.sunDir,
     };
     this.clouds = new Clouds();
+    // Keep stable uniform objects: terrain may be constructed before the sky.
+    this.clouds.uni.uCloudLayout = U.cloudLayout;
+    this.clouds.uni.uCloudWind = U.cloudWind;
     Object.assign(this.uni, this.clouds.uni);
     const mat = new THREE.ShaderMaterial({ uniforms: this.uni, vertexShader: SKY_VS, fragmentShader: SKY_FS, side: THREE.BackSide, depthWrite: false, fog: false });
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1500, 48, 24), mat);
@@ -230,7 +257,7 @@ export class Sky {
     this.hemi = new THREE.HemisphereLight(0xbfd8ff, 0x7a8a5a, 1.2);
     scene.add(this.hemi);
     scene.fog = new THREE.FogExp2(0xbcd6ec, 0.003);
-    this.fogBase = 0.003;
+    this.fogBase = 0.0026;
     this.cur = {};
   }
 
@@ -269,7 +296,10 @@ export class Sky {
     u.uCam.value.copy(camPos || center);
 
     // sun path: rises east (+x), sets west (-x), arcs south (+z)
-    const ang = ((h - 6) / 12) * Math.PI;
+    // Summer daylight lasts from 05:36 to 19:12: the 18.6 palette still has a low sun.
+    // Remap both halves of the orbit so midnight remains continuous over a 24-hour wrap.
+    const solar = (h - 5.6 + 24) % 24;
+    const ang = (solar < 13.6 ? solar / 13.6 : 1 + (solar - 13.6) / 10.4) * Math.PI;
     const sunDir = u.uSunDir.value.set(Math.cos(ang), Math.sin(ang), 0.35).normalize();
     u.uMoonDir.value.set(-Math.cos(ang), -Math.sin(ang) * 0.9 + 0.1, -0.3).normalize();
     const sunUp = sunDir.y;
@@ -280,11 +310,13 @@ export class Sky {
     // Directional light follows sun by day, moon by night
     const useMoon = sunUp < 0.02;
     const ldir = useMoon ? u.uMoonDir.value : sunDir;
-    const lightDir = _lightDir.set(ldir.x, Math.max(ldir.y, 0.25), ldir.z).normalize();
+    const lightDir = _lightDir.set(ldir.x, Math.max(ldir.y, 0.12), ldir.z).normalize();
     this.sun.position.copy(lightDir);
     lerpHex(a.sun, b.sun, t, this.sun.color);
     const hushDim = 1 - this.hush * 0.35;
-    this.sun.intensity = lerp(a.sunI, b.sunI, t) * hushDim * (1 - oc * 0.62 - st * 0.15);
+    // Hide the sun/moon direction handoff below the horizon instead of spinning shadows.
+    const handoff = smoothstep(0.025, 0.12, Math.abs(sunUp));
+    this.sun.intensity = lerp(a.sunI, b.sunI, t) * handoff * hushDim * (1 - oc * 0.62 - st * 0.15);
     u.uSunVis.value *= 1 - oc * 0.85;
     lerpHex(a.hemiS, b.hemiS, t, this.hemi.color);
     lerpHex(a.hemiG, b.hemiG, t, this.hemi.groundColor);
@@ -293,11 +325,14 @@ export class Sky {
     lerpHex(a.fog, b.fog, t, this.scene.fog.color);
     if (this.hush > 0) this.scene.fog.color.lerp(cA.set(0x4a4258), this.hush * 0.6);
     this.scene.fog.color.lerp(cA.set(0x8c96a4).multiplyScalar(1 - night * 0.75 - st * 0.3), oc * 0.55);
-    this.scene.fog.density = this.fogBase * (1 + this.hush * 1.4 + oc * 0.9 + st * 0.6);
+    const evening = smoothstep(16, 17.4, h) * (1 - smoothstep(19.2, 20, h));
+    // Distance haze is quadratic near the camera: less density preserves foreground values.
+    this.scene.fog.density = this.fogBase * (1 - evening * 0.38) * (1 + this.hush * 1.4 + oc * 0.9 + st * 0.6);
     U.rimColor.value.copy(this.sun.color).multiplyScalar(lerp(a.rim, b.rim, t) * 0.9);
     this.mesh.position.copy(center);
-    // the far ranges stay at one distance wherever you are on the map (they are the horizon)
-    this.ranges.position.set((camPos || center).x, 0, (camPos || center).z);
+    // The backdrop follows only a fraction of travel: distant ridges have restrained
+    // parallax, and remain beyond the world boundary even at the outer passes.
+    this.ranges.position.set((camPos || center).x * 0.65, 0, (camPos || center).z * 0.65);
     this.night = night;
     // how strongly the air lights up in shafts: full under a clear sun, faint by moonlight
     this.shaft = (sunVis * (1 - night) + 0.18 * night) * (1 - oc * 0.85) * (1 - this.hush * 0.5);
@@ -311,7 +346,8 @@ export class Sky {
     cT.multiplyScalar(1 / l);
     cT.r = lerp(1, cT.r, 1.25); cT.g = lerp(1, cT.g, 1.25); cT.b = lerp(1, cT.b, 1.25);
     U.shadeTint.value.copy(cT).multiplyScalar(lerp(0.3, 0.42, night) * (1 - this.hush * 0.2));
-    // cloud shadows drift with the sky clouds
+    // The terrain/water read the cumulus layout and wind through U.cloudLayout/cloudWind.
+    // U.cloud.xy remains the legacy approximation used by other materials.
     this.cloudT += dt;
     // the sky's cumulus: drift, slow rise of the billows, cover and light
     const W = 80000; // every noise period divides this, so wrapping never shows
@@ -325,15 +361,15 @@ export class Sky {
     // aerial perspective
     FOG.sunDir.x = sunDir.x; FOG.sunDir.y = sunDir.y; FOG.sunDir.z = sunDir.z;
     const golden = 1 - smoothstep(0.15, 0.55, sunUp);
-    const scat = (0.22 + 0.5 * golden) * sunVis * (1 - this.hush * 0.7) * (1 - oc * 0.8);
+    const scat = (0.12 + 0.22 * golden) * sunVis * (1 - this.hush * 0.7) * (1 - oc * 0.8);
     FOG.sunColor.x = u.uSunColor.value.r * scat; FOG.sunColor.y = u.uSunColor.value.g * scat; FOG.sunColor.z = u.uSunColor.value.b * scat;
-    cT.copy(u.uHorizon.value).lerp(u.uTop.value, 0.18);
+    cT.copy(u.uHorizon.value).lerp(u.uTop.value, 0.18 + evening * 0.37);
     if (this.hush > 0) cT.lerp(cA.set(0x4a4258), this.hush * 0.6);
     FOG.farColor.x = cT.r; FOG.farColor.y = cT.g; FOG.farColor.z = cT.b; FOG.farColor.w = 0.75;
     // valley mist: thicker around dawn, thinner at midday
     const dawn = Math.exp(-((h - 6.5) * (h - 6.5)) / 3);
-    FOG.height.x = (0.0022 + 0.004 * dawn + 0.002 * night) * (1 + this.hush);
-    FOG.height.y = 0.045;
-    FOG.height.z = 0;
+    FOG.height.x = (0.002 + 0.004 * dawn + 0.0015 * night) * (1 - evening * 0.65) * (1 + this.hush);
+    FOG.height.y = 0.045 + evening * 0.015;
+    FOG.height.z = -3;
   }
 }

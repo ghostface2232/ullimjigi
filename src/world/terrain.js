@@ -55,11 +55,11 @@ const segT = (x, z, s) => {
 const hex = (h) => new THREE.Color(h);
 const P = {
   grassLight: hex(0x9fc85a), grassMid: hex(0x6fa843), grassDark: hex(0x4a8238), grassTeal: hex(0x4e9468),
-  grassWarm: hex(0xb3c052), grassCool: hex(0x5f9e5a),
+  grassWarm: hex(0xb3c052), grassCool: hex(0x5f9e5a), meadowBloom: hex(0x9e9bb2),
   dry: hex(0xbfb466), dirt: hex(0xb89468), dirtDark: hex(0x86694b), dirtLight: hex(0xcdb088), worn: hex(0x7d8a4a),
   rock: hex(0xb6b9c0), rockDark: hex(0x8c909b), rockWarm: hex(0xc4b8a6), rockCool: hex(0xa3aec2),
   sand: hex(0xe0cf9c), wetSand: hex(0xa8986e),
-  snow: hex(0xc9d4e2), snowShade: hex(0x9fb0c6),
+  snow: hex(0xc3d0dc), snowShade: hex(0x869fbf),
   ash: hex(0x564d60), ashLight: hex(0x7a6f86),
   plaza: hex(0xc0b29a),
 };
@@ -448,7 +448,7 @@ export class Terrain {
     const forest = smoothstep(0.1, 0.6, fbm(this.noise, x * 0.012 + 50, z * 0.012, 2));
     const dry = smoothstep(0.2, 0.7, fbm(n, x * 0.008 - 40, z * 0.008 + 12, 2));
     // broad hue patches: warm yellow-green meadows vs. cool blue-green hollows
-    const hue = fbm(this.noise2, x * 0.0065 + 7, z * 0.0065 - 3, 3);
+    const hue = this.noise2(x / 72 + 7, z / 72 - 3) * 0.65 + this.noise2(x / 28 - 13, z / 36 + 8) * 0.35;
     out.copy(P.grassMid).lerp(P.grassLight, gN);
     out.lerp(P.grassWarm, smoothstep(0.05, 0.5, hue) * 0.45);
     out.lerp(P.grassCool, smoothstep(-0.05, -0.5, hue) * 0.4);
@@ -459,7 +459,16 @@ export class Terrain {
       F.dry = dry;
       for (let i = 0; i < OUTER.length; i++) if (OUTER[i].paint) OUTER[i].paint(out, outer * w[i], F, P);
     }
-    out.lerp(P.grassTeal, smoothstep(22, 40, h) * 0.5 * (1 - outer * 0.6));
+    out.lerp(P.grassTeal, smoothstep(22, 40, h) * 0.18 * (1 - outer * 0.6));
+    // Colour only: 20-80 m meadow masses are baked into the ground map and CPU colour
+    // queries together. Region keys, path/snow weights and the legacy scatter stay intact.
+    const meadow = smoothstep(0.015, 0.12, out.g - Math.max(out.r, out.b));
+    const warm = smoothstep(0.02, 0.4, hue) * meadow, cool = (1 - smoothstep(-0.4, -0.02, hue)) * meadow;
+    out.r *= 1 + warm * 0.26 - cool * 0.24;
+    out.g *= 1 + warm * 0.08 - cool * 0.12;
+    out.b *= 1 - warm * 0.24 + cool * 0.18;
+    const bloom = smoothstep(0.32, 0.62, n(x / 37 - 19, z / 37 + 23)) * (1 - dry) * meadow;
+    out.lerp(P.meadowBloom, bloom * 0.1);
     const rk = smoothstep(0.82, 0.68, ny);
     if (flat) flat.copy(out);
     const rockC = P.rock.clone().lerp(P.rockDark, smoothstep(-0.3, 0.5, n(x * 0.05, z * 0.05)))
@@ -480,8 +489,8 @@ export class Terrain {
     // west, where the cliffs are tall but not alpine
     const sl = legacy ? 38 : 38 + outer * 22 + smoothstep(226, 262, Math.hypot(x, z)) * 40 * smoothstep(-100, -260, x);
     const sn0 = smoothstep(sl, sl + 10, h + n(x * 0.03, z * 0.03) * 6) * smoothstep(-40, -90, z), sn = sn0 * (1 - rk * 0.55);
-    // wide snowfields out north get drifts of shade so they don't burn out to white
-    const drift = outer * (0.6 + 0.3 * smoothstep(-0.3, 0.5, n(x * 0.011 + 3, z * 0.011)));
+    // Inner frost fields need the same cool drift hollows as the outer alpine region.
+    const drift = 0.15 + 0.55 * smoothstep(-0.3, 0.5, n(x / 14 + 3, z / 23)) + outer * 0.1;
     out.lerp(_s.copy(P.snow).lerp(P.snowShade, Math.min(1, rk + drift)), sn);
     if (flat) flat.lerp(_s.copy(P.snow).lerp(P.snowShade, Math.min(1, drift)), sn0);
     const dr = Math.hypot(x - POI.rift.x, z - POI.rift.z);
@@ -540,7 +549,25 @@ export class Terrain {
       }
       pave[i] = r.pave * 255;
       splat[i * 4] = r.gf0 * 255; splat[i * 4 + 1] = r.dirt0 * 255; splat[i * 4 + 2] = r.sand0 * 255; splat[i * 4 + 3] = r.sn0 * 255;
-      const curv = this.ambientOcclusion(i, i % N, Math.floor(i / N));
+      const ix = i % N, iz = Math.floor(i / N), reach = Math.round(30 / st);
+      const curv = this.ambientOcclusion(i, ix, iz);
+      // Broad concavity ties the colour rhythm to real landforms, with no height edits or
+      // runtime texture reads: damp hollows deepen, exposed crests bleach towards straw.
+      const mean = (H[iz * N + Math.max(0, ix - reach)] + H[iz * N + Math.min(this.seg, ix + reach)] + H[Math.max(0, iz - reach) * N + ix] + H[Math.min(this.seg, iz + reach) * N + ix]) * 0.25;
+      const landform = (mean - H[i]) / 30;
+      const hollow = smoothstep(0.005, 0.065, landform), crest = smoothstep(0.005, 0.065, -landform);
+      _s.setRGB(1 + r.gf0 * (crest * 0.14 - hollow * 0.28), 1 + r.gf0 * (crest * 0.04 - hollow * 0.14), 1 + r.gf0 * (hollow * 0.02 - crest * 0.14));
+      _f.multiply(_s);
+      c.r *= lerp(1, _s.r, r.gf); c.g *= lerp(1, _s.g, r.gf); c.b *= lerp(1, _s.b, r.gf);
+      if (r.sn0 > 0.004) {
+        // Snow gathers blue contact shade beside the actual cliff footprint. Four nearby
+        // height samples are baked once, and the smoothstep spreads the foot over metres.
+        const near = Math.max(this.h[iz * N + Math.max(0, ix - 2)], this.h[iz * N + Math.min(this.seg, ix + 2)], this.h[Math.max(0, iz - 2) * N + ix], this.h[Math.min(this.seg, iz + 2) * N + ix]) - H[i];
+        const contact = smoothstep(2.5, 6.5, near) * (1 - CWR(this.cw[i]));
+        const shade = (hollow * 0.18 + contact * 0.28) * r.sn0;
+        _f.r *= 1 - shade; _f.g *= 1 - shade * 0.55; _f.b *= 1 - shade * 0.08;
+        c.r *= 1 - shade; c.g *= 1 - shade * 0.55; c.b *= 1 - shade * 0.08;
+      }
       // (rock catches light along its convex edges: the rims of ledges and blocks)
       const ao = 1 - 0.34 * smoothstep(0.0, 0.6, curv) + (0.05 + 0.2 * smoothstep(0.8, 0.6, nrm[i * 3 + 1])) * smoothstep(0.0, -0.5, curv);
       const ar = ao * (ao < 1 ? 0.97 + 0.03 * ao : 1), ab = ao < 1 ? 0.5 + 0.5 * ao + 0.04 : ao;

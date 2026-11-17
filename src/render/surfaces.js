@@ -121,34 +121,32 @@ Surf surf(vec2 uv){
     if (d3.x > 0.5) { tone = 0.86 + 0.14 * d3.y + 0.1 * d3.z; hgt = 0.34 + 0.1 * d3.z; tip = d3.z * 0.5; }
     if (d2.x > 0.5) { tone = 0.92 + 0.16 * d2.y + 0.12 * d2.z; hgt = 0.5 + 0.14 * d2.z; tip = d2.z * 0.7; }
     if (d1.x > 0.5) { tone = 0.96 + 0.2 * d1.y + 0.16 * d1.z; hgt = 0.68 + 0.2 * d1.z; tip = d1.z; }
-    s.h = hgt;
+    // Keep brush strokes subordinate to the terrain's broad colour masses.
+    s.h = mix(0.5, hgt, 0.35);
     // tips catch the light and yellow a little; the ground between is cooler
-    s.c = vec3(tone) * mix(vec3(0.95, 1.0, 1.04), vec3(1.08, 1.03, 0.84), tip);
-    s.r = 0.88; s.nk = 0.8;
+    s.c = mix(vec3(1.0), vec3(tone) * mix(vec3(0.95, 1.0, 1.04), vec3(1.08, 1.03, 0.84), tip), 0.28);
+    s.r = 0.88; s.nk = 0.4;
   } else if (uLayer == 1) {
-    // packed earth, painted: flat patches of two tones with crisp edges, hairline cracks
-    // where it has dried, and a scatter of stones of every size, each a pale flat top with a
-    // dark seat, no two the same shape
+    // Packed earth: clean, softly burnished planes, with sparse pale stones pressed into
+    // the surface. The path's broad wear and warm shoulders live in the terrain shader.
     vec2 w = vec2(fbm(uv, vec2(7.0), 3), fbm(uv + 0.43, vec2(7.0), 3)) - 0.5;
     vec2 q = uv + w * 0.03;
     float m = fbm(q, vec2(8.0), 4), m2 = fbm(q + 0.5, vec2(21.0), 3);
     float b1 = floor(m * 4.0), t1 = (b1 + smoothstep(0.42, 0.58, fract(m * 4.0))) / 4.0;
     float t2 = smoothstep(0.5, 0.56, m2);
-    vec3 cv = voro(q * 7.0 + 0.3, vec2(7.0), 0.95);
-    float crack = (1.0 - smoothstep(0.0, 0.022, cv.y - cv.x)) * smoothstep(0.48, 0.62, fbm(uv + 0.3, vec2(5.0), 2));
     vec3 v = voro(q * 13.0, vec2(13.0), 0.95);
     float r1 = 0.08 + 0.3 * fract(v.z * 7.13);
-    float peb = step(0.7, v.z) * (1.0 - smoothstep(r1 - 0.025, r1, v.x));
-    float seat = step(0.7, v.z) * (1.0 - smoothstep(r1, r1 + 0.09, v.x)) * (1.0 - peb);
+    float peb = step(0.82, v.z) * (1.0 - smoothstep(r1 - 0.025, r1, v.x));
+    float seat = step(0.82, v.z) * (1.0 - smoothstep(r1, r1 + 0.06, v.x)) * (1.0 - peb);
     vec3 v2 = voro(q * 41.0 + 5.0, vec2(41.0), 0.95);
     float r2 = 0.1 + 0.22 * fract(v2.z * 5.7);
-    float grit = step(0.62, v2.z) * (1.0 - smoothstep(r2 - 0.05, r2, v2.x));
-    s.h = 0.3 + 0.16 * t1 + 0.05 * t2 - 0.2 * crack + 0.42 * peb + 0.16 * grit * (1.0 - peb);
+    float grit = step(0.83, v2.z) * (1.0 - smoothstep(r2 - 0.05, r2, v2.x));
+    s.h = 0.4 + 0.1 * t1 + 0.025 * t2 + 0.24 * peb + 0.08 * grit * (1.0 - peb);
     s.c = vec3(0.86 + 0.22 * t1 + 0.07 * (t2 - 0.5)) * mix(vec3(1.0), vec3(1.05, 1.0, 0.93), fbm(uv + 0.5, vec2(9.0), 2));
-    s.c *= (1.0 - 0.3 * crack) * (1.0 - 0.26 * seat);
+    s.c *= 1.0 - 0.12 * seat;
     s.c = mix(s.c, vec3(1.12, 1.13, 1.16) * (0.86 + 0.26 * fract(v.z * 3.3)), peb);
     s.c = mix(s.c, vec3(1.08, 1.08, 1.1) * (0.84 + 0.3 * fract(v2.z * 9.1)), grit * (1.0 - peb) * 0.8);
-    s.r = mix(0.92, 0.6, peb); s.nk = 1.5;
+    s.r = mix(0.88, 0.72, peb); s.nk = 0.85;
   } else if (uLayer == 2) {
     // cliff rock, painted rather than patterned: the form is real geometry (terrain.js), so
     // this lays flat dabs of tone with crisp edges, the way rock is blocked in with a brush:
@@ -179,19 +177,21 @@ Surf surf(vec2 uv){
     s.r = 0.84; s.nk = 2.0;
   } else if (uLayer == 3) {
     // sand: wind ripples that wander, grains
-    float w = fbm(uv, vec2(4.0), 3);
+    float w = fbm(uv, vec2(12.0), 3);
     float rip = 0.5 + 0.5 * sin((uv.x * 26.0 + w * 3.0 + uv.y * 3.0) * TAU);
     float grain = vn(uv * 160.0, vec2(160.0));
-    s.h = 0.3 * fbm(uv + 0.2, vec2(5.0), 3) + 0.5 * rip * rip + 0.2 * grain;
-    s.c = vec3(0.92 + 0.12 * rip + 0.1 * (grain - 0.5));
-    s.r = 0.82 - 0.2 * step(0.92, grain); s.nk = 0.8;
+    s.h = 0.45 + 0.15 * rip * rip + 0.08 * grain;
+    s.c = vec3(0.96 + 0.055 * rip + 0.04 * (grain - 0.5));
+    s.r = 0.86; s.nk = 0.45;
   } else if (uLayer == 4) {
-    // snow: wind-smoothed drifts with a faint crust
-    float m = fbm(uv, vec2(4.0), 4);
-    float crust = fbm(uv + 0.6, vec2(28.0), 3);
-    s.h = 0.75 * m + 0.25 * crust;
-    s.c = vec3(0.96 + 0.07 * m);
-    s.r = 0.5 - 0.22 * step(0.9, vn(uv * 220.0, vec2(220.0))); s.nk = 0.55;
+    // Fine, broken wind-compacted grain. Broad sastrugi live in world space; this layer
+    // stays quiet and seamless, with no regularly spaced ribs competing with the drifts.
+    float lay = fbm(uv, vec2(24.0, 9.0), 3);
+    float crust = fbm(uv + 0.6, vec2(48.0), 3);
+    float edge = smoothstep(0.45, 0.65, lay) * smoothstep(0.35, 0.65, fbm(uv + 0.3, vec2(9.0, 18.0), 2));
+    s.h = 0.46 + 0.12 * (lay - 0.5) + 0.025 * (crust - 0.5) + 0.05 * edge;
+    s.c = mix(vec3(0.96, 0.975, 1.0), vec3(1.005, 1.0, 0.98), lay) * (0.98 + 0.02 * crust);
+    s.r = 0.9; s.nk = 0.6;
   } else if (uLayer == 5) {
     // rubble masonry: uneven stones bedded in recessed mortar
     vec3 v = voro(uv * vec2(5.0, 7.0), vec2(5.0, 7.0), 0.82);
@@ -315,7 +315,7 @@ export function bakeSurfaces(renderer, size = 1024) {
     minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
   });
   const mat = new THREE.ShaderMaterial({
-    uniforms: { uLayer: { value: 0 }, uOut: { value: 0 }, uPx: { value: 1 / size }, uH: { value: H.texture } },
+    uniforms: { uLayer: { value: 0 }, uOut: { value: 0 }, uPx: { value: 1 / size }, uH: { value: null } },
     vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
     fragmentShader: FS, depthTest: false, depthWrite: false, toneMapped: false,
   });
@@ -325,6 +325,9 @@ export function bakeSurfaces(renderer, size = 1024) {
     mat.uniforms.uLayer.value = l;
     for (const [o, rt] of [[0, A], [2, H], [1, N]]) {
       mat.uniforms.uOut.value = o;
+      // WebGL rejects a framebuffer texture bound to any active sampler, even when the
+      // uniform branch returns before reading it. Only the normal pass may sample H.
+      mat.uniforms.uH.value = o === 1 ? H.texture : null;
       renderer.setRenderTarget(rt, o === 2 ? 0 : l);
       quad.render(renderer);
     }

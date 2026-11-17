@@ -21,6 +21,24 @@ import { tier } from './quality.js';
 export const CLOUD = { base: 1500, tile: 20000, far: 30000, domeS: 0.985, mid: 1800 };
 const MARGIN = 700; // how far outside a footprint the layout still knows its distance
 
+// Project the same shaped cumulus footprint used by the dome onto a receiver. Two taps
+// account for the cloud's height along an oblique light ray; no second noise field or pass.
+// This is a soft column approximation, not the marcher's fine billow self-shadowing.
+export const CLOUD_SHADOW = `
+uniform sampler2D uCloudLayout;
+uniform vec3 uCloudWind;
+float landscapeCloudShadow(vec3 p, vec3 light, float strength) {
+  if (strength <= 0.0) return 1.0;
+  vec2 ray = light.xz / max(light.y, 0.12);
+  vec2 q = p.xz + ray * max(${CLOUD.base.toFixed(1)} - p.y, 0.0) + uCloudWind.xy;
+  vec2 column = texture2D(uCloudLayout, q / ${CLOUD.tile.toFixed(1)}).rg;
+  column = texture2D(uCloudLayout, (q + ray * column.r * 0.5) / ${CLOUD.tile.toFixed(1)}).rg;
+  float edge = smoothstep(-35.0, 140.0, column.g - ${MARGIN.toFixed(1)});
+  float opacity = 1.0 - exp(-max(column.r, 0.0) * 0.008);
+  return 1.0 - strength * edge * opacity;
+}
+`;
+
 // --- 3D noise ---------------------------------------------------------------
 const NOISE_FS = `
 precision highp float;
@@ -388,6 +406,7 @@ export class Clouds {
     // what the sky shader needs to read the finished map
     this.uni = {
       uCloudMap: { value: null }, uSnapCam: { value: new THREE.Vector3() }, uDrift: { value: new THREE.Vector2() },
+      uCloudLayout: { value: null }, uCloudWind: { value: new THREE.Vector3() },
     };
     this.phase = 0;
     this.front = snap(); this.back = snap();
@@ -503,6 +522,8 @@ export class Clouds {
     }
     const wr = (v) => ((v + 120000) % 80000) - 40000; // the wind wraps at 80 km
     this.uni.uDrift.value.set(wr(this.wind.x - this.front.wind.x), wr(this.wind.y - this.front.wind.y));
+    this.uni.uCloudLayout.value = this.layRT.texture;
+    this.uni.uCloudWind.value.copy(this.wind);
     renderer.setRenderTarget(prev);
   }
 }

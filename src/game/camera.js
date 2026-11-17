@@ -188,7 +188,7 @@ export class CameraRig {
       for (let i = 1; i <= steps; i++) {
         const t = (i / steps) * d;
         const x = look.x + back.x * t, y = look.y + back.y * t, z = look.z + back.z * t;
-        if (y < W.h(x, z) + 0.4 || W.col && W.col.pointHit(x, y, z, 0.22)) { d = Math.max(0.55, t - 0.35); break; }
+        if (y < W.h(x, z) + 0.4 || W.col && W.col.pointHit(x, y, z, 0.22, true)) { d = Math.max(0.55, t - 0.35); break; }
       }
     }
     // Retract immediately to remain outside terrain; release the obstruction

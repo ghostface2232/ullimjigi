@@ -297,11 +297,13 @@ export class WorldObjects {
   wake(b) { b.asleep = false; b.stillT = 0; }
   support(b) {
     if (b.kind === 'boulder') return b.r * this.sink;
-    const e = m4.makeRotationFromQuaternion(b.rot).elements;
-    if (b.kind === 'barrel') return Math.abs(e[5]) * b.h * 0.5 + Math.hypot(e[1], e[9]) * b.r;
-    return Math.abs(e[5]) * b.h * 0.5 + (Math.abs(e[1]) + Math.abs(e[9])) * b.r;
+    const { x, y, z, w } = b.rot;
+    // Vertical components of the rotated local axes.
+    const upX = 2 * (x * y + w * z), upY = 1 - 2 * (x * x + z * z), upZ = 2 * (y * z - w * x);
+    const side = b.kind === 'barrel' ? Math.hypot(upX, upZ) : Math.abs(upX) + Math.abs(upZ);
+    return Math.abs(upY) * b.h * 0.5 + side * b.r;
   }
-  center(b) { return new THREE.Vector3(b.pos.x, b.pos.y + this.support(b), b.pos.z); }
+  center(b, out = new THREE.Vector3()) { return out.set(b.pos.x, b.pos.y + this.support(b), b.pos.z); }
   origin(b, out) {
     out.copy(b.pos).y += this.support(b);
     if (b.kind !== 'boulder') out.sub(tmp2.set(0, b.h * 0.5, 0).applyQuaternion(b.rot));
@@ -364,7 +366,10 @@ export class WorldObjects {
         if (b.burn <= 0) { this.breakCrate(b, true); continue; }
       }
       b.wetT = Math.max(0, b.wetT - dt * (W.weather && W.weather.rain > 0.3 ? 0 : 1));
-      if (W.weather && W.weather.rain > 0.5 && b.kind === 'barrel') b.wetT = Math.max(b.wetT, 2);
+      if (b.kind === 'barrel') {
+        if (b.pos.y < W.water.level - b.h * 0.3) b.wetT = 20;
+        else if (W.weather && W.weather.rain > 0.5) b.wetT = Math.max(b.wetT, 2);
+      }
       // wildfire underfoot
       if (W.fire && b.kind !== 'boulder' && W.fire.isBurning(b.pos.x, b.pos.z)) {
         if (b.kind === 'barrel' && b.fuse <= 0 && b.wetT <= 0) this.light(b, 1.1);
@@ -407,9 +412,9 @@ export class WorldObjects {
           const imp = rel * (rel > 1 ? 1.18 : 1) / sum;
           a.vel.x -= nx * imp / a.mass; a.vel.z -= nz * imp / a.mass;
           c.vel.x += nx * imp / c.mass; c.vel.z += nz * imp / c.mass;
-          if (rel > 0.2 || push > 0.02) this.wake(c);
           if (rel > 3) G.audio.play(a.kind === 'boulder' || c.kind === 'boulder' ? 'boulder_thud' : 'crate_knock', { pos: a.pos, gap: 0.1 });
         }
+        if (rel > 0.2 || push > 0.02) this.wake(c);
       }
     }
     // Pair separation can move a sleeping body. Keep targets and ground contact
@@ -417,7 +422,7 @@ export class WorldObjects {
     for (const b of this.list) if (b.alive) {
       if (!b.asleep) W.col.resolve(b.pos, b.r, b.h);
       if (!b.asleep) b.pos.y = Math.max(b.pos.y, W.ground(b.pos.x, b.pos.z, b.pos.y + 0.5));
-      b.target.pos.copy(this.center(b));
+      this.center(b, b.target.pos);
     }
     // rumble for the fastest rolling boulder
     if (fastest && !this.rollLoop && G.audio.ready) this.rollLoop = G.audio.loop('loop_roll', { pos: fastest.b.pos, v: 0.9, max: 60 });
@@ -474,7 +479,7 @@ export class WorldObjects {
       const f = Math.exp(-K.fric * dt);
       b.vel.x *= f; b.vel.z *= f;
     }
-    const ox = b.pos.x, oz = b.pos.z;
+    const ox = b.pos.x, oy = b.pos.y, oz = b.pos.z;
     b.pos.addScaledVector(b.vel, dt);
     // static colliders
     const bx = b.pos.x, bz = b.pos.z;
@@ -504,7 +509,8 @@ export class WorldObjects {
     }
     // water: wood floats, stone sinks and is lost
     const wl = W.water.level;
-    if (b.pos.y < wl - b.h * 0.3) {
+    const submerged = b.pos.y < wl - b.h * 0.3;
+    if (submerged) {
       if (b.kind === 'boulder') { b.vel.multiplyScalar(Math.exp(-3 * dt)); if (b.pos.y < wl - 2.5) { b.alive = false; b.respawn = 60; this.hide(b); } }
       else { b.vel.y += (wl - b.h * 0.3 - b.pos.y) * 30 * dt; b.vel.multiplyScalar(Math.exp(-1.5 * dt)); if (b.kind === 'barrel') b.wetT = 20; }
     }
@@ -521,7 +527,7 @@ export class WorldObjects {
       // Settle to the nearest authored face, retaining its heading instead of
       // forcing a toppled crate upright. Barrels may rest on either end or side.
       let best = -1, ax = 0, ay = 1, az = 0;
-      for (let axis = 0; axis < 3; axis++) for (const sign of [-1, 1]) {
+      for (let axis = 0; axis < 3; axis++) for (let sign = -1; sign <= 1; sign += 2) {
         tmp.set(axis === 0 ? sign : 0, axis === 1 ? sign : 0, axis === 2 ? sign : 0).applyQuaternion(b.rot);
         if (tmp.y > best) { best = tmp.y; ax = tmp.x; ay = tmp.y; az = tmp.z; }
       }
@@ -548,11 +554,17 @@ export class WorldObjects {
       }
     }
     // settle
-    if (sp < 0.18 && b.ang.lengthSq() < 0.025 && Math.abs(b.vel.y) < 0.3 && onGround && b.pos.y >= wl) { b.stillT += dt; if (b.stillT > 1.2) { b.asleep = true; b.vel.set(0, 0, 0); b.ang.set(0, 0, 0); } }
-    else b.stillT = 0;
+    const buoyant = submerged && !K.roll;
+    // Buoyancy is applied after movement. At equilibrium it cancels the
+    // next gravity step, so measure the actual rise or fall of floating wood.
+    const vy = buoyant ? (b.pos.y - oy) / dt : b.vel.y;
+    if (b.alive && sp < 0.18 && b.ang.lengthSq() < 0.025 && Math.abs(vy) < 0.3 && (onGround || buoyant)) {
+      b.stillT += dt;
+      if (b.stillT > 1.2) { b.asleep = true; b.vel.set(0, 0, 0); b.ang.set(0, 0, 0); }
+    } else b.stillT = 0;
     // lost far from home (fell off the map / into a gorge)
     if (b.pos.distanceTo(b.home) > 140 || b.pos.y < -20) { b.alive = false; b.respawn = 30; this.hide(b); }
-    b.target.pos.copy(this.center(b));
+    this.center(b, b.target.pos);
     this.dirty = true;
   }
 

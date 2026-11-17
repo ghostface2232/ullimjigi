@@ -1,5 +1,35 @@
 // Static collision (circles + oriented boxes) in a spatial hash, plus
 // walkable platforms (discs / boxes) layered over the terrain.
+function segmentHits(c, x, y, z, dx, dy, dz, radius, lengthSq) {
+  const px = x - c.x, pz = z - c.z;
+  const box = c.type === 'box';
+  let enter = 0, exit = 1;
+  for (let axis = 0, axes = box ? 3 : 1; axis < axes; axis++) {
+    let p, d, lo, hi;
+    if (axis === 0) {
+      p = y; d = dy; lo = c.h0 - radius; hi = c.h1 + radius;
+    } else if (axis === 1) {
+      p = px * c.cos - pz * c.sin; d = dx * c.cos - dz * c.sin; lo = -c.hw - radius; hi = c.hw + radius;
+    } else {
+      p = px * c.sin + pz * c.cos; d = dx * c.sin + dz * c.cos; lo = -c.hd - radius; hi = c.hd + radius;
+    }
+    if (Math.abs(d) < 1e-8) {
+      if (p < lo || p > hi) return false;
+    } else {
+      const t0 = (lo - p) / d, t1 = (hi - p) / d;
+      enter = Math.max(enter, Math.min(t0, t1)); exit = Math.min(exit, Math.max(t0, t1));
+      if (enter > exit) return false;
+    }
+  }
+  if (box) return true;
+  const r = c.r + radius, offset = px * px + pz * pz - r * r;
+  if (lengthSq < 1e-8) return offset <= 0;
+  const b = px * dx + pz * dz, disc = b * b - lengthSq * offset;
+  if (disc < 0) return false;
+  const root = Math.sqrt(disc);
+  return Math.max(enter, (-b - root) / lengthSq) <= Math.min(exit, (-b + root) / lengthSq);
+}
+
 export class Colliders {
   constructor(cell = 16) {
     this.cell = cell;
@@ -35,23 +65,30 @@ export class Colliders {
   topAt(c, x, z) {
     if (!c.topFn) return c.h1;
     if (c.type === 'circle') return c.topFn(x - c.x, z - c.z);
-    const [lx, lz] = this._local(c, x, z);
-    return c.topFn(lx, lz);
+    const dx = x - c.x, dz = z - c.z;
+    return c.topFn(dx * c.cos - dz * c.sin, dx * c.sin + dz * c.cos);
   }
   inside(c, x, z, pad = 0) {
     if (c.type === 'circle') return Math.hypot(x - c.x, z - c.z) < c.r + pad;
-    const [lx, lz] = this._local(c, x, z);
-    return Math.abs(lx) < c.hw + pad && Math.abs(lz) < c.hd + pad;
+    const dx = x - c.x, dz = z - c.z;
+    return Math.abs(dx * c.cos - dz * c.sin) < c.hw + pad && Math.abs(dx * c.sin + dz * c.cos) < c.hd + pad;
   }
   // Highest walkable shape top under (x, z) that is at most `step` above y
   surfaceTop(x, z, y, step = 0.7) {
     let best = -1e9;
-    this.query(x, z, 0.5, (c) => {
-      if (c.noTop || c.h1 > 1e8) return;
-      if (!this.inside(c, x, z, -0.05)) return;
-      const t = this.topAt(c, x, z);
-      if (t <= y + step && t > best) best = t;
-    });
+    const S = this.cell, stamp = ++this.stamp;
+    for (let ix = Math.floor((x - 0.5) / S); ix <= Math.floor((x + 0.5) / S); ix++)
+      for (let iz = Math.floor((z - 0.5) / S); iz <= Math.floor((z + 0.5) / S); iz++) {
+        const cell = this.grid.get(this._key(ix, iz));
+        if (!cell) continue;
+        for (const c of cell) {
+          if (c._s === stamp) continue;
+          c._s = stamp;
+          if (c.noTop || c.h1 > 1e8 || !this.inside(c, x, z, -0.05)) continue;
+          const t = this.topAt(c, x, z);
+          if (t <= y + step && t > best) best = t;
+        }
+      }
     return best;
   }
   // Nearest grabbable wall around a body at (x, y..y+height, z).
@@ -100,18 +137,19 @@ export class Colliders {
       }
   }
   // Push a character (pos.x/pos.z mutated) out of static shapes
-  resolve(pos, radius, height = 1.8) {
+  resolve(pos, radius, height = 1.8, step = 0.45) {
     let hit = false;
     this.query(pos.x, pos.z, radius + 1, (c) => {
       if (pos.y > c.h1 - 0.05 || pos.y + height < c.h0) return;
       // within a step of a walkable top (stairs, sloped roofs): let the ground snap lift us instead
-      if (!c.noTop && pos.y > (c.topFn ? this.topAt(c, pos.x, pos.z) : c.h1) - 0.45) return;
+      if (!c.noTop && pos.y > (c.topFn ? this.topAt(c, pos.x, pos.z) : c.h1) - step) return;
       if (c.type === 'circle') {
         const dx = pos.x - c.x, dz = pos.z - c.z, rr = c.r + radius;
         const d2 = dx * dx + dz * dz;
         if (d2 < rr * rr) {
-          const d = Math.sqrt(d2) || 0.0001;
-          pos.x = c.x + (dx / d) * rr; pos.z = c.z + (dz / d) * rr; hit = true;
+          const d = Math.sqrt(d2);
+          pos.x = c.x + (d > 0 ? dx / d : 1) * rr;
+          pos.z = c.z + (d > 0 ? dz / d : 0) * rr; hit = true;
         }
       } else {
         const dx = pos.x - c.x, dz = pos.z - c.z;
@@ -136,73 +174,66 @@ export class Colliders {
     return hit;
   }
   // Does a sphere at (x,y,z) overlap any static shape?
-  pointHit(x, y, z, r = 0.2) {
-    let found = null;
-    this.query(x, z, r + 1, (c) => {
-      if (found || y > c.h1 || y < c.h0) return;
-      if (c.type === 'circle') {
-        if (Math.hypot(x - c.x, z - c.z) < c.r + r) found = c;
-      } else {
-        const dx = x - c.x, dz = z - c.z;
-        const lx = dx * c.cos - dz * c.sin, lz = dx * c.sin + dz * c.cos;
-        if (Math.abs(lx) < c.hw + r && Math.abs(lz) < c.hd + r) found = c;
+  pointHit(x, y, z, r = 0.2, camera = false) {
+    const S = this.cell, pad = r + 1, stamp = ++this.stamp;
+    for (let ix = Math.floor((x - pad) / S); ix <= Math.floor((x + pad) / S); ix++)
+      for (let iz = Math.floor((z - pad) / S); iz <= Math.floor((z + pad) / S); iz++) {
+        const cell = this.grid.get(this._key(ix, iz));
+        if (!cell) continue;
+        for (const c of cell) {
+          if (c._s === stamp) continue;
+          c._s = stamp;
+          if (y > c.h1 || y < c.h0) continue;
+          if (camera && c.type === 'circle' && c.climb === false && c.noTop && c.r <= 0.65) continue;
+          if (this.inside(c, x, z, r)) return c;
+        }
       }
-    });
-    return found;
+    return null;
   }
 
   // Read-only body clearance for navigation. Match resolve's step/top rules without
   // moving a probe or treating a roof above the body as an obstacle.
-  navBlocked(x, y, z, radius, height = 1.8) {
-    let blocked = false;
-    this.query(x, z, radius + 0.05, (c) => {
-      if (blocked || y > c.h1 - 0.05 || y + height < c.h0) return;
-      if (!c.noTop && y > this.topAt(c, x, z) - 0.45) return;
-      if (c.type === 'circle') {
-        blocked = Math.hypot(x - c.x, z - c.z) < c.r + radius;
-      } else {
-        const dx = x - c.x, dz = z - c.z;
-        const lx = dx * c.cos - dz * c.sin, lz = dx * c.sin + dz * c.cos;
-        const ox = Math.max(0, Math.abs(lx) - c.hw), oz = Math.max(0, Math.abs(lz) - c.hd);
-        blocked = ox * ox + oz * oz < radius * radius;
+  navBlocked(x, y, z, radius, height = 1.8, step = 0.45) {
+    const S = this.cell, pad = radius + 0.05, stamp = ++this.stamp;
+    for (let ix = Math.floor((x - pad) / S); ix <= Math.floor((x + pad) / S); ix++)
+      for (let iz = Math.floor((z - pad) / S); iz <= Math.floor((z + pad) / S); iz++) {
+        const cell = this.grid.get(this._key(ix, iz));
+        if (!cell) continue;
+        for (const c of cell) {
+          if (c._s === stamp) continue;
+          c._s = stamp;
+          if (y > c.h1 - 0.05 || y + height < c.h0 || (!c.noTop && y > this.topAt(c, x, z) - step)) continue;
+          const dx = x - c.x, dz = z - c.z;
+          if (c.type === 'circle') {
+            const r = c.r + radius;
+            if (dx * dx + dz * dz < r * r) return true;
+          } else {
+            const lx = dx * c.cos - dz * c.sin, lz = dx * c.sin + dz * c.cos;
+            const ox = Math.max(0, Math.abs(lx) - c.hw), oz = Math.max(0, Math.abs(lz) - c.hd);
+            if (ox * ox + oz * oz < radius * radius) return true;
+          }
+        }
       }
-    });
-    return blocked;
+    return false;
   }
 
   // Segment visibility through static cover, including oriented boxes. Callers
   // also test terrain; this is shared by ranged AI and target selection.
   navSight(from, to, radius = 0.1) {
-    const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
-    let blocked = false;
-    this.query((from.x + to.x) * 0.5, (from.z + to.z) * 0.5, Math.hypot(dx, dz) * 0.5 + radius, (c) => {
-      if (blocked) return;
-      let enter = 0, exit = 1;
-      const slab = (p, d, lo, hi) => {
-        if (Math.abs(d) < 1e-8) return p >= lo && p <= hi;
-        let t0 = (lo - p) / d, t1 = (hi - p) / d;
-        if (t0 > t1) [t0, t1] = [t1, t0];
-        enter = Math.max(enter, t0); exit = Math.min(exit, t1);
-        return enter <= exit;
-      };
-      if (!slab(from.y, dy, c.h0 - radius, c.h1 + radius)) return;
-      const px = from.x - c.x, pz = from.z - c.z;
-      if (c.type === 'box') {
-        if (!slab(px * c.cos - pz * c.sin, dx * c.cos - dz * c.sin, -c.hw - radius, c.hw + radius)
-          || !slab(px * c.sin + pz * c.cos, dx * c.sin + dz * c.cos, -c.hd - radius, c.hd + radius)) return;
-      } else {
-        const r = c.r + radius, a = dx * dx + dz * dz;
-        if (a < 1e-8) { if (px * px + pz * pz > r * r) return; }
-        else {
-          const b = px * dx + pz * dz, disc = b * b - a * (px * px + pz * pz - r * r);
-          if (disc < 0) return;
-          const root = Math.sqrt(disc);
-          enter = Math.max(enter, (-b - root) / a); exit = Math.min(exit, (-b + root) / a);
+    const { x, y, z } = from, dx = to.x - x, dy = to.y - y, dz = to.z - z;
+    const lengthSq = dx * dx + dz * dz, pad = Math.sqrt(lengthSq) * 0.5 + radius;
+    const cx = x + dx * 0.5, cz = z + dz * 0.5, S = this.cell, stamp = ++this.stamp;
+    for (let ix = Math.floor((cx - pad) / S); ix <= Math.floor((cx + pad) / S); ix++)
+      for (let iz = Math.floor((cz - pad) / S); iz <= Math.floor((cz + pad) / S); iz++) {
+        const cell = this.grid.get(this._key(ix, iz));
+        if (!cell) continue;
+        for (const c of cell) {
+          if (c._s === stamp) continue;
+          c._s = stamp;
+          if (segmentHits(c, x, y, z, dx, dy, dz, radius, lengthSq)) return false;
         }
       }
-      blocked = enter <= exit;
-    });
-    return !blocked;
+    return true;
   }
 
   // ---- walkable platforms ----

@@ -1328,9 +1328,10 @@ export class Chain {
     for (let k = 0; k < this.n - 1; k++) this.len[k] = this.t[k].distanceTo(this.t[k + 1]);
     const tmp = _t;
     const air = this.drag > 0 && dt > 0 ? G.wind?.sample(this.t[0], chainWind) : null;
-    for (let remaining = Math.min(Math.max(dt, 0), 0.1); remaining > 1e-6;) {
-      const h = Math.min(remaining, 1 / 120), ratio = this.prevH ? h / this.prevH : 1;
-      remaining -= h;
+    const span = Math.min(Math.max(dt, 0), 0.1);
+    const steps = Math.ceil(span * 120), h = span / (steps || 1);
+    for (let i = 0; i < steps; i++) {
+      const ratio = this.prevH ? Math.min(2, h / this.prevH) : 1;
       this.p[0].copy(this.t[0]); this.q[0].copy(this.t[0]);
       for (let k = 1; k < this.n; k++) {
         const P = this.p[k], Q = this.q[k];

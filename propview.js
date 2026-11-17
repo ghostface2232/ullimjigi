@@ -49,6 +49,11 @@ for (const spec of (q.get('p') || 'dummy').split(',')) {
     else if (name === 'stall') o = B.stall(a[0] ? B.MAT.clothBlue : B.MAT.clothRed);
     else if (name === 'house') { o = B.house({ id: args[0], planter: false, woodpile: false }); o.position.y = -0.2; }   // authored house by id ("house:inn")
     else if (name === 'shrine') o = B.shrine(args[0] || 'frost', new THREE.Texture(), { ruined: args[1] === 'r' });
+    else if (name === 'paving') {
+      o = B.pavingPlaza();
+      if (!o) { o = new THREE.Group(); B.pstone(o, 1.18, 0.12, 0.892, 0xb8ad9a, 0, -0.015, 0); }
+      ground.material = toon(0x807a63, { noAO: true });
+    }
     else o = B[name](...a);
   }
   const box = new THREE.Box3().setFromObject(o);
@@ -81,7 +86,8 @@ function frame() {
   R.render(dt);
   frames++;
 }
-setInterval(frame, 16);
+if (!q.has('still')) setInterval(frame, 16);
+else frame();
 const tris = () => { let n = 0; for (const o of items) o.traverse((m) => { if (m.isMesh && m.geometry) n += (m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count) / 3; }); return Math.round(n); };
 window.__pv = { R, sky, cam, view, items, G, B, tris, get frames() { return frames; } };
 // headless check: render with the given view and POST the canvas to a local collector

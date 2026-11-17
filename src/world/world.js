@@ -260,7 +260,20 @@ export class World {
     // plaza: flagstone rings around the bell tower with a kerb
     const pv = new THREE.Group();
     const bx = POI.bellTower.x, bz = POI.bellTower.z, by0 = this.h(bx, bz);
+    // Keep the dressed surface clear of scattered rocks and tall grass. The grass mask
+    // is sampled on a coarse grid, so include its interpolation footprint at the kerb.
+    this.props.clear(bx, bz, 11.9, ['rock', 'rockBig', 'pebbles']);
+    const T = this.terrain, clearR = 11.85 + Math.SQRT2 * T.step;
+    const ix0 = Math.max(0, Math.floor((bx - clearR + T.half) / T.step)), ix1 = Math.min(T.seg, Math.ceil((bx + clearR + T.half) / T.step));
+    const iz0 = Math.max(0, Math.floor((bz - clearR + T.half) / T.step)), iz1 = Math.min(T.seg, Math.ceil((bz + clearR + T.half) / T.step));
+    for (let iz = iz0; iz <= iz1; iz++) for (let ix = ix0; ix <= ix1; ix++) {
+      if (Math.hypot(ix * T.step - T.half - bx, iz * T.step - T.half - bz) <= clearR) T.gf[iz * T.N + ix] = 0;
+    }
     pv.position.set(bx, by0, bz); this.scene.add(pv);
+    const paving = B.pavingPlaza((x, z) => this.h(bx + x, bz + z) - by0);
+    if (paving) pv.add(paving);
+    // Consume the original dressing RNG even with the authored kit, so neighbouring
+    // lamps, gardens and planters keep their established arrangement.
     const tones = [0xb8ad9a, 0xa89e8c, 0xc2b8a4, 0x9c9282, 0xb0a490];
     for (let r = 3.8; r < 11.2; r += 0.92) {
       const n = Math.max(8, Math.round((TAU * r) / (1.05 + rnd() * 0.3)));
@@ -270,13 +283,14 @@ export class World {
         const a = a0 + (i / n) * TAU, arc = (TAU * r) / n;
         const x = Math.cos(a) * r, z = Math.sin(a) * r;
         const dy = this.h(bx + x, bz + z) - by0;
-        B.pstone(pv, arc * 0.93, 0.1, 0.84, tones[Math.floor(rnd() * tones.length)], x, dy + 0.03 + rnd() * 0.02, z, -a + Math.PI / 2);
+        const tone = tones[Math.floor(rnd() * tones.length)], lift = rnd() * 0.02;
+        if (!paving) B.pstone(pv, arc * 0.93, 0.1, 0.84, tone, x, dy + 0.03 + lift, z, -a + Math.PI / 2);
       }
     }
     for (let i = 0; i < 64; i++) {
       const a = (i / 64) * TAU, r = 11.65;
       const x = Math.cos(a) * r, z = Math.sin(a) * r;
-      B.pstone(pv, (TAU * r) / 64 * 0.96, 0.18, 0.36, 0x8b8377, x, this.h(bx + x, bz + z) - by0 + 0.05, z, -a + Math.PI / 2);
+      if (!paving) B.pstone(pv, (TAU * r) / 64 * 0.96, 0.18, 0.36, 0x8b8377, x, this.h(bx + x, bz + z) - by0 + 0.05, z, -a + Math.PI / 2);
     }
     // bell tower
     const bt = B.bellTower();

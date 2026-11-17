@@ -381,6 +381,144 @@ function bdPlants(P, parent, rnd) {
 
 // Paving stone (vertex-coloured, stone surface), rotated about y
 export function pstone(p, w, h, d, color, x, y, z, ry = 0) { return pbox(w, h, d, color, x, y, z, p, { mat: MAT.paintStone, ry, cast: false }); }
+
+// Dressed paving kit: identical topology, thirteen authored shapes and one atlas. Instanced
+// morph weights select a whole stone (never interpolate), keeping each paved site to one draw.
+let pavingKit = null;
+function pavingParts() {
+  if (pavingKit) return pavingKit;
+  const src = model('pr_paving');
+  if (!src) return null;
+  const names = [...Array.from({ length: 9 }, (_, i) => 'ring' + i), 'fill', 'kerb', 'corner', 'step'];
+  src.scene.updateMatrixWorld(true);
+  const parts = names.map((name) => src.scene.getObjectByName(name));
+  if (parts.some((m) => !m?.isMesh)) return null;
+  const geos = parts.map((m) => {
+    const g = new THREE.BufferGeometry();
+    for (const key of ['position', 'normal', 'uv']) {
+      const a = m.geometry.attributes[key], values = new Float32Array(a.count * a.itemSize);
+      for (let i = 0; i < a.count; i++) for (let j = 0; j < a.itemSize; j++) values[i * a.itemSize + j] = a.getComponent(i, j);
+      g.setAttribute(key, new THREE.BufferAttribute(values, a.itemSize));
+    }
+    g.applyMatrix4(m.matrixWorld);
+    return g;
+  });
+  const geo = geos[0];
+  geo.morphAttributes.position = geos.map((g) => g.attributes.position);
+  geo.morphAttributes.normal = geos.map((g) => g.attributes.normal);
+  geo.computeBoundingBox(); geo.computeBoundingSphere();
+  const srcMat = parts[0].material;
+  const mat = toon(0xffffff, { nocache: true, rim: 0.12, noAO: true, noMoss: true });
+  mat.map = srcMat.map; mat.normalMap = srcMat.normalMap; mat.aoMap = srcMat.aoMap;
+  mat.normalScale.set(1, -1); mat.aoMapIntensity = 0.65;
+  for (const t of [mat.map, mat.normalMap, mat.aoMap]) if (t) t.anisotropy = 8;
+  const patch = mat.onBeforeCompile, key = mat.customProgramCacheKey();
+  mat.onBeforeCompile = (sh) => {
+    patch(sh);
+    sh.vertexShader = 'attribute vec2 aPavingUV;\n' + sh.vertexShader.replace('#include <uv_vertex>', `
+      #include <uv_vertex>
+      vMapUv += aPavingUV;
+      vNormalMapUv += aPavingUV;
+      vAoMapUv += aPavingUV;`);
+    // Authored normals use the valley's soft stone response without the procedural rock/grime layer.
+    sh.fragmentShader = '#define TOON_SOFT\n' + sh.fragmentShader;
+  };
+  mat.customProgramCacheKey = () => key + '|paving';
+  pavingKit = { geo, mat, parts };
+  return pavingKit;
+}
+
+// groundAt is local to the parent, including its placement offset. A tangent plane fitted
+// over each footprint follows the terrain; the buried riser hides the joint without colliders.
+function pavingBatch(parent, entries, groundAt, tint = 0xffffff) {
+  const kit = pavingParts();
+  if (!kit) {
+    for (const e of entries) {
+      const m = pstone(parent, e.w || 1.18, 0.12, e.d || 0.892, tint === 0xffffff ? 0xb8ad9a : tint, e.x, groundAt(e.x, e.z) - 0.015, e.z, e.ry || 0);
+      const n = new THREE.Vector3(groundAt(e.x - 0.25, e.z) - groundAt(e.x + 0.25, e.z), 0.5, groundAt(e.x, e.z - 0.25) - groundAt(e.x, e.z + 0.25)).normalize();
+      m.quaternion.premultiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n));
+    }
+    return null;
+  }
+  const geo = kit.geo.clone(), uv = new Float32Array(entries.length * 2);
+  geo.setAttribute('aPavingUV', new THREE.InstancedBufferAttribute(uv, 2));
+  const m = new THREE.InstancedMesh(geo, kit.mat, entries.length);
+  m.name = 'dressed-paving'; m.receiveShadow = true; m.castShadow = false;
+  const dummy = new THREE.Object3D(), up = new THREE.Vector3(0, 1, 0), normal = new THREE.Vector3();
+  const yaw = new THREE.Quaternion(), weights = { morphTargetInfluences: Array(13).fill(0) };
+  const color = new THREE.Color(tint), rnd = mulberry32(6021);
+  entries.forEach((e, i) => {
+    const kind = e.kind, meta = kit.parts[kind].userData;
+    const w = e.w || meta.width, d = e.d || meta.depth;
+    const dx = Math.max(0.15, w / 2), dz = Math.max(0.15, d / 2);
+    normal.set((groundAt(e.x - dx, e.z) - groundAt(e.x + dx, e.z)) / (2 * dx), 1,
+      (groundAt(e.x, e.z - dz) - groundAt(e.x, e.z + dz)) / (2 * dz)).normalize();
+    dummy.position.set(e.x, groundAt(e.x, e.z) + (rnd() - 0.5) * 0.003, e.z);
+    dummy.quaternion.setFromUnitVectors(up, normal);
+    yaw.setFromAxisAngle(up, (e.ry || 0) + (rnd() - 0.5) * 0.002);
+    dummy.quaternion.multiply(yaw);
+    dummy.scale.set(w / meta.width, 1, d / meta.depth); dummy.updateMatrix();
+    m.setMatrixAt(i, dummy.matrix);
+    weights.morphTargetInfluences.fill(0); weights.morphTargetInfluences[kind] = 1; m.setMorphAt(i, weights);
+    uv[i * 2] = (kind % 4) / 4; uv[i * 2 + 1] = -Math.floor(kind / 4) / 4;
+    m.setColorAt(i, color.clone().multiplyScalar(0.975 + rnd() * 0.05));
+  });
+  m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; m.morphTexture.needsUpdate = true;
+  m.computeBoundingBox(); m.computeBoundingSphere(); parent.add(m);
+  return m;
+}
+
+export function pavingPlaza(groundAt = () => 0) {
+  if (!pavingParts()) return null;
+  const g = new THREE.Group(), entries = [];
+  for (let k = 0; k < 9; k++) {
+    const r = k === 8 ? 11.079 : 3.8 + k * 0.92, n = Math.round(TAU * r / 1.23), phase = (k % 2) * Math.PI / n;
+    for (let i = 0; i < n; i++) {
+      const a = i / n * TAU + phase;
+      entries.push({ kind: k, x: Math.cos(a) * r, z: Math.sin(a) * r, ry: -a - Math.PI / 2 });
+    }
+  }
+  for (let i = 0; i < 64; i++) {
+    const a = i / 64 * TAU;
+    entries.push({ kind: 10, x: Math.cos(a) * 11.65, z: Math.sin(a) * 11.65, ry: -a - Math.PI / 2 });
+  }
+  // Narrow dressed thresholds fill the four tower approaches; the tower's plinth covers
+  // their inner ends. The original radial footprint and terrain grass mask remain aligned.
+  for (let side = 0; side < 4; side++) {
+    const a = side * Math.PI / 2 + 0.1;
+    for (let j = -1; j <= 1; j++) {
+      const x = j * 0.60, z = 3.14;
+      entries.push({ kind: j ? 11 : 12, x: x * Math.cos(a) + z * Math.sin(a), z: z * Math.cos(a) - x * Math.sin(a), ry: a, w: 0.574, d: 0.40 });
+    }
+  }
+  pavingBatch(g, entries, groundAt);
+  return g;
+}
+
+// Replace only the authored approach's flags/kerbs, leaving the seal and gate architecture.
+function riftPaving(g, groundAt, authored = false) {
+  if (authored) {
+    for (const m of g.children) {
+      if (!m.isMesh || !m.geometry.attributes.position) continue;
+      const src = m.geometry, p = src.attributes.position, idx = src.index, keep = [];
+      const count = idx ? idx.count : p.count;
+      for (let i = 0; i < count; i += 3) {
+        const ids = [0, 1, 2].map((j) => idx ? idx.getX(i + j) : i + j);
+        const approach = ids.every((j) => Math.abs(p.getX(j)) < 2.2 && p.getZ(j) < -9.01 && p.getZ(j) > -12.0 && p.getY(j) < 1.2);
+        if (!approach) keep.push(...ids);
+      }
+      if (keep.length < count) { m.geometry = src.clone(); m.geometry.setIndex(keep); }
+    }
+  }
+  const entries = [];
+  const rows = authored ? 3 : 12, start = authored ? -11.48 : -10;
+  for (let i = 0; i < rows; i++) {
+    const z = start + i * 0.94;
+    for (let col = -1; col <= 1; col++) entries.push({ kind: i === 0 ? 12 : 9, x: col * 1.21, z, w: 1.18, d: 0.912 });
+    for (const side of [-1, 1]) entries.push({ kind: 10, x: side * 1.99, z, ry: Math.PI / 2, w: 0.912, d: 0.32 });
+  }
+  pavingBatch(g, entries, groundAt, 0xaeb2c0);
+}
 function lathe(profile, seg, mat, x, y, z, p, o) { return mesh(new THREE.LatheGeometry(profile.map(([a, b]) => new THREE.Vector2(a, b)), seg), mat, x, y, z, p, o); }
 
 // Beam between two points on a wall. axis 'z': wall facing ±z (beam in XY at z=off); 'x': wall facing ±x (beam in ZY at x=off)
@@ -2211,7 +2349,11 @@ function authoredRift(P, groundAt) {
 }
 export function riftGate(groundAt = () => 0) {
   const A = bdParts('riftgate');
-  if (A) return authoredRift(A, groundAt);
+  if (A) {
+    const g = authoredRift(A, groundAt);
+    riftPaving(g, groundAt, true);
+    return g;
+  }
   const g = new THREE.Group();
   const rnd = mulberry32(777);
   const veinMat = crystalMaterial({ color: 0x6a4a9a, glow: 0xa070ff, intensity: 1.4, seed: 9 });
@@ -2316,12 +2458,8 @@ export function riftGate(groundAt = () => 0) {
     const f = mesh(new THREE.DodecahedronGeometry(0.5 + rnd() * 0.8, 0), MAT.hushRock, Math.cos(a) * r, 5 + rnd() * 10, gz + Math.sin(a) * 3, g);
     f.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
   }
-  // cracked flagstones leading up to the gate
-  for (let i = 0; i < 12; i++) {
-    const z = gz + 4 + i * 1.3, x = (rnd() - 0.5) * 1.5;
-    const s = box(1.4 + rnd() * 0.6, 0.24, 1.1, MAT.hushRock, x, 0.42 + Math.abs(z) * 0.03, z, g, { ry: (rnd() - 0.5) * 0.4 });
-    s.rotation.z = (rnd() - 0.5) * 0.1;
-  }
+  // The legacy gate group is placed 0.3 m below the terrain by World.buildRift.
+  riftPaving(g, (x, z) => groundAt(x, z) + 0.3);
   const heartAnchor = new THREE.Object3D(); heartAnchor.position.set(0, 7, 0); g.add(heartAnchor);
   g.userData = { portal, heartAnchor };
   return g;

@@ -37,12 +37,12 @@ def fade(gid, w, mid=0.5, lo=0.0, hi=0.95, span=0.32):
 corner_body = (
   f"<g fill='none' stroke='{G}' stroke-linecap='round' stroke-linejoin='round'>"
   "<path d='M3 46 V13 Q3 3 13 3 H46' stroke-width='1.4'/>"
-  "<path d='M21 8 A13 13 0 0 1 8 21' stroke-width='1'/>"
-  "<path d='M28 8.5 A20 20 0 0 1 8.5 28' stroke-width='.8' opacity='.55'/>"
-  f"<path d='{wave(30, 58, 3, 2.2, 9, 2.6, 0.7)}' stroke-width='.9' opacity='.75'/>"
+  "<path d='M21 8 A13 13 0 0 1 8 21' stroke-width='1.2'/>"
+  "<path d='M28 8.5 A20 20 0 0 1 8.5 28' stroke-width='.9' opacity='.6'/>"
+  f"<path d='{wave(30, 58, 3, 2.6, 9, 2.4, 0.7)}' stroke-width='1.15' opacity='.9'/>"
   "</g>"
   # the same wave down the side edge (x and y swapped)
-  f"<g fill='none' stroke='{G}' stroke-linecap='round' stroke-width='.9' opacity='.75' transform='matrix(0 1 1 0 0 0)'><path d='{wave(30, 58, 3, 2.2, 9, 2.6, 0.7)}'/></g>"
+  f"<g fill='none' stroke='{G}' stroke-linecap='round' stroke-width='1.15' opacity='.9' transform='matrix(0 1 1 0 0 0)'><path d='{wave(30, 58, 3, 2.6, 9, 2.4, 0.7)}'/></g>"
   f"<path d='M6.5 0.8 L10.6 6.5 L6.5 12.2 L2.4 6.5Z' fill='{G}'/>"
   "<path d='M6.5 4 L8.3 6.5 L6.5 9 L4.7 6.5Z' fill='#fff6d6'/>"
   f"<circle cx='46' cy='3' r='1.2' fill='{G}'/><circle cx='3' cy='46' r='1.2' fill='{G}'/>"

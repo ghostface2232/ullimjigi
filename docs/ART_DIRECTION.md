@@ -88,7 +88,10 @@ element, and never hide the caster or the enemy silhouette. Daylight dims effect
 ## Interface
 
 One token set (`styles.css`), three type roles, one icon set. Night-blue panels with gold trim;
-information over ornament; numbers never jitter. The world is the main screen — the HUD steps aside.
+numbers never jitter. The world is the main screen — the HUD steps aside. The look is premium and
+ornate in an original voice (resonance, bells, memory), intuitive at a glance, and never in the way
+of play. **No left-edge accent bars** on panels, list items or cards: mark focus and importance with
+halos, symmetric ornamental caps, filigree, crystal markers or shape changes instead.
 
 ## Review rubric
 

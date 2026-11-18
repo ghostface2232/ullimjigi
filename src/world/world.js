@@ -877,15 +877,23 @@ export class World {
       const d = f.pos.distanceTo(camPos);
       if (d > 60) continue;
       const brazier = f.brazier;
-      if (brazier && d < 18) G.vfx.fireLight(f, tmp.copy(f.pos).setY(f.pos.y + 0.25), 10, 4);
+      if (brazier && d < 18) {
+        G.vfx.fireLight(f, tmp.copy(f.pos).setY(f.pos.y + 0.25), 14, 4.5);
+        if (d < 10) G.vfx.distort.fireHaze(tmp, 1.35 * f.scale);
+      }
       f.emit = (f.emit || 0) + dt * (brazier ? 21 : 13) * q;
       while (f.emit >= 1) {
         f.emit--; f.beat = ((f.beat || 0) + 1) % 3;
         const phase = f.beat * 2.094 + f.pos.x;
         const ring = (f.beat === 0 ? 0.08 : 0.28) * f.scale;
         tmp.copy(f.pos); tmp.x += Math.cos(phase) * ring; tmp.z += Math.sin(phase) * ring;
+        if (brazier && f.beat === 0) tmp.y += 0.54 * f.scale;
         G.vfx.burst(tmp, 'fire', 1, { spread: 0.07 * f.scale, speed: 0.22,
-          size: (f.beat === 0 ? 1.34 : 0.88) * f.scale, life: 1.05 });
+          size: (brazier ? 0.46 + f.beat * 0.07 : f.beat === 0 ? 1.34 : 0.88) * f.scale, life: 1.05 });
+        if (brazier) {
+          f.emberBeat = (f.emberBeat || 0) + 1;
+          G.vfx.fireAir(tmp, f.emberBeat, f.scale, f.emberBeat % 4 === 0);
+        }
       }
       if (rand() < dt * 3 * q) G.vfx.burst(f.pos, 'ember', 1, { speed: 2 });
     }

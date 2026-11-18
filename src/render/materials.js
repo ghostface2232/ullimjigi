@@ -27,8 +27,10 @@ export const U = {
   // grime: uv = (xz + x) * y + z
   heightTex: { value: null },
   heightP: { value: new THREE.Vector4(240, 1 / 480, 0, 0) },
+  fireSpill: { value: new THREE.Vector4(0, 0, 0, 0) },
   // Wildfire burn map on the heightmap grid (same uv as heightTex): R = scorched, G = burning
-  burnTex: { value: (() => { const t = new THREE.DataTexture(new Uint8Array(4), 1, 1); t.needsUpdate = true; return t; })() },
+  burnTex: { value: null },
+  fireVolume: { value: new THREE.Texture() },
   // Rain wetness of exposed surfaces, 0..1 (set by Weather)
   wet: { value: 0 },
   // See-through foliage: leaves on the line from the camera (a) to the player (b) within radius r thin out (dithered)
@@ -53,6 +55,10 @@ export const U = {
   // sky colour mirrored by glossy and wet surfaces (set by Sky)
   skyRefl: { value: new THREE.Color(0.5, 0.6, 0.75) },
 };
+
+// Both samplers start at zero until their respective world systems publish a map.
+// Sharing this placeholder leaves the original texture allocation count intact.
+U.burnTex.value = U.cloudLayout.value;
 
 // ---------------------------------------------------------------------------
 // Shared tileable noise texture. R: large fbm (cloud shapes), G: fbm (other
@@ -789,6 +795,8 @@ const TERRAIN_VERT_PARS = `varying vec3 vWPos;\nvarying vec3 vWNrm;\n`;
 const TERRAIN_FRAG_PARS = `
 ${CLOUD_SHADOW}
 uniform sampler2D uBurnTex;
+uniform float uTime;
+uniform vec4 uFireSpill;
 uniform sampler2D uGroundTex;
 uniform sampler2D uSplatTex;
 uniform sampler2D uPaveTex;
@@ -1041,13 +1049,33 @@ const TERRAIN_SURF = `
       float ashN = _vn(p * 1.3);
       vec3 ash = mix(vec3(0.042, 0.028, 0.021), vec3(0.095, 0.070, 0.052), ashN);
       diffuseColor.rgb = mix(diffuseColor.rgb, ash, clamp(burn.r * 1.2 + burn.g * 0.72, 0.0, 1.0) * (1.0 - _wRock * 0.6));
-      // Isolated cracks stay red for a few seconds behind the advancing tongues.
-      float coal = smoothstep(0.77, 0.91, _vn(p * 5.7)) * smoothstep(0.65, 0.82, _vn(p * 13.0 + ashN));
-      totalEmissiveRadiance += vec3(0.56, 0.032, 0.006) * coal * burn.b;
-      // Interpolated leading edge of a hot cell, broken into coals rather than a grid contour.
-      float heat = burn.g + (ashN - 0.5) * 0.21;
-      float front = smoothstep(0.20, 0.29, heat) * (1.0 - smoothstep(0.31, 0.38, heat));
-      totalEmissiveRadiance += vec3(1.10, 0.21, 0.026) * front * 0.43 * smoothstep(0.42, 0.71, _vn(p * 7.2)) * (1.0 - burn.r);
+      // Heat seeps through thin faults in the ash. Warp the strata, break
+      // them with cool charcoal, and let only a few grains flare at once.
+      vec3 grain = texture2D(uNoiseTex, p * 0.15).rgb;
+      vec2 strata = vec2(dot(p, vec2(0.88, 0.48)), dot(p, vec2(-0.48, 0.88)));
+      strata += 0.85 * (grain.rg - 0.5);
+      float fault = texture2D(uNoiseTex, strata * vec2(0.048, 0.17)).g - 0.52;
+      float d = abs(fault);
+      float breaks = texture2D(uNoiseTex, strata * vec2(0.17, 0.24) + grain.gb * 0.18).r;
+      float pockets = smoothstep(0.42, 0.79, grain.r * 0.66 + breaks * 0.34);
+      float breath = 0.58 + 0.42 * sin(1.9 * uTime + grain.b * 12.0 + strata.x * 0.65);
+      float remaining = smoothstep(0.045, 0.84, burn.b - 0.32 * (1.0 - breaks));
+      float powder = smoothstep(0.38, 0.78, grain.b) * burn.r * (1.0 - burn.g);
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.058, 0.045, 0.039), 0.47 * powder);
+      float heat = remaining * pockets * (0.45 + 0.55 * breath) * (1.0 - burn.g * 0.66);
+      // Dust interrupts narrow veins. A soft shoulder and a few wider hot
+      // grains keep the remaining hairlines embedded in the charcoal.
+      float width = 0.016 + 0.014 * smoothstep(0.63, 0.86, breaks);
+      float vein = exp(-pow(d / width, 2.0)) * smoothstep(0.34, 0.61, breaks);
+      float halo = exp(-d * d * 435.0);
+      totalEmissiveRadiance += heat * (vec3(1.05, 0.22, 0.012) * vein + vec3(0.19, 0.026, 0.004) * halo);
+      float lip = smoothstep(0.025, 0.38, burn.g) * (1.0 - smoothstep(0.57, 0.95, burn.g));
+      totalEmissiveRadiance += vec3(0.49, 0.092, 0.008) * lip * (1.0 - burn.r) * (0.42 + 0.58 * grain.g);
+    }
+    if (uFireSpill.w > 0.0) {
+      vec3 delta = vWPos - uFireSpill.xyz;
+      float fall = 1.0 / (1.0 + dot(delta, delta) * 1.55);
+      totalEmissiveRadiance += vec3(0.53, 0.13, 0.013) * uFireSpill.w * fall * fall;
     }
     // rain: darker, more saturated ground with a wet sheen
     diffuseColor.rgb *= 1.0 - uWet * (0.22 + 0.12 * _wRock);
@@ -1312,7 +1340,7 @@ export function patch(m, opts = {}) {
     sh.uniforms.uHeightTex = U.heightTex;
     sh.uniforms.uHeightP = U.heightP;
     sh.uniforms.uSeeA = U.seeA; sh.uniforms.uSeeB = U.seeB; sh.uniforms.uSeeR = U.seeR;
-    if (isTerrain) { sh.uniforms.uBurnTex = U.burnTex; sh.uniforms.uWet = U.wet; sh.uniforms.uSplatTex = U.splatTex; sh.uniforms.uPaveTex = U.paveTex; sh.uniforms.uGroundTex = U.groundTex; sh.uniforms.uPathTex = U.pathTex; sh.uniforms.uTNormTex = U.tnormTex; sh.uniforms.uPal = U.terrPal; }
+    if (isTerrain) { sh.uniforms.uFireSpill = U.fireSpill; sh.uniforms.uBurnTex = U.burnTex; sh.uniforms.uWet = U.wet; sh.uniforms.uSplatTex = U.splatTex; sh.uniforms.uPaveTex = U.paveTex; sh.uniforms.uGroundTex = U.groundTex; sh.uniforms.uPathTex = U.pathTex; sh.uniforms.uTNormTex = U.tnormTex; sh.uniforms.uPal = U.terrPal; }
     sh.uniforms.uSurfA = U.surfA; sh.uniforms.uSurfN = U.surfN; sh.uniforms.uSkyRefl = U.skyRefl;
     if (cards) sh.uniforms.uLeafTex = U.leaf;
     let fs = sh.fragmentShader;

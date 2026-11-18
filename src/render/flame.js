@@ -1,4 +1,4 @@
-import { Color } from 'three';
+import { Color, ImageLoader, LinearFilter } from 'three';
 
 // Scene-linear colours shared by the particle, volume and fuel-bed programs.
 export const firePaint = {
@@ -6,36 +6,107 @@ export const firePaint = {
   body: new Color(1.24, 0.36, 0.035),
   tip: new Color(0.66, 0.068, 0.018),
 };
-export const FIRE_RAMP = /* glsl */ `
-const vec3 fireTip = vec3(${firePaint.tip.toArray().join(', ')});
-const vec3 fireBody = vec3(${firePaint.body.toArray().join(', ')});
-const vec3 fireCore = vec3(${firePaint.core.toArray().join(', ')});`;
+// Shared by the point, volume and fuel-bed shaders. Loaded with the authored models.
+export async function preloadFireVolume(texture) {
+  texture.image = await new ImageLoader().loadAsync('./textures/fire-density.png');
+  texture.generateMipmaps = false;
+  texture.minFilter = LinearFilter;
+  texture.needsUpdate = true;
+}
 
-export const FLAME_GLSL = /* glsl */ `
+export const FIRE_RAMP = /* glsl */ `
+vec3 fireRadiance(float heat, float core) {
+  float h = clamp(heat, 0.0, 1.0);
+  // Keep the radiance of the gold band just over the bloom knee. Strong
+  // white emission is confined to the deepest fuel at the foot of the plume.
+  vec3 glow = mix(vec3(0.057, 0.027, 0.020), vec3(0.52, 0.034, 0.007), smoothstep(0.12, 0.49, h));
+  glow = mix(glow, vec3(1.35, 0.275, 0.008), smoothstep(0.42, 0.62, h));
+  glow = mix(glow, vec3(2.08, 1.65, 0.012), smoothstep(0.55, 0.78, h));
+  glow = mix(glow, vec3(2.55, 2.41, 0.074), smoothstep(0.75, 0.94, h));
+  return glow + vec3(3.05, 2.93, 1.20) * pow(clamp(core, 0.0, 1.0), 2.1);
+}
+`;
+
+export const COMBUSTION_GLSL = /* glsl */ `
+uniform sampler2D uFireVolume;
+// Volume projections store temperature, hot optical depth, soot and coverage.
+// Blend neighbouring projections before mapping optical depth to scene light.
+vec4 pyroFrame(vec2 uv, float frame) {
+  vec2 tile = vec2(mod(frame, 8.0), 11.0 - floor(frame / 8.0));
+  return texture2D(uFireVolume, (tile + clamp(uv, 0.004, 0.996)) / vec2(8.0, 12.0));
+}
+vec4 pyroVolume(vec2 uv, float phase, float page) {
+  float frame = (page != 1.0 ? fract(phase) * 32.0 : clamp(phase, 0.0, 1.0) * 31.0);
+  float next = page != 1.0 ? mod(floor(frame) + 1.0, 32.0) : min(31.0, floor(frame) + 1.0);
+  return mix(pyroFrame(uv, floor(frame) + page * 32.0), pyroFrame(uv, next + page * 32.0), fract(frame));
+}
 ${FIRE_RAMP}
-// x spans -1..1, h grows upward from the fuel. The shorter arm peels away
-// from the trunk as the neck narrows. Late in the cycle its crest breaks free.
-vec4 flameTongue(float x, float h, float phase, float age, float lean) {
-  float wave = sin(phase - h * 5.4);
-  float top = 0.83 + 0.12 * sin(phase * 0.8) + 0.04 * sin(phase * 1.7);
-  float y = h / top;
-  x -= y * y * lean + y * (0.24 * wave + 0.13 * sin(phase * 0.68 - y * 8.0));
-  float fork = smoothstep(0.20, 0.88, y);
-  float width = (0.33 + 0.16 * sin(y * 4.8 - 0.4)) * (1.0 - y);
-  float trunk = width - abs(x - fork * (0.20 + 0.10 * sin(phase)));
-  float branchH = 0.68 + 0.16 * sin(phase - 0.8);
-  float forkY = clamp(y / branchH, 0.0, 1.0);
-  float side = (0.41 + 0.12 * sin(forkY * 4.0)) * (branchH - y)
-             - abs(x + 0.40 * smoothstep(0.17, 0.83, forkY) - 0.10 * sin(forkY * 5.4));
-  float root = h - 0.028 - 0.70 * x * x;
-  float outline = min(max(trunk, side), root);
-  outline = min(outline, abs(y - 0.81 + 0.10 * x) + 0.16 - smoothstep(0.61, 0.95, age) * 0.20);
-  float aa = max(fwidth(outline), 0.003);
-  float alpha = smoothstep(-0.5 * aa, 0.5 * aa, outline);
-  float band = outline - (0.031 + 0.081 * y);
-  float lip = max(1.35 * fwidth(band), 0.012);
-  vec3 col = mix(fireTip, fireBody, smoothstep(-lip, lip, band));
-  float heart = 0.21 * (1.0 - y * y * 5.3) - abs(x + 0.075 * sin(y * 8.0 + phase));
-  col = mix(col, fireCore, smoothstep(-lip, lip, heart) * (1.0 - 0.35 * age));
-  return vec4(col, alpha);
-}`;
+vec4 pyroLight(vec4 field, float age) {
+  float hot = field.r - 0.08 * age;
+  vec3 light = fireRadiance(hot, field.g * (1.0 - 0.23 * age));
+  light = mix(light, vec3(0.049, 0.030, 0.026), field.b * 0.81);
+  return vec4(light, field.a);
+}
+// Soot absorbs the light below a blast. Only the hottest pockets reach
+// white heat, leaving enough orange between them to read the turbulent body.
+vec4 impactGas(vec4 fuel, float underside, float age, float grain) {
+  float heat = clamp(fuel.r - 0.11 * age, 0.0, 1.0);
+  float soot = clamp(0.65 * fuel.b + underside * (1.10 - 0.67 * fuel.g), 0.0, 0.96);
+  float knots = smoothstep(0.40, 0.78, fuel.g) * smoothstep(0.65, 0.91, heat) * smoothstep(0.49, 0.76, grain);
+  vec3 light = mix(vec3(0.26, 0.030, 0.006), vec3(2.05, 0.47, 0.016), smoothstep(0.29, 0.91, heat + (grain - 0.5) * 0.13));
+  light = mix(light, vec3(3.6, 1.52, 0.08), smoothstep(0.47, 0.93, fuel.g) * (0.34 + 0.53 * grain));
+  light += vec3(5.12, 5.22, 3.06) * knots * knots;
+  return vec4(mix(light, vec3(0.065, 0.036, 0.028), soot), fuel.a);
+}
+vec4 combustion(vec2 uv, float seed, float age, float t, float lean) {
+  uv.x -= uv.y * uv.y * lean * 0.44;
+  if (fract(seed * 8.13) < 0.5) uv.x = 1.0 - uv.x;
+  vec2 margin = smoothstep(vec2(0.0), vec2(0.045), min(uv, 1.0 - uv));
+  vec4 field = pyroVolume(uv, t * (0.66 + 0.20 * fract(seed * 3.79)) + seed * 6.4 + age * 0.22, 0.0);
+  vec4 gas = pyroLight(vec4(field.r, field.g * (1.0 - smoothstep(0.16, 0.59, uv.y) * 0.78), field.ba), age);
+  float fx = uv.x * 2.0 - 1.0;
+  float foot = smoothstep(0.012, 0.17, uv.y - fx * fx * 0.105);
+  gas.a *= margin.x * margin.y * foot;
+  return gas;
+}
+
+vec4 grassCombustion(vec2 uv, float seed, float age) {
+  if (fract(seed * 9.31) < 0.5) uv.x = 1.0 - uv.x;
+  vec4 field = pyroVolume(uv, age * 0.87 + seed * 3.63, 2.0);
+  // Cool soot under brighter pockets provides occlusion between layers.
+  float hot = smoothstep(0.18, 0.63, field.g);
+  float underside = 1.0 - smoothstep(0.11, 0.43, uv.y);
+  float soot = clamp(field.b + (1.0 - hot) * (0.32 + 0.69 * underside), 0.0, 1.0);
+  field.r = clamp(field.r + 0.085 * (fract(seed * 5.73) - 0.5) - soot * 0.29, 0.0, 1.0);
+  field.g *= mix(0.32, 0.87, hot) * (1.0 - soot * 0.39);
+  float bed = underside * (0.37 + 0.54 * (1.0 - hot));
+  field.b = max(field.b, max(soot * 0.85, bed));
+  field.r *= 1.0 - bed * 0.59;
+  field.a *= 0.90;
+  return pyroLight(field, 0.23 * age);
+}
+`;
+
+// The brazier retains its turbulent fuel mask, with the shared gold-to-white emission.
+export const BRAZIER_GLSL = /* glsl */ `
+vec4 brazierCombustion(vec2 uv, float seed, float age, float t, float lean) {
+  float y = uv.y;
+  float x = uv.x * 2.0 - 1.0;
+  vec2 travel = vec2(seed * 5.79, seed * 3.87 - t * (0.66 + 0.41 * seed));
+  vec2 p = vec2(x * 0.33, y * 0.64) + travel;
+  vec2 warp = texture2D(uNoise, p * 0.64).rg - 0.5;
+  x -= y * (lean + 0.48 * warp.x);
+  p = vec2(x * 0.40, y * 0.64) + travel + warp * vec2(0.32, 0.23);
+  vec4 billow = texture2D(uNoise, p);
+  vec3 filament = texture2D(uNoise, p * vec2(1.85, 1.38) + warp * 0.25 - vec2(0.0, t * 0.13)).rgb;
+  float thickness = 1.09 - x * x * (1.15 + 0.74 * y) - 1.06 * y - 0.21 * age;
+  thickness += (billow.g - 0.5) * 1.10 + (filament.r - 0.5) * 0.61 + (billow.b - 0.5) * 0.22;
+  float mask = smoothstep(0.19, 0.54, thickness);
+  mask *= smoothstep(0.00, 0.27, y) * (1.0 - smoothstep(0.83, 1.0, y));
+  mask *= (1.0 - smoothstep(0.76, 1.0, abs(uv.x * 2.0 - 1.0)));
+  float heat = clamp(thickness * 0.82 + 0.12 * (1.0 - y) + 0.18 * filament.g - 0.10 * age - 0.15 * y, 0.0, 1.0);
+  heat += (1.0 - heat) * 0.18 * (1.0 - smoothstep(0.22, 0.79, y));
+  float heart = (1.0 - smoothstep(0.19, 0.49, y)) * smoothstep(0.51, 0.91, thickness);
+  return vec4(fireRadiance(heat, heart * (1.0 - smoothstep(0.15, 0.40, y))), mask);
+}
+`;

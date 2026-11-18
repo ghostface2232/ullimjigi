@@ -7,7 +7,7 @@
 // - Debris: instanced physical chunks (rock, ice, embers) that tumble and bounce
 // - Distort: screen-space refraction objects (shock rings, shells, heat haze)
 //   rendered into the renderer's distortion target
-import { firePaint } from './flame.js';
+import { COMBUSTION_GLSL, firePaint } from './flame.js';
 import * as THREE from 'three';
 import { U, toon } from './materials.js';
 import { crystalMaterial, crystalGeometry } from './crystal.js';
@@ -75,6 +75,7 @@ const SPHERE_VS = /* glsl */ `
 uniform float uTime, uScale, uDisp, uSeed, uRise, uSpeed, uMode;
 varying vec3 vN, vW, vL;
 varying float vN1, vRad;
+varying vec2 vGasUV;
 ${SNOISE}
 float field(vec3 d){
   vec3 q = d * uScale + vec3(uSeed * 7.1, uSeed * 13.7 - uTime * uRise, uSeed * 3.3);
@@ -82,6 +83,22 @@ float field(vec3 d){
 }
 vec3 disp(vec3 d, out float n){ n = field(d); return d * (1.0 + n * uDisp); }
 void main(){
+  vGasUV = uv;
+  if (uMode < -0.5) {
+    vec4 centre = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+    float width = length(modelMatrix[0].xyz);
+    float height = length(modelMatrix[1].xyz);
+    vec2 axis = modelViewMatrix[1].xy;
+    vec2 up = length(axis) > 0.01 ? normalize(axis) : vec2(0.0, 1.0);
+
+    vec2 right = vec2(up.y, -up.x);
+    vec3 offset = vec3(right * position.x * width + up * position.y * height, 0.0);
+    vW = modelMatrix[3].xyz + (vec4(offset, 0.0) * viewMatrix).xyz;
+    vL = vec3(position.xy, 0.0); vN = vec3(0.0, 1.0, 0.0); vN1 = 0.0; vRad = width;
+    centre.xyz += offset;
+    gl_Position = projectionMatrix * centre;
+    return;
+  }
   vec3 d = normalize(position);
   vec3 t1 = normalize(cross(d, abs(d.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
   vec3 t2 = cross(d, t1);
@@ -93,51 +110,55 @@ void main(){
   if (dot(nn, d) < 0.0) nn = -nn;
   vN1 = n; vL = d;
   vRad = length(modelMatrix[0].xyz);
-  if (uMode < -1.5) {
-    // An erupting parcel is broad at the root and splits into curling jets at its tip.
-    float axial = d.y * 0.5 + 0.5;
-    float az = atan(d.z, d.x);
-    float flute = 0.5 + 0.5 * sin(az * 3.0 + axial * 4.3 + uSeed);
-    float shoulder = length(d.xz);
-    p0.xz *= (1.22 - 0.78 * axial) * (0.87 + 0.21 * flute);
-    p0.x += axial * axial * (0.56 + 0.23 * sin(uSeed)) - 0.22 * sin(axial * 5.4);
-    p0.y += axial * shoulder * (flute * 0.84 + n * 0.24 - 0.35);
-    nn = d;
-  } else if (uMode < -0.5) {
-    // The long local axis points down the wake when the body is in flight.
-    float angle = atan(d.z, d.x);
-    float fold = sin(angle * 3.0 + uSeed + 1.9 * d.y - uTime * uSpeed);
-    float fin = smoothstep(-0.12, 0.92, fold) * smoothstep(-0.15, 0.55, d.y);
-    p0.xz *= 1.0 - 0.40 * max(d.y, 0.0);
-    p0.y += fin * 0.86 - (1.0 - fin) * max(d.y, 0.0) * 0.55;
-  }
   vec4 wp = modelMatrix * vec4(p0, 1.0);
   vW = wp.xyz;
-  vN = uMode < -1.5 ? normalize((vec4(normalMatrix * nn, 0.0) * viewMatrix).xyz) : normalize(mat3(modelMatrix) * nn);
+  vN = normalize(mat3(modelMatrix) * nn);
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
 const SPHERE_FS = /* glsl */ `
 uniform float uTime, uScale, uRise, uErode, uAlpha, uMode, uFres, uGlow, uEmiss, uEdge, uAdd, uSoft;
 uniform vec3 uHot, uMid, uCool, uSun, uLit, uShade;
-uniform float uAmb;
+uniform vec4 uIgnition, uHeightP;
+uniform sampler2D uHeightTex;
+uniform float uAmb, uSeed;
 varying vec3 vN, vW, vL;
 varying float vN1, vRad;
+varying vec2 vGasUV;
 ${SNOISE}
 ${FOG_GLSL}
+${COMBUSTION_GLSL}
 void main(){
+  if (uMode < -0.5) {
+    float age = clamp(uErode, 0.0, 1.0);
+    vec4 gas;
+    if (uMode < -2.5) {
+      // Ejected fuel has a bright root and porous orange fringes. Every
+      // parcel uses its own time and orientation as it clears the shared core.
+      vec2 uv = vec2(fract(uSeed * 1.37) < 0.5 ? 1.0 - vGasUV.x : vGasUV.x, vGasUV.y);
+      vec4 field = pyroVolume(uv, uSeed + age * 0.72, 2.0);
+      float centre = 1.0 - smoothstep(0.13, 0.62, length(vW - uIgnition.xyz) * uIgnition.w);
+      float height = (vW.y - uIgnition.y) * uIgnition.w;
+      float base = 1.0 - smoothstep(-0.02, 0.19, height + (field.r - 0.55) * 0.18);
+      field.g *= 0.78 + 0.32 * centre;
+      float grain = 0.5 + 0.5 * snoise(vec3(uv * 24.0, uSeed + age * 2.3));
+      gas = impactGas(field, base * 0.87, age, grain);
+    } else {
+      gas = combustion(vGasUV, fract(uSeed), age, uTime, 0.12);
+    }
+    gas.a *= uAlpha * (1.0 - smoothstep(0.57, 1.0, age));
+    float ground = texture2D(uHeightTex, (vW.xz + uHeightP.x) * uHeightP.y + uHeightP.z).r;
+    gas.a *= smoothstep(-0.025, 0.23, vW.y - ground);
+    if (gas.a < 0.006) discard;
+    gl_FragColor = vec4(mix(gas.rgb, uFogC, fxFog(vW)), gas.a);
+    return;
+  }
   vec3 N = normalize(vN);
   vec3 V = normalize(cameraPosition - vW);
   float facing = clamp(abs(dot(N, V)), 0.0, 1.0);
   float fres = pow(1.0 - facing, uFres);
   vec3 noisePos = vL * uScale * 2.9 + vec3(0.0, -uTime * uRise * 1.6, uTime * 0.37);
-  if (uMode < -1.5) noisePos = vL * vec3(3.3, 1.8, 3.3) + vec3(0.0, -uTime * 1.9, uTime * 0.21);
   float n2 = snoise(noisePos);
   float mask = vN1 * 0.5 + 0.5 + n2 * 0.22 + facing * 0.12;
-  if (uMode < -1.5) {
-    // The thinnest ridges are eaten first. Pockets open through the skin,
-    // and the cool outer material has a lower density than the central folds.
-    mask = 0.31 + 0.14 * vN1 + 0.23 * n2 + 0.34 * facing - 0.15 * vL.y;
-  }
   float ero = smoothstep(uErode - uSoft * 0.3, uErode + uSoft, mask);
   float alpha = ero * uAlpha;
   // big blasts thin out where they pass close to the camera, so a fireball at arm's length
@@ -145,21 +166,7 @@ void main(){
   alpha *= mix(1.0, smoothstep(1.2, 5.5, distance(cameraPosition, vW)), smoothstep(1.4, 2.6, vRad));
   if (alpha < 0.008) discard;
   vec3 col;
-  if (uMode < -1.5) {
-    float fold = sin(atan(vL.z, vL.x) * 3.0 + 4.3 * vL.y + 2.1 * vN1 + n2);
-    float depth = clamp(mask - uErode, 0.0, 1.0);
-    float heat = 0.26 + 0.75 * depth - 0.28 * vL.y + 0.12 * fold + 0.16 * n2;
-    heat -= 0.57 * smoothstep(0.32, 0.92, uErode);
-    col = mix(uCool * 0.82, uMid, smoothstep(0.02, 0.44, heat));
-    col = mix(col, uHot * vec3(1.10, 1.28, 1.14), smoothstep(0.39, 0.88, heat));
-  } else if (uMode < -0.5) {
-    float roll = sin(atan(vL.z, vL.x) * 3.0 + vL.y * 3.2 - uTime * uRise);
-    float heat = 0.55 * facing + 0.22 * roll + 0.30 * vN1 + 0.12 * n2 - 0.26 * vL.y;
-    float aa = max(fwidth(heat), 0.017);
-    col = mix(uCool, uMid, smoothstep(0.21 - aa, 0.21 + aa, heat));
-    col = mix(col, uHot, smoothstep(0.62 - aa, 0.62 + aa, heat));
-    col *= mix(0.60, 1.0, smoothstep(-0.4, 0.15, heat));
-  } else if (uMode < 0.5) {
+  if (uMode < 0.5) {
     // Hush and custom banded volumes retain their own palette and rim.
     // dark soot swirls where the noise dips, hot rim on eroding edges
     float heat = 0.38 + vN1 * 0.5 + n2 * 0.24 + facing * 0.5 - fres * 0.62 - uErode * 0.7;
@@ -207,6 +214,7 @@ void main(){
 const C = (r, g, b) => new THREE.Color(r, g, b);
 const flame = { mode: -1, hot: firePaint.core, mid: firePaint.body, cool: firePaint.tip, add: 0 };
 export const SPHERE_LOOK = {
+  ignition: { ...flame, mode: -3, hot: C(7.5, 6.1, 2.0), mid: C(2.62, 0.47, 0.021), scale: 1.40, disp: 0.43, soft: 0.15, rise: 2.0, speed: 1.9 },
   eruption: { ...flame, mode: -2, scale: 1.15, disp: 0.26, soft: 0.033, rise: 1.1, speed: 1.7 },
   fire: { ...flame, scale: 1.45, disp: 0.3, rise: 0.8, speed: 0.9 },
   fireball: { ...flame, scale: 1.6, disp: 0.18, rise: 2.4, speed: 2.8 },
@@ -233,6 +241,7 @@ function sphereMaterial() {
     uniforms: {
       uTime: U.time, uScale: { value: 1 }, uDisp: { value: 0.2 }, uSeed: { value: 0 }, uRise: { value: 0.5 }, uSpeed: { value: 1 },
       uErode: { value: 0 }, uSoft: { value: 0.1 }, uAlpha: { value: 1 }, uMode: { value: 0 }, uFres: { value: 1.5 }, uGlow: { value: 0.2 }, uEmiss: { value: 0 }, uEdge: { value: 1 }, uAdd: { value: 0 },
+      uIgnition: { value: new THREE.Vector4() }, uFireVolume: U.fireVolume, uHeightTex: U.heightTex, uHeightP: U.heightP,
       uHot: { value: new THREE.Color() }, uMid: { value: new THREE.Color() }, uCool: { value: new THREE.Color() },
       uLit: { value: new THREE.Color() }, uShade: { value: new THREE.Color() }, uSun: U.sunDir,
       uAmb: FXU.amb, uFogD: FXU.fogD, uFogC: FXU.fogC,
@@ -616,7 +625,22 @@ export class Distort {
     this.list.push(h);
     return h;
   }
+  // Keep one prewarmed screen-space haze over the nearest vigorous fire.
+  // The warm-up mesh doubles as the ambient slot, leaving spell slots free.
+  fireHaze(pos, size) {
+    if (!this.airMesh || G.settings.quality === 'low') return;
+    const d = pos.distanceToSquared(G.camera.position);
+    if (this.airTime === G.time && this.airDistance <= d) return;
+    this.airTime = G.time; this.airDistance = d;
+    const m = this.airMesh, u = m.material.uniforms;
+    m.position.copy(pos); m.position.y += size * 0.23;
+    m.scale.set(size, size * 0.65, size);
+    u.uKind.value = 2; u.uBill.value = 1; u.uSeed.value = 1.73;
+    u.uAmp.value = 0.0028;
+    m.visible = true;
+  }
   update(dt) {
+    if (this.airMesh && this.airTime !== G.time) this.airMesh.visible = false;
     for (let i = this.list.length - 1; i >= 0; i--) {
       const x = this.list[i];
       x.t += dt;
@@ -625,7 +649,7 @@ export class Distort {
       if ((Number.isFinite(x.dur) && x.t >= x.dur) || (x.done && x.fin <= 0)) { x.m.visible = false; this.list.splice(i, 1); }
     }
   }
-  get active() { return this.list.length > 0; }
+  get active() { return this.list.length > 0 || this.airMesh?.visible === true; }
 }
 
 // ------------------------------------------------------------------

@@ -384,7 +384,7 @@ const FIELD_VS = `
   }`;
 const FIELD_FS = `
   uniform vec3 uColor, uCore, uSky, uSun; uniform float uKind, uAlpha, uTime, uAge, uAmb;
-  uniform sampler2D uHeight; uniform vec4 uHeightP;
+  uniform sampler2D uHeight, uNoise; uniform vec4 uHeightP;
   varying vec2 vUv; varying vec3 vWorld; varying float vFog, vGrass;
   float line(float d, float w) { return 1.0 - smoothstep(w, w + 0.008, abs(d)); }
   void main() {
@@ -399,12 +399,19 @@ const FIELD_FS = `
     float mark = 0.0, fill = 0.0; vec3 tint = uColor;
     vec3 reflection = vec3(0.0);
     if (uKind < 1.5) {
-      // Three sweeping ember seams; open centre preserves feet and shadows.
-      float seam = sin(a * 3.0 + r * 14.0 - t * 0.8 + fringe * 0.8);
-      mark = pow(max(0.0, seam), 24.0) * smoothstep(0.3, 0.65, r);
-      mark *= smoothstep(-0.65, 0.35, fringe); rim *= 0.26;
       fill = 0.08;
-      if (uKind > 0.5) {
+      if (uKind < 0.5) {
+        vec3 fuel = texture2D(uNoise, vWorld.xz * 0.15).rgb;
+        vec2 strata = vWorld.xz * vec2(0.060, 0.16) + fuel.rg * 0.13;
+        float fault = texture2D(uNoise, strata).g - 0.52;
+        float heat = smoothstep(0.33, 0.76, fuel.r) * (0.68 + 0.32 * sin(t * 2.1 + fuel.b * 12.0));
+        mark = heat * (0.38 * exp(-fault * fault * 380.0) + 0.17 * exp(-fault * fault * 37.0));
+        rim = 0.0;
+      } else {
+        // Plasma retains its arcing electric seams.
+        float seam = sin(a * 3.0 + r * 14.0 - t * 0.8 + fringe * 0.8);
+        mark = pow(max(0.0, seam), 24.0) * smoothstep(0.3, 0.65, r);
+        mark *= smoothstep(-0.65, 0.35, fringe); rim *= 0.26;
         float zap = pow(max(0.0, cos(a * 6.0 + floor(t * 8.0) + r * 18.0)), 60.0);
         mark += zap * 0.55; tint = mix(tint, vec3(1.0, 0.68, 0.12), zap);
       }
@@ -529,7 +536,7 @@ class Streaks {
     this.life = new Float32Array(max); this.ml = new Float32Array(max);
     this.w = new Float32Array(max); this.st = new Float32Array(max); this.minL = new Float32Array(max); this.maxL = new Float32Array(max);
     this.c0 = new Float32Array(max * 4); this.c1 = new Float32Array(max * 4);
-    this.grav = new Float32Array(max); this.drag = new Float32Array(max);
+    this.grav = new Float32Array(max); this.drag = new Float32Array(max); this.curl = new Float32Array(max);
     const g = (this.geo = new THREE.BufferGeometry());
     this.aPos = new THREE.BufferAttribute(new Float32Array(max * 12), 3).setUsage(THREE.DynamicDrawUsage);
     this.aCol = new THREE.BufferAttribute(new Float32Array(max * 16), 4).setUsage(THREE.DynamicDrawUsage);
@@ -559,7 +566,7 @@ class Streaks {
     const c = o.color, c1 = o.color1 ?? c;
     this.c0[i4] = c.r; this.c0[i4 + 1] = c.g; this.c0[i4 + 2] = c.b; this.c0[i4 + 3] = o.alpha ?? 1;
     this.c1[i4] = c1.r; this.c1[i4 + 1] = c1.g; this.c1[i4 + 2] = c1.b; this.c1[i4 + 3] = o.alpha1 ?? 0;
-    this.grav[i] = o.grav ?? 0; this.drag[i] = o.drag ?? 0;
+    this.grav[i] = o.grav ?? 0; this.drag[i] = o.drag ?? 0; this.curl[i] = o.curl ?? 0;
   }
   _kill(i) {
     const j = --this.count; if (i === j) return;
@@ -567,7 +574,7 @@ class Streaks {
     const c4 = (a) => { a[i * 4] = a[j * 4]; a[i * 4 + 1] = a[j * 4 + 1]; a[i * 4 + 2] = a[j * 4 + 2]; a[i * 4 + 3] = a[j * 4 + 3]; };
     c3(this.p); c3(this.v); c4(this.c0); c4(this.c1);
     this.life[i] = this.life[j]; this.ml[i] = this.ml[j]; this.w[i] = this.w[j]; this.st[i] = this.st[j];
-    this.minL[i] = this.minL[j]; this.maxL[i] = this.maxL[j]; this.grav[i] = this.grav[j]; this.drag[i] = this.drag[j];
+    this.minL[i] = this.minL[j]; this.maxL[i] = this.maxL[j]; this.grav[i] = this.grav[j]; this.drag[i] = this.drag[j]; this.curl[i] = this.curl[j];
   }
   update(dt, cam) {
     const P = this.p, V = this.v, ap = this.aPos.array, ac = this.aCol.array;
@@ -579,6 +586,11 @@ class Streaks {
       const i3 = i * 3, i4 = i * 4;
       const dr = Math.max(0, 1 - this.drag[i] * dt);
       V[i3] *= dr; V[i3 + 1] = V[i3 + 1] * dr - this.grav[i] * dt; V[i3 + 2] *= dr;
+      if (this.curl[i]) {
+        const turn = this.curl[i] + (this.ml[i] - this.life[i]) * 7.5;
+        V[i3] += Math.cos(turn) * dt * 2.7;
+        V[i3 + 2] += Math.sin(turn) * dt * 2.7;
+      }
       P[i3] += V[i3] * dt; P[i3 + 1] += V[i3 + 1] * dt; P[i3 + 2] += V[i3 + 2] * dt;
       const t = 1 - this.life[i] / this.ml[i];
       const px = P[i3], py = P[i3 + 1], pz = P[i3 + 2];
@@ -859,7 +871,7 @@ export class VFX {
       const mat = new THREE.ShaderMaterial({
         uniforms: { uColor: { value: new THREE.Color() }, uCore: { value: new THREE.Color() }, uKind: { value: 0 }, uAlpha: { value: 0 }, uAge: { value: 0 },
           uTime: U.time, uFogDensity: this.fogU.density, uSky: U.skyRefl, uSun: U.sunDir, uAmb: this.ambU,
-          uHeight: U.heightTex, uHeightP: U.heightP, uGrass: U.splatTex, uPath: U.pathTex },
+          uHeight: U.heightTex, uHeightP: U.heightP, uGrass: U.splatTex, uPath: U.pathTex, uNoise: U.noise },
         vertexShader: FIELD_VS, fragmentShader: FIELD_FS, transparent: true, depthWrite: false,
         blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendEquation: THREE.AddEquation,
         polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
@@ -953,8 +965,14 @@ export class VFX {
     if (ds && drt) {
       const dsc = new THREE.Scene();
       const m = new THREE.Mesh(this.distort.quad, this.distort.base); m.frustumCulled = false; dsc.add(m);
+      const finish = () => {
+        dsc.clear();
+        if (!this.distort.airMesh) {
+          m.visible = false; this.distort.airMesh = m; ds.add(m);
+        }
+      };
       R.setRenderTarget(drt);
-      try { const p = R.compileAsync ? R.compileAsync(dsc, G.camera, ds) : (R.compile(dsc, G.camera, ds), null); if (p && p.then) p.then(() => dsc.clear(), () => dsc.clear()); } catch (e) { /* ignore */ }
+      try { const p = R.compileAsync ? R.compileAsync(dsc, G.camera, ds) : (R.compile(dsc, G.camera, ds), null); if (p && p.then) p.then(finish, finish); else finish(); } catch (e) { /* ignore */ }
     }
     R.setRenderTarget(prevRT);
   }
@@ -1061,11 +1079,32 @@ export class VFX {
     slot.t = 0; slot.dur = 0.20;
   }
 
+  // All variation in extra sparks and smoke is local to the emission. Neither
+  // the pool nor the visual sampler advances the gameplay random sequence.
+  fireAir(pos, seed, scale, smoke) {
+    const sample = mulberry32(seed);
+    if (sample() < Math.min(0.88, 0.23 + scale * 0.62)) {
+      const wind = G.wind.sample(pos, tmpV4);
+      const color = PAL.fire.glow;
+      this.add.emit({ p: [pos.x + (sample() - 0.5) * scale, pos.y + scale * (0.28 + sample() * 0.61), pos.z + (sample() - 0.5) * scale],
+        v: [wind.x * 0.36 + sample() * 0.42 - 0.21, (0.78 + sample() * 1.78) * scale, wind.z * 0.36 + sample() * 0.42 - 0.21],
+        size: (0.019 + 0.039 * sample()) * scale, size1: 0.005, life: 0.41 + 0.57 * sample(),
+        color, color1: EMBER_B, alpha: 1, alpha1: 0, fadeIn: 0.09, drag: 0.24, grav: 0.32, turb: 0.68,
+        shape: 23, stretch: 0.13, seed: sample(), rot: 0, spin: 0 });
+    }
+    if (!smoke) return;
+    const wind = G.wind.sample(pos, tmpV4);
+    this.norm.emit({ p: [pos.x, pos.y + scale * 0.40, pos.z], v: [wind.x * 0.44, 0.68 + sample(), wind.z * 0.44],
+      size: 0.55 * scale, size1: (1.32 + sample() * 0.72) * scale, life: 0.83 + sample() * 0.74, color: COAL_SMOKE, color1: GREY2,
+      alpha: 0.39, alpha1: 0, fadeIn: 0.21, shape: 22, rot: sample() * 6.28, spin: 0.21, seed: sample() });
+  }
+
+
   burning(target, center, dt) {
     if (target.rig?.body?.visible === false || target.ghost) return;
     const st = target.st;
-    const anchors = (st.fireAnchors ||= [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]);
-    // Only three deformed vertices per actor. Detached armour falls back to the skin.
+    const anchors = (st.fireAnchors ||= BURN_TARGETS.map(() => new THREE.Vector3()));
+    // Sample the current pose at the crown, arms and upper body. Detached armour falls back to the skin.
     for (let site = 0; site < anchors.length; site++) {
       const armor = site < 2 && target.rig?.armor?.[site === 0 ? 6 : 4];
       const mesh = armor?.visible ? armor : target.rig?.mesh;
@@ -1073,7 +1112,7 @@ export class VFX {
       if (mesh?.geometry?.attributes.position) {
         mesh.getVertexPosition(burningVertices(mesh.geometry)[armor?.visible ? 2 : site], p).applyMatrix4(mesh.matrixWorld);
       } else {
-        const angle = site * 2.094;
+        const angle = site * 2.4;
         p.copy(center); p.x += Math.cos(angle) * target.radius * 0.64;
         p.z += Math.sin(angle) * target.radius * 0.64; p.y += target.height * (site === 2 ? 0.32 : 0.11);
       }
@@ -1085,10 +1124,16 @@ export class VFX {
     const beat = st.burnBeat ?? 0;
     st.burnBeat = (beat + 1) % 12;
     const p = anchors[beat % 3];
-    const size = clamp(target.height * (target.rig?.armor ? 0.60 : 0.39), 0.42, 1.85) * randRange(0.85, 1.14);
-    this.norm.emit({ p: [rv(size * 0.06), size * 0.38, rv(size * 0.05)], anchor: p,
-      v: [0, 0.16, 0], life: randRange(0.29, 0.38), size, size1: size * 0.79,
+    const size = clamp(target.height * (target.rig?.armor ? 0.50 : 0.44), 0.40, 1.75) * randRange(0.85, 1.14);
+    this.norm.emit({ p: [rv(size * 0.06), size * 0.21, rv(size * 0.05)], anchor: p,
+      v: [0, 0.51, 0], life: randRange(0.36, 0.48), size, size1: size * 0.79,
       color: PAL.fire.glow, color2: PAL.fire.glow, mid: 0.67, alpha: 0.98, alpha2: 0.98, alpha1: 0.08, fadeIn: 0.12, shape: 18 });
+    const secondary = anchors[3 + beat % 2];
+    const seed = (beat * 0.618034 + 0.17) % 1;
+    this.norm.emit({ p: [(seed - 0.5) * size * 0.21, size * 0.13, 0], anchor: secondary,
+      v: [G.wind.flow.x * 0.24, 0.7, G.wind.flow.y * 0.24], life: 0.27 + seed * 0.16,
+      size: size * 0.79, size1: size * 0.53, color: PAL.fire.core, alpha: 0.98, alpha1: 0, fadeIn: 0.13, shape: 18, seed });
+    if (beat % 2 === 0) this.fireAir(p, beat + Math.floor(G.time * 31), size * 0.76, beat === 2 || beat === 8);
     if (beat % 4 === 1) this.burst(p, 'ember', 1, { speed: 0.9 });
     if (beat === 6) this.burst(p, 'smoke', 1, { speed: 0.65, size: 0.48, life: 0.55, alpha: 0.23 });
   }
@@ -1826,6 +1871,10 @@ export class VFX {
     s.busy = true;
     const m = s.m, u = m.material.uniforms;
     applyLook(m.material, look, o);
+    // Fire volumes use a projected gas parcel. Reused slots recover their
+    // original solid geometry for ice, plasma, smoke and other sphere looks.
+    s.solidGeometry ??= m.geometry;
+    m.geometry = u.uMode.value < -0.5 ? this.distort.quad : s.solidGeometry;
     const base = pos.clone();
     const dur = o.dur ?? 1, persist = dur <= 0;
     const r0 = o.r0 ?? 0.3, r1 = o.r1 ?? r0, grow = o.grow ?? 3;
@@ -2334,18 +2383,37 @@ export class VFX {
       const a = phase + (i + randRange(-0.23, 0.23)) * 6.28 / count;
       const lift = column ? randRange(2.4, 4.0) : ground ? randRange(0.08, 1.0) : randRange(-0.58, 0.88);
       const dir = new THREE.Vector3(Math.cos(a), lift, Math.sin(a)).normalize();
-      const width = r * randRange(0.145, 0.21);
+      const width = r * randRange(0.145, 0.21) * (column ? 1.65 : 2.28);
       const pos = center.clone().addScaledVector(dir, r * (column ? 0.15 : 0.22));
-      this.sphere('eruption', pos, { r0: width * 1.12, r1: width * 0.62, grow: 1.8,
-        dur: column ? 0.42 : randRange(0.21, 0.33), squash: column ? 3.4 : randRange(1.35, 1.95),
+      const parcel = this.sphere(column ? 'eruption' : 'ignition', pos, { r0: width * 1.12, r1: width * 0.62, grow: 1.8,
+        dur: column ? 0.42 : randRange(0.21, 0.33), squash: column ? 3.4 : randRange(0.96, 1.30),
         along: dir.clone().negate(), drift: dir.multiplyScalar(r * (column ? 2.9 : 1.7)),
         fadeIn: 0.001, erode0: 0.10, erodeAt: 0.22, erode1: 0.94 });
+      if (!column && parcel) parcel.u.uIgnition.value.set(center.x, center.y, center.z, 1 / r);
     }
     if (column) return;
-    this.add.emit({ p: center, size: r * 2.65, size1: r * 2.8, life: 0.070, rot: phase,
+    this.impactSpray(center, r, phase, ground);
+    this.add.emit({ p: center, size: r * 2.55, size1: r * 2.86, life: 0.070, rot: phase,
       color: PAL.fire.core, alpha: 1, alpha2: 1, mid: 0.44, alpha1: 0, shape: 21 });
     this.sparks(center, null, 12, { el: 'fire', up: ground ? 0.85 : 0,
-      speed: 12 + r * 3.4, w: 0.038, minL: 0.17, maxL: 0.54, life: 0.41, grav: 8, drag: 1 });
+      speed: 12 + r * 3.4, w: 0.019, minL: 0.10, maxL: 0.34, life: 0.41, grav: 8, drag: 1 });
+  }
+
+  impactSpray(center, r, phase, ground) {
+    // A blast has already expelled fine fuel around its bright body
+    // on the contact frame. Tail length follows velocity as the spray slows.
+    const sample = mulberry32(Math.floor(phase * 1e6));
+    const spray = G.settings.quality === 'low' ? 19 : 36;
+    for (let i = 0; i < spray; i++) {
+      const a = phase + i * 2.4 + sample() * 0.75;
+      const y = ground ? 0.07 + sample() * 0.90 : sample() * 1.8 - 0.9;
+      const side = Math.sqrt(1 - y * y), x = Math.cos(a) * side, z = Math.sin(a) * side;
+      const radius = r * (0.32 + sample() * 0.93), speed = r * (1.65 + sample() * 3.2);
+      this.streaks.emit({ p: [center.x + x * radius, center.y + y * radius, center.z + z * radius],
+        v: [x * speed, y * speed, z * speed], life: 0.095 + sample() * 0.16,
+        w: (0.004 + sample() * 0.010) * r, stretch: 0.07, minL: 0.034 * r, maxL: (0.055 + sample() ** 2 * 0.24) * r,
+        color: i % 4 === 0 ? FIRE_WHITE : EMBER_A, color1: EMBER_B, drag: 2.8, grav: 2.9 });
+    }
   }
 
   fireImpact(pos, radius, ground) {
@@ -2368,8 +2436,11 @@ export class VFX {
           size: reach * 0.84, size1: reach * 1.18, life: randRange(0.16, 0.28), drag: 4,
           color: PAL.fire.glow, alpha: 1, alpha1: 0.22, shape: 20 });
       }
+      this.add.emit({ p: crown, size: size * 2.16, size1: size * 2.30, life: 0.064, rot: phase,
+        color: FIRE_WHITE, alpha: 1, alpha2: 0.95, mid: 0.43, alpha1: 0, shape: 21, seed: phase / 6.28 });
+      this.impactSpray(crown, radius * 0.77, phase, ground);
       this.sparks(crown, null, 5, { el: 'fire', up: ground ? 0.9 : 0, speed: 12 + radius * 3,
-        color: FIRE_WHITE, color1: PAL.fire.glow, w: 0.03, minL: 0.22 * radius, maxL: radius, life: 0.18, drag: 1 });
+        color: FIRE_WHITE, color1: PAL.fire.glow, w: 0.018, minL: 0.08 * radius, maxL: 0.35 * radius, life: 0.18, drag: 1 });
     }
     this.flash(crown, PAL.fire.light, big ? 23 : 9, 5 + radius, 0.16);
     if (ground) {
@@ -2383,7 +2454,7 @@ export class VFX {
       this.burst(crown, 'ember', big ? 7 : 3, { speed: big ? 7 : 4 });
     }, 48);
     this.later(() => this.burst(crown, 'smoke', big ? 3 : 1, { size: big ? 1.4 : 0.65,
-      spread: radius * 0.34, alpha: 0.32, life: 0.52 }), 128);
+      spread: radius * 0.34, alpha: 0.37, life: 0.52, shape: 22 }), 128);
   }
 
   // Projectile / small-spell impact. o: dir (travel), ground, target, scale.
@@ -3009,6 +3080,16 @@ export class VFX {
         if (k <= 0) { s.fireOwner = null; s.dur = 0; s.l.intensity = 0; }
       }
     }
+    let closest = Infinity;
+    U.fireSpill.value.w = 0;
+    for (const slot of this.lights) {
+      if (!slot.fireOwner) continue;
+      const d = slot.l.position.distanceToSquared(G.camera.position);
+      if (d >= closest) continue;
+      closest = d;
+      const p = slot.l.position;
+      U.fireSpill.value.set(p.x, p.y - 0.35, p.z, Math.min(1.25, slot.l.intensity * 0.095));
+    }
     // perfect-dodge flourish (driven by G.slowmo so player code stays untouched)
     const slow = G.slowmo > 0;
     if (slow && !this._slowPrev && G.state === 'play') this.dodge();
@@ -3053,10 +3134,10 @@ function coneDir(out, dir, spread) {
   return out.normalize();
 }
 const D = [0, 0, 0];
-// Cache four upper-surface vertices in bind pose, then skin just the emitting
-// vertex at each beat. Shared rig geometries need only one bounded search.
+const COAL_SMOKE = C(0.13, 0.12, 0.12);
+// Cache the surface samples in bind pose, then follow their deformed positions. Shared rig geometries need only one bounded search.
 const burnSites = new WeakMap();
-const BURN_TARGETS = [[0.08, 0.66, 0.73], [0.92, 0.82, 0.70], [0.48, 1.0, 0.70]];
+const BURN_TARGETS = [[0.08, 0.63, 0.73], [0.92, 0.72, 0.70], [0.48, 0.96, 0.70], [0.28, 0.58, 0.85], [0.70, 0.66, 0.86]];
 function burningVertices(geo) {
   let sites = burnSites.get(geo);
   if (sites) return sites;
@@ -3110,7 +3191,7 @@ VFX.prototype.presets = {
   smoke(p, o) {
     const s = o.spread ?? 0.6;
     this.norm.emit({ p: [p.x + rv(s), p.y + rv(s) * 0.5, p.z + rv(s)], v: [rv(0.8), randRange(0.8, 2), rv(0.8)], life: randRange(1.4, 2.4) * (o.life ?? 1),
-      size: randRange(0.8, 1.4) * (o.size || 1), size1: randRange(2.1, 3.1) * (o.size || 1), ease: 0.55, color: o.color || GREY, color1: o.color1 || GREY2, alpha: o.alpha ?? 0.5, alpha1: 0, drag: 1.2, grav: -0.3, shape: 8, fadeIn: 0.08 });
+      size: randRange(0.8, 1.4) * (o.size || 1), size1: randRange(2.1, 3.1) * (o.size || 1), ease: 0.55, color: o.color || GREY, color1: o.color1 || GREY2, alpha: o.alpha ?? 0.5, alpha1: 0, drag: 1.2, grav: -0.3, shape: o.shape ?? 8, fadeIn: 0.08 });
   },
   spark(p, o) {
     const c = PAL[o.el || 'fire'] || PAL.fire;
@@ -3207,7 +3288,7 @@ VFX.prototype.presets = {
   dust(p, o) {
     const a = rand() * Math.PI * 2, sp = (o.speed ?? 5) * randRange(0.6, 1);
     this.norm.emit({ p: [p.x + Math.cos(a) * 0.5, p.y + 0.2, p.z + Math.sin(a) * 0.5], v: [Math.cos(a) * sp, randRange(0.3, 1.5), Math.sin(a) * sp], life: randRange(0.7, 1.4),
-      size: randRange(0.6, 1.1) * (o.size || 1), size1: randRange(2.0, 3.0) * (o.size || 1), ease: 0.5, color: o.color || C(0.66, 0.58, 0.45), color1: o.color || C(0.72, 0.66, 0.54), alpha: 0.55, alpha1: 0.05, drag: 3, grav: -0.2, shape: 8 });
+      size: randRange(0.6, 1.1) * (o.size || 1), size1: randRange(2.0, 3.0) * (o.size || 1), ease: 0.5, color: o.color || C(0.66, 0.58, 0.45), color1: o.color || C(0.72, 0.66, 0.54), alpha: 0.55, alpha1: 0.05, drag: 3, grav: -0.2, shape: o.shape ?? 8 });
   },
   // droplets: dense, specular, stretched along their motion; a few bright glints
   water(p, o) {

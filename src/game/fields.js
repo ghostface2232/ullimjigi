@@ -565,6 +565,9 @@ export class Fields {
   visuals(f, dt, k) {
     const V = G.vfx, c = f.pos, r = f.r;
     if (f.surface && f.surfaceR !== r) { f.surface.resize(r); f.surfaceR = r; }
+    if (f.kind === 'blaze' && c.distanceToSquared(G.camera.position) < 18 * 18) {
+      V.fireLight(f, tmp.copy(c).setY(c.y + 0.48), 10, 2.5 + r);
+    }
     const area = Math.min(1.8, 0.5 + r * 0.25) * (this.rateK ?? 1);
     f.visualAcc = (f.visualAcc || 0) + dt * area * k * 8;
     let budget = 0;
@@ -573,13 +576,28 @@ export class Fields {
       // Cluster detail at three islands, leaving most of the footprint quiet.
       const island = Math.floor(rand() * 3), a = island * 2.094 + randRange(-0.28, 0.28) + 0.4;
       const rr = r * randRange(0.45, 0.88);
-      const p = tmp.set(c.x + Math.cos(a) * rr, c.y + 0.1, c.z + Math.sin(a) * rr);
+      const reach = f.kind === 'blaze' ? rr * 0.56 : rr;
+      const p = tmp.set(c.x + Math.cos(a) * reach, c.y + 0.1, c.z + Math.sin(a) * reach);
       p.y = Math.max(f.visualFloor ?? -Infinity, G.world.ground(p.x, p.z, c.y + 2)) + 0.1;
       switch (f.kind) {
         case 'blaze':
         case 'plasma': {
-          const s = randRange(0.7, 1.05);
+          const s = randRange(0.7, 1.05) * (f.kind === 'blaze' ? Math.min(2.45, 0.8 + r * 0.47) : 1);
           V.norm.emit({ p: [p.x, p.y + s * 0.34, p.z], v: [Math.sin(a) * 0.16, 0.18, -Math.cos(a) * 0.16], life: 0.54, size: s, size1: s * 0.7, color: PAL.fire.glow, alpha: 0.98 * k, alpha1: 0.25, fadeIn: 0.12, shape: 7 });
+          if (f.kind === 'blaze') {
+            const seed = (rr * 2.71 + f.t * 0.84) % 1;
+            // Overlapping billows move from the hot centre to the draft side.
+            for (let j = 0; j < 3; j++) {
+              const fseed = (seed + j * 0.382) % 1, travel = 0.08 + j * 0.32;
+              const x = c.x + (p.x - c.x) * travel, z = c.z + (p.z - c.z) * travel;
+              const y = Math.max(f.visualFloor ?? -Infinity, G.world.ground(x, z, c.y + 2));
+              const width = s * (1.38 - j * 0.16);
+              V.norm.emit({ p: [x, y + width * 0.24, z], v: [G.wind.flow.x * 0.44, 0.64 + fseed * 0.66, G.wind.flow.y * 0.44],
+                life: 0.42 + fseed * 0.20, size: width, size1: width * 0.64,
+                color: PAL.fire.core, alpha: k * 0.87, alpha1: 0, fadeIn: 0.10, shape: 7, seed: fseed });
+            }
+            V.fireAir(p, Math.floor((f.t + rr) * 211), 0.60, island === 0 && seed > 0.58);
+          }
           if (rand() < 0.25) V.burst(p, 'ember', 1, { speed: 2, size: 0.06 });
           if (f.kind === 'plasma' && rand() < 0.2) {
             const end = p.clone().add(new THREE.Vector3(-Math.sin(a), 0.2, Math.cos(a)));

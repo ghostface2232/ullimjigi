@@ -5,7 +5,7 @@
 // The burn map (R scorched, G burning) is shared with terrain and grass shaders.
 import * as THREE from 'three';
 import { G } from '../core/context.js';
-import { FIRE_RAMP } from '../render/flame.js';
+import { BRAZIER_GLSL, COMBUSTION_GLSL } from '../render/flame.js';
 import { windUniforms } from './wind.js';
 import { U } from '../render/materials.js';
 import { rand, randRange, clamp, smoothstep } from '../core/util.js';
@@ -18,62 +18,60 @@ const MAX_BURNING = 360;
 // Each ignition carries a vigor (1 at the source) that fades as flames pass from
 // cell to cell, so one spark scorches a patch of meadow, not the whole forest.
 const VIGOR_DECAY = 0.72, VIGOR_DECAY_DOWNWIND = 0.8, VIGOR_MIN = 0.32;
+const EDGE_X = [1, 0, -1, 0], EDGE_Z = [0, 1, 0, -1];
 const FLAMES = 180;           // flame cards drawn around the camera
 
-// A strip joins two crossings of the burning perimeter. Neighbouring segments
-// share ground endpoints even on slopes and when viewed from the side.
+// Each instance is a wind-blown fuel particle. Successive births stay tied
+// to a patch of grass and run on the game clock, including during hitstop.
 const FLAME_VS = /* glsl */ `
-attribute vec4 iEnds; // start xz, end xz
-attribute vec2 iHeat; // height at each end
+attribute vec4 iFuel;   // foot XYZ, width
+attribute vec2 iCycle;  // phase, aspect (negative for grass rooted on the heightmap)
+uniform float uTime;
 uniform vec4 uWindFlow, uHeightP;
 uniform sampler2D uHeightTex;
-varying float vH, vHeat, vAlong, vPhase;
-void main(){
-  vec2 foot = mix(iEnds.xy, iEnds.zw, uv.x);
-  vec2 axis = iEnds.zw - iEnds.xy;
-  foot += vec2(-axis.y, axis.x) * sin(uv.x * 3.14159) * 0.13;
-  vPhase = fract(sin(dot(iEnds.xy + iEnds.zw, vec2(2.37, 8.19))) * 7163.4);
-  vAlong = uv.x * length(axis) * (2.05 + 1.0 * vPhase) + vPhase * 7.0;
-  vHeat = mix(iHeat.x, iHeat.y, uv.x);
-  float h = uv.y * min(1.2, vHeat);
-  vH = uv.y;
-  float ground = texture2D(uHeightTex, (foot + uHeightP.x) * uHeightP.y + uHeightP.z).r;
-  vec2 bend = uWindFlow.xy * h * mix(0.18, 0.56, clamp(uWindFlow.z * 0.16, 0.0, 1.0));
-  gl_Position = projectionMatrix * viewMatrix * vec4(foot.x + bend.x, ground + h - 0.035, foot.y + bend.y, 1.0);
+varying vec2 vUv;
+varying vec4 vFire;
+varying vec3 vWP;
+void main() {
+  vUv = uv;
+  float seed = iCycle.x;
+  float clock = uTime * (1.54 + 1.31 * seed) + seed * 91.0;
+  float age = fract(clock);
+  float birth = fract(sin(floor(clock) * 13.21 + seed * 493.0) * 3914.76);
+  float growth = smoothstep(0.0, 0.18, age);
+  float width = iFuel.w * (0.70 + 0.30 * growth) * (1.0 - 0.43 * age);
+  float height = iFuel.w * abs(iCycle.y) * (0.76 + 0.27 * birth) * (1.0 - 0.16 * age);
+  vec3 right = normalize(vec3(viewMatrix[0].x, 0.0, viewMatrix[2].x));
+  vec3 wp = iFuel.xyz + right * (uv.x - 0.5) * width;
+  if (iCycle.y < 0.0) wp.y = texture2D(uHeightTex, (iFuel.xz + uHeightP.x) * uHeightP.y + uHeightP.z).r - 0.025;
+  wp.y += height * (uv.y - 0.10 + 0.38 * age);
+  float pull = age * age * 0.35 + uv.y * uv.y * 0.19;
+  wp.xz += uWindFlow.xy * height * pull * min(1.2, 0.30 + uWindFlow.z * 0.16);
+  if (iCycle.y < 0.0) wp.xz += uWindFlow.xy * height * age * 0.12;
+  wp.xz += right.xz * (birth - 0.5) * iFuel.w * 0.23;
+  vWP = wp;
+  float phase = seed + birth * 0.38;
+  vFire = vec4(iCycle.y < 0.0 ? -phase - 0.01 : phase, age, growth * (1.0 - smoothstep(0.61, 1.0, age)), dot(right.xz, uWindFlow.xy) * 0.19);
+  gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
 }`;
 const FLAME_FS = /* glsl */ `
+uniform sampler2D uNoise,uHeightTex;
+uniform vec4 uHeightP;
 uniform float uTime;
-varying float vH, vHeat, vAlong, vPhase;
-${FIRE_RAMP}
-void main(){
-  // Measure across the strip in metres even when it lies along a view ray.
-  // Adjacent tongues share a rough root, but have separate crests and lifetimes.
-  float x = vAlong;
-  float beat = uTime * 4.0 + vPhase * 17.0;
-  x += 0.16 * sin(x * 1.8 + vPhase * 12.0);
-  x -= vH * (0.23 + 0.29 * sin(beat - vH * 4.1 + x * 1.7));
-  float lane = floor(x), q = fract(x) - 0.5;
-  float seed = fract(sin(lane * 19.7 + vPhase * 9.1) * 1739.4);
-  float pulse = 0.5 + 0.5 * sin(beat * (0.84 + 0.25 * seed) + lane * 2.1);
-  float height = 0.29 + 0.42 * seed + 0.34 * pulse;
-  float y = vH / height;
-  float split = smoothstep(0.21, 0.90, y);
-  float width = (0.52 + 0.17 * sin(5.0 * y + seed * 2.0)) * (1.0 - y);
-  float stem = width - abs(q - 0.24 * split + 0.20 * y * sin(beat + lane - y * 5.2));
-  float side = (0.45 - 0.10 * y) * (0.70 + 0.16 * pulse - y) - abs(q + 0.40 * split);
-  float bed = 0.083 + 0.045 * sin(x * 3.0 + beat) + 0.034 * sin(x * 6.1 - beat * 0.7);
-  float shape = max(bed - vH, max(stem, side));
-  float aa = max(0.55 * fwidth(shape), 0.007);
-  float alpha = smoothstep(-aa, aa, shape);
-  if (alpha < 0.01) discard;
-  float heat = shape + 0.075 * pulse - 0.085 * y + 0.035 * sin(x * 5.1 + y * 3.0);
-  vec3 col = mix(fireTip, fireBody, smoothstep(-0.015, 0.15, heat));
-  col = mix(col, fireCore, smoothstep(0.17, 0.43, heat) * smoothstep(0.14, 0.70, vHeat));
-  gl_FragColor = vec4(col, alpha);
+varying vec2 vUv;
+varying vec4 vFire;
+varying vec3 vWP;
+${COMBUSTION_GLSL}
+${BRAZIER_GLSL}
+void main() {
+  vec4 flame = vFire.x < 0.0 ? grassCombustion(vUv, -vFire.x, vFire.y)
+    : brazierCombustion(vUv, vFire.x, vFire.y, uTime, vFire.w);
+  float alpha = flame.a * vFire.z;
+  if (alpha < 0.004) discard;
+  float ground = texture2D(uHeightTex, (vWP.xz + uHeightP.x) * uHeightP.y + uHeightP.z).r;
+  alpha *= smoothstep(-0.035, 0.13, vWP.y - ground);
+  gl_FragColor = vec4(flame.rgb * alpha, alpha * (vFire.x < 0.0 ? 0.96 : 0.85));
 }`;
-
-// Cell corners run clockwise. Offset coordinates are fractions of a grid cell.
-const CORNER_X = [0, 1, 1, 0], CORNER_Z = [0, 0, 1, 1];
 
 export class Wildfire {
   constructor(scene, terrain) {
@@ -93,7 +91,7 @@ export class Wildfire {
     this.timer = new Float32Array(N * N); // burn / regrow countdown
     this.vigor = new Float32Array(N * N); // how much further this flame can travel
     this.burning = new Set();
-    this.front = { corners: [], fill: [], edges: [], xs: [], zs: [], heights: [] };
+    this.airT = 0; this.airBeat = 0;
     this.heatSince = new Map(); // visual age, including the brief afterglow on cooling ash
     this.scorched = new Set();
     this.tex = new THREE.DataTexture(new Uint8Array(N * N * 4), N, N, THREE.RGBAFormat);
@@ -103,28 +101,28 @@ export class Wildfire {
     this.texBox = new THREE.Box2(); this.texAt = new THREE.Vector2();
     this.texCells = []; this.texZ0 = N; this.texZ1 = -1;
     U.burnTex.value = this.tex;
-    this.acc = 0; this.hurtT = 0; this.fxT = 0; this.flameT = 0;
+    this.acc = 0; this.hurtT = 0; this.fxT = 0;
     this.dirty = false;
     // flames
-    const strip = new THREE.PlaneGeometry(1, 1, 8, 1);
+    const quad = new THREE.PlaneGeometry(1, 1);
     const g = new THREE.InstancedBufferGeometry();
-    g.setAttribute('position', strip.attributes.position);
-    g.setAttribute('uv', strip.attributes.uv);
-    g.setIndex(strip.index);
-    this.ends = new THREE.InstancedBufferAttribute(new Float32Array(FLAMES * 4), 4).setUsage(THREE.DynamicDrawUsage);
+    g.setAttribute('position', quad.attributes.position);
+    g.setAttribute('uv', quad.attributes.uv);
+    g.setIndex(quad.index);
+    this.particles = new THREE.InstancedBufferAttribute(new Float32Array(FLAMES * 4), 4).setUsage(THREE.DynamicDrawUsage);
     // Key phases to cells so culling, distance sorting and regrowth cannot pop the tongues.
     this.flamePhases = Float32Array.from({ length: FLAMES }, () => rand() * 10);
-    this.heat = new THREE.InstancedBufferAttribute(new Float32Array(FLAMES * 2), 2).setUsage(THREE.DynamicDrawUsage);
-    g.setAttribute('iEnds', this.ends); g.setAttribute('iHeat', this.heat);
+    this.cycles = new THREE.InstancedBufferAttribute(new Float32Array(FLAMES * 2), 2).setUsage(THREE.DynamicDrawUsage);
+    g.setAttribute('iFuel', this.particles); g.setAttribute('iCycle', this.cycles);
     g.instanceCount = 0;
     const mat = new THREE.ShaderMaterial({
       vertexShader: FLAME_VS, fragmentShader: FLAME_FS,
-      uniforms: { uTime: U.time, uWindFlow: windUniforms.uWindFlow, uHeightTex: U.heightTex, uHeightP: U.heightP },
-      transparent: true, depthWrite: false, side: THREE.DoubleSide,
-      forceSinglePass: true,
+      uniforms: { uTime: U.time, uNoise: U.noise, uFireVolume: U.fireVolume, uWindFlow: windUniforms.uWindFlow, uHeightTex: U.heightTex, uHeightP: U.heightP },
+      transparent: true, depthWrite: false, blending: THREE.CustomBlending,
+      blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
     });
     this.flames = new THREE.Mesh(g, mat);
-    this.flames.frustumCulled = false;
+    this.flames.frustumCulled = false; this.flames.renderOrder = 9;
     this.flames.userData.noBake = true;
     scene.add(this.flames);
     this.light = new THREE.PointLight(0xff7a2a, 0, 26, 1.6);
@@ -212,53 +210,44 @@ export class Wildfire {
     return Math.min(1, heat / 2.6) * (1 - Math.max(0, above - 6) / 6);
   }
 
-  // Interpolate the perimeter on a terrain quad, including both disjoint
-  // contours in the diagonal case. Return the next free strip instance.
-  writeFrontSegment(x, z, i, n, limit) {
-    const N = this.N, { corners, fill, edges, xs, zs, heights } = this.front;
-    corners[0] = i; corners[1] = i + 1; corners[2] = i + N + 1; corners[3] = i + N;
-    for (let c = 0; c < 4; c++) {
-      const id = corners[c];
-      fill[c] = this.state[id] === 2 ? 1 : 0;
-      if (this.state[id] === 1) fill[c] = 0.44 + 0.56 * smoothstep(0, 0.25, G.time - this.heatSince.get(id));
-    }
-    edges.length = 0;
-    for (let e = 0; e < 4; e++) {
-      const next = (e + 1) % 4;
-      if ((fill[e] > 0.48) === (fill[next] > 0.48)) continue;
-      const t = (0.48 - fill[e]) / (fill[next] - fill[e]);
-      xs[e] = (x + CORNER_X[e] + t * (CORNER_X[next] - CORNER_X[e])) * this.step - this.half;
-      zs[e] = (z + CORNER_Z[e] + t * (CORNER_Z[next] - CORNER_Z[e])) * this.step - this.half;
-      const id = corners[fill[e] > fill[next] ? e : next];
-      const phase = this.flamePhases[id % FLAMES] * 0.1;
-      const age = G.time - (this.heatSince.get(id) ?? -10);
-      heights[e] = this.state[id] === 1 ? (0.63 + 0.78 * phase) * (1 - smoothstep(0.55, 1.70, age)) : 0;
-      edges.push(e);
-    }
-    // Disjoint diagonal islands each keep their own two-edge contour.
-    if (edges.length === 4 && fill[0] > 0.48) edges.push(edges.shift());
-    for (let e = 0; e < edges.length && n < limit; e += 2) {
-      const a = edges[e], b = edges[e + 1];
-      if (Math.max(heights[a], heights[b]) < 0.11) continue;
-      this.ends.setXYZW(n, xs[a], zs[a], xs[b], zs[b]);
-      this.heat.setXY(n++, heights[a], heights[b]);
-      // A few shorter clumps just inside a vigorous front give it depth.
-      // Pull toward burning corners, keeping the older interior open.
-      if (n < limit && Math.max(heights[a], heights[b]) > 0.65 && (i % 5 < 2)) {
-        let ix = 0, iz = 0, weight = 0;
-        for (let c = 0; c < 4; c++) {
-          ix += fill[c] * CORNER_X[c]; iz += fill[c] * CORNER_Z[c]; weight += fill[c];
-        }
-        const innerX = (x + ix / weight) * this.step - this.half;
-        const innerZ = (z + iz / weight) * this.step - this.half;
-        const backX = (innerX - (xs[a] + xs[b]) * 0.5) * 0.74;
-        const backZ = (innerZ - (zs[a] + zs[b]) * 0.5) * 0.74;
-        this.ends.setXYZW(n, xs[a] + backX, zs[a] + backZ, xs[b] + backX, zs[b] + backZ);
-        this.heat.setXY(n++, heights[a] * 0.75, heights[b] * 0.63);
+  writeBraziers(sources, camera, limit) {
+    let n = 0;
+    for (const f of sources) {
+      if (!f.brazier || !f.lit || f.pos.distanceToSquared(camera) > 60 * 60) continue;
+      const count = limit === FLAMES ? 17 : 9;
+      for (let j = 0; j < count && n < limit; j++) {
+        const seed = this.flamePhases[(j * 13 + 9) % FLAMES] * 0.1;
+        const chimney = j < 2, body = j < Math.ceil(count * 0.55);
+        const angle = 2.4 * j + seed * 0.88;
+        const r = (chimney ? 0.07 : body ? 0.24 : 0.40) * f.scale;
+        const width = chimney ? 1.12 + seed * 0.24 : body ? 0.99 + seed * 0.29 : 0.79 + seed * 0.22;
+        const aspect = chimney ? 1.51 + seed * 0.36 : body ? 1.21 + seed * 0.52 : 0.59 + seed * 0.37;
+        this.particles.setXYZW(n, f.pos.x + Math.cos(angle) * r, f.pos.y - 0.08 * f.scale,
+          f.pos.z + Math.sin(angle) * r, width * f.scale);
+        this.cycles.setXY(n++, seed, aspect);
       }
     }
     return n;
   }
+
+  // Each pocket spans several neighboring emitters on the advancing edge.
+  // Layer short convecting puffs in the gaps and a billowing crown in the pockets.
+  writeEdge(cell, side, layer, n) {
+    const phase = this.flamePhases[(cell + side * 13 + layer * 37) % FLAMES] * 0.1;
+    const nx = EDGE_X[side], nz = EDGE_Z[side], ix = cell % this.N, iz = Math.floor(cell / this.N);
+    const along = ((layer * 0.618034 + phase * 0.27 + cell * 0.271) % 1 - 0.5) * 0.95;
+    const depth = 0.31 + phase * 0.18 - (layer % 3) * 0.15;
+    const x = (ix + nx * depth - nz * along) * this.step - this.half;
+    const z = (iz + nz * depth + nx * along) * this.step - this.half;
+    const pocket = smoothstep(-0.79, 0.82, Math.sin(x * 0.65 + 1.46 * Math.cos(z * 0.41)) + 0.61 * Math.sin(z * 0.69 - x * 0.24));
+    const growth = smoothstep(0, 0.27, G.time - this.heatSince.get(cell));
+    if (pocket < 0.14 + 0.14 * phase && (layer > 0 || phase < 0.70)) return n;
+    const width = (1.20 + phase * 1.04) * (0.44 + 0.77 * pocket) * (0.73 + 0.27 * growth);
+    this.particles.setXYZW(n, x, this.T.h[cell], z, width);
+    this.cycles.setXY(n, phase, -(0.72 + pocket * (0.15 + phase * 0.49)));
+    return n + 1;
+  }
+
 
   update(dt, camPos, playerPos) {
     const W = G.world;
@@ -308,7 +297,8 @@ export class Wildfire {
 
     // --- visuals: flames on burning cells near the camera, one warm light, smoke and embers
     const q = G.settings.quality === 'low' ? 0.5 : 1;
-    let n = 0, lx = 0, lz = 0, ly = 0, ln = 0;
+    let n = this.writeBraziers(W.flames || [], camPos, FLAMES * q);
+    let lx = 0, lz = 0, ly = 0, ln = 0;
     if (this.burning.size) {
       const cand = [];
       for (const i of this.burning) {
@@ -320,37 +310,27 @@ export class Wildfire {
       const order = [];
       for (let k = 0; k < cand.length; k += 2) order.push(k);
       if (order.length > FLAMES * q / 2) order.sort((a, b) => cand[a] - cand[b]);
-      const visited = new Set();
-      const N = this.N, limit = FLAMES * q;
+      const limit = FLAMES * q;
       for (const k of order) {
-        const cell = cand[k + 1], cx = cell % N, cz = Math.floor(cell / N);
-        if (cand[k] < 40 * 40) { this.cellPos(cell, tmp); lx += tmp.x; ly += tmp.y; lz += tmp.z; ln++; }
-        if (n >= limit) continue;
-        for (let j = 0; j < 4 && n < limit; j++) {
-          const x = cx - CORNER_X[j], z = cz - CORNER_Z[j], i = z * N + x;
-          if (x < 0 || z < 0 || x >= N - 1 || z >= N - 1 || visited.has(i)) continue;
-          visited.add(i);
-          n = this.writeFrontSegment(x, z, i, n, limit);
+        if (cand[k] >= 40 * 40) continue;
+        this.cellPos(cand[k + 1], tmp); lx += tmp.x; ly += tmp.y; lz += tmp.z; ln++;
+      }
+      const edges = [];
+      for (const k of order) {
+        const id = cand[k + 1], ix = id % this.N, iz = Math.floor(id / this.N);
+        for (let face = 0; face < 4; face++) {
+          const x = ix + EDGE_X[face], z = iz + EDGE_Z[face], neighbor = z * this.N + x;
+          if (x >= 0 && x < this.N && z >= 0 && z < this.N && this.state[neighbor] === 0 && this.fuel[neighbor] >= 0.12) {
+            edges.push(id * 4 + face);
+          }
         }
       }
-      // Newly caught grass still burns just behind the advancing line. Add
-      // short, wind-swept pockets only after the actual perimeter has its slots.
-      for (const k of order) {
-        if (n >= limit) break;
-        const id = cand[k + 1], age = G.time - this.heatSince.get(id);
-        if (age <= 0.10 || age >= 0.90) continue;
-        const h = Math.imul(id ^ (id >>> 9), 1597334677) >>> 0;
-        const seed = (h & 65535) / 65535;
-        if (seed < 0.28) continue;
-        const angle = (h >>> 16) * (6.2831853 / 65536);
-        const dx = Math.cos(angle) * (0.48 + seed * 0.51);
-        const dz = Math.sin(angle) * (0.48 + seed * 0.51);
-        this.cellPos(id, tmp);
-        this.ends.setXYZW(n, tmp.x - dx, tmp.z - dz, tmp.x + dx, tmp.z + dz);
-        const heat = (0.45 + seed * 0.64) * smoothstep(0.10, 0.29, age) * (1 - smoothstep(0.39, 0.90, age));
-        this.heat.setXY(n++, heat, heat * (0.37 + seed * 0.47));
+      for (let layer = 0; layer < 12 && n < limit; layer++) {
+        for (const edge of edges) {
+          n = this.writeEdge(Math.floor(edge / 4), edge % 4, layer, n);
+          if (n === limit) break;
+        }
       }
-      this.ends.needsUpdate = this.heat.needsUpdate = true;
       this.fxT -= dt;
       if (this.fxT <= 0 && order.length) {
         this.fxT = 0.18 / q;
@@ -361,12 +341,33 @@ export class Wildfire {
         if (rand() < 0.6) G.vfx.burst(tmp, 'ember', 2, { speed: 3 });
       }
     }
+    this.airT -= dt;
+    if (this.airT <= 0 && this.heatSince.size) {
+      this.airT = 0.095 / q;
+      const beat = ++this.airBeat;
+      // Walk the small set of hot cells once, with a rotating start, including
+      // still-warm ash after the last cell has gone out.
+      const count = this.heatSince.size, start = (beat * 71) % count;
+      let index = 0, emitted = 0;
+      for (const [id, since] of this.heatSince) {
+        const slot = (index++ - start + count) % count;
+        if (slot >= 9 || G.time - since > (this.state[id] === 2 ? 7 : 4) || (this.state[id] === 2 && (beat + id) % 5 !== 0)) continue;
+        this.cellPos(id, tmp);
+        if (tmp.distanceToSquared(camPos) > 38 * 38) continue;
+        G.vfx.fireAir?.(tmp, beat * 47 + id, this.state[id] === 1 ? 1 : 0.63, (beat + id) % (this.state[id] === 2 ? 2 : 6) === 0);
+        if (++emitted === 7) break;
+      }
+    }
+    if (n) this.particles.needsUpdate = this.cycles.needsUpdate = true;
     this.flames.geometry.instanceCount = n;
     this.flames.visible = n > 0;
     if (ln) {
       this.light.position.set(lx / ln, ly / ln + 2, lz / ln);
       // sized for the dark; by day the same light only bleaches the grass (see VFX.lightK)
       this.light.intensity = Math.min(1, ln / 12) * (22 + Math.sin(G.time * 17) * 4) * (G.vfx ? G.vfx.lightK() : 1);
+      if (ln >= 9 && this.light.position.distanceToSquared(camPos) < 24 * 24) {
+        G.vfx.distort?.fireHaze(this.light.position, 3.2);
+      }
     } else this.light.intensity = 0;
     // crackle bed at the fire nearest the player
     const near = ln > 0;
@@ -410,8 +411,9 @@ export class Wildfire {
       d[i * 4] = Math.round(255 * clamp(this.timer[i] / 40, 0, 1));
       if (this.heatSince.has(i)) {
         const age = G.time - this.heatSince.get(i);
-        d[i * 4 + 2] = Math.round(225 * (1 - smoothstep(0, 3.2, age)));
-        if (age >= 3.2) this.heatSince.delete(i);
+        const cooling = 4.2 + this.flamePhases[i % FLAMES] * 0.36;
+        d[i * 4 + 2] = Math.round(225 * (1 - smoothstep(0, cooling, age)));
+        if (age >= cooling) this.heatSince.delete(i);
       }
       mark(i);
     }

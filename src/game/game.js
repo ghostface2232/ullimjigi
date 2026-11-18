@@ -6,6 +6,8 @@ import { AudioEngine } from '../core/audio.js';
 import { Music } from '../core/music.js';
 import { Renderer } from '../render/renderer.js';
 import { suggestTier } from '../render/quality.js';
+import { U } from '../render/materials.js';
+import { preloadFireVolume } from '../render/flame.js';
 import { preloadModels } from '../render/models.js';
 import { VFX } from '../render/vfx.js';
 import { World, LANTERNS } from '../world/world.js';
@@ -100,7 +102,7 @@ export class Game {
     G.scene = G.renderer.scene; G.camera = G.renderer.camera;
     G.vfx = new VFX(G.scene);
     await nextFrame();
-    await preloadModels(); // authored GLB models, needed by the world and the characters
+    await Promise.all([preloadModels(), preloadFireVolume(U.fireVolume.value)]);
     G.world = new World(G.scene, (p, t) => this.progress(p, t));
     G.atlas = new Atlas(G.world.terrain);
     this.progress(0.75, '사람들을 깨우는 중…');

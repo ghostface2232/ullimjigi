@@ -3,14 +3,16 @@
 //        7 flame tongue, 8 dissolving wisp (smoke that breaks up as it ages),
 //        9 droplet (specular water drop), 10 snowflake, 11 leaf, 12 rune glyph,
 //        13 electric spark (jagged, flickering), 14 bubble, 15 glint (hairline cross flare),
-//        16 shock ring (thins with age), 17 hit spark (spiked burst), 18 surface flame, 19 fire impact, 20 trailing flame, 21 impact rays
+//        16 shock ring (thins with age), 17 hit spark (spiked burst), 18 surface flame, 19 fire impact, 20 trailing flame, 21 ignition flash,
+//        22 soot, 23 airborne cinder
 // Sprites can rotate (rot/spin) and stretch along their screen-space velocity
 // (sparks, streaks and droplets do by default). Colour runs through up to three
 // keys (color → color2 at `mid` → color1) and size follows an ease curve.
 // Alpha softens where a sprite meets the terrain (heightmap) and right in front
 // of the camera.
 import * as THREE from 'three';
-import { FLAME_GLSL } from './flame.js';
+import { COMBUSTION_GLSL } from './flame.js';
+import { windUniforms } from '../world/wind.js';
 import { U } from './materials.js';
 
 // Eight independently filtered stamps. RG stores a puff's tangent normal, B the
@@ -133,7 +135,8 @@ void main(){
   float above = wp.y - gh;
   vGround = vec3(2.0, 0.0, 0.0);
   bool puff = abs(aShape - 3.0) < 0.5 || abs(aShape - 8.0) < 0.5;
-  if (puff && above < aSize * 1.5) {
+  bool flame = abs(aShape - 7.0) < 0.5 || (aShape > 17.5 && aShape < 21.5);
+  if ((puff || flame) && above < aSize * 1.5) {
     // Project the local heightfield tangent across the billboard. Only large
     // contact puffs pay the extra two vertex reads; all fragments share them.
     float cell = 1.0 / float(textureSize(uHeightTex, 0).x);
@@ -169,7 +172,7 @@ varying vec2 vDir;
 varying float vStretch;
 varying vec2 vMisc;
 varying vec3 vGround;
-${FLAME_GLSL}
+${COMBUSTION_GLSL}
 uniform vec4 uWindFlow;
 float h21(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 // value noise, one lattice cell per unit: the shared noise texture's A channel is the same
@@ -223,13 +226,12 @@ void main(){
   }
   else if (vShape < 5.5) { a = smoothstep(0.2, 0.0, abs(d - 0.72)); }
   else if (vShape < 6.5) { a = smoothstep(0.3, 0.0, abs(p.x)) * smoothstep(1.0, 0.15, abs(p.y)) * mix(1.0, 0.5, smoothstep(0.2, -1.0, p.y)); }
-  else if (vShape < 7.5 || abs(vShape - 18.0) < 0.5 || abs(vShape - 20.0) < 0.5) {
-    vec2 uv = vShape > 19.5 ? vec2(p.x, p.y) : vec2(p0.x, -p0.y);
-    float mirror = seed < 0.5 ? -1.0 : 1.0;
+  else if (vShape < 7.5 || abs(vShape - 18.0) < 0.5) {
+    vec2 uv = vec2(gl_PointCoord.x, 1.0 - gl_PointCoord.y);
     float wind = dot(uWindFlow.xy, vec2(viewMatrix[0].x, viewMatrix[2].x));
-    vec4 tongue = flameTongue(uv.x * mirror, uv.y * 0.5 + 0.5,
-      seed * 29.0 + age * 4.2, age, mirror * wind * min(0.48, 0.09 + uWindFlow.z * 0.16));
-    a = tongue.a; ink = tongue.rgb;
+    vec4 fire = combustion(uv, seed, age, uTime, wind * 0.28);
+    a = fire.a * smoothstep(-0.015, 0.12, vGround.x + dot(p0, vGround.yz));
+    ink = fire.rgb;
   }
   else if (vShape < 9.5) {
     // A round leading bead trails a drawn-out neck along the projected motion.
@@ -294,50 +296,39 @@ void main(){
     a = smoothstep(w, w * 0.45, f) * step(d, len) * smoothstep(age * 0.85 - 0.2, age * 0.85, d);
     a += smoothstep(0.2, 0.0, d) * (1.0 - age);
   }
+  else if (vShape > 22.5) {
+    // Raised cinders have a compact warm head and just a hint of velocity stretch.
+    a = 1.0 - smoothstep(0.16, 0.89, d);
+    ink = mix(vec3(1.59, 0.38, 0.014), vec3(3.50, 2.10, 0.26), (1.0 - age) * (1.0 - d * 0.55));
+  }
+  else if (vShape > 21.5) {
+    vec4 mist = pyroVolume(stampUV, age * 0.83 + seed * 0.15, 1.0);
+    a = mist.a * (0.46 + 0.54 * mist.b) * (1.0 - smoothstep(0.61, 1.0, age));
+    ink = mix(vec3(0.058, 0.044, 0.039), vec3(0.16, 0.145, 0.14), age + mist.b * 0.17);
+  }
+
   else if (vShape > 20.5) {
-    // Eight unequal, tapered rays share the contact point for the first two
-    // frames, including rays aimed into the screen by the physical burst.
-    float sector = atan(p.y, p.x) * (8.0 / 6.2831853) + seed * 8.0;
-    float cell = floor(sector);
-    float jitter = h21(vec2(mod(cell, 8.0), seed * 51.0));
-    float offset = abs(fract(sector) - (0.34 + 0.32 * jitter));
-    float across = offset * d * (6.2831853 / 8.0);
-    float end = (0.53 + 0.28 * jitter) * (1.0 - age * 0.34);
-    float width = mix(0.021, 0.002, clamp(d / end, 0.0, 1.0));
-    float aa = clamp(fwidth(d), 0.001, 0.011);
-    a = (1.0 - smoothstep(width - aa, width + aa, across)) * (1.0 - smoothstep(end - aa, end, d));
-    float heart = 1.0 - smoothstep(0.02, 0.125, d);
-    a = max(heart, a);
-    ink = mix(vec3(1.72, 1.53, 1.05), fireCore * vec3(1.15, 1.35, 1.50), heart);
+    vec4 field = pyroVolume(stampUV, age * 0.70, 1.0);
+    float centre = 1.0 - smoothstep(0.025, 0.32, d);
+    float veins = vn(stampUV * 31.0 + seed * 41.0 + vec2(0.0, -age * 2.6));
+    a = field.a * centre * (0.04 + 0.96 * smoothstep(0.54, 0.78, veins));
+    ink = mix(vec3(2.0, 0.49, 0.012), vec3(6.2, 5.45, 1.91), smoothstep(0.58, 0.83, veins));
   }
   else {
-    // A compressed shock front splits into unequal radial sheets of flame.
-    vec2 q = vec2(p.x, p.y * 1.12);
-    float r = length(q), angle = atan(q.y, q.x);
-    float curl = 0.24 * sin(angle * 3.0 + seed * 23.0) + 0.16 * cos(angle * 5.0 - age * 4.0);
-    float spoke = (angle + r * curl + r * r * 0.25 * sin(angle * 2.0 + seed * 8.0))
-                * (8.0 / 6.2831853) + seed * 15.0;
-    float sector = mod(floor(spoke), 8.0);
-    float tooth = 1.0 - abs(fract(spoke) * 2.0 - 1.0);
-    float edge = 0.29 + 0.07 * sin(angle * 3.0) + pow(tooth, 1.28) * (0.24 + 0.36 * h21(vec2(sector, seed)));
-    float band = edge - r;
-    float aa = max(fwidth(band), 0.008);
-    float tear = r + 0.11 * sin(angle * 4.0 + r * 9.0) - age * age * 0.86;
-    a = smoothstep(-aa, aa, band) * smoothstep(-0.13, 0.015, tear);
-    float sheet = band + 0.068 * sin(angle * 5.0 + r * 12.0 - age * 7.0);
-    ink = mix(fireTip, fireBody, smoothstep(0.035 - aa, 0.062 + aa, sheet));
-    float line = abs(sin(angle * 2.0 + seed * 13.0 + r * 0.40));
-    float ray = (1.0 - smoothstep(0.045, 0.14, line)) * smoothstep(0.01, 0.09, band);
-    float hot = max(ray, smoothstep(0.14, 0.30, sheet) * (1.0 - smoothstep(0.04, 0.38, r)));
-    ink = mix(ink, fireCore, hot * (1.0 - smoothstep(0.18, 0.67, age)));
+    float phase = vShape > 19.5 ? age * 0.78 + seed * 0.17 : age;
+    float grain = vn(stampUV * 29.0 + vec2(seed * 41.0, -age * 2.4));
+    vec4 cloud = impactGas(pyroVolume(stampUV, phase, 1.0), smoothstep(0.06, 0.77, p0.y), age, grain);
+    a = cloud.a;
+    ink = cloud.rgb;
   }
+  if (vShape > 18.5 && vShape < 21.5) a *= smoothstep(-0.01, 0.13, vGround.x + dot(p0, vGround.yz));
   if (a < 0.004) discard;
   float al = vColor.a * a;
   if (uAdditive > 0.5) {
     al *= smoothstep(0.3, 2.0, vDist);
     // The contact flash has calibrated radiance at noon and dusk; the pool's
     // premultiplied blend becomes purely additive with zero coverage.
-    if (vShape > 20.5) {
+    if (abs(vShape - 21.0) < 0.5) {
       gl_FragColor = vec4(ink * al * (1.0 - vFog), 0.0);
       return;
     }
@@ -399,8 +390,8 @@ export class Particles {
         uViewport: { value: new THREE.Vector2(1280, 720) },
         uHeightTex: U.heightTex,
         uHeightP: U.heightP,
-        uTime: U.time,
-        uNoise: U.noise,
+        uTime: U.time, uWindFlow: windUniforms.uWindFlow,
+        uNoise: U.noise, uFireVolume: U.fireVolume,
         uStamps: { value: particleStamps() }, uSun: U.sunDir, uLightK: { value: 0.45 },
       },
       transparent: true, depthWrite: false,

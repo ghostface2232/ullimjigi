@@ -21,6 +21,7 @@ uniform float uFade;
 ${WIND_GLSL}
 ${WIND_CONTACT_GLSL}
 uniform sampler2D uBurnMap;
+uniform vec4 uFireSpill;
 uniform vec4 uHeightP;
 uniform float uWet;
 uniform vec4 uCloud;
@@ -31,6 +32,7 @@ varying float vH;
 varying float vWave;
 varying float vCloud;
 varying float vFacing;
+varying float vHeat;
 varying vec2 vBlade;
 #include <common>
 #include <shadowmap_pars_vertex>
@@ -57,7 +59,7 @@ void main(){
   // wildfire: burning blades wither, scorched ones are stubble until they grow back
   vec4 burnS = texture2D(uBurnMap, (iOffset.xz + uHeightP.x) * uHeightP.y + uHeightP.z);
   float burnK = max(burnS.r, burnS.g);
-  p.y *= 1.0 - burnK * 0.82;
+  p.y *= 1.0 - burnK * (0.69 + aBlade.x * 0.17);
   float c = cos(iParams.x), s = sin(iParams.x);
   p = vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z);
   vec3 wp = iOffset + p;
@@ -76,7 +78,13 @@ void main(){
   wp.y = iOffset.y + stem;
   vWave = air.y;
   vColor = mix(iColor, vec3(0.055, 0.035, 0.025), burnK * 0.98);
-  vColor = mix(vColor, vec3(1.10, 0.21, 0.026), smoothstep(0.16, 0.39, burnS.g) * (1.0 - smoothstep(0.45, 0.75, burnS.g)) * (1.0 - burnS.r) * h);
+  // Charred stalks stay dark against the light coming through the ash.
+  // Broad spill at the advancing front illuminates live grass from its base.
+  float edgeHeat = smoothstep(0.03, 0.42, burnS.g) * (1.0 - smoothstep(0.62, 0.98, burnS.g));
+  vHeat = edgeHeat * (1.0 - burnS.r) * (0.23 + 0.24 * (1.0 - h));
+  vec3 delta = wp - uFireSpill.xyz;
+  float fall = 1.0 / (1.0 + dot(delta, delta) * 1.55);
+  vHeat += uFireSpill.w * fall * fall * (0.24 + 0.30 * h);
   vColor *= 1.0 - uWet * 0.16;
   vH = h;
   vBlade = aBlade;
@@ -105,6 +113,7 @@ varying float vH;
 varying float vWave;
 varying float vCloud;
 varying float vFacing;
+varying float vHeat;
 varying vec2 vBlade;
 #include <common>
 #include <packing>
@@ -133,7 +142,7 @@ void main(){
   col += base * uSun * min(vWave, 1.3) * vH * vH * 0.3 * lit;
   // alpha of the scene target = how much screen-space occlusion a pixel takes (Renderer):
   // blades shading each other would only read as dirt
-  gl_FragColor = vec4(col, 0.3);
+  gl_FragColor = vec4(col + vec3(1.44,0.25,0.012) * vHeat, 0.3);
   #include <fog_fragment>
 }`;
 
@@ -209,7 +218,7 @@ export class Grass {
     this.uni.uCloud = U.cloud;
     this.uni.uSunW = U.sunDir;
     this.uni.uShadeTint = U.shadeTint;
-    this.uni.uBurnMap = U.burnTex;
+    this.uni.uBurnMap = U.burnTex; this.uni.uFireSpill = U.fireSpill;
     this.uni.uHeightP = U.heightP;
     this.uni.uWet = U.wet;
     this.uni.uNoiseTex = { value: noiseTexture() };

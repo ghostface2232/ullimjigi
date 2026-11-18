@@ -1805,6 +1805,6 @@ export class Spells {
     const dir = p.vel.lengthSq() > 1e-6 ? p.vel.clone().normalize() : null;
     V.impact(p.el, pos, { dir, target, ground: ground || undefined, scale: p.heavy ? 1.4 : 1 });
     if (p.el === 'wind' && ground) G.world.grass.gust(pos.x, pos.z, 3, 1);
-    if (ground && p.el !== 'wind') V.burst(pos, 'dust', 3, { speed: 3, size: 0.5 });
+    if (ground && p.el !== 'wind') V.burst(pos, 'dust', 3, { speed: 3, size: 0.5, shape: p.el === 'fire' ? 22 : 8 });
   }
 }

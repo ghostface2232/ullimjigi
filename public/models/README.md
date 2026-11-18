@@ -7,9 +7,10 @@ from scratch; the files below use third-party scans as their form source.
 
 The scattered rocks (`pr_rocks.glb`, `pr_rocktex.glb`) and the rolling boulder (`pr_boulder.glb`,
 `pr_bouldertex.glb`) are restyled from photogrammetry scans. Each rock keeps the old model's
-layout of masses and bounding box; every mass is a scan fitted to its box, remeshed, flattened
-into a few broad planes with stepped secondary blocks, decimated, and baked (normal map: the
-designed planes plus the fine band of the scan). The albedo is painted, not taken from the scans.
+layout of masses, collider data and bounding box. Exposed shoulders are rounded more broadly
+than sheltered fractures. The near and far meshes follow these weathered forms. The baked
+normal map carries the fine scan relief, and the painted albedo separates warm tops, cool sides
+and deep creases.
 
 | Model | Source | Licence |
 |---|---|---|

@@ -98,8 +98,9 @@ halos, symmetric ornamental caps, filigree, crystal markers or shape changes ins
 No model, costume, hair, shader or effect is started from imagination. Before any work on an
 asset: read the shared library in `ref/targets/` (local, gitignored; the user's own picks are in
 `ref/targets/user-refs-*`), gather 4–8 further high-quality references for that specific asset, and
-write a reference board and a one-page spec (silhouette, proportions, construction, palette, what is
-taken from which image). The user approves the board before modelling. Every review shows the result
+write a reference board and a one-page spec. References set the bar for quality, variety and detail —
+they are not designs to copy. The asset keeps its own identity, proportions, costume and palette; the
+spec lists what stays and which quality and detail traits are taken from which image. The user approves the board before modelling. Every review shows the result
 beside its references.
 
 ## Review rubric

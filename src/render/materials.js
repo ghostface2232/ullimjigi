@@ -21,6 +21,7 @@ export const U = {
   sunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3).normalize() },
   // Fraction of the key light that still reaches surfaces facing away from it
   // (tinted cool: BotW shadows are bluish, not grey)
+  valleyLight: { value: 0 }, // fades across the valley passes; driven by the sky
   shadeTint: { value: new THREE.Color(0.3, 0.36, 0.52) },
   // Terrain heightmap (HalfFloat, set by Terrain) for ground-contact AO and
   // grime: uv = (xz + x) * y + z
@@ -327,7 +328,7 @@ export const FOG = {
   sunDir: { x: 0, y: 1, z: 0 },
   sunColor: { x: 0, y: 0, z: 0 },          // in-scatter color (already scaled)
   farColor: { x: 0, y: 0, z: 0, w: 0 },    // rgb far-haze color, w = blend amount
-  height: { x: 0, y: 0.05, z: 0, w: 0 },   // x density at base, y falloff (1/m), z base height
+  height: { x: 0, y: 0.05, z: 0, w: 0 },   // x density at base, y falloff (1/m), z base height, w clear valley air
 };
 const FOG_UNIFORMS = {
   fogSunDir: { value: FOG.sunDir },
@@ -387,6 +388,10 @@ THREE.ShaderChunk.fog_fragment = /* glsl */ `
   }
   // Keep portrait and interaction distance clear; layer the air behind the subject.
   _od *= smoothstep( 4.0, 32.0, _fd );
+  // At noon the neutral 20-to-400 m reference gains about 37% linear luminance.
+  // Keep the low ridge distinct without losing the last ridge in white air.
+  _od *= 1.0 - 0.68 * fogHeight.w;
+  _od += 0.14 * fogHeight.w * smoothstep(28.0, 255.0, _fd);
   vec3 _f = 1.0 - exp( - _od * vec3( 0.84, 0.96, 1.14 ) );
   float _sun = pow( max( dot( _rd, fogSunDir ), 0.0 ), 7.0 );
   vec3 _fc = mix( fogColor, fogFarColor.rgb, fogFarColor.w * smoothstep( 30.0, 380.0, _fd ) );
@@ -585,6 +590,8 @@ uniform sampler2D uNoiseTex;
 uniform vec4 uCloud;
 uniform vec3 uSunW;
 uniform vec3 uShadeTint;
+uniform float uValleyLight;
+uniform vec2 uFinish;
 float _dirShadow = 1.0;
 float _isDir = 0.0;
 float _cloudSh = 1.0;
@@ -620,6 +627,11 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
       float g = texture2D( gradientMap, vec2( clamp( ndl * 0.5 + 0.5, 0.0, 1.0 ), 0.5 ) ).r;
     #else
       float g = smoothstep( -0.12, 0.08, ndl );
+    #endif
+    #ifndef ACTOR_RAMP
+      // Within the lit band a broad turning plane lets masonry bevels, stone
+      // shoulders and leaf clumps keep their form under a high sun.
+      g *= 1.0 - uValleyLight * 0.27 * (1.0 - clamp(ndl, 0.0, 1.0));
     #endif
     float lit = g * _dirShadow * _cloudSh;
     vec3 irr = directLight.color * mix( uShadeTint, vec3( 1.0 ), lit ) * mix( 1.0, _cav, 0.55 );
@@ -962,7 +974,11 @@ const TERRAIN_SURF = `
     // (rock: the relief comes and goes over a face, strong in one stretch and worn nearly
     // smooth in the next, and is read more gently from afar, or a far wall is all one grain)
     float rf = _wRock * (1.0 - mix(0.15, 0.75, texture2D(uNoiseTex, p * 0.013 + vWPos.y * 0.021 + 0.7).r) * (0.45 + 0.55 * smoothstep(40.0, 150.0, length(cameraPosition - vWPos))));
-    vec3 pn = normalize(wn + dW * iw * 1.15 * (1.0 - _wRock + rf * 0.5));
+    // Project scanned detail onto the actual slope: a normal perturbation
+    // parallel to the face normal only inflates it, especially on cliff shoulders.
+    vec3 tangentDetail = dW - wn * dot(wn, dW) * uValleyLight;
+    float rockRelief = 0.5 + uValleyLight * (0.25 - 0.37 * farSurface);
+    vec3 pn = normalize(wn + tangentDetail * iw * 1.15 * (1.0 - _wRock + rf * rockRelief));
     if (ws > 0.0) { _rough = rgh * iw; _cav = cav * iw; _specK = 1.0; }
     _cav = mix(_cav, 1.0, _wRock * (0.45 + farSurface * 0.2));
     if (_wN > 0.004) {
@@ -1119,11 +1135,11 @@ const SURFACE_FRAG = `
       // damp, dirty foot of a wall
       float mott = texture2D(uNoiseTex, _uv * 0.11).g;
       float gr = 1.0 - smoothstep(0.05, 0.75 + mott * 0.5, _above);
-      diffuseColor.rgb *= mix(vec3(1.0), vec3(0.8, 0.74, 0.66), gr * 0.55);
+      diffuseColor.rgb *= mix(vec3(1.0), vec3(0.8, 0.74, 0.66), gr * 0.55 * (1.0 - uValleyLight));
     }
     #elif defined( TEX_WOOD ) || defined( TEX_PLANKS )
     {
-      diffuseColor.rgb *= 1.0 - 0.25 * (1.0 - smoothstep(0.0, 0.6, _above));
+      diffuseColor.rgb *= 1.0 - 0.25 * (1.0 - uValleyLight) * (1.0 - smoothstep(0.0, 0.6, _above));
     }
     #elif defined( TEX_STONE )
     {
@@ -1181,10 +1197,19 @@ const SURFACE_FRAG = `
       }
     }
     #endif
+    #if defined(USE_NORMALMAP) && !defined(SURF_LAYER) && !defined(ACTOR_RAMP)
+      // Shared atlases on authored architecture and props already contain the
+      // dressing normals. Supply their finish without a second normal layer.
+      _rough = uFinish.x;
+      _specK = uFinish.y * uValleyLight;
+    #endif
     #ifdef TOON_GROUND_AO
     {
       float ao = (1.0 - smoothstep(0.0, 0.6, _above)) * step(-0.8, _above);
-      diffuseColor.rgb *= mix(vec3(1.0), vec3(0.62, 0.66, 0.74), ao);
+      // Keep contact close to the foot and direct pigment clean. In the valley
+      // cavity primarily attenuates indirect fill (also a small share of the key).
+      diffuseColor.rgb *= mix(vec3(1.0), vec3(0.62, 0.66, 0.74), ao * (1.0 - uValleyLight));
+      _cav *= 1.0 - 0.46 * uValleyLight * ao * ao;
     }
     #endif
   }
@@ -1223,6 +1248,7 @@ export function toon(color = 0xffffff, opts = {}) {
 }
 
 export function patch(m, opts = {}) {
+  const finish = { value: new THREE.Vector2(opts.roughness ?? 0.82, opts.specular ?? 0.24) };
   const rim = { value: opts.rim ?? 0.28 };
   m.userData.rim = rim;
   const sway = { value: opts.sway ?? 0 };
@@ -1251,6 +1277,8 @@ export function patch(m, opts = {}) {
     sh.uniforms.uCloud = U.cloud;
     sh.uniforms.uSunW = U.sunDir;
     sh.uniforms.uShadeTint = U.shadeTint;
+    sh.uniforms.uValleyLight = U.valleyLight;
+    sh.uniforms.uFinish = finish;
     sh.uniforms.uHeightTex = U.heightTex;
     sh.uniforms.uHeightP = U.heightP;
     sh.uniforms.uSeeA = U.seeA; sh.uniforms.uSeeB = U.seeB; sh.uniforms.uSeeR = U.seeR;

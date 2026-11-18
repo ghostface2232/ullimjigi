@@ -196,10 +196,10 @@ function amat() {
   };
   AMAT = {
     paint: mk({ rim: 0.2 }),
-    cloth: mk({ rim: 0.15, side: THREE.DoubleSide }),
+    cloth: mk({ rim: 0.15, roughness: 0.95, specular: 0.06, side: THREE.DoubleSide }),
     stone: mk({ rim: 0.25, tex: 'rock' }),
-    metal: mk({ rim: 0.9, emissive: 0x1c1204 }),
-    iron: mk({ rim: 0.5 }),
+    metal: mk({ rim: 0.9, roughness: 0.38, specular: 1, emissive: 0x1c1204 }),
+    iron: mk({ rim: 0.5, roughness: 0.55, specular: 0.8 }),
     glass: windowMat,
   };
   return AMAT;
@@ -311,8 +311,8 @@ function bmat() {
   };
   BMAT = {
     wall: mk({ rim: 0.2 }),
-    metal: mk({ rim: 0.9, emissive: 0x1c1204 }),
-    cloth: mk({ rim: 0.15, side: THREE.DoubleSide }),
+    metal: mk({ rim: 0.9, roughness: 0.38, specular: 1, emissive: 0x1c1204 }),
+    cloth: mk({ rim: 0.15, roughness: 0.95, specular: 0.06, side: THREE.DoubleSide }),
     glass: windowMat,
   };
   return BMAT;
@@ -424,7 +424,7 @@ function pavingParts() {
   geo.computeBoundingBox(); geo.computeBoundingSphere();
   const srcMat = parts[0].material;
   const rows = parts[0].userData.pavingRows || 4;
-  const mat = toon(0xffffff, { nocache: true, rim: 0.12, noAO: true, noMoss: true });
+  const mat = toon(0xffffff, { nocache: true, rim: 0.12, roughness: 0.69, specular: 0.45, noAO: true, noMoss: true });
   mat.map = srcMat.map; mat.normalMap = srcMat.normalMap; mat.aoMap = srcMat.aoMap;
   mat.normalScale.set(1.15, -1.15); mat.aoMapIntensity = 0.9;
   for (const t of [mat.map, mat.normalMap, mat.aoMap]) if (t) t.anisotropy = 8;

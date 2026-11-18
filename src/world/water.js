@@ -25,7 +25,7 @@ uniform sampler2D tRefl;
 uniform mat4 uReflMat;
 uniform float uRefl;
 uniform vec3 uShallow, uDeep, uFoam, uSunDir, uSunColor, uSky, uSkyTop, uCloudLight;
-uniform float uNight, uSunVisible;
+uniform float uNight, uSunVisible, uValleyLight;
 uniform sampler2D uCloudDome;
 uniform vec3 uCloudLit, uCloudShade, uCloudSnap;
 uniform vec2 uCloudDrift;
@@ -51,6 +51,9 @@ void main(){
   float e = 0.35;
   float h0 = waveH(p), hx = waveH(p + vec2(e, 0.0)), hz = waveH(p + vec2(0.0, e));
   float amp = mix(1.0, 0.3, smoothstep(20.0, 160.0, dist)) * (0.35 + 0.65 * smoothstep(0.0, 1.5, depth));
+  // Keep the broad sky reflection continuous across the lake. Short facets
+  // remain legible at the bank and lose contrast towards the opposite shore.
+  amp *= 1.0 - uValleyLight * (0.16 + 0.40 * smoothstep(10.0, 70.0, dist));
   vec2 nd = vec2(h0 - hx, h0 - hz) / e * 0.55 * amp;
   vec3 N = normalize(vec3(nd.x, 1.0, nd.y));
   float ndv = max(dot(N, V), 0.0);
@@ -141,6 +144,7 @@ export class Water {
     this.uni.uCloudLayout = U.cloudLayout;
     this.uni.uCloudWind = U.cloudWind;
     this.uni.uCloudLight = U.sunDir;
+    this.uni.uValleyLight = U.valleyLight;
     this.uni.uBed = U.groundTex;
     this.uni.uHeightP = U.heightP;
     this.uni.uNoiseTex = { value: noiseTexture() };

@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { U, FOG, noiseTexture } from '../render/materials.js';
 import { SunLight } from 'three/addons/lights/SunLight.js';
 import { lerp, clamp, smoothstep, createNoise2D, ridged } from '../core/util.js';
+import { POI } from './layout.js';
 import { tier } from '../render/quality.js';
 import { Clouds, CLOUD } from '../render/clouds.js';
 
@@ -279,6 +280,11 @@ export class Sky {
     const a = KEYS[i], b = KEYS[Math.min(i + 1, KEYS.length - 1)];
     const t = b.h > a.h ? smoothstep(0, 1, (h - a.h) / (b.h - a.h)) : 0;
     const u = this.uni;
+    const eye = camPos || center;
+    const valley = 1 - smoothstep(205, 236, Math.hypot(eye.x, eye.z));
+    U.valleyLight.value = valley;
+    const evening = smoothstep(16, 17.4, h) * (1 - smoothstep(19.2, 20, h));
+    const frost = valley * (1 - smoothstep(28, 72, Math.hypot(eye.x - POI.frost.x, eye.z - POI.frost.z)));
     lerpHex(a.top, b.top, t, u.uTop.value);
     lerpHex(a.hor, b.hor, t, u.uHorizon.value);
     lerpHex(a.bot, b.bot, t, u.uBottom.value);
@@ -300,19 +306,25 @@ export class Sky {
     // Remap both halves of the orbit so midnight remains continuous over a 24-hour wrap.
     const solar = (h - 5.6 + 24) % 24;
     const ang = (solar < 13.6 ? solar / 13.6 : 1 + (solar - 13.6) / 10.4) * Math.PI;
-    const sunDir = u.uSunDir.value.set(Math.cos(ang), Math.sin(ang), 0.35).normalize();
+    const sunset = valley * evening * (1 - smoothstep(17.7, 18.75, h));
+    const sunDir = u.uSunDir.value.set(Math.cos(ang), Math.sin(ang) * (1 - 0.41 * sunset), 0.35).normalize();
     u.uMoonDir.value.set(-Math.cos(ang), -Math.sin(ang) * 0.9 + 0.1, -0.3).normalize();
     const sunUp = sunDir.y;
     const sunVis = smoothstep(-0.12, 0.05, sunUp);
     u.uSunVis.value = sunVis;
     lerpHex(a.sun, b.sun, t, u.uSunColor.value);
 
+    u.uSunColor.value.lerp(cA.setRGB(1, 0.72, 0.45), sunset);
     // Directional light follows sun by day, moon by night
     const useMoon = sunUp < 0.02;
     const ldir = useMoon ? u.uMoonDir.value : sunDir;
     const lightDir = _lightDir.set(ldir.x, Math.max(ldir.y, 0.12), ldir.z).normalize();
     this.sun.position.copy(lightDir);
-    lerpHex(a.sun, b.sun, t, this.sun.color);
+    this.sun.color.copy(u.uSunColor.value);
+    // r186 snaps each cascade to its own grid. The same PCF disk thus widens in metres
+    // in the far cascade. Tighten the near footprint and keep low-angle acne biased.
+    this.sun.shadow.radius = lerp(3.2, tier().shadowRadius, valley);
+    this.sun.shadow.normalBias = lerp(0.05, 0.023 + 0.016 * (1 - lightDir.y), valley);
     const hushDim = 1 - this.hush * 0.35;
     // Hide the sun/moon direction handoff below the horizon instead of spinning shadows.
     const handoff = smoothstep(0.025, 0.12, Math.abs(sunUp));
@@ -322,10 +334,16 @@ export class Sky {
     lerpHex(a.hemiG, b.hemiG, t, this.hemi.groundColor);
     this.hemi.intensity = lerp(a.hemiI, b.hemiI, t) * (1 - st * 0.25);
     this.hemi.color.lerp(cA.set(0x9aa4b4), oc * 0.5);
+    // Earth lends warm light to soffits and downward planes. Snow returns a brighter,
+    // blue-white fill to the shrine. Leave amber local lights in charge at night.
+    this.hemi.groundColor.lerp(cA.set(0xc49b70), valley * (0.31 + evening * 0.28) * (1 - night));
+    this.hemi.groundColor.lerp(cA.set(0xb8d4e5), frost * (0.66 - night * 0.44));
+    this.hemi.color.lerp(cA.set(0x9eafd8), valley * evening * 0.52);
+    this.hemi.color.lerp(cA.set(0x8599c0), valley * night * 0.52);
+    this.hemi.intensity *= 1 + valley * (0.22 * evening + 0.20 * night);
     lerpHex(a.fog, b.fog, t, this.scene.fog.color);
     if (this.hush > 0) this.scene.fog.color.lerp(cA.set(0x4a4258), this.hush * 0.6);
     this.scene.fog.color.lerp(cA.set(0x8c96a4).multiplyScalar(1 - night * 0.75 - st * 0.3), oc * 0.55);
-    const evening = smoothstep(16, 17.4, h) * (1 - smoothstep(19.2, 20, h));
     // Distance haze is quadratic near the camera: less density preserves foreground values.
     this.scene.fog.density = this.fogBase * (1 - evening * 0.38) * (1 + this.hush * 1.4 + oc * 0.9 + st * 0.6);
     U.rimColor.value.copy(this.sun.color).multiplyScalar(lerp(a.rim, b.rim, t) * 0.9);
@@ -346,6 +364,11 @@ export class Sky {
     cT.multiplyScalar(1 / l);
     cT.r = lerp(1, cT.r, 1.25); cT.g = lerp(1, cT.g, 1.25); cT.b = lerp(1, cT.b, 1.25);
     U.shadeTint.value.copy(cT).multiplyScalar(lerp(0.3, 0.42, night) * (1 - this.hush * 0.2));
+    // The toon shadow band is multiplied by the key colour. Counter its amber cast
+    // in shade so the sky can put blue/violet into recesses at sunset.
+    const shade = U.shadeTint.value;
+    shade.r *= 1 - valley * (0.08 + 0.11 * evening) * (1 - night);
+    shade.b *= 1 + valley * evening * 0.64;
     // The terrain/water read the cumulus layout and wind through U.cloudLayout/cloudWind.
     // U.cloud.xy remains the legacy approximation used by other materials.
     this.cloudT += dt;
@@ -364,6 +387,7 @@ export class Sky {
     const scat = (0.12 + 0.22 * golden) * sunVis * (1 - this.hush * 0.7) * (1 - oc * 0.8);
     FOG.sunColor.x = u.uSunColor.value.r * scat; FOG.sunColor.y = u.uSunColor.value.g * scat; FOG.sunColor.z = u.uSunColor.value.b * scat;
     cT.copy(u.uHorizon.value).lerp(u.uTop.value, 0.18 + evening * 0.37);
+    cT.lerp(u.uTop.value, valley * (0.19 + evening * 0.12) * (1 - night) * (1 - oc));
     if (this.hush > 0) cT.lerp(cA.set(0x4a4258), this.hush * 0.6);
     FOG.farColor.x = cT.r; FOG.farColor.y = cT.g; FOG.farColor.z = cT.b; FOG.farColor.w = 0.75;
     // valley mist: thicker around dawn, thinner at midday
@@ -371,5 +395,6 @@ export class Sky {
     FOG.height.x = (0.002 + 0.004 * dawn + 0.0015 * night) * (1 - evening * 0.65) * (1 + this.hush);
     FOG.height.y = 0.045 + evening * 0.015;
     FOG.height.z = -3;
+    FOG.height.w = valley * (1 - night * 0.8) * (1 - oc * 0.65) * (1 - dawn * 0.55);
   }
 }

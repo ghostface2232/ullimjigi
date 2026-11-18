@@ -18,6 +18,29 @@ class BloomPass extends UnrealBloomPass {
     // Normalize both: strength now means the fraction scattered out of the bright source.
     this.compositeMaterial.fragmentShader = this.compositeMaterial.fragmentShader.replace('3.0 * bloomStrength', 'bloomStrength / 3.0');
     this.highPassUniforms.smoothWidth.value = 0.3;
+    this.highPassUniforms.uValleyLight = U.valleyLight;
+    // Threshold before the 2x reduction so thin emissive lines contribute
+    // their share even when their neighbours are dark.
+    this.materialHighPassFilter.fragmentShader = /* glsl */ `
+      uniform sampler2D tDiffuse;
+      uniform float luminosityThreshold, smoothWidth, uValleyLight;
+      varying vec2 vUv;
+      vec3 extractLight(vec3 c) {
+        return c * smoothstep(luminosityThreshold, luminosityThreshold + smoothWidth, luminance(c));
+      }
+      void main() {
+        vec3 mean = texture2D(tDiffuse, vUv).rgb;
+        vec3 bright = extractLight(mean);
+        if (uValleyLight > 0.0) {
+          vec2 d = 0.5 / vec2(textureSize(tDiffuse, 0));
+          vec3 sum = extractLight(texture2D(tDiffuse, vUv - d).rgb)
+                   + extractLight(texture2D(tDiffuse, vUv + vec2(d.x, -d.y)).rgb)
+                   + extractLight(texture2D(tDiffuse, vUv + vec2(-d.x, d.y)).rgb)
+                   + extractLight(texture2D(tDiffuse, vUv + d).rgb);
+          bright = mix(bright, 0.25 * sum, uValleyLight);
+        }
+        gl_FragColor = vec4(bright, 1.0);
+      }`;
     // The bilinear Gaussian taps must conserve DC energy through every downsample.
     for (const m of this.separableBlurMaterials) {
       const u = m.uniforms;
@@ -75,6 +98,7 @@ const FX_FS = /* glsl */ `
 uniform sampler2D tDepth;
 uniform mat4 uProjInv, uCamWorld;
 uniform vec2 uPx;
+uniform float uValleyLight;
 uniform vec4 uAo;      // radius (m), strength, fade start, fade end (m)
 uniform vec3 uProj;    // projection[1][1], aspect, far
 varying vec2 vUv;
@@ -109,7 +133,10 @@ void main(){
     float R = uAo.x, R2 = R * R;
     float rUv = min(R * uProj.x * 0.5 / z, 0.1);
     float phi = ign(gl_FragCoord.xy) * 6.2831853;
-    float bias = 0.03 + 0.004 * z;
+    // Follow the reconstructed pixel footprint. A fixed depth-proportional
+    // offset erases a boot or chair leg well before the AO distance fade.
+    float footprint = min(length(dx), length(dy));
+    float bias = mix(0.03 + 0.004 * z, clamp(0.012 + 0.35 * footprint, 0.012, 0.075), uValleyLight);
     float sum = 0.0;
     for (int i = 0; i < 10; i++) {
       float a = (float(i) + 0.5) / 10.0;
@@ -119,7 +146,10 @@ void main(){
       float vv = dot(v, v), f = max(R2 - vv, 0.0);
       sum += f * f * f * max((dot(v, N) - bias) / (vv + 0.02), 0.0);
     }
-    float A = max(0.0, 1.0 - sum * 5.0 / (R2 * R2 * R2 * 10.0) * uAo.y);
+    float obscurance = sum * 5.0 * uAo.y / (R2 * R2 * R2 * 10.0);
+    // Saturate gently: opposing faces at a contact can occlude ambient light
+    // without turning a crease into a solid dark stripe.
+    float A = mix(max(0.0, 1.0 - obscurance), 1.0 / (1.0 + 1.3 * obscurance), uValleyLight);
     ao = mix(A, 1.0, smoothstep(uAo.z, uAo.w, z));
     if (!(ao >= 0.0)) ao = 1.0;
   }
@@ -168,11 +198,12 @@ void main(){
 const BLUR_FS = /* glsl */ `
 uniform sampler2D tFx;
 uniform vec2 uDir;
+uniform float uValleyLight;
 varying vec2 vUv;
 void main(){
   vec4 c = texture2D(tFx, vUv);
   vec2 acc = c.rg * 0.2;
-  float ws = 0.2, tol = c.b * 0.025 + 1.5e-5;
+  float ws = 0.2, tol = c.b * mix(0.025, 0.012, uValleyLight) + 1.5e-5;
   for (int i = 1; i <= 4; i++) {
     float w0 = 0.2 - 0.04 * float(i);
     for (int s = -1; s <= 1; s += 2) {
@@ -196,7 +227,7 @@ uniform sampler2D tDiffuse, tBloom, tDistort, tDepth, tFx;
 uniform vec2 uFxRes, uPx, uNF;
 uniform vec3 uAoTint, uShaftColor, uGlareColor;
 uniform vec4 uDof, uSunScr;
-uniform float uSharp, uBloomScatter;
+uniform float uSharp, uBloomScatter, uValleyLight;
 uniform float uDistort, uTime, uImpact, uHurt, uLowHp, uSat, uVignette, uFlash, uMono, uAspect, uSlowmo;
 uniform vec3 uFlashColor;
 varying vec2 vUv;
@@ -213,11 +244,13 @@ void main(){
   if (uDistort > 0.5) off = clamp(texture2D(tDistort, uv).xy, vec2(-0.08), vec2(0.08));
   float ca = uImpact * 0.010;
   vec2 ur = uv - c * ca + off * 1.08, ug = uv + off, ub = uv + c * ca + off * 0.92;
-  vec3 sc;
-  sc.r = texture2D(tDiffuse, ur).r;
   vec4 mid = texture2D(tDiffuse, ug);
-  sc.g = mid.g;
-  sc.b = texture2D(tDiffuse, ub).b;
+  vec3 sc = mid.rgb;
+  bool split = uImpact > 0.0 || uDistort > 0.5;
+  if (split) {
+    sc.r = texture2D(tDiffuse, ur).r;
+    sc.b = texture2D(tDiffuse, ub).b;
+  }
   #ifdef USE_DEPTH
     float zc = linZ(ug);
   #endif
@@ -256,7 +289,7 @@ void main(){
     vec2 b0 = (floor(st) + 0.5) * ipx;
     vec4 s00 = texture2D(tFx, b0), s10 = texture2D(tFx, b0 + vec2(ipx.x, 0.0));
     vec4 s01 = texture2D(tFx, b0 + vec2(0.0, ipx.y)), s11 = texture2D(tFx, b0 + ipx);
-    float zn = min(zc / uNF.y, 1.0), tol = zn * 0.018 + 1.5e-5;
+    float zn = min(zc / uNF.y, 1.0), tol = zn * mix(0.018, 0.010, uValleyLight) + 1.5e-5;
     vec4 w = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y)
       * max(vec4(0.0), 1.0 - abs(vec4(s00.b, s10.b, s01.b, s11.b) - zn) / tol);
     float ws = w.x + w.y + w.z + w.w;
@@ -288,9 +321,12 @@ void main(){
     float g3 = smoothstep(0.16, 0.1, length(pc + ax * 1.6)) * smoothstep(0.08, 0.14, length(pc + ax * 1.6)) * 0.05;
     col += uGlareColor * (veil + g1 + g2 + g3) * uSunScr.z;
   }
-  col.r += texture2D(tBloom, ur).r;
-  col.g += texture2D(tBloom, ug).g;
-  col.b += texture2D(tBloom, ub).b;
+  vec3 scatter = texture2D(tBloom, ug).rgb;
+  if (split) {
+    scatter.r = texture2D(tBloom, ur).r;
+    scatter.b = texture2D(tBloom, ub).b;
+  }
+  col += scatter;
   if (uImpact > 0.02) {
     vec3 acc = col;
     for (int i = 1; i < 6; i++) { vec2 o = ug - c * float(i) * 0.014 * uImpact; acc += texture2D(tDiffuse, o).rgb + texture2D(tBloom, o).rgb; }
@@ -373,18 +409,18 @@ export class Renderer {
     this.fxMat = fsMat({
       fragmentShader: FX_FS,
       uniforms: {
-        tDepth: { value: null }, uProjInv: { value: this.camera.projectionMatrixInverse }, uCamWorld: { value: this.camera.matrixWorld },
+        uValleyLight: U.valleyLight, tDepth: { value: null }, uProjInv: { value: this.camera.projectionMatrixInverse }, uCamWorld: { value: this.camera.matrixWorld },
         uPx: { value: new THREE.Vector2() }, uAo: { value: new THREE.Vector4(1.1, 1.0, 140, 220) }, uProj: { value: new THREE.Vector3(1, 1, 2400) },
         tShadow: { value: null }, uShadowMat: { value: [new THREE.Matrix4(), new THREE.Matrix4()] }, uCascade: { value: [new THREE.Vector4(), new THREE.Vector4()] },
         uNoiseTex: U.noise, uCloud: U.cloud, uSunW: U.sunDir, uShaft: { value: new THREE.Vector4(320, 0, 0.01, 0) },
       },
     });
-    this.blurMat = fsMat({ fragmentShader: BLUR_FS, uniforms: { tFx: { value: null }, uDir: { value: new THREE.Vector2() } } });
+    this.blurMat = fsMat({ fragmentShader: BLUR_FS, uniforms: { uValleyLight: U.valleyLight, tFx: { value: null }, uDir: { value: new THREE.Vector2() } } });
     // other systems drive the look through grade.uniforms
     this.grade = fsMat({
       fragmentShader: GRADE_FS,
       uniforms: {
-        tDiffuse: { value: null }, tBloom: { value: this.bloom.texture }, tDistort: { value: this.distortRT.texture },
+        uValleyLight: U.valleyLight, tDiffuse: { value: null }, tBloom: { value: this.bloom.texture }, tDistort: { value: this.distortRT.texture },
         tDepth: { value: null }, tFx: { value: this.fxA.texture },
         uFxRes: { value: new THREE.Vector2(1, 1) }, uPx: { value: new THREE.Vector2(1, 1) }, uNF: { value: new THREE.Vector2(0.1, 2400) },
         uAoTint: { value: new THREE.Color(0.2, 0.24, 0.36) }, uShaftColor: { value: new THREE.Color(0, 0, 0) },
@@ -541,6 +577,11 @@ export class Renderer {
       G.vfx.prewarm();
     }
     u.uTime.value = G.realTime;
+    const sky = G.world?.sky;
+    const valley = U.valleyLight.value;
+    const night = sky?.night ?? 0;
+    this.bloom.strength = 0.28 + valley * (-0.065 + 0.15 * night);
+    this.bloom.radius = 0.18 + valley * (-0.12 + 0.08 * night);
     u.uBloomScatter.value = this.bloom.strength;
     u.uNF.value.set(cam.near, cam.far);
     // depth of field: dialogue and cutscene shots focus on what the camera looks at

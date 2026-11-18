@@ -192,7 +192,8 @@ export class WorldObjects {
         const h = L.height(x, z), n = L.normal(x, z);
         if (h - L.height(c.x, c.z) < 3.5 || n.y < 0.72 || n.y > 0.96 || near(x, z, 3)) continue;
         if (W.col.pointHit(x, h + 1, z, 1.4) || L.pathAt(x, z) > 0.3) continue;
-        this.add('boulder', x, z, 0.85 + rnd() * 0.4);
+        const b = this.add('boulder', x, z, 0.85 + rnd() * 0.4);
+        if (b) b.camp = c;
         break;
       }
     }
@@ -205,6 +206,32 @@ export class WorldObjects {
       const nn = L.normal(x, z);
       if (nn.y < 0.75 || nn.y > 0.92 || L.height(x, z) < 6 || near(x, z, 20) || W.col.pointHit(x, L.height(x, z) + 1, z, 1.4)) continue;
       this.add('boulder', x, z, 0.9 + rnd() * 0.5); n++;
+    }
+  }
+
+  // Move only unsupported boulders, after every camp has used its original spacing
+  // checks and the static rock colliders have settled. Search from the old site out.
+  seatBoulders() {
+    const W = this.W, T = W.terrain;
+    for (const b of this.list) {
+      if (b.kind !== 'boulder') continue;
+      const supported = (x, z) => T.supportsFootprint(x, z, b.r, b.r * 0.88, 0.88);
+      if (supported(b.home.x, b.home.z)) continue;
+      const floor = b.camp ? W.h(b.camp.x, b.camp.z) + 2 : b.home.y - 1;
+      search: for (let ring = 1; ring <= 32; ring++) {
+        const distance = ring * 0.75, samples = 8 * ring;
+        for (let i = 0; i < samples; i++) {
+          const a = 2 * Math.PI * i / samples;
+          const x = b.home.x + distance * Math.cos(a), z = b.home.z + distance * Math.sin(a), y = W.h(x, z);
+          if (y < floor || (b.camp && Math.hypot(x - b.camp.x, z - b.camp.z) > 32)) continue;
+          if (T.pathAt(x, z) > 0.3 || !supported(x, z) || W.col.navBlocked(x, y, z, b.r, b.h, 0.05)) continue;
+          if (this.list.some(o => o !== b && Math.hypot(x - o.home.x, z - o.home.z) < b.r + o.r + 0.3)) continue;
+          b.home.set(x, y, z);
+          b.pos.copy(b.home);
+          this.center(b, b.target.pos);
+          break search;
+        }
+      }
     }
   }
 

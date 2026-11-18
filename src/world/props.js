@@ -1206,6 +1206,10 @@ export class Props {
     const sunk = t.sunk * s;
     const sy = s * (o.sy ?? (type.startsWith('rock') || type === 'pebbles' ? 1 : 0.92 + rnd() * 0.16)) * (o.vy ?? 1);
     const it = { x, y: ground - sunk + (o.dy ?? 0), z, s, sy, r: o.ry ?? rnd() * TAU, v };
+    if (this.tintRandom) {
+      if (!this.supported(type, it)) return null;
+      it.tint = this.itemTint(t);
+    }
     t.items.push(it);
     this.dirty = true;
     const b = t.bounds[v];
@@ -1238,6 +1242,44 @@ export class Props {
     return it;
   }
 
+  supported(name, it) {
+    const { x, z, s, v } = it, t = this.types[name];
+    const rock = name.startsWith('rock') || name === 'pebbles';
+    if (Math.hypot(x - POI.lake.x, z - POI.lake.z) < POI.lake.r * 1.8) {
+      const h = this.T.height(x, z);
+      if (name === 'reeds' && (h < -0.75 || h > 1.1 || this.T.pathInfo(x, z).d < 3)) return false;
+      if (name !== 'reeds' && !rock && h < 0.15) return false;
+    }
+    const tree = name in TREES && name !== 'bush';
+    const radius = (tree ? 0.85 : t.bounds[v].rxz) * s;
+    if (this.T.pathInfo(x, z, this.T.lanes).d < 1.55 + radius) return false;
+    return this.T.supportsFootprint(x, z, radius, (tree ? 0.36 : 0.24) * s + 0.06);
+  }
+
+  itemTint(t) {
+    const rnd = this.tintRandom, j = t.tint;
+    return new THREE.Color(1 - j * 0.5 + rnd() * j, 1 - j * 0.5 + rnd() * j, 1 - j * 0.5 + rnd() * j * 0.8);
+  }
+
+  // Finish after every landmark clearing and camp has picked its site. Consume
+  // the original per-variant tint stream before pruning so distant rocks keep their paint.
+  finishPlacement() {
+    this.tintRandom = mulberry32(99);
+    for (const [name, t] of Object.entries(this.types)) {
+      for (let v = 0; v < t.variants.length; v++) for (const it of t.items) if (it.v === v) it.tint = this.itemTint(t);
+      t.items = t.items.filter((it) => {
+        if (this.supported(name, it)) return true;
+        this.removeColliders(it);
+        return false;
+      });
+    }
+    this.dirty = true;
+  }
+
+  removeColliders(it) {
+    for (const c of it.cols || (it.col ? [it.col] : [])) this.col.remove(c);
+  }
+
   // Remove scattered instances (and their colliders) within r of (x, z),
   // e.g. to keep a landmark's surroundings clear. types: optional name list.
   clear(x, z, r, types = null) {
@@ -1245,7 +1287,7 @@ export class Props {
       if (types && !types.includes(name)) continue;
       t.items = t.items.filter((it) => {
         if (Math.hypot(it.x - x, it.z - z) >= r) return true;
-        for (const c of it.cols || (it.col ? [it.col] : [])) this.col.remove(c);
+        this.removeColliders(it);
         return false;
       });
     }
@@ -1334,7 +1376,18 @@ export class Props {
       if (h < -0.75 || h > 1.1) continue;
       if (T.pathInfo(x, z).d < 3) continue;
       if (fbm(nv, x * 0.08, z * 0.08, 2) < -0.15) continue;
-      this.add('reeds', x, z, 0.8 + rnd() * 0.5);
+      // Carry the old reed's water depth onto the new bank along the same bearing.
+      // Preserve its exact spot when it already stands in the shallows.
+      let radius = rr, y = T.height(x, z);
+      if (y < -0.75 || y > 1.1) {
+        const dir = y < h ? 1 : -1, dx = Math.cos(a), dz = Math.sin(a);
+        for (let k = 0; k < 24; k++) {
+          const next = T.height(POI.lake.x + (radius + dir) * dx, POI.lake.z + (radius + dir) * dz);
+          if ((next - h) * dir >= 0) { radius += dir * (h - y) / (next - y); break; }
+          radius += dir; y = next;
+        }
+      }
+      this.add('reeds', POI.lake.x + Math.cos(a) * radius, POI.lake.z + Math.sin(a) * radius, 0.8 + rnd() * 0.5);
     }
     // shore stones where the water meets the sand
     for (let i = 0; i < 260 * q; i++) {
@@ -1374,7 +1427,6 @@ export class Props {
     for (const m of this.meshes) { this.scene.remove(m); m.dispose(); }
     this.meshes = [];
     this.batches = [];
-    const rnd = mulberry32(99);
     const ashC = new THREE.Color(0.62, 0.56, 0.7);
     for (const [name, t] of Object.entries(this.types)) {
       t.variants.forEach(([geoN, geoF], v) => {
@@ -1388,8 +1440,7 @@ export class Props {
           tmpQ.setFromAxisAngle(UP, it.r);
           tmpS.set(it.s, it.sy, it.s);
           tmpM.compose(tmpP, tmpQ, tmpS).toArray(mats, i * 16);
-          const j = t.tint;
-          tmpC.setRGB(1 - j * 0.5 + rnd() * j, 1 - j * 0.5 + rnd() * j, 1 - j * 0.5 + rnd() * j * 0.8);
+          tmpC.copy(it.tint);
           if (name.startsWith('rock') || name === 'pebbles') { if (Math.hypot(it.x - POI.rift.x, it.z - POI.rift.z) < 70) tmpC.multiply(ashC); }
           cols[i * 3] = tmpC.r; cols[i * 3 + 1] = tmpC.g; cols[i * 3 + 2] = tmpC.b;
           sphs[i * 4] = it.x; sphs[i * 4 + 1] = it.y + b.cy * it.sy; sphs[i * 4 + 2] = it.z; sphs[i * 4 + 3] = b.r * Math.max(it.s, it.sy) + 1;

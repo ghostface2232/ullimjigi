@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { createNoise2D, fbm, ridged, smoothstep, lerp, clamp } from '../core/util.js';
 import { toon, U } from '../render/materials.js';
-import { PATHS, POI, PADS, PASSES, WORLD } from './layout.js';
+import { PATHS, VILLAGE_LANES, POI, PADS, PASSES, WORLD } from './layout.js';
 import { OUTER, outerWeights } from './regions/index.js';
 import { tier } from '../render/quality.js';
 import { SHADOW_LAYER } from '../render/renderer.js';
@@ -17,6 +17,45 @@ const SKIRT = [3, 6, 12, 24];     // skirt depth per LOD: hides cracks between n
 // Cliffs (Terrain.initCliffs): plan size (m) of a rock mass, the least half-width of the
 // face between two masses, and how far (m) the walls swell and hollow (Terrain.sculpt).
 const CL0 = 19, BEV0 = 1.0, BAMP = 0.45;
+// Mirror Lake, clockwise in local metres. The third value is the shore grade:
+// a shallow landing on the village road, a willow point in the southeast,
+// a long western inlet and a raised headland separating it from the north bay.
+const lakeBanks = [
+  [34, -9, 0.36], [38, 0, 0.23], [35, 6, 0.2], [26, 10, 0.26],
+  [23, 17, 0.32], [25, 26, 0.29], [16, 36, 0.19], [8, 36, 0.15],
+  [-1, 29, 0.22], [-8, 17, 0.52], [-14, 19, 0.58], [-23, 30, 0.39],
+  [-31, 25, 0.47], [-34, 17, 0.58], [-47, 13, 0.32], [-52, 6, 0.18],
+  [-44, 1, 0.22], [-33, -3, 0.5], [-27, -12, 0.68], [-37, -21, 0.62],
+  [-33, -28, 0.45], [-16, -32, 0.4], [0, -31, 0.33], [15, -36, 0.26],
+  [24, -32, 0.25], [27, -20, 0.32],
+];
+const bankCurve = new THREE.CatmullRomCurve3(lakeBanks.map(([x, z, grade]) => new THREE.Vector3(x, grade, z)), true, 'catmullrom', 0.42);
+const bankPoints = bankCurve.getPoints(lakeBanks.length * 4);
+function lakeBed(x, z, land, noise) {
+  // Nearest bank sets the shallows. Ray crossings also cover concave spits and coves.
+  let inside = false, nearest = Infinity, grade = 0;
+  for (let i = 1; i < bankPoints.length; i++) {
+    const a = bankPoints[i - 1], b = bankPoints[i], dx = b.x - a.x, dz = b.z - a.z;
+    if ((a.z > z) !== (b.z > z) && x < a.x + dx * (z - a.z) / dz) inside = !inside;
+    const t = clamp(((x - a.x) * dx + (z - a.z) * dz) / (dx * dx + dz * dz), 0, 1);
+    const d2 = (x - a.x - t * dx) ** 2 + (z - a.z - t * dz) ** 2;
+    if (d2 < nearest) { nearest = d2; grade = lerp(a.y, b.y, t); }
+  }
+  const d = Math.sqrt(nearest);
+  if (!inside) {
+    // The western inlet narrows into a grassed drainage hollow. Its bed rises
+    // towards the woods; the village road reaches a separate, dry eastern landing.
+    const upstream = -52 - x;
+    const channel = (1 - smoothstep(1.5, 6, Math.abs(z - 6 - upstream * 0.28))) * smoothstep(-2, 3, upstream);
+    const bank = d * lerp(grade, 0.09, channel);
+    return lerp(bank, land, smoothstep(2, 23, d));
+  }
+  // A rounded bottom softens ridges between equally distant banks.
+  const depth = 6.8 + 1.1 * noise(x / 26, z / 30);
+  const slope = lerp(grade, 0.48, smoothstep(2, 13, d));
+  return -depth * Math.tanh(d * slope / depth);
+}
+
 // smooth value noise in 3D, 0..1
 const vn3 = (x, y, z) => {
   const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
@@ -29,6 +68,7 @@ const vn3 = (x, y, z) => {
 };
 const RING = Array.from({ length: 8 }, (_, k) => [Math.cos(k * Math.PI / 4 + 0.3), Math.sin(k * Math.PI / 4 + 0.3)]);
 const hsh = (a, b, k) => { let h = Math.imul(a, 374761393) ^ Math.imul(b, 668265263) ^ Math.imul(k, 2246822519); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+const FOOT_RING = Array.from({ length: 16 }, (_, i) => [Math.cos(i * Math.PI / 8), Math.sin(i * Math.PI / 8)]);
 const _c = new THREE.Color(), _f = new THREE.Color(), _s = new THREE.Color();
 // range of the road distance map (m)
 const PATH_D = 12;
@@ -119,6 +159,26 @@ export class Terrain {
       }
     }
     this.initCliffs();
+    // Paint the village after the heightfield and cliff weights have been established.
+    // The narrow lanes replace the old road tips between the houses and the kerb.
+    this.lanes = lines(Object.values(VILLAGE_LANES).map(pts => ({ pts, h0: 8, h1: 8 })), () => 8);
+    const approaches = lines(PATHS.map(p => {
+      const join = VILLAGE_LANES[p.id]?.[0];
+      if (!join) return p;
+      const pts = p.id === 'tower' ? [...p.pts.slice(0, -1), join] : [join, ...p.pts.slice(1)];
+      return { ...p, pts };
+    }), () => 0);
+    const grid = (v) => (v + this.half) / this.step;
+    const x0 = Math.floor(grid(Math.min(...this.lanes.map(l => l.x0)) - PATH_D));
+    const x1 = Math.ceil(grid(Math.max(...this.lanes.map(l => l.x1)) + PATH_D));
+    const z0 = Math.floor(grid(Math.min(...this.lanes.map(l => l.z0)) - PATH_D));
+    const z1 = Math.ceil(grid(Math.max(...this.lanes.map(l => l.z1)) + PATH_D));
+    for (let iz = z0; iz <= z1; iz++) for (let ix = x0; ix <= x1; ix++) {
+      const x = ix * this.step - this.half, z = iz * this.step - this.half, i = iz * N + ix;
+      const distance = Math.min(this.pathInfo(x, z, approaches).d, 1.55 * this.pathInfo(x, z, this.lanes).d);
+      pd[i] = Math.min(255, distance * (255 / PATH_D));
+      this.pf[i] = this.pathFactor(x, z, distance);
+    }
     this.buildMesh(pd);
     this.buildHeightTexture();
   }
@@ -252,11 +312,11 @@ export class Terrain {
 
   // Nearest road: distance and the road bed height there. Past 30 m from every road the
   // answer no longer matters to anyone (road beds fade out by 15 m).
-  pathInfo(x, z) {
+  pathInfo(x, z, paths = this.paths) {
     const B = this.pathBox;
     if (x < B.x0 - 30 || x > B.x1 + 30 || z < B.z0 - 30 || z > B.z1 + 30) return { d: 1e9, h: 0 };
     let bd = 1e9, bh = 0;
-    for (const p of this.paths) {
+    for (const p of paths) {
       if (x < p.x0 - 30 || x > p.x1 + 30 || z < p.z0 - 30 || z > p.z1 + 30) continue;
       for (const s of p.segs) {
         const t = segT(x, z, s), cx = s.ax + (s.bx - s.ax) * t, cz = s.az + (s.bz - s.az) * t;
@@ -265,6 +325,10 @@ export class Terrain {
       }
     }
     return { d: bd, h: bh };
+  }
+
+  pathFactor(x, z, d) {
+    return 1 - smoothstep(1.6, 3.3, d + fbm(this.noise3, x * 0.2, z * 0.2, 2) * 0.8);
   }
 
   // Passes through the ring mountains: carve down towards the pass floor; fill up only outside the vale.
@@ -341,7 +405,7 @@ export class Terrain {
     if (pi.d < 20) {
       const roadBed = 1 - smoothstep(3.5, 15, pi.d);
       h = lerp(h, pi.h, roadBed * 0.94);
-      this._lastPF = 1 - smoothstep(1.6, 3.3, pi.d + fbm(this.noise3, x * 0.2, z * 0.2, 2) * 0.8);
+      this._lastPF = this.pathFactor(x, z, pi.d);
     } else this._lastPF = 0;
     // flattened landmarks
     const fl = (cx, cz, r0, r1, th) => { const d = Math.hypot(x - cx, z - cz); h = lerp(h, th, 1 - smoothstep(r0, r1, d)); };
@@ -351,7 +415,13 @@ export class Terrain {
     fl(POI.storm.x, POI.storm.z, 22, 40, 34);
     // lake basin
     const dl = Math.hypot(x - POI.lake.x, z - POI.lake.z) / POI.lake.r;
-    h = lerp(h, -7 + dl * dl * 6.5, 1 - smoothstep(0.7, 1.28, dl));
+    const oldBasin = lerp(h, -7 + dl * dl * 6.5, 1 - smoothstep(0.7, 1.28, dl));
+    if (!legacy && dl < 1.95 && z > 27) {
+      // Keep the storm-road ridge and its cliff foot above the north bank intact.
+      const lx = x - POI.lake.x, lz = z - POI.lake.z;
+      const dock = smoothstep(22, 30, lx) * (1 - smoothstep(3, 10, Math.abs(lz + lx * 14 / 38)));
+      h = lerp(oldBasin, lakeBed(lx, lz, h, this.noise2), (1 - dock) * smoothstep(27, 36, z));
+    } else h = oldBasin;
     const di = Math.hypot(x - POI.island.x, z - POI.island.z);
     h = lerp(h, 1.9 + (1 - di / 7) * 0.8, 1 - smoothstep(3, 7, di));
     return h;
@@ -361,6 +431,30 @@ export class Terrain {
     if (g !== this || !this.base) return this.gridHeight(g.h, x, z, g);
     const hb = this.gridHeight(this.base, x, z), w = CWR(this.sampleGrid(this.cw, x, z));
     return w > 0 ? this.cliffAt(x, z, hb, w) : hb;
+  }
+
+  // Check the root plate or stone base against the live cliff, including a margin
+  // for the sculpted wall. Only cliff blocks in the chapter-one valley need this.
+  supportsFootprint(x, z, radius, tolerance, maxGrade = 0.56) {
+    if (Math.hypot(x, z) > 236) return true;
+    const reach = radius + BAMP + 0.25, block = this.step * 2;
+    const bx = Math.floor((x + this.half - reach) / block), bz = Math.floor((z + this.half - reach) / block);
+    const ex = Math.floor((x + this.half + reach) / block), ez = Math.floor((z + this.half + reach) / block);
+    let cliff = false;
+    for (let j = bz; j <= ez && !cliff; j++) {
+      for (let i = bx; i <= ex; i++) if (this.blockSteep[j * this.NB + i]) { cliff = true; break; }
+    }
+    if (!cliff) return true;
+    const center = this.height(x, z), rings = Math.ceil(reach);
+    for (const [dx, dz] of FOOT_RING) {
+      let prev = center;
+      for (let i = 1; i <= rings; i++) {
+        const step = reach / rings, r = i * step, h = this.height(x + dx * r, z + dz * r);
+        if (Math.abs(h - prev) > step * maxGrade || Math.abs(h - center) > tolerance + Math.max(0, r - radius) * 0.36) return false;
+        prev = h;
+      }
+    }
+    return true;
   }
 
   // exact triangle interpolation matching the grid mesh

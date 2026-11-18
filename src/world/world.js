@@ -95,6 +95,8 @@ export class World {
     onProgress(0.72, '돌을 다듬는 중…');
     this.bakeStatics();
     this.objects = new WorldObjects(scene, this);
+    this.props.finishPlacement();
+    this.objects.seatBoulders();
     this.terrain.dropLegacy();
   }
 
@@ -390,7 +392,7 @@ export class World {
     for (let i = 0; i < 70; i++) {
       const a = rnd() * TAU, r = 16 + rnd() * 22;
       const x = 3 + Math.cos(a) * r, z = 18 + Math.sin(a) * r;
-      if (this.col.pointHit(x, this.h(x, z) + 0.5, z, 1.2) || this.terrain.pathAt(x, z) > 0.3) continue;
+      if (this.col.pointHit(x, this.h(x, z) + 0.5, z, 1.2) || this.terrain.legacy().pathAt(x, z) > 0.3) continue;
       if (Math.hypot(x - bx, z - bz) < 13) continue;
       if (rnd() < 0.45) P.add('bush', x, z, 0.6 + rnd() * 0.5);
       else P.add('flowers', x, z, 0.8 + rnd() * 0.4);

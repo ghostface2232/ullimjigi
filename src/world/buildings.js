@@ -394,7 +394,9 @@ function pavingParts() {
   src.scene.updateMatrixWorld(true);
   const parts = names.map((name) => src.scene.getObjectByName(name));
   if (parts.some((m) => !m?.isMesh)) return null;
-  const geos = parts.map((m) => {
+  const variants = names.map((name) => src.scene.getObjectByName(name + '_alternate'));
+  const hasAlternates = variants.every((m) => m?.isMesh);
+  const geos = (hasAlternates ? parts.concat(variants) : parts).map((m) => {
     const g = new THREE.BufferGeometry();
     for (const key of ['position', 'normal', 'uv']) {
       const a = m.geometry.attributes[key], values = new Float32Array(a.count * a.itemSize);
@@ -406,6 +408,9 @@ function pavingParts() {
   });
   const geo = geos[0], mirror = parts[0].userData.mirrorVertices;
   geo.setIndex(parts[0].geometry.index);
+  // The shared bevel profile stores its uncut height and signed value change at each band.
+  const finish = parts[0].geometry.attributes._finish;
+  if (finish) geo.setAttribute('aPavingFinish', finish);
   // Reflect the wear across the tangent, preserving curvature, triangle winding and terrain fit.
   for (const key of ['position', 'normal']) {
     const shapes = geos.map((g) => g.attributes[key]);
@@ -420,7 +425,7 @@ function pavingParts() {
   const srcMat = parts[0].material;
   const mat = toon(0xffffff, { nocache: true, rim: 0.12, noAO: true, noMoss: true });
   mat.map = srcMat.map; mat.normalMap = srcMat.normalMap; mat.aoMap = srcMat.aoMap;
-  mat.normalScale.set(1, -1); mat.aoMapIntensity = 0.9;
+  mat.normalScale.set(1.15, -1.15); mat.aoMapIntensity = 0.9;
   for (const t of [mat.map, mat.normalMap, mat.aoMap]) if (t) t.anisotropy = 8;
   const patch = mat.onBeforeCompile, key = mat.customProgramCacheKey();
   mat.onBeforeCompile = (sh) => {
@@ -432,14 +437,24 @@ function pavingParts() {
       // The grout apron is a separate UV island at 12 mm. Its offsets never span a stone face.
       bool apron = abs(position.y - 0.012) < 0.0002;
       float flipU = aPavingTile.w * (0.25 - 2.0 * uv.x);
-      vMapUv += pavingOffset(apron ? aPavingTile.z : aPavingTile.x) + vec2(flipU, 0.0);
+      // The three moss swatches contain continuous growth from grout to stone shoulder.
+      float tile = aPavingTile.z >= 13.0 || apron ? aPavingTile.z : aPavingTile.x;
+      vMapUv += pavingOffset(tile) + vec2(flipU, 0.0);
       vNormalMapUv = vMapUv; // Shallow dressing marks follow their colour tile.
-      vAoMapUv += pavingOffset(aPavingTile.y) + vec2(flipU, 0.0);`);
+      vAoMapUv = vMapUv;`);
+    if (finish) {
+      sh.vertexShader = 'attribute vec2 aPavingFinish; varying float vPavingFinish;\n' + sh.vertexShader
+        .replace('#include <morphtarget_vertex>', `#include <morphtarget_vertex>
+          float flake = clamp((aPavingFinish.x - transformed.y - 0.001) * 230.0, 0.0, 1.0);
+          vPavingFinish = 1.0 + aPavingFinish.y * flake;`);
+      sh.fragmentShader = 'varying float vPavingFinish;\n' + sh.fragmentShader
+        .replace('#include <map_fragment>', '#include <map_fragment>\n diffuseColor.rgb *= vPavingFinish;');
+    }
     // Authored normals use the valley's soft stone response without the procedural rock/grime layer.
     sh.fragmentShader = '#define TOON_SOFT\n' + sh.fragmentShader;
   };
   mat.customProgramCacheKey = () => key + '|paving';
-  pavingKit = { geo, mat, parts };
+  pavingKit = { geo, mat, parts, shapeCount: geos.length, hasAlternates };
   return pavingKit;
 }
 
@@ -462,7 +477,7 @@ function pavingBatch(parent, entries, groundAt, tint = 0xffffff) {
   m.name = 'dressed-paving'; m.receiveShadow = true; m.castShadow = false;
   const dummy = new THREE.Object3D(), up = new THREE.Vector3(0, 1, 0), normal = new THREE.Vector3();
   const yaw = new THREE.Quaternion(), weights = { morphTargetInfluences: Array(geo.morphAttributes.position.length).fill(0) };
-  const color = new THREE.Color(tint), rnd = mulberry32(6021), wear = mulberry32(32831);
+  const color = new THREE.Color(tint), rnd = mulberry32(6021), wear = mulberry32(32831), variantRng = mulberry32(75503);
   // Restrained warm/cool dressings break up ring-wise repetition without a patchwork floor.
   const tones = [[1.06, 1.015, 0.94], [0.88, 0.93, 0.97], [1.0, 0.94, 0.93],
     [0.93, 0.99, 0.92], [0.91, 0.88, 0.83], [1.025, 1.025, 1.01]];
@@ -478,18 +493,21 @@ function pavingBatch(parent, entries, groundAt, tint = 0xffffff) {
     dummy.quaternion.multiply(yaw);
     dummy.scale.set(w / meta.width, 1, d / meta.depth); dummy.updateMatrix();
     m.setMatrixAt(i, dummy.matrix);
-    const flip = geo.morphAttributes.position.length > kit.parts.length && wear() < 0.5;
+    const flip = geo.morphAttributes.position.length > kit.shapeCount && wear() < 0.5;
+    const variant = kit.hasAlternates && variantRng() < 0.5 ? kit.parts.length : 0;
     weights.morphTargetInfluences.fill(0);
-    weights.morphTargetInfluences[kind + (flip ? kit.parts.length : 0)] = 1;
+    weights.morphTargetInfluences[kind + variant + (flip ? kit.shapeCount : 0)] = 1;
     m.setMorphAt(i, weights);
     // Full flags at both sites share the surface pool independently of their authored shape.
     const tile = kind < 10 ? Math.floor(rnd() * 10) : kind;
     // The noon sun comes from +Z. Reserve interrupted moss patches for sheltered northern
-    // joints on the last three rings and kerb. Each swatch only colours part of the apron.
+    // joints on the last three rings and kerb. Only these flags have moss on the shoulder.
     const shaded = tint === 0xffffff && e.z < -2 && (kind >= 6 && kind <= 8 || kind === 10);
     const chance = (kind === 10 ? 0.68 : (kind - 5) * 0.11) * Math.min(1, -e.z / 8);
-    const moss = shaded && wear() < chance;
-    const grout = moss ? [7, 8, 10][Math.floor(wear() * 3)] : 0;
+    const swatch = shaded && wear() < chance ? Math.floor(wear() * 3) : -1;
+    let grout = 0;
+    if (swatch >= 0) grout = kit.hasAlternates ? 13 + swatch : [7, 8, 10][swatch];
+    else if (shaded && kit.hasAlternates && variantRng() < 0.09) grout = 13 + Math.floor(variantRng() * 3);
     tiles.setXYZW(i, tile, kind, grout, Number(flip));
     const tone = tones[Math.floor(rnd() * tones.length)];
     m.setColorAt(i, color.clone().multiply(new THREE.Color().setRGB(...tone)));

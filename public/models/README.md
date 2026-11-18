@@ -1,7 +1,8 @@
 # Models
 
-Every model here is built by the Blender scripts in `ref/blender/` (see its README). Most are made
-from scratch; the files below use third-party scans as their form source.
+These models are built in Blender. The scripts live in `ref/blender/` (see its README), except for
+`mn_heart.glb`, whose generator and original texture inputs are in the Heart boss round’s evidence/work bundle.
+The files below use third-party scans as their form source.
 
 ## Third-party sources
 

@@ -2388,14 +2388,14 @@ function riftPortal(rx, ry) {
   const mat = new THREE.ShaderMaterial({
     // Shares the scene's fog uniforms (not a clone) so the portal sits behind the same aerial
     // perspective as the gate stones instead of reading crisp from across the map.
-    uniforms: { ...THREE.UniformsLib.fog, uTime: U.time, uAlpha: { value: 1 } },
+    uniforms: { ...THREE.UniformsLib.fog, uTime: U.time, uAlpha: { value: 1 }, uRift: { value: 0 } },
     fog: true,
     vertexShader: `#include <fog_pars_vertex>
       varying vec2 vUv;
       void main(){ vUv = uv; vec4 mvPosition = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mvPosition;
       #include <fog_vertex>
       }`,
-    fragmentShader: `uniform float uTime; uniform float uAlpha; varying vec2 vUv;
+    fragmentShader: `uniform float uTime; uniform float uAlpha; uniform float uRift; varying vec2 vUv;
       #include <fog_pars_fragment>
       float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -2414,7 +2414,12 @@ function riftPortal(rx, ry) {
         col *= 1.0 - core * 0.92;
         float rim = smoothstep(0.8, 0.95, r) * smoothstep(1.0, 0.95, r);
         col += vec3(1.5, 1.05, 2.5) * rim * (0.8 + 0.2 * sin(uTime * 0.9));
-        gl_FragColor = vec4(col, smoothstep(1.0, 0.97, r) * uAlpha);
+        float spiral = 0.5 + 0.5 * sin(a * 3.0 + dep * 8.0 - uTime * 0.68 + n2 * 5.5);
+        vec3 voidColor = mix(vec3(0.057,0.009,0.10), vec3(0.58,0.048,0.36), n2 * (0.5 + spiral));
+        voidColor += vec3(0.57,0.14,0.47) * fil + vec3(0.18,0.043,0.21) * rim;
+        col = mix(col, voidColor * (0.55 + 0.45 * (1.0 - core)), uRift);
+        float edgeAlpha = 1.0 - smoothstep(mix(0.97, 0.71, uRift), 1.0, r);
+        gl_FragColor = vec4(col, edgeAlpha * uAlpha);
         #include <fog_fragment>
       }`,
     transparent: true, depthWrite: false, side: THREE.DoubleSide,

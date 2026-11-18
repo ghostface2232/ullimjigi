@@ -3,9 +3,9 @@ import * as THREE from 'three';
 import { G } from '../core/context.js';
 import { newStatus } from './combat.js';
 import { makeAshling, makeWailer, makeBrute, makeKnight, makeOoze, makeMoth, makeShieldBearer, makeArcher, makeRootHand, makeWatcher } from './characters.js';
-import { fresnelMat, glowMat, toon } from '../render/materials.js';
+import { glowMat, toon } from '../render/materials.js';
 import { PAL } from '../render/vfx.js';
-import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
+import { HeartBody, heartWard, prepareHeart } from './heartbody.js';
 import { clamp, damp, angleDamp, randRange, rand, pick, wrapAngle, lerp, josa } from '../core/util.js';
 import { regionAt } from '../world/layout.js';
 
@@ -2359,13 +2359,12 @@ class Plate {
     this.maxHp = Math.round(65 * (1 + 0.12 * (heart.level - 1))); this.hp = this.maxHp;
     this.st = newStatus(); this.level = heart.level; this.name = `${WARD[ward].name}의 결계`;
     this.pos = new THREE.Vector3();
-    const g = new THREE.CylinderGeometry(1.2, 1.2, 0.35, 6); g.rotateX(Math.PI / 2);
-    this.mesh = new THREE.Mesh(g, fresnelMat(0x222233, WARD[ward].color, { intensity: 1.4, normal: false }));
-    const rune = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.8), new THREE.MeshBasicMaterial({ map: G.vfx.runeTex2, color: new THREE.Color(WARD[ward].color).multiplyScalar(2), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    this.mesh.add(rune);
+    const { group, ink } = heartWard(G.enemies.heartKit, ward, WARD[ward].color);
+    this.mesh = group; this.ink = ink; this.age = 0;
     G.scene.add(this.mesh);
     this.flash = 0;
     this.barT = 0;
+    this.update(0);
   }
   center() { return this.pos.clone(); }
   receive(h) {
@@ -2386,7 +2385,7 @@ class Plate {
   die() {
     if (!this.alive) return;
     this.alive = false; this.hittable = false;
-    G.scene.remove(this.mesh);
+    this.remove();
     G.vfx.burst(this.pos, 'ice', 20, { speed: 9 }); G.vfx.burst(this.pos, 'star', 1, { el: 'white', size: 5 });
     G.vfx.flash(this.pos, WARD[this.ward].color, 80, 14, 0.4);
     G.audio.play('shatter', { pos: this.pos });
@@ -2397,16 +2396,30 @@ class Plate {
   update(dt) {
     if (!this.alive) return false;
     const h = this.heart;
-    const a = h.spin + (this.idx / this.n) * Math.PI * 2;
-    this.pos.set(h.core.position.x + Math.cos(a) * 3.6, h.core.position.y + Math.sin(G.time * 1.5 + this.idx) * 0.4, h.core.position.z + Math.sin(a) * 3.6);
+    this.age += dt;
+    const a = h.spin * .48 + this.idx * Math.PI * 2 / this.n;
+    // Petals arrive spread, clamp at the chest, then briefly release between breaths.
+    const release = Math.max(1 - THREE.MathUtils.smoothstep(this.age, .12, .92),
+      THREE.MathUtils.smoothstep(Math.cos(this.age * 1.15 + 2.4), .60, .97));
+    const radius = (this.n === 4 ? 1.62 : 1.46) + release * 1.08;
+    const across = Math.sin(a) * radius, depth = 1.32 - release * .18;
+    const yaw = h.core.rotation.y;
+    this.pos.set(h.core.position.x + across * Math.cos(yaw) + depth * Math.sin(yaw),
+      h.core.position.y + Math.cos(a) * radius,
+      h.core.position.z - across * Math.sin(yaw) + depth * Math.cos(yaw));
     this.mesh.position.copy(this.pos);
-    this.mesh.lookAt(h.core.position);
+    this.mesh.rotation.set(0, yaw, -a, 'YXZ');
+    this.mesh.rotateX(-release * .26);
     this.flash = Math.max(0, this.flash - dt * 5);
-    this.mesh.material.uniforms.uIntensity.value = 1.4 + this.flash * 2;
+    this.ink.emissiveIntensity = 2.6 + this.flash * 1.65;
     this.barT = Math.max(0, this.barT - dt);
     return true;
   }
-  remove() { G.scene.remove(this.mesh); this.alive = false; }
+  remove() {
+    this.mesh.removeFromParent();
+    if (this.ink) this.ink.dispose();
+    this.ink = null; this.alive = false; this.hittable = false;
+  }
 }
 
 class Heart {
@@ -2422,28 +2435,7 @@ class Heart {
     this.st = newStatus(); this.resist = {}; this.armor = 0; this.freezeAt = 10; this.freezeTime = 1.5;
     this.pos = center.clone().setY(center.y + 6); this.home = this.pos.clone();
     this.core = new THREE.Group();
-    // dark faceted heart-stone with a violet core that burns brighter when exposed
-    const crystal = new THREE.Mesh(crystalGeometry('gem', { sides: 7, table: 0.5, crown: 0.62, pavilion: 0.95, seed: 66 }), crystalMaterial({ color: 0x3a2458, glow: 0xb080ff, intensity: 1.2, rim: 1.3, seed: 5, nocache: true }));
-    crystal.scale.set(1.6, 1.9, 1.6); crystal.rotation.x = Math.PI;
-    this.core.add(crystal);
-    // shards orbiting the heart (spun by `inner`) and a soft violet halo
-    const inner = new THREE.Group();
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      const sh = new THREE.Mesh(crystalGeometry('shard', { seed: 700 + i }), crystal.material);
-      sh.scale.setScalar(0.45 + (i % 3) * 0.12);
-      sh.position.set(Math.cos(a) * 2.5, (i % 2 ? 0.5 : -0.6), Math.sin(a) * 2.5);
-      sh.rotation.set(Math.PI + (i % 2 ? 0.4 : -0.3), a, (i % 2 ? 0.3 : -0.4));
-      inner.add(sh);
-    }
-    this.core.add(inner);
-    this.core.add(crystalGlowSprite(0xa070ff, 9, { intensity: 0.4 }));
-    this.tendrils = [];
-    for (let i = 0; i < 8; i++) {
-      const t = new THREE.Mesh(new THREE.ConeGeometry(0.25, 4, 5), toon(0x2a2236, { rim: 1, nocache: true }));
-      t.userData.a = (i / 8) * Math.PI * 2; this.core.add(t); this.tendrils.push(t);
-    }
-    this.crystal = crystal; this.inner = inner;
+    this.appearance = new HeartBody(this, G.enemies.heartKit);
     this.core.position.copy(this.pos);
     G.scene.add(this.core);
     this.plates = [];
@@ -2486,6 +2478,7 @@ class Heart {
     for (const b of this.beams) b.end();
     this.beams.length = 0;
     for (const p of this.plates) p.remove();
+    this.appearance.end();
     if (G.story) G.story.onKill(this);
   }
   spawnPlates() {
@@ -2510,35 +2503,23 @@ class Heart {
       this.core.scale.setScalar(Math.max(0.01, 1 - this.dyingT / 3));
       this.core.rotation.y += dt * (3 + this.dyingT * 6);
       if (Math.random() < 0.6) G.vfx.burst(this.core.position, 'soul', 3, { el: 'gold' });
-      if (this.dyingT > 3) { G.scene.remove(this.core); return false; }
+      if (this.dyingT > 3) { G.scene.remove(this.core); this.appearance.dispose(); return false; }
       return true;
     }
     this.stateT += dt;
     this.spin += dt * (0.6 + this.phase * 0.2);
     this.flash = Math.max(0, this.flash - dt * 5);
     this.barT = 5;
-    const breathe = 1 + Math.sin(G.time * 2) * 0.05;
-    const cu = this.crystal.material.uniforms;
-    cu.uIntensity.value = 1.2 + this.flash * 0.8 + (this.exposed > 0 ? 0.9 + Math.sin(G.time * 10) * 0.4 : 0);
-    cu.uFlash.value = this.flash * 0.6;
-    this.inner.rotation.y += dt * 0.9;
-    this.crystal.rotation.y -= dt * 0.4;
-    this.tendrils.forEach((t, i) => {
-      const a = t.userData.a + this.spin * 0.3;
-      t.position.set(Math.cos(a) * 2.2, -1 + Math.sin(G.time * 2 + i) * 0.3, Math.sin(a) * 2.2);
-      t.rotation.set(Math.PI + Math.sin(G.time * 1.3 + i) * 0.4, 0, Math.cos(a) * 0.5);
-    });
-    this.core.scale.setScalar(breathe);
     G.combat.tick(this, dt);
     if (!this.alive) return true;
     tickBreak(this, dt);
-    if (this.state === 'dormant') { this.core.position.y = this.pos.y + Math.sin(G.time) * 0.3; return true; }
+    if (this.state === 'dormant') { this.core.position.y = this.pos.y + Math.sin(G.time) * 0.3; this.appearance.update(dt); return true; }
     // phase checks
     const frac = this.hp / this.maxHp;
     const want = frac > 0.66 ? 1 : frac > 0.33 ? 2 : 3;
     if (want > this.phase) { this.phase = want; this.phaseMul = PHASE_DMG[want - 1]; G.enemies.bossSpill(this.core.position, 'phase'); if (G.story) G.story.onBossPhase(this, want); G.audio.play('boss_roar', { pos: this.core.position }); }
     // plates / exposure cycle
-    this.plates = this.plates.filter((p) => p.update(dt));
+    this.plates = this.plates.filter((p) => p.alive);
     if (this.exposed > 0) {
       this.exposed -= dt;
       this.hittable = true; this.vulnerable = true;
@@ -2549,6 +2530,8 @@ class Heart {
       this.hittable = false;
       if (this.plates.length === 0) this.expose();
     }
+    this.appearance.update(dt);
+    for (const plate of this.plates) plate.update(dt);
     // attacks
     this.atkT -= dt; this.addsCD -= dt;
     if (this.atkT <= 0 && this.exposed <= 0) {
@@ -2669,6 +2652,7 @@ class Heart {
     this.alive = false; this.hittable = false; this.atkGen++;
     for (const b of this.beams) b.end();
     this.beams.length = 0;
+    this.appearance.dispose();
     G.scene.remove(this.core); for (const p of this.plates) p.remove();
   }
 }
@@ -2705,6 +2689,7 @@ export const CAMPS = [
 const tmpP = new THREE.Vector3(), side = new THREE.Vector3();
 export class EnemyManager {
   constructor() {
+    this.heartKit = prepareHeart();
     this.list = [];
     this.bosses = [];
     this.tokens = 0; this.maxTokens = 2;

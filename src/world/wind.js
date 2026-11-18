@@ -251,7 +251,7 @@ export class Wind {
     }
     const enemies = G.enemies?.list;
     if (enemies) for (const e of enemies) {
-      if (!e.alive || !e.root.visible || e.def.flying) continue;
+      if (!e.alive || !e.root?.visible || e.def.flying) continue;
       const p = e.pos;
       const d = (p.x - playerPos.x) ** 2 + (p.z - playerPos.z) ** 2;
       for (let i = 2; i < BODY_COUNT; i++) {

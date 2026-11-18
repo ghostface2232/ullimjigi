@@ -19,7 +19,7 @@ void main(){
 const SKY_FS = `
 const float C_MID = ${CLOUD.mid.toFixed(1)}, C_FAR = ${CLOUD.far.toFixed(1)}, DOME_S = ${CLOUD.domeS.toFixed(3)};
 uniform vec3 uTop, uHorizon, uBottom, uSunColor, uSunDir, uMoonDir, uCloud, uCloudShade, uCam, uLightDir;
-uniform float uTime, uNight, uSunVis, uHush, uCover;
+uniform float uTime, uNight, uSunVis, uHush, uCover, uRift;
 uniform vec4 uCloudW;
 uniform sampler2D uNoiseTex, uCloudMap;
 uniform vec3 uSnapCam;
@@ -98,6 +98,7 @@ void main(){
     }
   }
   col = mix(col, vec3(0.32, 0.26, 0.4) * (0.6 + 0.4 * col), uHush * 0.55);
+  col *= mix(vec3(1.0), vec3(0.32, 0.23, 0.43), uRift);
   gl_FragColor = vec4(col, 1.0);
 }`;
 
@@ -219,7 +220,7 @@ export class Sky {
       uTop: { value: new THREE.Color() }, uHorizon: { value: new THREE.Color() }, uBottom: { value: new THREE.Color() },
       uSunColor: { value: new THREE.Color() }, uSunDir: { value: new THREE.Vector3() }, uMoonDir: { value: new THREE.Vector3() },
       uCloud: { value: new THREE.Color() }, uCloudShade: { value: new THREE.Color() },
-      uTime: U.time, uNight: { value: 0 }, uSunVis: { value: 1 }, uHush: { value: 0 },
+      uTime: U.time, uNight: { value: 0 }, uSunVis: { value: 1 }, uHush: { value: 0 }, uRift: { value: 0 },
       uCover: { value: 0.53 }, uCloudW: U.cloud, uNoiseTex: { value: noiseTexture() }, uCam: { value: new THREE.Vector3() },
       uLightDir: U.sunDir,
     };

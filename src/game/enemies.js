@@ -2332,7 +2332,7 @@ class Knight extends Enemy {
     });
   }
   animState() {
-    const s = { speed: this.curSpeed || 0, grounded: true };
+    const s = { speed: this.curSpeed || 0, grounded: true, phase: this.phase };
     if (this.state === 'slashWind') { s.cast = true; s.aimPitch = -1.2 + this.stateT; }
     if (this.state === 'slash') { s.cast = true; s.aimPitch = 0.8; }
     if (this.state === 'dashWind' || this.state === 'dash') { s.cast = true; s.aimPitch = 0; }

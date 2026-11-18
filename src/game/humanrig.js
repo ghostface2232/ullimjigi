@@ -1775,7 +1775,7 @@ export class HumanRig extends Rig {
       const f = this.feet[k];
       const sd = f.side;
       // rest spot under the hip
-      const rx = sd * footW, rz = (sd > 0 ? 0.03 : -0.02) * s * rs;
+      const rx = sd * footW, rz = ((sd > 0 ? 0.03 : -0.02) + (moving ? 0 : sd * (this.style.stanceDepth || 0))) * s * rs;
       const restX = e[12] + sideX * rx + fwdX * rz, restZ = e[14] + sideZ * rx + fwdZ * rz;
       if (!f.init) {
         const fw = B['foot' + f.n].getWorldPosition(_v1);

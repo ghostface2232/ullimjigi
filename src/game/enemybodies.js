@@ -487,7 +487,7 @@ const metalMat = (rim = 0.9) => sheen(bodyMat(0xffffff, { vertexColors: true, ri
 function knightCfg(spectral) {
   const col = (x, k) => (spectral ? x : ashen(x, k));
   const c = {
-    key: 'knight', scale: 1.4, bodyW: 1.6, shoulderW: 1.2, legLen: 0.77, torsoLen: 1.1, headR: 0.14, armLen: 1.1, spectral, group: METAL,
+    key: 'knight', scale: 1.4, bodyW: 1.6, shoulderW: 1.2, legLen: 0.90, torsoLen: 1.1, headR: 0.14, armLen: 1.1, spectral, group: METAL,
     colors: { metal: col(0xb4b4c6), metalD: col(0x74748a), trim: col(0xd2b064, 0.28), under: col(0x30303a, 0.3), cape: col(0x2a4a9a, 0.6), lining: col(0x162452, 0.55), cloth: col(0x3558b0, 0.6), glow: 0xffffff, glowD: 0xa0a0a0 },
     bones(def, L) {
       const ch = capeChains(def, L, 1.02, { r1: 0.33 });
@@ -612,6 +612,10 @@ function knightPose(q, s, R) {
   const idle = 1 - a;
   q.armRx += -0.25 * idle; q.foreRx += -0.55 * idle; q.armRz += -0.1 * idle; q.fingR = 1.3; q.thumbR = 1.1;
   q.armLz += 0.08; q.spinex += 0.06; q.headx -= 0.04;
+  const guard = idle * (1 - Math.max(R.w.kneel, R.w.down, R.w.dead));
+  q.chesty += 0.27 * guard; q.spiney += 0.10 * guard; q.heady -= 0.22 * guard;
+  q.thighLx -= 0.34 * guard; q.thighRx += 0.21 * guard; q.shinLx += 0.26 * guard;
+  q.armRx += 0.22 * guard; q.foreRx += 0.37 * guard;
   if (a < 0.01) return;
   const pitch = s.aimPitch ?? 0;
   const raise = clamp((0.8 - pitch) / 2.4, 0, 1);
@@ -627,7 +631,131 @@ function knightPose(q, s, R) {
   q.thighLx += a * -0.35; q.shinLx += a * 0.45; q.thighRx += a * 0.25; q.shinRx += a * 0.2;
   void t;
 }
-function knightPost(s, R) {
+const knightPlates = [
+  ['pauldron', 0.46, 0.27, -0.07],
+  ['flank', 0.38, 0.04, -0.17],
+  ['vambrace', 0.53, -0.02, -0.06],
+  ['tasset', 0.31, -0.07, -0.13],
+];
+
+const forkAxis = v(1, 0, 0);
+
+// Normalize one authored bolt along X. Stretch its length independently of the wire thickness.
+function knightFork(template) {
+  if (!template.stormFork) {
+    const end = v(0.256, 0.075, 0.055);
+    const length = end.length();
+    template.stormFork = template.built.rigid.rootL.geo.clone()
+      .applyQuaternion(_q1.setFromUnitVectors(end.normalize(), forkAxis)).scale(1 / length, 1, 1);
+  }
+  return template.stormFork;
+}
+
+function aimKnightFork(mesh, end, width) {
+  const direction = _v2.subVectors(end, mesh.position);
+  const length = direction.length();
+  mesh.scale.set(length, width, width);
+  mesh.quaternion.setFromUnitVectors(forkAxis, direction.multiplyScalar(1 / length));
+}
+
+function bindKnightArmour(rig, sword, steel, core, spectral) {
+  const held = rig.T.built.rigid;
+  if (!held?.crown) return;
+  const parts = {};
+  for (const [name, part] of Object.entries(held)) {
+    if (name === 'sword' || name === 'hilt') continue;
+    const blade = name === 'bladeArc';
+    if (spectral && (blade || name === 'crown' || name === 'rootL' || name === 'rootR')) continue;
+    const mesh = rigid(blade ? sword : rig.B[part.bone], part.geo, steel, blade ? _v1.set(0, 0, 0) : part.pos);
+    mesh.name = name;
+    parts[name] = mesh;
+  }
+  if (spectral) return;
+  const wire = knightFork(rig.T);
+  // Short discharges bridge the five breaks in the coronet.
+  for (let i = 0; i < 5; i++) {
+    const a = i * TAU / 5 + 0.46, b = (i + 1) * TAU / 5 - 0.46;
+    const start = v(0.185 * Math.sin(a), 0.006 * Math.cos(2 * a), 0.155 * Math.cos(a));
+    const end = v(0.185 * Math.sin(b), 0.006 * Math.cos(2 * b), 0.155 * Math.cos(b));
+    const arc = rigid(parts.crown, wire, steel, start, 1, null, false);
+    aimKnightFork(arc, end, 0.58);
+  }
+  const plates = [], chains = [], roots = [];
+  for (const [i, side] of ['L', 'R'].entries()) {
+    const sign = i ? -1 : 1;
+    const root = parts['root' + side];
+    roots.push(root);
+    for (const [name, x, y, z] of knightPlates) {
+      const mesh = parts[name + side];
+      // Some pivots sit inside the hollow shell. Terminate at an actual metal vertex.
+      const terminal = v(0, 0, 0), vertices = mesh.geometry.attributes.position;
+      let nearest = Infinity;
+      for (let j = 0; j < vertices.count; j++) {
+        _v1.fromBufferAttribute(vertices, j);
+        const d = _v1.lengthSq();
+        if (d < nearest) { nearest = d; terminal.copy(_v1); }
+      }
+      const fork = rigid(mesh.parent, wire, steel, mesh.position, 1, null, false);
+      fork.name = 'tether' + name + side;
+      fork.visible = false;
+      plates.push({ mesh, rest: mesh.position.clone(), offset: v(x * sign, y, z), fork, sign, terminal });
+    }
+    for (const [j, name] of ['bind', 'cross', 'fetter'].entries()) {
+      const mesh = parts[name + side];
+      chains.push({ mesh, rest: mesh.position.clone(), sign, delay: (2 * j + i) * 0.14 });
+    }
+  }
+  parts.crown.visible = parts.bladeArc.visible = false;
+  for (const root of roots) root.scale.setScalar(0.15);
+  rig.p.stormArmour = { plates, chains, roots, core, crown: parts.crown, crownY: parts.crown.position.y,
+    blade: parts.bladeArc, phase: 1, broken: 0, opened: 0 };
+}
+
+function animateKnightArmour(rig, phase, dt) {
+  const armour = rig.p.stormArmour;
+  if (!armour) return;
+  armour.phase = phase ?? armour.phase;
+  const tint = rig.glowMat.color;
+  armour.core.setRGB(0.92, 1.53, 2.25).lerp(tint, 0.09);
+  const charged = armour.phase >= 2, open = armour.phase === 3, t = rig.t;
+  armour.blade.visible = charged;
+  armour.broken = charged ? Math.min(1.3, armour.broken + dt) : 0;
+  for (const { mesh, rest, sign, delay } of armour.chains) {
+    const snap = Math.max(0, armour.broken - delay);
+    mesh.visible = snap < 0.43;
+    if (!mesh.visible) continue;
+    mesh.position.copy(rest);
+    mesh.position.x += sign * snap * 0.59;
+    mesh.position.y += snap * (0.62 - 3.6 * snap);
+    mesh.rotation.z = sign * snap * 2.8;
+    mesh.scale.setScalar(1 - sstep(0.29, 0.43, snap));
+  }
+  for (let i = 0; i < armour.roots.length; i++) {
+    const beat = Math.sin(21 * t + 5 * i) * Math.sin(7 * t + i);
+    const scale = charged ? 0.88 + 0.17 * beat : 0.14 + 0.20 * Math.max(0, beat);
+    armour.roots[i].scale.setScalar(scale);
+  }
+  armour.opened = open ? Math.min(1, armour.opened + dt * 1.5) : 0;
+  const lift = sstep(0, 1, armour.opened);
+  armour.crown.visible = open;
+  armour.crown.position.y = armour.crownY - 0.18 * (1 - lift) + 0.018 * Math.sin(t * 2);
+  armour.crown.rotation.y = t * 0.43;
+  for (let i = 0; i < armour.plates.length; i++) {
+    const { mesh, rest, offset, sign, fork, terminal } = armour.plates[i];
+    mesh.position.copy(rest).addScaledVector(offset, lift);
+    mesh.position.y += lift * (0.030 * Math.sin(t * 2.7 + i * 2) + 0.005 * Math.sin(18 * t + i));
+    mesh.position.z += lift * 0.022 * Math.cos(t * 1.8 + i);
+    mesh.rotation.z = sign * lift * (0.20 + 0.12 * Math.sin(2.1 * t + i));
+    mesh.rotation.y = lift * 0.23 * Math.cos(t * 1.7 + i);
+    fork.visible = lift > 0.01;
+    if (fork.visible) {
+      const end = _v1.copy(terminal).applyQuaternion(mesh.quaternion).add(mesh.position);
+      aimKnightFork(fork, end, 0.82 + 0.12 * Math.sin(t * 16 + i));
+    }
+  }
+}
+
+function knightPost(s, R, dt) {
   // orient the fist so the blade points: low guard (idle), up/back (windup), forward-down (cut)
   const root = R.root;
   const re = root.matrixWorld.elements;
@@ -636,13 +764,17 @@ function knightPost(s, R) {
   const fw = _v2.set(re[8], re[9], re[10]).multiplyScalar(1 / rs);
   const a = R.w.cast * (1 - Math.max(R.w.dead, R.w.down));
   const raise = clamp((0.8 - (s.aimPitch ?? 0)) / 2.4, 0, 1);
-  const ang = mix(-0.32, mix(-0.3, 2.6, raise), a) + R.w.kneel * -0.75;
-  const want = _v3.copy(fw).multiplyScalar(Math.cos(ang)).addScaledVector(up, Math.sin(ang)).normalize();
+  const ang = mix(-0.54, mix(-0.3, 2.6, raise), a) + R.w.kneel * -0.6;
+  const guardSide = _v5.crossVectors(up, fw);
+  const guardYaw = -2.25 * (1 - a);
+  const want = _v3.copy(fw).multiplyScalar(Math.cos(ang) * Math.cos(guardYaw))
+    .addScaledVector(guardSide, Math.cos(ang) * Math.sin(guardYaw)).addScaledVector(up, Math.sin(ang)).normalize();
   const hand = R.B.handR;
   hand.getWorldQuaternion(_q1);
   const cur = _v4.set(0, 0, 1).applyQuaternion(_q1);
   rotateTowards(hand, cur, want, 0.95 * (1 - R.w.shock));
   hand.updateMatrixWorld(true);
+  animateKnightArmour(R, s.phase, dt);
 }
 
 export function makeKnight(spectral = false) {
@@ -650,13 +782,16 @@ export function makeKnight(spectral = false) {
   const glow = glowBasic(spectral ? 0x9ad0ff : 0xb080ff, 2.5);
   const metal = metalMat();
   const main = skinMat(0.6);
-  const rig = new HumanRig(T, { mats: { main, metal, glow }, castPose: false, hold: null, outline: 0.0032, rim: 0.6, style: { armHang: 0.1 }, pose: knightPose, post: knightPost });
-  dress(rig, { mat: { main: { spec: 0.75 } } });
+  const rig = new HumanRig(T, { mats: { main, metal, glow }, castPose: false, hold: null, outline: 0.0032, rim: 0.6, style: { armHang: 0.1, stanceDepth: 0.19 }, pose: knightPose, post: knightPost });
+  // Keep the rib light cold while retaining a little of the level tint.
+  const cold = new THREE.Color(0.92, 1.53, 2.25);
+  dress(rig, { glow: cold, mat: { main: { spec: 0.58, row: 2 } } });
   const sword = new THREE.Group(), held = T.built.rigid || {};
-  getSwordGeo();
+  if (!held.sword || !held.bladeArc) getSwordGeo();
   if (held.sword) for (const k of ['sword', 'hilt']) { const m = new THREE.Mesh(held[k].geo, main); m.castShadow = true; sword.add(m); }
   else { const blade = metalMat(); rig.mats.push(blade); const sm = new THREE.Mesh(swordGeo, blade); sm.castShadow = true; sword.add(sm); }
-  const edge = new THREE.Mesh(swordEdgeGeo, new THREE.MeshBasicMaterial({ color: new THREE.Color(spectral ? 0x9ad0ff : 0xffd84a).multiplyScalar(2.5) }));
+  const edge = held.bladeArc ? new THREE.Object3D() : new THREE.Mesh(swordEdgeGeo, glow);
+  bindKnightArmour(rig, sword, main, cold, spectral);
   edge.position.set(0, 0, 0.76); sword.add(edge);
   sword.position.set(0, -rig.L.hand * 0.36, 0.004);
   rig.B.handR.add(sword);

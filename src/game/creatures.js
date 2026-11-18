@@ -107,13 +107,14 @@ export function surfaced(m, tex, o = {}) {
   m.normalScale.set(o.bump ?? 1, o.bump ?? 1);
   for (const t of [tex.map, tex.normalMap, tex.orm]) if (t) t.anisotropy = 4;
   const u = { uOrm: { value: tex.orm }, uSurfP: { value: new THREE.Vector4(o.spec ?? 0.6, o.metal ?? 3, o.ao ?? 0.4, o.glowK ?? 1) }, uGlowC: { value: o.glow || new THREE.Color(0, 0, 0) }, uGlowA: { value: new THREE.Vector2(o.glowAlb ?? 0, o.glowBoost ?? 0) } };
+  u.uVisorLight = o.visorLight ?? { value: 0 };
   m.userData.surf = u;
   extendMat(m, 'surfaced|' + !!tex.orm + '|' + !!tex.map, u, (sh) => {
     if (tex.orm) {
       sh.vertexShader = 'varying vec2 vActorUv;\n' + sh.vertexShader.replace('#include <uv_vertex>', '#include <uv_vertex>\nvActorUv = uv;');
       sh.fragmentShader = 'varying vec2 vActorUv;\n' + sh.fragmentShader;
     }
-    sh.fragmentShader = 'uniform sampler2D uOrm;\nuniform vec4 uSurfP;\nuniform vec3 uGlowC;\nuniform vec2 uGlowA;\n' + sh.fragmentShader
+    sh.fragmentShader = 'uniform sampler2D uOrm;\nuniform vec4 uSurfP;\nuniform vec3 uGlowC;\nuniform vec2 uGlowA;\nuniform float uVisorLight;\n' + sh.fragmentShader
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
   vec4 _mo = ${tex.orm ? 'texture2D(uOrm, vActorUv)' : 'vec4(1.0, 0.68, 0.0, 1.0)'};
   _actorMetal = _mo.b;
@@ -134,6 +135,12 @@ export function surfaced(m, tex, o = {}) {
   // Keep the painted seam's edge, with only the full-intensity core feeding bloom.
   float _glowEdge = smoothstep(0.02, 0.95, _mGlow);
   vec3 _seam = mix(uGlowC, uGlowC * diffuseColor.rgb, uGlowA.x) * uSurfP.w;
+  #if defined(USE_COLOR) || defined(USE_COLOR_ALPHA)
+    // The knight's two recessed lenses carry a blue vertex tint. Preserve their painted cores and rings.
+    if (uVisorLight > 0.0 && vColor.b - vColor.r > 0.30) {
+      _seam = mix(diffuseColor.rgb, vec3(0.88, 0.96, 1.0), smoothstep(0.73, 0.96, _mGlow)) * uVisorLight;
+    }
+  #endif
   outgoingLight = mix(outgoingLight, _seam, _glowEdge);
   outgoingLight += _seam * uGlowA.y * smoothstep(0.86, 1.0, _mGlow);
 }

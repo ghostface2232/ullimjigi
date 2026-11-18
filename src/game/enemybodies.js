@@ -731,6 +731,7 @@ function bindKnightArmour(rig, sword, steel, core, spectral) {
     blade: parts.bladeArc, phase: 1, broken: 0, opened: 0 };
 }
 
+const knightVisorStrength = 4.8;
 function animateKnightArmour(rig, phase, dt) {
   const armour = rig.p.stormArmour;
   if (!armour) return;
@@ -738,6 +739,7 @@ function animateKnightArmour(rig, phase, dt) {
   const tint = rig.glowMat.color;
   armour.core.setRGB(0.92, 1.53, 2.25).lerp(tint, 0.09);
   const charged = armour.phase >= 2, open = armour.phase === 3, t = rig.t;
+  rig.p.visorLight.value = knightVisorStrength + 0.32 * Math.sin(t * 3.6);
   armour.blade.visible = charged;
   armour.broken = charged ? Math.min(1.3, armour.broken + dt) : 0;
   for (const { mesh, rest, sign, delay } of armour.chains) {
@@ -805,7 +807,8 @@ export function makeKnight(spectral = false) {
   const rig = new HumanRig(T, { mats: { main, metal, glow }, castPose: false, hold: null, outline: 0.0032, rim: 0.6, style: { armHang: 0.1, stanceDepth: 0.19 }, pose: knightPose, post: knightPost });
   // Keep the rib light cold while retaining a little of the level tint.
   const cold = new THREE.Color(0.92, 1.53, 2.25);
-  dress(rig, { glow: cold, mat: { main: { spec: 0.58, row: 2 } } });
+  rig.p.visorLight = { value: spectral ? 0 : knightVisorStrength };
+  dress(rig, { glow: cold, mat: { main: { spec: 0.68, row: 2, visorLight: rig.p.visorLight } } });
   const sword = new THREE.Group(), held = T.built.rigid || {};
   if (!held.sword || !held.bladeArc) getSwordGeo();
   if (held.sword) for (const k of ['sword', 'hilt']) { const m = new THREE.Mesh(held[k].geo, main); m.castShadow = true; sword.add(m); }

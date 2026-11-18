@@ -6,6 +6,8 @@ The files below use third-party scans as their form source.
 
 ## Third-party sources
 
+The Nameless Knight (`mn_knight.glb`) uses two CC0 materials by Rob Tuytel from Poly Haven. Its armour atlas incorporates wear, roughness and fine relief from [Metal Plate 02](https://polyhaven.com/a/metal_plate_02). The cape and tabard use the weave from [Fabric Pattern 07](https://polyhaven.com/a/fabric_pattern_07). The knight's mesh, filigree and engraving were sculpted for the game. [Poly Haven licence](https://polyhaven.com/license)
+
 The scattered rocks (`pr_rocks.glb`, `pr_rocktex.glb`) and the rolling boulder (`pr_boulder.glb`,
 `pr_bouldertex.glb`) are restyled from photogrammetry scans. Each rock keeps the old model's
 layout of masses and bounding box. Large scan-derived planes carry the silhouette and smaller fracture

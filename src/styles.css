@@ -348,8 +348,8 @@ kbd [data-ico] { font-size: 1.25em; }
 .act.cooling .act-ico { opacity: 0.4; }
 .act.off .act-btn { filter: saturate(0.3) brightness(0.8); } .act.off .act-name { color: var(--ink-3); }
 .act.ready .act-btn { --in: var(--gold-hi); --ring: var(--gold); --glow: 0 0 16px rgba(241, 212, 138, 0.5); }
-.act.nomana .act-btn { --in: var(--danger); --ring: rgba(255, 107, 92, 0.5); }
-.act.nomana .act-ico { opacity: 0.45; filter: none; }
+.act.nomana .act-btn { --in: rgba(241, 234, 219, 0.22); --ring: rgba(241, 234, 219, 0.12); }
+.act.nomana .act-ico { opacity: 0.38; filter: grayscale(1); }
 .act.nomana .slot-cost { color: #ffa99c; } .act.nomana .slot-cost i { background: var(--danger); box-shadow: 0 0 0 1px rgba(7, 9, 20, 0.8), 0 0 5px var(--danger); }
 .act.locked { opacity: 0.6; } .act.locked .act-btn { --in: rgba(241, 234, 219, 0.25); --ring: rgba(241, 234, 219, 0.14); color: var(--ink-3); }
 .act.locked .act-ico { filter: none; opacity: 0.5; }

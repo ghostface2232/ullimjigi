@@ -235,14 +235,15 @@ export class HUD {
       this.el.weaveIcons.innerHTML = info.els.map((e) => `<span style="color:${EL_INFO[e].css}">${EL_SVG[e]}</span>`).join('');
       this.el.weaveName.textContent = info.name;
     } else { this.el.weaveIcons.innerHTML = ''; this.el.weaveName.textContent = !wKnown ? '엮기' : P.unlocked.size > 1 ? '속성을 바꿔 엮기' : '엮기'; }
-    this.el.weaveCost.innerHTML = wKnown ? `<i></i>${WEAVE_COST}` : '미습득';
+    // Slots show whether a skill can be cast through their colour (.nomana), not a mana number.
+    this.el.weaveCost.innerHTML = wKnown ? '' : '미습득';
     const hKnown = P.canHeavy();
     this.el.heavySlot.classList.toggle('locked', !hKnown);
     this.el.heavySlot.classList.toggle('hidden', !hKnown && !(G.skills && Object.values(SIG).some((id) => G.skills.has(id))));
     this.el.heavyName.textContent = HEAVY[P.element].name;
     this.el.heavySlot.style.setProperty('--c', EL_INFO[P.element].css);
     this.el.heavyIco.innerHTML = hKnown ? EL_SVG[P.element] : ICON.lock;
-    this.el.heavyCost.innerHTML = hKnown ? `<i></i>${HEAVY[P.element].cost}` : '미습득';
+    this.el.heavyCost.innerHTML = hKnown ? '' : '미습득';
     this.el.tickH.style.setProperty('--tc', EL_INFO[P.element].css);
     if (!wKnown) this.el.weaveIcons.innerHTML = `<span>${ICON.lock}</span>`;
     this.updateUlt();

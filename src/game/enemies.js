@@ -2360,8 +2360,8 @@ class Plate {
     this.maxHp = Math.round(65 * (1 + 0.12 * (heart.level - 1))); this.hp = this.maxHp;
     this.st = newStatus(); this.level = heart.level; this.name = `${WARD[ward].name}의 결계`;
     this.pos = new THREE.Vector3();
-    const { group, ink } = heartWard(G.enemies.heartKit, ward, WARD[ward].color);
-    this.mesh = group; this.ink = ink; this.age = 0;
+    const { group, ink, orbit } = heartWard(G.enemies.heartKit, ward, WARD[ward].color);
+    this.mesh = group; this.ink = ink; this.orbit = orbit; this.age = 0;
     G.scene.add(this.mesh);
     this.flash = 0;
     this.barT = 0;
@@ -2398,19 +2398,21 @@ class Plate {
     if (!this.alive) return false;
     const h = this.heart;
     this.age += dt;
-    const a = h.spin * .48 + this.idx * Math.PI * 2 / this.n;
-    // Petals arrive spread, clamp at the chest, then briefly release between breaths.
+    const side = this.idx % 2 === 0 ? -1 : 1;
+    const a = h.spin * .48 + (this.idx < 2 ? 0 : Math.PI) + .74 + side * .18;
+    // Opposite petals share a shoulder orbit. The centre of the disc is its hit target.
     const release = Math.max(1 - THREE.MathUtils.smoothstep(this.age, .12, .92),
       THREE.MathUtils.smoothstep(Math.cos(this.age * 1.15 + 2.4), .60, .97));
-    const radius = (this.n === 4 ? 1.62 : 1.46) + release * 1.08;
-    const across = Math.sin(a) * radius, depth = 1.32 - release * .18;
+    const across = side * (7.05 + (1.72 + .36 * release) * Math.cos(a));
+    const depth = 1.02 + .36 * Math.cos(a);
     const yaw = h.core.rotation.y;
     this.pos.set(h.core.position.x + across * Math.cos(yaw) + depth * Math.sin(yaw),
-      h.core.position.y + Math.cos(a) * radius,
+      h.core.position.y + 5.12 + (1.66 + .30 * release) * Math.sin(a),
       h.core.position.z - across * Math.sin(yaw) + depth * Math.cos(yaw));
     this.mesh.position.copy(this.pos);
-    this.mesh.rotation.set(0, yaw, -a, 'YXZ');
+    this.mesh.rotation.set(0, yaw, side * (Math.PI / 2 - a), 'YXZ');
     this.mesh.rotateX(-release * .26);
+    if (this.orbit) this.orbit.rotation.z = side * (this.age * .70 + this.idx * .53);
     this.flash = Math.max(0, this.flash - dt * 5);
     this.ink.emissiveIntensity = 2.6 + this.flash * 1.65;
     this.barT = Math.max(0, this.barT - dt);

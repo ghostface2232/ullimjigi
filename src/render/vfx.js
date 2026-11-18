@@ -906,7 +906,11 @@ export class VFX {
     // Upload their shared array here even when both draw ranges are empty.
     R.initTexture(this.add.mat.uniforms.uStamps.value);
     const sc = new THREE.Scene();
-    const add = (mat, geo = this.planeGeo) => { const m = new THREE.Mesh(geo, mat); m.position.set(0, -500, 0); m.frustumCulled = false; sc.add(m); };
+    const add = (mat, geo = this.planeGeo, skeleton) => {
+      const m = skeleton ? new THREE.SkinnedMesh(geo, mat) : new THREE.Mesh(geo, mat);
+      if (skeleton) m.bind(skeleton, new THREE.Matrix4());
+      m.position.set(0, -500, 0); m.frustumCulled = false; sc.add(m);
+    };
     add(this.decals[0].m.material, this.decalGeo);
     add(this.fieldSurfaces[0].m.material, this.fieldSurfaces[0].m.geometry);
     add(this.shells[0].m.material, this.shellGeo);
@@ -937,7 +941,7 @@ export class VFX {
       this._templates.push([ds, this.spheres[0].m.geometry]);
     }
     for (const [mat, geo] of this._templates) add(mat, geo);
-    for (const k of this.keepers) add(k.mat, k.geo || this.planeGeo);
+    for (const k of this.keepers) add(k.mat, k.geo || this.planeGeo, k.skeleton);
     const done = () => { sc.clear(); };
     // programs are keyed by output colour space / tone mapping: compile against the
     // composer's HDR target the scene is actually drawn into (not the sRGB canvas)
@@ -978,7 +982,7 @@ export class VFX {
   }
 
   // register a per-use material type whose shader program must stay compiled
-  keep(mat, geo) { this.keepers.push({ mat, geo }); }
+  keep(mat, geo, skeleton) { this.keepers.push({ mat, geo, skeleton }); }
 
   // Fog, the sun, shadows and the number of lights are part of every program key, and the
   // first prewarm() runs before the world exists. Templates compiled then never match what

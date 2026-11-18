@@ -1,5 +1,6 @@
-// Rigid pieces of the Heart of the Hush. Geometry and baked maps belong to the model cache.
+// The Heart's armour pivots and skinned arms share geometry and baked maps from the model cache.
 import * as THREE from 'three';
+import { clone as cloneRig } from 'three/addons/utils/SkeletonUtils.js';
 import { G } from '../core/context.js';
 import { angleDamp, damp } from '../core/util.js';
 import { U } from '../render/materials.js';
@@ -15,17 +16,29 @@ function paintFirmament(mat, floor, sky) {
     shader.fragmentShader = 'varying float vRiftY; uniform float uSealHeight, uInterior; uniform vec3 uRiftSky;\n' + shader.fragmentShader
       .replace('#include <emissivemap_fragment>', `
         vec3 look = normalize(vViewPosition);
-        vec2 offset = normal.xy * 0.013;
-        vec3 distant = texture2D(emissiveMap, vEmissiveMapUv + offset).rgb;
+        vec2 skyUv = vEmissiveMapUv;
+        #if defined(USE_NORMALMAP_TANGENTSPACE) && !defined(USE_TANGENT)
+          // The sculpt uses a separate atlas, so derive the view offset in the sky chart's frame.
+          mat3 skyFrame = getTangentFrame(-vViewPosition, nonPerturbedNormal, vEmissiveMapUv);
+          skyUv += vec2(dot(look, skyFrame[0]), dot(look, skyFrame[1])) * .023;
+        #endif
+        vec3 distant = texture2D(emissiveMap, skyUv).rgb;
         totalEmissiveRadiance *= distant;
       `)
       .replace('#include <opaque_fragment>', `
         float heightBand = smoothstep(2.0, 13.0, vRiftY - uSealHeight);
-        vec3 veil = mix(vec3(.018,.045,.13), vec3(.17,.061,.27), heightBand);
+        outgoingLight *= mix(vec3(.52,.53,.84), vec3(.81,.74,1.04), heightBand);
+        float cavity = 0.0;
+        #ifdef USE_AOMAP
+          cavity = 1.0 - ambientOcclusion;
+        #endif
+        float cloud = smoothstep(.005, .066, distant.b);
+        float stars = smoothstep(.058, .36, distant.g);
+        vec3 gas = mix(vec3(.014,.024,.13), vec3(.21,.046,.46), cloud);
         float grazing = pow(1.0 - max(0.0,dot(normal,look)), 3.22);
-        outgoingLight += veil * (0.28 + 0.63 * diffuseColor.b) +
+        outgoingLight += gas * (.23 + .80 * cloud + .61 * cavity + .20 * uInterior) +
           grazing * mix(vec3(.16,.14,.36),vec3(.40,.22,.64),heightBand) * (0.86 + 0.14 * clamp(uRiftSky.b,0.0,1.0));
-        outgoingLight += uInterior * (vec3(.025,.055,.12) + diffuseColor.rgb * .85);
+        outgoingLight += stars * vec3(.69,.85,1.03);
         outgoingLight = min(outgoingLight, vec3(1.28));
         #include <opaque_fragment>
       `);
@@ -36,7 +49,7 @@ function paintFirmament(mat, floor, sky) {
 const floorY = { value: 0 };
 const wardParts = ['WardPlate', 'Drops', 'Quills'];
 const fractures = [[0, 0, 8.8], [-7, 9, 3.7], [5.4, 9.4, 4.3]];
-const emitter = (name) => name === 'EyeLight' || name === 'EyeCorona' || name === 'WardLight';
+const emitter = (name) => name === 'EyeLight' || name === 'EyeCorona' || name === 'WardLight' || name === 'VioletGaze';
 
 // Keep the encounter playable if the model request fails, like the authored rift gate.
 function fallbackKit() {
@@ -62,14 +75,15 @@ function fallbackKit() {
 }
 
 export function prepareHeart() {
-  const kit = (model('mn_heart')?.scene || fallbackKit()).clone(true);
+  const kit = cloneRig(model('mn_heart')?.scene || fallbackKit());
   const materials = new Map();
+  const rigid = new Set(), skinned = new Set();
   kit.traverse((mesh) => {
     if (!mesh.isMesh) return;
     const source = mesh.material;
     if (!materials.has(source)) {
       const mat = source.clone();
-      if (mat.name === 'DeepFirmament' || mat.name === 'InnerFirmament') paintFirmament(mat, floorY, U.skyRefl);
+      if (mat.emissiveMap && ['DeepFirmament', 'InnerFirmament', 'CarvedBasalt'].includes(mat.name)) paintFirmament(mat, floorY, U.skyRefl);
       else if (!emitter(mat.name)) {
         mat.onBeforeCompile = (shader) => {
           shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>',
@@ -78,9 +92,13 @@ export function prepareHeart() {
         mat.customProgramCacheKey = () => 'hush-armour';
       }
       materials.set(source, mat);
-      G.vfx.keep(mat, mesh.geometry);
     }
     mesh.material = materials.get(source);
+    const samples = mesh.isSkinnedMesh ? skinned : rigid;
+    if (!samples.has(source)) {
+      samples.add(source);
+      G.vfx.keep(mesh.material, mesh.geometry, mesh.skeleton);
+    }
   });
   return kit;
 }
@@ -92,17 +110,20 @@ export function heartWard(kit, ward, color) {
   let ink;
   glyph.traverse((m) => {
     if (m.material?.name !== 'WardLight') return;
-    ink = m.material = m.material.clone();
-    ink.color.setHex(color); ink.emissive.copy(ink.color); ink.emissiveIntensity = 2.6;
+    if (!ink) {
+      ink = m.material.clone();
+      ink.color.setHex(color); ink.emissive.copy(ink.color); ink.emissiveIntensity = 2.6;
+    }
+    m.material = ink;
   });
   group.add(face, glyph);
-  return { group, ink };
+  return { group, ink, orbit: glyph.getObjectByName('WardOrbit' + glyph.name) };
 }
 
 export class HeartBody {
   constructor(heart, kit) {
     this.heart = heart;
-    this.root = kit.clone(true);
+    this.root = cloneRig(kit);
     for (const name of wardParts) this.root.getObjectByName(name).removeFromParent();
     this.root.position.y = -6;
     heart.core.add(this.root);
@@ -116,6 +137,18 @@ export class HeartBody {
     });
     this.parts = this.root.children.filter((p) => /^(Tip|Spur|Tine|Crown|Breast)/.test(p.name))
       .map((p) => ({ p, home: p.position.clone(), side: p.name.endsWith('R') ? 1 : -1 }));
+    this.lenses = this.root.children.filter(p => p.name.startsWith('SealLens'))
+      .map(part => ({ part, height: part.scale.y }));
+    this.shards = this.root.children.filter(p => p.name.startsWith('Fracture'))
+      .map(part => ({ part, home: part.position.clone(), side: part.name.endsWith('R') ? 1 : -1 }));
+    const clips = model('mn_heart')?.animations || [];
+    this.mixer = new THREE.AnimationMixer(this.root);
+    this.poses = clips.filter(clip => clip.name === 'SealWindup' || clip.name === 'SealUnbound')
+      .map(clip => {
+        const action = this.mixer.clipAction(clip).play();
+        action.paused = true; action.time = clip.duration; action.weight = 0;
+        return { action, windup: clip.name === 'SealWindup' };
+      });
     this.vortex = this.root.getObjectByName('Vortex');
     this.vortexScale = this.vortex?.scale.clone();
     this.skirt = this.root.getObjectByName('VortexSkirt');
@@ -138,6 +171,20 @@ export class HeartBody {
     this.split = damp(this.split, h.phase === 3 ? 1 : 0, 2.3, dt);
     this.open = damp(this.open, h.exposed > 0 ? 1 : 0, 5, dt);
     const breath = Math.sin(t * 1.55);
+    const windup = h.state === 'active' && h.exposed <= 0 ? 1 - THREE.MathUtils.smoothstep(h.atkT, .08, .76) : 0;
+    for (const { action, windup: isWindup } of this.poses) {
+      action.weight = isWindup ? windup * .78 : this.split * (1 - windup) * .80;
+    }
+    this.mixer.update(0);
+    for (const { part, height } of this.lenses) {
+      part.scale.y = height * (1 + .045 * breath + .16 * this.open);
+    }
+    for (const { part, home, side } of this.shards) {
+      part.position.copy(home);
+      part.position.x += side * (.17 * this.stage + .52 * this.split);
+      part.position.y += .10 * this.stage + .13 * this.split + .035 * Math.sin(t + home.y);
+      part.rotation.z = side * (.045 * this.stage + .14 * this.split);
+    }
     this.root.rotation.z = Math.sin(t * 0.68) * 0.013;
     this.root.scale.set(1 + breath * .009, 1 + breath * .006, 1);
     this.eye.scale.set(this.eyeScale.x * (.65 + .58 * this.open + .13 * this.split),
@@ -206,6 +253,11 @@ export class HeartBody {
 
   dispose() {
     this.end();
+    this.mixer.stopAllAction();
+    this.mixer.uncacheRoot(this.root);
+    const skeletons = new Set();
+    this.root.traverse(o => { if (o.isSkinnedMesh) skeletons.add(o.skeleton); });
+    for (const skeleton of skeletons) skeleton.dispose();
     for (const { mat } of this.iris) mat.dispose();
     this.iris.length = 0;
   }

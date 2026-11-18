@@ -226,39 +226,63 @@ function makeLeafTexture(S = 2048) {
     }
     return ops;
   };
-  for (let v = 4; v < 8; v++) {
-    const ops = [], twigs = [];
-    if (v < 6) {
-      // Short overlapping needle sprays fill a fan. Long painted lances looked like
-      // giant grass blades close up, so detail stays small even on a broad branch sheet.
-      for (let band = -5; band <= 5; band++) {
-        const end = 0.86 + 0.045 * Math.cos(band * 1.7 + v);
-        for (let k = 0; k < 20; k++) {
-          const u = k / 19, x = C * (0.07 + (end - 0.07) * u);
-          const y = C * (0.5 + band * 0.077 * (0.6 + u * 0.4));
-          const tone = 177 + u * 35 + (5 - Math.abs(band)) * 3;
-          for (const side of [-1, 1]) {
-            const angle = side * (0.7 + rnd() * 0.2), L = C * (0.065 + rnd() * 0.025);
-            leaf(ops, x, y + side * C * 0.009, angle, L, L * 0.25, tone, C / 1024);
-            // Fine tips feather the outer edge while the overlapping bases stay quiet.
-            for (let n = 0; n < 3; n++) {
-              const nx = x + C * n * 0.015, ny = y + side * C * 0.012;
-              line(ops, nx, ny, nx + C * 0.037, ny + side * C * (0.025 + n * 0.004), C * 0.003, tone + 8);
-            }
-          }
+  // Paint the spine of the fan first. Neighbouring shoots overlap at their
+  // bases, and separate only at the fringe. The snow mask follows those spines.
+  for (let v = 4; v < 6; v++) {
+    const ops = [], cap = [];
+    const spine = (u) => 0.5 + (v === 4 ? 0.045 : -0.035) * Math.sin(u * Math.PI * 2);
+    const shoot = (ax, ay, bx, by, girth, tone) => {
+      const dx = bx - ax, dy = by - ay, angle = Math.atan2(dy, dx);
+      const len = Math.hypot(dx, dy), nx = -dy / len, ny = dx / len;
+      const point = (t, offset) => [(ax + t * dx + nx * offset) * C, (ay + t * dy + ny * offset) * C];
+      ops.push((g, A) => {
+        // Several shoots merge into one pad at a distance; the gradient turns
+        // each one without a baked key light or a stripe down the centre.
+        g.beginPath(); g.moveTo(...point(0, 0));
+        g.bezierCurveTo(...point(0.24, -girth * 1.3), ...point(0.75, -girth * 0.8), ...point(1, 0));
+        g.bezierCurveTo(...point(0.71, girth * 0.65), ...point(0.22, girth * 1.15), ...point(0, 0));
+        if (A) g.fillStyle = '#fff';
+        else {
+          const gr = g.createLinearGradient(...point(0, 0), ...point(1, 0));
+          gr.addColorStop(0, grey(tone * 0.65)); gr.addColorStop(0.72, grey(tone)); gr.addColorStop(1, grey(tone * 1.10));
+          g.fillStyle = gr;
         }
+        g.fill();
+      });
+      for (let i = 0; i < 54; i++) {
+        const t = 0.08 + rnd() * 0.85, side = rnd() * 2 - 1;
+        const [x, y] = point(t, Math.sin(Math.PI * t) * girth * side * 0.8);
+        const L = C * len * (0.07 + rnd() * 0.15);
+        leaf(ops, x, y, angle + side * 0.86, L, L * 0.11, tone * (0.80 + t * 0.16 + rnd() * 0.18), C / 1500);
       }
-      paint(v, ops);
-      const cap = [];
-      for (let k = 0; k < 3; k++) blob(cap, C * (0.28 + k * 0.17), C * (0.5 + Math.sin(k * 2 + v) * 0.025),
-        C * 0.205, C * (0.3 + k * 0.015), 0, 242 + k * 4, 0.86);
-      paint(v + 4, cap);
-      continue;
-    } else {
-      // tuft: twigs of every length all round a centre (a ragged ball, not a star)
-      const n = 17 + (v - 6) * 2;
-      for (let k = 0; k < n; k++) twigs.push([0.5 * C + (rnd() - 0.5) * 0.06 * C, 0.5 * C + (rnd() - 0.5) * 0.06 * C, k * 2.3999632 + rnd() * 0.4, C * (0.25 + rnd() * 0.17), k % 3 ? 196 + rnd() * 56 : 148 + rnd() * 30]);
+      // Small drifts merge over the thick inner shoots, with green left in the clefts.
+      for (let k = 0; k < 4; k++) {
+        const u = 0.19 + k * (0.089 + 0.033 * rnd()), [x, y] = point(u, girth * (rnd() * 0.24 - 0.12));
+        blob(cap, x, y, C * len * (0.19 - k * 0.021), C * girth * (0.82 - k * 0.10),
+          angle, 224 + 3 * k + rnd() * 8, 0.89);
+      }
+    };
+    for (const side of [-1, 1]) {
+      const us = v === 4 ? [0.07, 0.20, 0.29, 0.43, 0.55, 0.66] : [0.08, 0.16, 0.32, 0.45, 0.59, 0.68];
+      for (const u of us) {
+        const ax = u + rnd() * 0.04;
+        const bx = ax + (0.17 + rnd() * 0.13) * (1.16 - ax * 0.45);
+        const breadth = Math.sin(Math.PI * bx) * (0.24 + 0.10 * rnd());
+        shoot(ax, spine(ax), bx, 0.5 + side * breadth, 0.057 + 0.025 * rnd(), 154 + ax * 57 + rnd() * 24);
+      }
     }
+    shoot(0.04, spine(0.04), 0.68, spine(0.68), 0.088, 193);
+    shoot(0.35, spine(0.35), 0.96, 0.508, 0.066, 214);
+    paint(v, ops); paint(v + 4, cap);
+  }
+
+  // Keep the original random sequence for tuft, willow and blossom tiles.
+  s = 441603674;
+  for (let v = 6; v < 8; v++) {
+    const ops = [], twigs = [];
+    // Tuft: twigs of every length all round a centre.
+    const n = 17 + (v - 6) * 2;
+    for (let k = 0; k < n; k++) twigs.push([0.5 * C + (rnd() - 0.5) * 0.06 * C, 0.5 * C + (rnd() - 0.5) * 0.06 * C, k * 2.3999632 + rnd() * 0.4, C * (0.25 + rnd() * 0.17), k % 3 ? 196 + rnd() * 56 : 148 + rnd() * 30]);
     // darker ones underneath
     twigs.sort((a, b) => a[4] - b[4]);
     for (const tw of twigs) twig(ops, tw[0], tw[1], tw[2], tw[3], tw[4]);

@@ -570,70 +570,135 @@ function pathAt(pts, y) {
 
 // ---------------- conifer (fir / spruce) ----------------
 // A tapered stem carries overlapping, drooping branch fans. Curved sheets have a lit
-// upper surface and cool underside; the far model uses the same tier layout with fewer
-// radial rows. Snow caps follow only the upper sheets, leaving a needle fringe.
+// upper surface and cool underside; both detail levels use the same roots, shoulders
+// and tips. Snow caps follow only the upper sheets, leaving a needle fringe.
 // o: { pal (index into FIR_PAL), snowy }
 const FIR_PAL = [
   { dark: 0x1a4a2e, mid: 0x2f7a42, tip: 0x7cba56, under: 0x12301f },   // fir
-  { dark: 0x1a463c, mid: 0x2e7664, tip: 0x78c0a0, under: 0x122e2a },   // blue spruce
+  { dark: 0x274e42, mid: 0x49816b, tip: 0x9ebc86, under: 0x20382f },   // blue spruce
   { dark: 0x2a5226, mid: 0x4c8632, tip: 0xa0c452, under: 0x1a321a },   // yellow-green
 ];
+// A branch carries a terminal spray and shorter laterals. Each spray has two
+// textured faces meeting at the rim, so even a side view shows its thickness.
+function firFan(M, lod, start, angle, length, width, fall, curl, roll, tile, tones, snowy) {
+  const along = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
+  const across = new THREE.Vector3(-along.z, 0, along.x);
+  // Low skirts turn out above the ground, including the sunk base of an instance.
+  fall = Math.min(fall, (start.y - 0.35 - width * 0.16) / length);
+  const { dark, mid, tip, under, snow, lum } = tones;
+  const n = new THREE.Vector3(), c = new THREE.Color();
+  const surface = (bottom, cap) => {
+    const row = (u, breadth) => {
+      const arch = Math.sin(Math.PI * u), sag = u * u * (2.2 - 1.2 * u);
+      const p = start.clone().addScaledVector(along, length * u)
+        .addScaledVector(across, length * curl * u * u)
+        .addScaledVector(UP, length * (0.10 * arch - fall * sag));
+      const indices = [];
+      for (const side of breadth ? [-1, 0, 1] : [0]) {
+        const crest = !side && breadth > 0;
+        const q = p.clone().addScaledVector(across, side * width * breadth);
+        q.y += width * breadth * (side * roll + (crest ? (bottom ? -0.09 : 0.16) : -0.30));
+        if (cap) q.y += 0.012 + width * 0.055 * arch;
+        n.copy(along).multiplyScalar((fall * u * (4.4 - 3.6 * u) - 0.10 * Math.PI * Math.cos(Math.PI * u)) * (bottom ? -1 : 1));
+        n.addScaledVector(across, side * 1.08 - roll); n.y = bottom ? -0.82 : 1; n.normalize();
+        if (cap) c.copy(snow).multiplyScalar(crest ? 1 : 0.85);
+        else if (bottom) c.copy(under).lerp(mid, 0.22 + u * 0.22);
+        else c.copy(dark).lerp(mid, 0.42 + 0.48 * u).lerp(tip, (crest ? 0.24 : 0.07) + 0.16 * u);
+        c.multiplyScalar(lum);
+        indices.push(M.sheet(q, n, c, u, 0.5 + side * breadth * 0.68, tile + (cap ? SNOW : 0)));
+      }
+      return indices;
+    };
+    const tri = (a, b, c) => bottom ? M.ftri(a, c, b) : M.ftri(a, b, c);
+    const [root] = row(0, 0), shoulder = row(0.48, 1);
+    tri(root, shoulder[1], shoulder[0]); tri(root, shoulder[2], shoulder[1]);
+    let outer = shoulder;
+    if (!lod) {
+      outer = row(0.76, 0.73);
+      for (let i = 0; i < 2; i++) {
+        tri(shoulder[i], shoulder[i + 1], outer[i + 1]);
+        tri(shoulder[i], outer[i + 1], outer[i]);
+      }
+    }
+    const [end] = row(1, 0);
+    tri(outer[0], outer[1], end); tri(outer[1], outer[2], end);
+  };
+  surface(false, false); surface(true, false);
+  if (snowy) surface(false, true);
+}
+
 function conifer(seed, lod, o = {}) {
   const rnd = mulberry32(seed), M = new Mesher();
-  const snowy = !!o.snowy, pal = FIR_PAL[(o.pal ?? 0) % FIR_PAL.length];
-  const dark = hc(pal.dark), mid = hc(pal.mid), tip = hc(pal.tip), under = hc(pal.under);
-  const snow = hc(0xcad4e2), snowShade = hc(0xa6b6d0);
-  const H = 7.6 + rnd() * 2, ph = rnd() * TAU, lean = (rnd() - 0.5) * 0.4, r0 = 0.29 + rnd() * 0.06;
-  const stem = (t) => new THREE.Vector3(Math.sin(t * 2.2 + ph) * 0.07 * t + lean * t * t, t * H, Math.cos(t * 1.7 + ph) * 0.06 * t);
+  const pal = FIR_PAL[(o.pal ?? 0) % FIR_PAL.length];
+  const tones = { dark: hc(pal.dark), mid: hc(pal.mid), tip: hc(pal.tip), under: hc(pal.under), snow: hc(0xc8d3d9), lum: 1 };
+  const H = 7.6 + rnd() * 2, ph = rnd() * TAU, lean = (rnd() - 0.5) * 1.14, r0 = 0.255 + rnd() * 0.055;
+  const stem = (t) => new THREE.Vector3(Math.sin(t * 3.2 + ph) * 0.32 * t + lean * t * t, t * H, Math.cos(t * 2.7 + ph) * 0.32 * t);
   const bark = barkColor(BARK.pine, 0.25), ts = [0, 0.04, 0.1, 0.22, 0.4, 0.58, 0.75, 0.88, 1];
   tube(M, ts.map((t) => { const p = stem(t); if (!t) p.y = -0.3; return p; }),
-    ts.map((t) => lerp(r0, 0.022, Math.pow(t, 0.8))), lod ? 5 : 8, bark,
+    ts.map((t) => lerp(r0, 0.009, Math.pow(t, 0.8))), lod ? 5 : 8, bark,
     { flare: 0.7, flareT: 0.1, lobes: 5, ph, bump: lod ? 0 : 0.14 });
-  const y0 = H * (0.22 + rnd() * 0.035), tiers = 9 + Math.floor(rnd() * 2);
-  const color = new THREE.Color(), normal = new THREE.Vector3();
-  for (let tier = 0; tier < tiers; tier++) {
-    const t = tier / (tiers - 1), y = lerp(y0, H - 0.45, t);
-    const radius = (0.36 + 3.1 * Math.pow(1 - t, 0.72)) * (0.9 + 0.1 * Math.sin(t * Math.PI));
-    const branches = t > 0.8 ? 6 : 8, phase = ph + tier * 2.39996;
+
+  const base = 0.19 + rnd() * 0.075, girth = 3.05 + rnd() * 0.47, tiers = 7 + Math.floor(rnd() * 2);
+  const exposure = rnd() * TAU;
+  const fill = mulberry32(seed + 107), needle = new THREE.Color(), normal = new THREE.Vector3();
+  let phase = ph;
+  for (let i = 0; i < tiers; i++) {
+    const fraction = (i + (i > 0 && i < tiers - 1 ? (rnd() - 0.5) * 0.40 : 0)) / (tiers - 1);
+    const t = 1 - Math.pow(1 - fraction, 1.38);
+    const h = lerp(base, 0.925, t), envelope = 0.44 + girth * Math.pow(1 - t, 0.74);
+    const radius = envelope * (0.87 + rnd() * 0.28), branches = (t > 0.87 ? 3 : 5) + Math.floor(rnd() * 2);
+    phase += 1.7 + rnd() * 1.4;
     for (let b = 0; b < branches; b++) {
-      const a = phase + b / branches * TAU + (rnd() - 0.5) * 0.12;
-      const L = radius * (0.92 + rnd() * 0.16), lum = 0.95 + rnd() * 0.1;
-      const drop = lerp(0.62, 0.44, t), by = y + (rnd() - 0.5) * 0.12;
-      const E = new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), S = new THREE.Vector3(-E.z, 0, E.x);
-      const center = stem(by / H);
-      const at = (u) => center.clone().addScaledVector(E, L * u).addScaledVector(UP, L * (0.17 * Math.sin(Math.PI * u) - drop * u * u));
-      const steps = lod ? [0.06, 0.55, 1.04] : [0.06, 0.37, 0.73, 1.04];
-      const tile = TILE.spray[0] + (b & 1), snowK = rnd();
-      // Overlapping, curved branch fans form a hanging skirt. Their alpha texture still
-      // has small needle openings; no opaque cone or interior body is added near the player.
-      const layer = (bottom, white) => {
-        const ix = [];
-        for (let r = 0; r < steps.length; r++) {
-          const u = steps[r], w = L * (0.13 + 0.62 * u), p = at(u);
-          if (white) color.copy(snowShade).lerp(snow, 0.35 + u * 0.55);
-          else if (bottom) color.copy(under).lerp(dark, 0.35 + u * 0.25).multiplyScalar(lum);
-          else color.copy(dark).lerp(mid, 0.35 + u * 0.55).lerp(tip, smoothstep(0.65, 1.04, u) * 0.3).multiplyScalar(lum);
-          for (let k = 0; k < 3; k++) {
-            normal.copy(E).multiplyScalar(0.15 + u * 0.45).addScaledVector(S, (k - 1) * 0.18);
-            normal.y = bottom ? -0.65 : 0.95; normal.normalize();
-            const q = p.clone().addScaledVector(S, (k - 1) * w).addScaledVector(UP, (k === 1 ? 0.06 : -0.14) * w + (white ? 0.035 : 0));
-            ix.push(M.sheet(q, normal, color, (u - 0.06) / 0.98, k * 0.5, tile + (white ? SNOW : 0)));
-          }
-        }
-        for (let r = 0; r < steps.length - 1; r++) for (let k = 0; k < 2; k++) {
-          const a = ix[r * 3 + k], b = ix[r * 3 + k + 1], c = ix[(r + 1) * 3 + k + 1], d = ix[(r + 1) * 3 + k];
-          if (bottom) { M.ftri(a, c, b); M.ftri(a, d, c); } else { M.ftri(a, b, c); M.ftri(a, c, d); }
-        }
-      };
-      layer(false, false); layer(true, false);
-      if (snowy && snowK < 0.95) layer(false, true);
-      if (!lod) tube(M, [at(0), at(0.35), at(0.7), at(0.98)].map(p => p.addScaledVector(UP, -0.025)),
-        [0.035, 0.025, 0.016, 0.008], 3, bark, { tip: false });
+      const a = phase + (b + (rnd() - 0.5) * 0.55) * TAU / branches;
+      const reach = radius * (0.72 + rnd() * 0.44 + 0.14 * Math.cos(a - exposure));
+      const L = Math.min(reach, envelope * 1.14);
+      const origin = stem(h + (0.048 * Math.cos(a - phase + i) + (rnd() - 0.5) * 0.060) * (1 - t));
+      const slope = 0.22 + rnd() * 0.22 - 0.46 * t * t, bend = (rnd() - 0.5) * 0.24;
+      const along = new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), across = new THREE.Vector3(-along.z, 0, along.x);
+      const onBranch = (u) => origin.clone().addScaledVector(along, L * u).addScaledVector(across, L * bend * u * u)
+        .addScaledVector(UP, L * (0.10 * Math.sin(Math.PI * u) - (slope + 0.12) * u * u * (2.2 - 1.2 * u)));
+      if (!lod) tube(M, [origin, onBranch(0.22), onBranch(0.48)], [0.024 * L, 0.016 * L, 0.006 * L], 3, bark, { tip: false });
+      const pattern = Math.floor(rnd() * 2), tile = TILE.spray[0] + pattern;
+      const snowLoad = rnd(), roll = (rnd() - 0.5) * 0.38;
+      tones.lum = 0.87 + rnd() * 0.23;
+      const collar = 0.015 + rnd() * 0.085, W = L * (0.36 + rnd() * 0.14);
+      firFan(M, lod, onBranch(collar), a + bend * collar, L * (1 - collar), W, slope + 0.12, bend, roll, tile, tones, o.snowy && snowLoad > 0.08);
+      // Recess a needle tuft under selected forks. It overlaps the existing fans
+      // from the side while the edge of the crown keeps the branch silhouette.
+      if (i < tiers - 1 && (i + b) % 3 !== 0) {
+        const u = 0.24 + fill() * 0.24, p = onBranch(u);
+        const size = L * (0.246 + 0.074 * fill());
+        p.y -= size * (0.19 + fill() * 0.23);
+        normal.copy(along).addScaledVector(UP, 0.45).normalize();
+        needle.copy(tones.dark).lerp(tones.mid, 0.61 + fill() * 0.16).multiplyScalar(tones.lum);
+        // Point the atlas shoot toward the underside of its bough.
+        const turn = 0.58 + 0.34 * fill();
+        M.card(p, normal, needle, size, (pattern + turn) * 0.5, TILE.spray, 1);
+      }
+      // An isolated shoot occupies one side of the larger spaces between whorls.
+      if (i > 0 && t < 0.91 && (b === 0 || b === 3)) {
+        const root = stem(h - (0.036 + 0.026 * (1 - t)));
+        firFan(M, lod, root, a + 0.64, L * 0.75, W * 0.85, slope + 0.12,
+          -bend, -roll, tile, tones, o.snowy && snowLoad > 0.34);
+      }
+      if (i === tiers - 1) continue;
+      // Forks spring from different points; their tips pull down with their own weight.
+      for (const side of [-1, 1]) {
+        const u = 0.13 + rnd() * 0.31, wing = 0.54 + rnd() * 0.28;
+        const fork = a + side * (0.49 + rnd() * 0.43), sag = slope + 0.18 + rnd() * 0.26;
+        // Allow for the sideways bend of both the stem and the fork at its tip.
+        const wingLength = Math.min(L * wing, (envelope * 1.15 - L * u * Math.hypot(1, bend * u)) / Math.hypot(1, 0.14));
+        firFan(M, lod, onBranch(u), fork, wingLength, W * (0.62 + rnd() * 0.26), sag, -side * 0.14,
+          roll + side * 0.19, TILE.spray[0] + 1 - pattern, tones, o.snowy && snowLoad > 0.28);
+      }
     }
   }
-  normal.set(0, 1, 0);
-  M.card(stem(0.98), normal, mid, 0.28, 0.2, TILE.tuft);
-  M.card(stem(1.01), normal, tip.clone().lerp(mid, 0.6), 0.2, 0.7, TILE.tuft);
+  // Upright buds hug the last stretch of wood to give the leader a green taper.
+  for (let k = 0; k < 7; k++) {
+    const t = k / 6, length = 0.41 - 0.29 * t;
+    firFan(M, lod, stem(0.889 + 0.097 * t), phase + k * 2.4, length, length * 0.70,
+      -(0.77 + t * 0.77), 0.12, 0.08, TILE.spray[0] + (k & 1), tones, false);
+  }
   return M.geometry();
 }
 

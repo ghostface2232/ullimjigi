@@ -1039,9 +1039,15 @@ const TERRAIN_SURF = `
     vec4 burn = texture2D(uBurnTex, guv);
     if (burn.r + burn.g > 0.002) {
       float ashN = _vn(p * 1.3);
-      vec3 ash = mix(vec3(0.16, 0.14, 0.13), vec3(0.34, 0.3, 0.27), ashN);
-      diffuseColor.rgb = mix(diffuseColor.rgb, ash, burn.r * (0.75 + 0.25 * ashN) * (1.0 - _wRock * 0.6));
-      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.08, 0.04), burn.g * 0.6);
+      vec3 ash = mix(vec3(0.042, 0.028, 0.021), vec3(0.095, 0.070, 0.052), ashN);
+      diffuseColor.rgb = mix(diffuseColor.rgb, ash, clamp(burn.r * 1.2 + burn.g * 0.72, 0.0, 1.0) * (1.0 - _wRock * 0.6));
+      // Isolated cracks stay red for a few seconds behind the advancing tongues.
+      float coal = smoothstep(0.77, 0.91, _vn(p * 5.7)) * smoothstep(0.65, 0.82, _vn(p * 13.0 + ashN));
+      totalEmissiveRadiance += vec3(0.56, 0.032, 0.006) * coal * burn.b;
+      // Interpolated leading edge of a hot cell, broken into coals rather than a grid contour.
+      float heat = burn.g + (ashN - 0.5) * 0.21;
+      float front = smoothstep(0.20, 0.29, heat) * (1.0 - smoothstep(0.31, 0.38, heat));
+      totalEmissiveRadiance += vec3(1.10, 0.21, 0.026) * front * 0.43 * smoothstep(0.42, 0.71, _vn(p * 7.2)) * (1.0 - burn.r);
     }
     // rain: darker, more saturated ground with a wet sheen
     diffuseColor.rgb *= 1.0 - uWet * (0.22 + 0.12 * _wRock);

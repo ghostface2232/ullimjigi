@@ -7,6 +7,7 @@
 // - Debris: instanced physical chunks (rock, ice, embers) that tumble and bounce
 // - Distort: screen-space refraction objects (shock rings, shells, heat haze)
 //   rendered into the renderer's distortion target
+import { firePaint } from './flame.js';
 import * as THREE from 'three';
 import { U, toon } from './materials.js';
 import { crystalMaterial, crystalGeometry } from './crystal.js';
@@ -71,7 +72,7 @@ float fxFog(vec3 w){ float d = length(w - cameraPosition); return 1.0 - exp(-uFo
 // FxSphere
 // ------------------------------------------------------------------
 const SPHERE_VS = /* glsl */ `
-uniform float uTime, uScale, uDisp, uSeed, uRise, uSpeed;
+uniform float uTime, uScale, uDisp, uSeed, uRise, uSpeed, uMode;
 varying vec3 vN, vW, vL;
 varying float vN1, vRad;
 ${SNOISE}
@@ -92,9 +93,27 @@ void main(){
   if (dot(nn, d) < 0.0) nn = -nn;
   vN1 = n; vL = d;
   vRad = length(modelMatrix[0].xyz);
+  if (uMode < -1.5) {
+    // An erupting parcel is broad at the root and splits into curling jets at its tip.
+    float axial = d.y * 0.5 + 0.5;
+    float az = atan(d.z, d.x);
+    float flute = 0.5 + 0.5 * sin(az * 3.0 + axial * 4.3 + uSeed);
+    float shoulder = length(d.xz);
+    p0.xz *= (1.22 - 0.78 * axial) * (0.87 + 0.21 * flute);
+    p0.x += axial * axial * (0.56 + 0.23 * sin(uSeed)) - 0.22 * sin(axial * 5.4);
+    p0.y += axial * shoulder * (flute * 0.84 + n * 0.24 - 0.35);
+    nn = d;
+  } else if (uMode < -0.5) {
+    // The long local axis points down the wake when the body is in flight.
+    float angle = atan(d.z, d.x);
+    float fold = sin(angle * 3.0 + uSeed + 1.9 * d.y - uTime * uSpeed);
+    float fin = smoothstep(-0.12, 0.92, fold) * smoothstep(-0.15, 0.55, d.y);
+    p0.xz *= 1.0 - 0.40 * max(d.y, 0.0);
+    p0.y += fin * 0.86 - (1.0 - fin) * max(d.y, 0.0) * 0.55;
+  }
   vec4 wp = modelMatrix * vec4(p0, 1.0);
   vW = wp.xyz;
-  vN = normalize(mat3(modelMatrix) * nn);
+  vN = uMode < -1.5 ? normalize((vec4(normalMatrix * nn, 0.0) * viewMatrix).xyz) : normalize(mat3(modelMatrix) * nn);
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
 const SPHERE_FS = /* glsl */ `
@@ -110,8 +129,15 @@ void main(){
   vec3 V = normalize(cameraPosition - vW);
   float facing = clamp(abs(dot(N, V)), 0.0, 1.0);
   float fres = pow(1.0 - facing, uFres);
-  float n2 = snoise(vL * uScale * 2.9 + vec3(0.0, -uTime * uRise * 1.6, uTime * 0.37));
+  vec3 noisePos = vL * uScale * 2.9 + vec3(0.0, -uTime * uRise * 1.6, uTime * 0.37);
+  if (uMode < -1.5) noisePos = vL * vec3(3.3, 1.8, 3.3) + vec3(0.0, -uTime * 1.9, uTime * 0.21);
+  float n2 = snoise(noisePos);
   float mask = vN1 * 0.5 + 0.5 + n2 * 0.22 + facing * 0.12;
+  if (uMode < -1.5) {
+    // The thinnest ridges are eaten first. Pockets open through the skin,
+    // and the cool outer material has a lower density than the central folds.
+    mask = 0.31 + 0.14 * vN1 + 0.23 * n2 + 0.34 * facing - 0.15 * vL.y;
+  }
   float ero = smoothstep(uErode - uSoft * 0.3, uErode + uSoft, mask);
   float alpha = ero * uAlpha;
   // big blasts thin out where they pass close to the camera, so a fireball at arm's length
@@ -119,8 +145,22 @@ void main(){
   alpha *= mix(1.0, smoothstep(1.2, 5.5, distance(cameraPosition, vW)), smoothstep(1.4, 2.6, vRad));
   if (alpha < 0.008) discard;
   vec3 col;
-  if (uMode < 0.5) {
-    // fire: banded (toon) temperature ramp; hot facing core, cooler smoky rim,
+  if (uMode < -1.5) {
+    float fold = sin(atan(vL.z, vL.x) * 3.0 + 4.3 * vL.y + 2.1 * vN1 + n2);
+    float depth = clamp(mask - uErode, 0.0, 1.0);
+    float heat = 0.26 + 0.75 * depth - 0.28 * vL.y + 0.12 * fold + 0.16 * n2;
+    heat -= 0.57 * smoothstep(0.32, 0.92, uErode);
+    col = mix(uCool * 0.82, uMid, smoothstep(0.02, 0.44, heat));
+    col = mix(col, uHot * vec3(1.10, 1.28, 1.14), smoothstep(0.39, 0.88, heat));
+  } else if (uMode < -0.5) {
+    float roll = sin(atan(vL.z, vL.x) * 3.0 + vL.y * 3.2 - uTime * uRise);
+    float heat = 0.55 * facing + 0.22 * roll + 0.30 * vN1 + 0.12 * n2 - 0.26 * vL.y;
+    float aa = max(fwidth(heat), 0.017);
+    col = mix(uCool, uMid, smoothstep(0.21 - aa, 0.21 + aa, heat));
+    col = mix(col, uHot, smoothstep(0.62 - aa, 0.62 + aa, heat));
+    col *= mix(0.60, 1.0, smoothstep(-0.4, 0.15, heat));
+  } else if (uMode < 0.5) {
+    // Hush and custom banded volumes retain their own palette and rim.
     // dark soot swirls where the noise dips, hot rim on eroding edges
     float heat = 0.38 + vN1 * 0.5 + n2 * 0.24 + facing * 0.5 - fres * 0.62 - uErode * 0.7;
     float hb = clamp(heat, 0.0, 1.0) * 3.0;
@@ -165,15 +205,17 @@ void main(){
 
 // Presets: colours are linear HDR; only fire/energy cores exceed the bloom threshold.
 const C = (r, g, b) => new THREE.Color(r, g, b);
+const flame = { mode: -1, hot: firePaint.core, mid: firePaint.body, cool: firePaint.tip, add: 0 };
 export const SPHERE_LOOK = {
-  fire: { mode: 0, hot: C(3.3, 2.1, 0.72), mid: C(2.2, 0.62, 0.08), cool: C(0.32, 0.05, 0.02), fres: 1.5, glow: 0.1, edge: 2.2, scale: 1.45, disp: 0.3, rise: 0.8, speed: 0.9, add: 0 },
-  fireball: { mode: 0, hot: C(4.4, 3.3, 1.5), mid: C(2.6, 0.95, 0.16), cool: C(0.9, 0.18, 0.04), fres: 1.2, glow: 0.4, edge: 2.0, scale: 1.6, disp: 0.18, rise: 2.4, speed: 2.8, add: 0 },
+  eruption: { ...flame, mode: -2, scale: 1.15, disp: 0.26, soft: 0.033, rise: 1.1, speed: 1.7 },
+  fire: { ...flame, scale: 1.45, disp: 0.3, rise: 0.8, speed: 0.9 },
+  fireball: { ...flame, scale: 1.6, disp: 0.18, rise: 2.4, speed: 2.8 },
   // projectile body (불씨 탄): hot only at the heart, deep red and sooty at the rim, so the
   // comet keeps a dark-edged silhouette instead of blooming into a ball
-  comet: { mode: 0, hot: C(2.6, 1.55, 0.45), mid: C(1.8, 0.48, 0.05), cool: C(0.36, 0.05, 0.02), fres: 1.0, glow: 0, edge: 1.2, scale: 2.2, disp: 0.34, rise: 3.4, speed: 3.0, add: 0 },
-  // big flying fire (화염구): the same idea at size, a little hotter at the heart
-  meteor: { mode: 0, hot: C(2.5, 1.45, 0.42), mid: C(1.8, 0.48, 0.06), cool: C(0.36, 0.05, 0.02), fres: 1.0, glow: 0, edge: 1.2, scale: 1.7, disp: 0.26, rise: 3.0, speed: 2.6, add: 0 },
-  sun: { mode: 0, hot: C(3.8, 2.5, 0.9), mid: C(2.6, 0.85, 0.12), cool: C(0.8, 0.14, 0.03), fres: 1.2, glow: 0.5, edge: 2.0, scale: 1.1, disp: 0.16, rise: 1.2, speed: 1.4, add: 0 },
+  comet: { ...flame, scale: 2.2, disp: 0.34, rise: 3.4, speed: 3.0 },
+  // The meteor rolls more slowly than the small comet.
+  meteor: { ...flame, scale: 1.7, disp: 0.26, rise: 3.0, speed: 2.6 },
+  sun: { ...flame, scale: 1.1, disp: 0.16, rise: 1.2, speed: 1.4 },
   smoke: { mode: 1, hot: C(2.2, 0.65, 0.12), lit: C(0.46, 0.44, 0.44), shade: C(0.13, 0.13, 0.17), fres: 2, scale: 1.1, disp: 0.3, rise: 0.35, speed: 0.25, add: 0 },
   steam: { mode: 1, hot: C(0, 0, 0), lit: C(1.05, 1.07, 1.1), shade: C(0.55, 0.62, 0.72), fres: 2, scale: 1.0, disp: 0.28, rise: 0.6, speed: 0.3, add: 0 },
   dust: { mode: 1, hot: C(0, 0, 0), lit: C(0.72, 0.64, 0.5), shade: C(0.32, 0.3, 0.3), fres: 2, scale: 1.2, disp: 0.3, rise: 0.25, speed: 0.2, add: 0 },

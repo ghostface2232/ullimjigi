@@ -543,7 +543,7 @@ export class Combat {
     const V = G.vfx;
     if (st.burn > 0) {
       st.burn -= dt; st.burnTick -= dt;
-      if (st.burn > 0 && st.wet <= 0) V.burning(t, c, dt);
+      if (st.burn > 0 && st.wet <= 0 && st.frozen <= 0) V.burning(t, c, dt);
       if (st.burnTick <= 0) {
         st.burnTick = 0.5;
         this.hit(t, { dmg: st.burnDmg, el: 'fire', noReact: true, noStatus: true, pos: c, hitstop: 0, shake: 0, source: 'dot' });

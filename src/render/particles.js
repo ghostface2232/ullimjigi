@@ -3,13 +3,14 @@
 //        7 flame tongue, 8 dissolving wisp (smoke that breaks up as it ages),
 //        9 droplet (specular water drop), 10 snowflake, 11 leaf, 12 rune glyph,
 //        13 electric spark (jagged, flickering), 14 bubble, 15 glint (hairline cross flare),
-//        16 shock ring (thins with age), 17 hit spark (spiked burst), 18 surface flame
+//        16 shock ring (thins with age), 17 hit spark (spiked burst), 18 surface flame, 19 fire impact, 20 trailing flame, 21 impact rays
 // Sprites can rotate (rot/spin) and stretch along their screen-space velocity
 // (sparks, streaks and droplets do by default). Colour runs through up to three
 // keys (color → color2 at `mid` → color1) and size follows an ease curve.
 // Alpha softens where a sprite meets the terrain (heightmap) and right in front
 // of the camera.
 import * as THREE from 'three';
+import { FLAME_GLSL } from './flame.js';
 import { U } from './materials.js';
 
 // Eight independently filtered stamps. RG stores a puff's tangent normal, B the
@@ -142,7 +143,7 @@ void main(){
     vec3 normalV = mat3(viewMatrix) * vec3(-slope.x, 1.0, -slope.y);
     vGround = vec3(above / max(aSize, 0.01), normalV.x * 0.5, -normalV.y * 0.5);
   }
-  vColor.a *= mix(0.4, 1.0, smoothstep(-aSize * 0.2, aSize * 0.3, above));
+  if (aShape < 20.5) vColor.a *= mix(0.4, 1.0, smoothstep(-aSize * 0.2, aSize * 0.3, above));
   // tiny sprites (sub-pixel) would shimmer; fade them instead
   vColor.a *= smoothstep(0.6, 2.0, size);
   // a sprite that would come out invisible (sub-pixel, or faded right in front of the lens,
@@ -168,11 +169,12 @@ varying vec2 vDir;
 varying float vStretch;
 varying vec2 vMisc;
 varying vec3 vGround;
+${FLAME_GLSL}
+uniform vec4 uWindFlow;
 float h21(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 // value noise, one lattice cell per unit: the shared noise texture's A channel is the same
 // smoothstep-interpolated value noise with 32 cells per tile, so one fetch replaces four hashes
 float vn(vec2 p){ return textureLod(uNoise, p * (1.0 / 32.0), 0.0).a; }
-float fbm(vec2 p){ return vn(p) * 0.55 + vn(p * 2.07 + 3.1) * 0.3 + vn(p * 4.3 + 7.7) * 0.15; }
 void main(){
   vec2 p0 = gl_PointCoord * 2.0 - 1.0;
   // rotate into the particle frame; x across, y along the motion/orientation
@@ -181,6 +183,7 @@ void main(){
   float d = length(p);
   float seed = vMisc.x, age = vMisc.y;
   float a;
+  vec3 ink = vColor.rgb;
   vec3 tint = vec3(1.0);
   float variant = step(0.5, seed);
   vec2 stampUV = clamp(p * 0.5 + 0.5, 0.0, 1.0);
@@ -220,20 +223,13 @@ void main(){
   }
   else if (vShape < 5.5) { a = smoothstep(0.2, 0.0, abs(d - 0.72)); }
   else if (vShape < 6.5) { a = smoothstep(0.3, 0.0, abs(p.x)) * smoothstep(1.0, 0.15, abs(p.y)) * mix(1.0, 0.5, smoothstep(0.2, -1.0, p.y)); }
-  else if (vShape < 7.5) {
-    // flame tongue: screen-upright teardrop, licked sideways by scrolling noise,
-    // hot white-yellow base, frays at the tip and erodes with age
-    vec2 q = vec2(p0.x, -p0.y);
-    float t = uTime * 3.2 + seed * 17.0;
-    float lick = (vn(vec2(q.y * 2.6 - t, seed * 9.0)) - 0.5) * 0.55 * smoothstep(-0.9, 0.9, q.y);
-    float x = q.x - lick;
-    float w = mix(0.62, 0.04, smoothstep(-0.75, 0.95, q.y)) * (0.85 + 0.3 * vn(vec2(t * 0.7, seed * 5.0)));
-    float body = smoothstep(w, w * 0.25, abs(x)) * smoothstep(-1.0, -0.62, q.y);
-    float n = fbm(vec2(x * 3.0, q.y * 2.2 - t * 1.4) + seed * 11.0);
-    float erode = mix(0.08, 0.72, age);
-    a = body * smoothstep(erode, erode + 0.28, n + (1.0 - smoothstep(-0.8, 0.8, q.y)) * 0.35);
-    float core = smoothstep(w * 0.55, 0.0, abs(x)) * smoothstep(0.35, -0.7, q.y);
-    tint = vec3(1.0) + vec3(0.9, 0.7, 0.35) * core * (1.0 - age);
+  else if (vShape < 7.5 || abs(vShape - 18.0) < 0.5 || abs(vShape - 20.0) < 0.5) {
+    vec2 uv = vShape > 19.5 ? vec2(p.x, p.y) : vec2(p0.x, -p0.y);
+    float mirror = seed < 0.5 ? -1.0 : 1.0;
+    float wind = dot(uWindFlow.xy, vec2(viewMatrix[0].x, viewMatrix[2].x));
+    vec4 tongue = flameTongue(uv.x * mirror, uv.y * 0.5 + 0.5,
+      seed * 29.0 + age * 4.2, age, mirror * wind * min(0.48, 0.09 + uWindFlow.z * 0.16));
+    a = tongue.a; ink = tongue.rgb;
   }
   else if (vShape < 9.5) {
     // A round leading bead trails a drawn-out neck along the projected motion.
@@ -298,37 +294,70 @@ void main(){
     a = smoothstep(w, w * 0.45, f) * step(d, len) * smoothstep(age * 0.85 - 0.2, age * 0.85, d);
     a += smoothstep(0.2, 0.0, d) * (1.0 - age);
   }
+  else if (vShape > 20.5) {
+    // Eight unequal, tapered rays share the contact point for the first two
+    // frames, including rays aimed into the screen by the physical burst.
+    float sector = atan(p.y, p.x) * (8.0 / 6.2831853) + seed * 8.0;
+    float cell = floor(sector);
+    float jitter = h21(vec2(mod(cell, 8.0), seed * 51.0));
+    float offset = abs(fract(sector) - (0.34 + 0.32 * jitter));
+    float across = offset * d * (6.2831853 / 8.0);
+    float end = (0.53 + 0.28 * jitter) * (1.0 - age * 0.34);
+    float width = mix(0.021, 0.002, clamp(d / end, 0.0, 1.0));
+    float aa = clamp(fwidth(d), 0.001, 0.011);
+    a = (1.0 - smoothstep(width - aa, width + aa, across)) * (1.0 - smoothstep(end - aa, end, d));
+    float heart = 1.0 - smoothstep(0.02, 0.125, d);
+    a = max(heart, a);
+    ink = mix(vec3(1.72, 1.53, 1.05), fireCore * vec3(1.15, 1.35, 1.50), heart);
+  }
   else {
-    // Sideways curl above a low coal bed. Only a sliver at the root is hot.
-    float h = 0.5 - 0.5 * p0.y;
-    float curl = sin(h * 6.8 - age * 3.8 + seed * 12.0);
-    float x = p0.x - h * h * (0.48 * curl + seed - 0.5);
-    float width = (0.27 + 0.19 * sin(h * 3.14)) * (1.0 - h * h);
-    float edge = abs(x) / max(width, 0.015);
-    a = (1.0 - smoothstep(0.62, 1.0, edge)) * smoothstep(0.0, 0.17, h);
-    float coal = (1.0 - smoothstep(0.08, 0.36, edge)) * (1.0 - smoothstep(0.19, 0.49, h));
-    tint = mix(vec3(0.82, 0.40, 0.14), vec3(1.9, 1.65, 0.72), coal);
+    // A compressed shock front splits into unequal radial sheets of flame.
+    vec2 q = vec2(p.x, p.y * 1.12);
+    float r = length(q), angle = atan(q.y, q.x);
+    float curl = 0.24 * sin(angle * 3.0 + seed * 23.0) + 0.16 * cos(angle * 5.0 - age * 4.0);
+    float spoke = (angle + r * curl + r * r * 0.25 * sin(angle * 2.0 + seed * 8.0))
+                * (8.0 / 6.2831853) + seed * 15.0;
+    float sector = mod(floor(spoke), 8.0);
+    float tooth = 1.0 - abs(fract(spoke) * 2.0 - 1.0);
+    float edge = 0.29 + 0.07 * sin(angle * 3.0) + pow(tooth, 1.28) * (0.24 + 0.36 * h21(vec2(sector, seed)));
+    float band = edge - r;
+    float aa = max(fwidth(band), 0.008);
+    float tear = r + 0.11 * sin(angle * 4.0 + r * 9.0) - age * age * 0.86;
+    a = smoothstep(-aa, aa, band) * smoothstep(-0.13, 0.015, tear);
+    float sheet = band + 0.068 * sin(angle * 5.0 + r * 12.0 - age * 7.0);
+    ink = mix(fireTip, fireBody, smoothstep(0.035 - aa, 0.062 + aa, sheet));
+    float line = abs(sin(angle * 2.0 + seed * 13.0 + r * 0.40));
+    float ray = (1.0 - smoothstep(0.045, 0.14, line)) * smoothstep(0.01, 0.09, band);
+    float hot = max(ray, smoothstep(0.14, 0.30, sheet) * (1.0 - smoothstep(0.04, 0.38, r)));
+    ink = mix(ink, fireCore, hot * (1.0 - smoothstep(0.18, 0.67, age)));
   }
   if (a < 0.004) discard;
   float al = vColor.a * a;
   if (uAdditive > 0.5) {
     al *= smoothstep(0.3, 2.0, vDist);
+    // The contact flash has calibrated radiance at noon and dusk; the pool's
+    // premultiplied blend becomes purely additive with zero coverage.
+    if (vShape > 20.5) {
+      gl_FragColor = vec4(ink * al * (1.0 - vFog), 0.0);
+      return;
+    }
     // "additive-over": premultiplied colour plus a little coverage, so glowing sprites
     // also dim what's behind them and keep their hue over bright sky / snow
-    vec3 ink = vColor.rgb * tint;
+    ink *= tint;
     float lum = dot(ink, vec3(0.2126, 0.7152, 0.0722));
     vec3 body = ink * min(1.0, 1.0 / max(lum, 0.001));
     vec3 radiance = mix(body, ink, smoothstep(0.68, 1.0, a) * clamp(uLightK, 0.0, 1.0));
     gl_FragColor = vec4(radiance * (1.0 - vFog * 0.9) * al, min(al, 1.0) * uOcc);
   } else {
     al *= smoothstep(0.2, 1.2, vDist);
-    gl_FragColor = vec4(mix(vColor.rgb * tint, uFogColor, vFog), min(al, 1.0));
+    gl_FragColor = vec4(mix(ink * tint, uFogColor, vFog), min(al, 1.0));
   }
 }`;
 
 export class Particles {
   constructor(scene, max = 6000, additive = true) {
     this.max = max; this.count = 0;
+    this.anchors = []; // optional animated world origins for attached surface flames
     this.pos = new Float32Array(max * 3);
     this.vel = new Float32Array(max * 3);
     this.life = new Float32Array(max);
@@ -395,6 +424,7 @@ export class Particles {
     const i = this.count++;
     const i3 = i * 3, i4 = i * 4;
     const p = o.p;
+    this.anchors[i] = o.anchor;
     this.pos[i3] = p.x ?? p[0]; this.pos[i3 + 1] = p.y ?? p[1]; this.pos[i3 + 2] = p.z ?? p[2];
     const v = o.v || [0, 0, 0];
     this.vel[i3] = v.x ?? v[0]; this.vel[i3 + 1] = v.y ?? v[1]; this.vel[i3 + 2] = v.z ?? v[2];
@@ -441,7 +471,10 @@ export class Particles {
       }
       P[i3] += V[i3] * dt; P[i3 + 1] += V[i3 + 1] * dt; P[i3 + 2] += V[i3 + 2] * dt;
       const t = 1 - this.life[i] / this.maxLife[i];
-      ap[i3] = P[i3]; ap[i3 + 1] = P[i3 + 1]; ap[i3 + 2] = P[i3 + 2];
+      const anchor = this.anchors[i];
+      ap[i3] = P[i3] + (anchor ? anchor.x : 0);
+      ap[i3 + 1] = P[i3 + 1] + (anchor ? anchor.y : 0);
+      ap[i3 + 2] = P[i3 + 2] + (anchor ? anchor.z : 0);
       av[i3] = V[i3]; av[i3 + 1] = V[i3 + 1]; av[i3 + 2] = V[i3 + 2];
       this.rot[i] += this.spin[i] * dt;
       ar[i * 2] = this.rot[i]; ar[i * 2 + 1] = this.stretch[i];
@@ -471,6 +504,7 @@ export class Particles {
 
   _kill(i) {
     const j = --this.count;
+    this.anchors[i] = this.anchors[j]; this.anchors[j] = undefined;
     if (i === j) return;
     const cp3 = (a) => { a[i * 3] = a[j * 3]; a[i * 3 + 1] = a[j * 3 + 1]; a[i * 3 + 2] = a[j * 3 + 2]; };
     const cp4 = (a) => { a[i * 4] = a[j * 4]; a[i * 4 + 1] = a[j * 4 + 1]; a[i * 4 + 2] = a[j * 4 + 2]; a[i * 4 + 3] = a[j * 4 + 3]; };

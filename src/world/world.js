@@ -494,11 +494,11 @@ export class World {
   makeBrazier(x, z, id) {
     const b = B.brazier(); this.place(b, x, z);
     this.noClimb(this.col.addCircle(x, z, 0.5, -10, this.h(x, z) + 1.6));
-    const fl = { pos: new THREE.Vector3(x, this.h(x, z) + b.userData.fireY, z), lit: false, scale: 1 };
+    const fl = { pos: new THREE.Vector3(x, this.h(x, z) + b.userData.fireY, z), lit: false, brazier: true, scale: 1 };
     this.flames.push(fl);
     const tgt = this.addTarget({ id, pos: fl.pos.clone().add(new THREE.Vector3(0, -0.2, 0)), r: 1.1, obj: b, flame: fl, lit: false, onHit: null });
     // lit and cold coal, shared by every brazier (swapped, never rebuilt)
-    COAL.lit ||= new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 1.2, 0.3) });
+    COAL.lit ||= new THREE.MeshBasicMaterial({ color: new THREE.Color(1.10, 0.21, 0.026) });
     COAL.cold ||= new THREE.MeshBasicMaterial({ color: new THREE.Color(0.15, 0.1, 0.1) });
     tgt.baseHit = (el) => {
       if (el === 'fire' && !tgt.lit) {
@@ -876,7 +876,17 @@ export class World {
       if (!f.lit) continue;
       const d = f.pos.distanceTo(camPos);
       if (d > 60) continue;
-      if (rand() < dt * 30 * q * f.scale) G.vfx.burst(f.pos, 'fire', 1, { spread: 0.18 * f.scale, speed: 0.6, size: 0.9 * f.scale, life: 0.9 });
+      const brazier = f.brazier;
+      if (brazier && d < 18) G.vfx.fireLight(f, tmp.copy(f.pos).setY(f.pos.y + 0.25), 10, 4);
+      f.emit = (f.emit || 0) + dt * (brazier ? 21 : 13) * q;
+      while (f.emit >= 1) {
+        f.emit--; f.beat = ((f.beat || 0) + 1) % 3;
+        const phase = f.beat * 2.094 + f.pos.x;
+        const ring = (f.beat === 0 ? 0.08 : 0.28) * f.scale;
+        tmp.copy(f.pos); tmp.x += Math.cos(phase) * ring; tmp.z += Math.sin(phase) * ring;
+        G.vfx.burst(tmp, 'fire', 1, { spread: 0.07 * f.scale, speed: 0.22,
+          size: (f.beat === 0 ? 1.34 : 0.88) * f.scale, life: 1.05 });
+      }
       if (rand() < dt * 3 * q) G.vfx.burst(f.pos, 'ember', 1, { speed: 2 });
     }
     // lantern flame flicker

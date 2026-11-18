@@ -20,7 +20,6 @@ const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
 const C = (r, g, b) => new THREE.Color(r, g, b);
 const STEAM_C = C(0.92, 0.95, 1.0), STEAM_C1 = C(0.82, 0.86, 0.92);
 const MIST_C = C(0.86, 0.95, 1.05), MIST_C1 = C(0.75, 0.88, 1.0);
-const FIRE_W = C(1.3, 0.48, 0.06);
 const MAX_FIELDS = 12;
 
 // el: the element the field carries (what a wind blade picks up, what it applies)
@@ -579,8 +578,8 @@ export class Fields {
       switch (f.kind) {
         case 'blaze':
         case 'plasma': {
-          const s = randRange(0.35, 0.65);
-          V.norm.emit({ p: [p.x, p.y, p.z], v: [Math.sin(a) * 0.2, 1.6, -Math.cos(a) * 0.2], life: 0.55, size: s, size1: 0.05, ease: 0.6, color: FIRE_W, color2: PAL.fire.glow, mid: 0.25, color1: PAL.fire.deep, alpha: 0.85 * k, alpha1: 0, grav: -1.5, drag: 1.6, shape: 7 });
+          const s = randRange(0.7, 1.05);
+          V.norm.emit({ p: [p.x, p.y + s * 0.34, p.z], v: [Math.sin(a) * 0.16, 0.18, -Math.cos(a) * 0.16], life: 0.54, size: s, size1: s * 0.7, color: PAL.fire.glow, alpha: 0.98 * k, alpha1: 0.25, fadeIn: 0.12, shape: 7 });
           if (rand() < 0.25) V.burst(p, 'ember', 1, { speed: 2, size: 0.06 });
           if (f.kind === 'plasma' && rand() < 0.2) {
             const end = p.clone().add(new THREE.Vector3(-Math.sin(a), 0.2, Math.cos(a)));

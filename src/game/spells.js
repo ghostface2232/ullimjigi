@@ -14,7 +14,6 @@ const UP = new THREE.Vector3(0, 1, 0);
 const RAIN_C = new THREE.Color(0.55, 0.65, 0.85);
 const WAVE_BLUE = new THREE.Color(0.1, 0.34, 0.75), WAVE_FROST = new THREE.Color(0.32, 0.6, 0.85);
 const C85 = new THREE.Color(0.85, 0.95, 1.05), C60 = new THREE.Color(0.6, 0.8, 1.0);
-const FLAME_A = new THREE.Color(2.6, 1.6, 0.5), FLAME_B = new THREE.Color(2.0, 0.6, 0.08);
 const SOOT_A = new THREE.Color(0.1, 0.08, 0.08), SOOT_B = new THREE.Color(0.26, 0.24, 0.25);
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
 const R = (id) => (G.skills ? G.skills.r(id) : 0);
@@ -89,15 +88,15 @@ const BURST_OF = { fire: 'fire', frost: 'ice', storm: 'electric', wind: 'wind', 
 // projectile ribbon looks, keyed by trail type
 const RIBBON = {
   arcane: { el: 'arcane', width: 0.2, life: 0.16 },
-  fire: { el: 'fire', width: 0.26, life: 0.2, wave: 0.6 },
-  bigfire: { el: 'fire', width: 0.85, life: 0.32, wave: 0.8 },
+  fire: { el: 'fire', width: 0.16, life: 0.095, wave: 0.5 },
+  bigfire: { el: 'fire', width: 0.36, life: 0.15, wave: 0.65 },
   plasma: { el: 'fire', width: 0.75, life: 0.3, wave: 1, core: PAL.storm.core },
   frost: { el: 'frost', width: 0.08, life: 0.11 },
   water: { el: 'water', width: 0.2, life: 0.2, wave: 0.5 },
   hush: { el: 'hush', width: 0.24, life: 0.26, wave: 0.3 },
 };
 // trail sprite emission rates (per second) so density doesn't depend on frame rate
-const TRAIL_RATE = { arcane: 45, fire: 55, bigfire: 60, plasma: 110, wind: 120, frost: 50, water: 80, hush: 70 };
+const TRAIL_RATE = { arcane: 45, fire: 40, bigfire: 45, plasma: 110, wind: 120, frost: 50, water: 80, hush: 70 };
 
 // Water wall shader for waves: curling crest, deep body, foam, fresnel glint
 const WAVE_VS = `
@@ -424,7 +423,7 @@ export class Spells {
             for (let i = 0; i < 5; i++) {
               const a = a0 + (i / 5) * 6.28 + rv3(0.25), rr = randRange(1.5, 2.2);
               const q = new THREE.Vector3(g.x + Math.cos(a) * rr, 0, g.z + Math.sin(a) * rr); q.y = G.world.ground(q.x, q.z, g.y + 2);
-              V.later(() => { V.sphere('fire', q.clone().setY(q.y + 0.25), { r0: 0.1, r1: 0.5, dur: 0.4, grow: 3, erodeAt: 0.15, rise: 1.2 }); V.pop(q.clone().setY(q.y + 0.25), 'fire', 0.9, 0.1); V.decal(q, 'scorch', 0.7, { dur: 6, glowDur: 1.2 }); V.chunks(q, 'ember', 3, { speed: 5 }); }, 110 + i * 35);
+              V.later(() => { V.burst(q, 'fire', 2, { size: 0.74, speed: 1.5, spread: 0.17, life: 0.7 }); V.decal(q, 'scorch', 0.7, { dur: 6, glowDur: 1.2 }); V.chunks(q, 'ember', 3, { speed: 5 }); }, 110 + i * 35);
             }
           },
         });
@@ -1058,7 +1057,7 @@ export class Spells {
         const light = V.holdLight(PAL.fire.light, 60, 30);
         const haze = V.distort.haze(opos, 7, 0, { follow: opos, amp: 0.02 });
         const snd = sndLoop('loop_fireball', opos, { v: 1.6 });
-        const rib = V.ribbon({ el: 'fire', width: 3.2, life: 0.45, wave: 1, follow: opos });
+        const rib = V.ribbon({ el: 'fire', width: 0.48, life: 0.10, wave: 0.65, follow: opos });
         let t = 0, acc = 0, sm = 0;
         A.play('charge', { pos: tp }); A.play('heavy_fire', { pos: from });
         V.timer(1.15, (dt) => {
@@ -1067,19 +1066,23 @@ export class Spells {
           if (sun) sun.r = 1.6 + k * 0.8; else { orb.position.copy(opos); orb.scale.setScalar(2.2 + k); }
           if (light) light.l.position.copy(opos);
           snd.set(opos);
-          acc += dt * 45;
-          for (; acc >= 1; acc--) V.burst(opos, 'fire', 1, { spread: 0.9, speed: 2, size: 0.75 });
+          acc += dt * 26;
+          for (; acc >= 1; acc--) {
+            const angle = t * 12 + acc * 2.4;
+            const tail = opos.clone(); tail.x += Math.cos(angle) * 0.9; tail.z += Math.sin(angle) * 0.9;
+            V.burst(tail, 'fire', 1, { spread: 0.22, speed: 1.2, vy: 3.2, size: 2.4, life: 0.58 });
+          }
           sm -= dt;
           if (sm <= 0) { sm = 0.22; V.sphere('smoke', opos.clone().add(new THREE.Vector3(randRange(-1, 1), 1, randRange(-1, 1))), { r0: 0.5, r1: 1.2, dur: 1, grow: 2, erodeAt: 0.2, rise: 1.5, emiss: 0.5, alpha: 0.4 }); }
           if (rand() < dt * 40) V.burst(opos, 'ember', 1, { speed: 6 });
         }, () => {
           if (sun) sun.end(); if (orb) G.vfx.disposeOrb(orb); if (light) V.releaseLight(light); if (rib) rib.release(); if (haze) haze.end(); snd.stop(0.2);
           this.explode(tp.clone().setY(tp.y + 0.6), 7, P * 6, 'fire', { shake: 0.95, lift: 9, knock: 16, quiet: true, kind: 'ult', graphic: true });
-          V.orbitLines(tp, 'fire', 6.5, 1, { rate: 6, alpha: 0.75 });
+          V.eruption(tp.clone().setY(tp.y + 1.25), 4.6, true, true);
+          V.orbitLines(tp, 'fire', 6.5, 0.38, { rate: 6, alpha: 0.4 });
           V.ring(tp, PAL.fire.glow, 11, 0.65, { thick: 0.035, alpha: 0.65 });
           V.sparks(tp, UP, 18, { el: 'fire', spread: 0.3, speed: 23, grav: 13, life: 0.9, w: 0.05 });
           V.decal(tp, 'crack', 6.5, { glow: PAL.fire.glow, dur: 12, glowDur: 3 });
-          V.later(() => V.puffRing(tp.clone().setY(tp.y + 1), 'fire', 10, 0.35, { alpha: 0.6 }), 70);
           V.distort.ring(tp, 10, 0.32, { flat: true, amp: 0.005, width: 0.04 });
           V.chunks(tp, 'rock', 14, { speed: 18, up: 0.85, size: 0.25 });
           V.chunks(tp, 'ember', 16, { speed: 16, up: 0.7 });
@@ -1671,18 +1674,18 @@ export class Spells {
           V.burst(p.pos, 'trail', 1, { el: 'arcane', size: 0.2, spread: 0.12, vx, vy, vz, shape: rand() < 0.7 ? 4 : 0 });
           break;
         case 'fire':
-          // short licks torn off the comet (kept below white heat so the trail has colour), soot, embers
-          V.add.emit({ p: [p.pos.x + rv3(0.07), p.pos.y + rv3(0.07), p.pos.z + rv3(0.07)], v: [vx * 3 + rv3(0.6), vy * 3 + randRange(0.4, 1.4), vz * 3 + rv3(0.6)], life: randRange(0.16, 0.3), size: randRange(0.22, 0.4), size1: 0.06, color: FLAME_A, color2: FLAME_B, mid: 0.3, color1: PAL.fire.deep, alpha: 0.75, alpha1: 0, drag: 3, grav: -2, shape: 7 });
-          if (rand() < 0.3) V.norm.emit({ p: [p.pos.x, p.pos.y, p.pos.z], v: [rv3(0.4), randRange(0.3, 0.9), rv3(0.4)], life: randRange(0.4, 0.7), size: 0.16, size1: 0.5, color: SOOT_A, color1: SOOT_B, alpha: 0.38, alpha1: 0, drag: 1.5, shape: 8 });
-          if (rand() < 0.3) V.burst(p.pos, 'ember', 1, { speed: 1.5 });
+        case 'bigfire': {
+          const big = p.trail === 'bigfire';
+          const size = big ? 0.95 : 0.42;
+          const wing = Math.sin((p.age || 0) * 44 + k * 2.4);
+          V.norm.emit({ p: [p.pos.x + wing * size * 0.16, p.pos.y + rv3(size * 0.12), p.pos.z],
+            v: [vx * 5, vy * 5 + 0.45, vz * 5], life: big ? 0.21 : 0.13, size, size1: size * 0.22,
+            color: PAL.fire.glow, alpha: 0.98, alpha1: 0.28, shape: 20, stretch: 1.1 });
+          if (rand() < 0.19) V.burst(p.pos, 'ember', 1, { speed: 1.3 });
+          if (rand() < (big ? 0.19 : 0.09)) V.norm.emit({ p: p.pos, v: [vx, 0.8, vz], life: 0.6,
+            size: size * 0.2, size1: size * 0.75, color: SOOT_A, color1: SOOT_B, alpha: 0.23, alpha1: 0, fadeIn: 0.18, shape: 8 });
           break;
-        case 'bigfire':
-          if (p.age < 0.08) break;
-          // torn flames close behind the head, then a dark smoke tail that gives the ball its outline
-          V.add.emit({ p: [p.pos.x + rv3(0.25), p.pos.y + rv3(0.25), p.pos.z + rv3(0.25)], v: [vx * 4 + rv3(1), vy * 4 + randRange(0.5, 2), vz * 4 + rv3(1)], life: randRange(0.2, 0.38), size: randRange(0.45, 0.8), size1: 0.12, color: FLAME_B, color1: PAL.fire.deep, alpha: 0.6, alpha1: 0, drag: 3, grav: -2.5, shape: 7 });
-          if (rand() < 0.45) V.norm.emit({ p: [p.pos.x + rv3(0.2), p.pos.y + rv3(0.2), p.pos.z + rv3(0.2)], v: [rv3(0.6), randRange(0.5, 1.4), rv3(0.6)], life: randRange(0.7, 1.2), size: 0.5, size1: 1.5, ease: 0.6, color: SOOT_A, color1: SOOT_B, alpha: 0.5, alpha1: 0, drag: 1.2, grav: -0.3, shape: 8, fadeIn: 0.1 });
-          if (rand() < 0.25) V.burst(p.pos, 'ember', 1);
-          break;
+        }
         case 'plasma': V.burst(p.pos, 'fire', 1, { spread: 0.4, speed: 1 }); if (rand() < 0.2) V.burst(p.pos, 'electric', 1, { spread: 0.6, speed: 3 }); break;
         case 'wind':
           V.burst(p.pos, 'trail', 1, { el: 'wind', size: 0.35, spread: 0.5, vx, vy, vz });

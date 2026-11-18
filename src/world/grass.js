@@ -75,8 +75,8 @@ void main(){
   wp.xz += slope * stem;
   wp.y = iOffset.y + stem;
   vWave = air.y;
-  vColor = mix(iColor, vec3(0.13, 0.1, 0.08), burnK * 0.9);
-  vColor = mix(vColor, vec3(1.4, 0.45, 0.08), burnS.g * 0.5 * aBlade.x);
+  vColor = mix(iColor, vec3(0.055, 0.035, 0.025), burnK * 0.98);
+  vColor = mix(vColor, vec3(1.10, 0.21, 0.026), smoothstep(0.16, 0.39, burnS.g) * (1.0 - smoothstep(0.45, 0.75, burnS.g)) * (1.0 - burnS.r) * h);
   vColor *= 1.0 - uWet * 0.16;
   vH = h;
   vBlade = aBlade;

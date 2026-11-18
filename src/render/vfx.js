@@ -4,6 +4,7 @@
 // (scorch / frost / puddle / char / swirl / rune / crack), shock shells,
 // light pillars and the per-element cast / impact / reaction / aftermath
 // recipes used by spells and combat.
+import { firePaint } from './flame.js';
 import * as THREE from 'three';
 import { Particles } from './particles.js';
 import { fresnelMat, toon, U } from './materials.js';
@@ -16,7 +17,7 @@ import { randRange, rand, easeOutBack, clamp, lerp, mulberry32 } from '../core/u
 const C = (r, g, b) => new THREE.Color(r, g, b);
 export const PAL = {
   arcane: { core: C(2.4, 1.9, 3.2), glow: C(1.2, 0.55, 2.6), deep: C(0.35, 0.12, 0.8), light: 0xa070ff },
-  fire: { core: C(4.0, 2.6, 0.9), glow: C(3.0, 0.9, 0.12), deep: C(1.1, 0.12, 0.02), light: 0xff7a2a },
+  fire: { core: firePaint.core, glow: firePaint.body, deep: firePaint.tip, light: 0xff7a2a },
   frost: { core: C(2.4, 3.0, 3.4), glow: C(0.6, 1.8, 3.2), deep: C(0.15, 0.45, 1.2), light: 0x6cd0ff },
   storm: { core: C(3.6, 3.4, 2.2), glow: C(3.2, 2.4, 0.4), deep: C(1.4, 0.6, 1.6), light: 0xffd84a },
   wind: { core: C(2.0, 3.2, 2.6), glow: C(0.5, 2.4, 1.4), deep: C(0.1, 0.6, 0.4), light: 0x6effc0 },
@@ -170,7 +171,7 @@ const DECAL_GEN = {
       const rn = 1 - Math.abs(fbm(u * 3.4 + 1, v * 3.4 + 1, 14) * 2 - 1);
       const cracks = Math.pow(rn, 9) * sst(0.85, 0.2, edge);
       const hot = sst(0.6, 0.0, r) * (0.35 + 0.65 * n);
-      return [soot, clamp(cracks * 1.3 + hot * 0.55, 0, 1), n, 1];
+      return [soot, clamp(cracks * 1.1 + hot * 0.19, 0, 1), n, 1];
     };
   },
   frost(S) {
@@ -399,8 +400,9 @@ const FIELD_FS = `
     vec3 reflection = vec3(0.0);
     if (uKind < 1.5) {
       // Three sweeping ember seams; open centre preserves feet and shadows.
-      float seam = sin(a * 3.0 + r * 14.0 - t * 1.5);
+      float seam = sin(a * 3.0 + r * 14.0 - t * 0.8 + fringe * 0.8);
       mark = pow(max(0.0, seam), 24.0) * smoothstep(0.3, 0.65, r);
+      mark *= smoothstep(-0.65, 0.35, fringe); rim *= 0.26;
       fill = 0.08;
       if (uKind > 0.5) {
         float zap = pow(max(0.0, cos(a * 6.0 + floor(t * 8.0) + r * 18.0)), 60.0);
@@ -713,7 +715,7 @@ class RibbonPool {
 
 // Decal presets
 const DECAL = {
-  scorch: { base: C(0.025, 0.018, 0.014), baseA: 0.8, glow: C(3.4, 1.1, 0.18), glowA: 1, glowDur: 2.4, flick: 1, dur: 11 },
+  scorch: { base: C(0.042, 0.028, 0.021), baseA: 0.88, glow: C(1.10, 0.21, 0.026), glowA: 0.85, glowDur: 1.25, flick: 1, dur: 11 },
   frost: { base: C(0.6, 0.76, 0.88), baseA: 0.6, glow: C(0.45, 1.3, 2.1), glowA: 0.7, glowDur: 1.4, dur: 9, sheen: C(0.9, 1, 1.1) },
   wet: { base: C(0.03, 0.05, 0.08), baseA: 0.32, glow: C(0.22, 0.32, 0.45), glowA: 0.5, glowDur: 99, ripple: 0.35, sheen: C(0.35, 0.45, 0.6), dur: 8 },
   char: { base: C(0.02, 0.02, 0.03), baseA: 0.62, glow: C(2.8, 2.3, 0.7), glowA: 1.2, glowDur: 1.6, flick: 1, dur: 7 },
@@ -1025,7 +1027,7 @@ export class VFX {
     for (const s of this.lights) {
       if (s.held || s.dur <= 0 || s.l.intensity < 1) continue;
       if (s.l.position.distanceToSquared(pos) < 9) {
-        if (intensity > s.l.intensity) { s.l.color.set(color); s.peak = intensity; s.l.intensity = intensity; s.dur = Math.max(dur, s.dur - s.t); s.t = 0; }
+        if (intensity > s.l.intensity) { s.fireOwner = null; s.l.color.set(color); s.peak = intensity; s.l.intensity = intensity; s.dur = Math.max(dur, s.dur - s.t); s.t = 0; }
         s.l.distance = Math.max(s.l.distance, distance);
         return;
       }
@@ -1033,7 +1035,7 @@ export class VFX {
     let best = null;
     for (const s of this.lights) if (!s.held && (!best || s.l.intensity < best.l.intensity)) best = s;
     if (!best) return;
-    best.l.position.copy(pos);
+    best.fireOwner = null; best.l.position.copy(pos);
     best.l.color.set(color);
     best.l.distance = distance;
     best.peak = intensity; best.t = 0; best.dur = dur; best.follow = null;
@@ -1042,48 +1044,53 @@ export class VFX {
   holdLight(color, intensity = 18, distance = 10) {
     const s = this.lights.find((s) => !s.held && s.l.intensity < 0.5) || this.lights.find((s) => !s.held);
     if (!s) return null;
-    intensity *= 0.7 * this.lightK(); s.held = true; s.l.color.set(color); s.l.intensity = intensity; s.l.distance = distance; s.peak = intensity; s.dur = 0;
+    intensity *= 0.7 * this.lightK(); s.fireOwner = null; s.held = true; s.l.color.set(color); s.l.intensity = intensity; s.l.distance = distance; s.peak = intensity; s.dur = 0;
     return s;
   }
   releaseLight(s) { if (s) { s.held = false; s.t = 0; s.dur = 0.15; s.peak = s.l.intensity; } }
 
   // ---------------- particles ----------------
+  // Reflected firelight yields to combat flashes; coals never steal a busy slot.
+  fireLight(owner, pos, power, distance) {
+    if (pos.distanceToSquared(G.camera.position) > 18 * 18) return;
+    const slot = this.lights.find(s => s.fireOwner === owner) || this.lights.find(s => !s.held && s.dur <= 0);
+    if (!slot) return;
+    slot.fireOwner = owner; slot.l.position.copy(pos);
+    slot.l.color.setHex(0xff8a39); slot.l.distance = distance;
+    slot.l.intensity = slot.peak = power * this.lightK() * (0.93 + 0.07 * Math.sin(G.time * 12 + pos.x));
+    slot.t = 0; slot.dur = 0.20;
+  }
+
   burning(target, center, dt) {
-    if (target.rig?.body?.visible === false) return;
+    if (target.rig?.body?.visible === false || target.ghost) return;
     const st = target.st;
+    const anchors = (st.fireAnchors ||= [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]);
+    // Only three deformed vertices per actor. Detached armour falls back to the skin.
+    for (let site = 0; site < anchors.length; site++) {
+      const armor = site < 2 && target.rig?.armor?.[site === 0 ? 6 : 4];
+      const mesh = armor?.visible ? armor : target.rig?.mesh;
+      const p = anchors[site];
+      if (mesh?.geometry?.attributes.position) {
+        mesh.getVertexPosition(burningVertices(mesh.geometry)[armor?.visible ? 2 : site], p).applyMatrix4(mesh.matrixWorld);
+      } else {
+        const angle = site * 2.094;
+        p.copy(center); p.x += Math.cos(angle) * target.radius * 0.64;
+        p.z += Math.sin(angle) * target.radius * 0.64; p.y += target.height * (site === 2 ? 0.32 : 0.11);
+      }
+    }
+    this.fireLight(target, tmpV.copy(target.pos).setY(target.pos.y + 0.52), 6, target.radius * 2.2 + 1.4);
     st.burnEmitT = (st.burnEmitT ?? 0) - dt;
     if (st.burnEmitT > 0) return;
-    const interval = G.settings.quality === 'low' ? 0.10 : 0.065;
-    st.burnEmitT = Math.max(0, st.burnEmitT + interval);
+    st.burnEmitT += G.settings.quality === 'low' ? 0.105 : 0.073;
     const beat = st.burnBeat ?? 0;
     st.burnBeat = (beat + 1) % 12;
-    const site = beat % 4;
-    // A brute's removable shoulder stones sit outside its skinned shoulders.
-    const armor = target.rig?.armor?.[3 + site % 2];
-    const mesh = site < 2 && armor?.visible ? armor : target.rig?.mesh;
-    const p = tmpV3;
-    if (mesh?.geometry?.attributes.position) {
-      const sites = burningVertices(mesh.geometry);
-      mesh.getVertexPosition(sites[site], p).applyMatrix4(mesh.matrixWorld);
-    } else {
-      // Exposed non-rigged cores also accept the burning status.
-      const angle = site * Math.PI * 0.5;
-      p.copy(center); p.x += Math.cos(angle) * target.radius * 0.52;
-      p.z += Math.sin(angle) * target.radius * 0.52; p.y += target.height * 0.23;
-    }
-    const size = clamp(target.height * 0.21, 0.19, 0.57) * randRange(0.86, 1.14);
-    p.y += size * 0.28;
-    this.norm.emit({ p, v: [(target.vel?.x || 0) * 0.65, 0.20, (target.vel?.z || 0) * 0.65],
-      life: randRange(0.23, 0.34), size, size1: size * 0.72, color: BURN_ORANGE, color1: BURN_RED,
-      alpha: 0.96, alpha1: 0, fadeIn: 0.08, grav: -0.55, shape: 18 });
-    if (beat % 4 === 1) {
-      this.add.emit({ p, v: [rv(0.20), randRange(0.65, 1.2), rv(0.20)], life: 0.58,
-        size: size * 0.24, size1: size * 0.08, color: EMBER_A, color1: BURN_RED, alpha: 0.94, alpha1: 0, shape: 1 });
-    } else if (beat === 6) {
-      p.y += size * 0.58;
-      this.norm.emit({ p, v: [rv(0.15), 0.63, rv(0.15)], life: 1.1,
-        size: size * 0.64, size1: size * 1.7, color: GREY, color1: GREY2, alpha: 0.40, alpha1: 0, fadeIn: 0.18, shape: 8 });
-    }
+    const p = anchors[beat % 3];
+    const size = clamp(target.height * (target.rig?.armor ? 0.60 : 0.39), 0.42, 1.85) * randRange(0.85, 1.14);
+    this.norm.emit({ p: [rv(size * 0.06), size * 0.38, rv(size * 0.05)], anchor: p,
+      v: [0, 0.16, 0], life: randRange(0.29, 0.38), size, size1: size * 0.79,
+      color: PAL.fire.glow, color2: PAL.fire.glow, mid: 0.67, alpha: 0.98, alpha2: 0.98, alpha1: 0.08, fadeIn: 0.12, shape: 18 });
+    if (beat % 4 === 1) this.burst(p, 'ember', 1, { speed: 0.9 });
+    if (beat === 6) this.burst(p, 'smoke', 1, { speed: 0.65, size: 0.48, life: 0.55, alpha: 0.23 });
   }
 
   burst(pos, preset, n = 12, o = {}) {
@@ -2046,7 +2053,7 @@ export class VFX {
         this.streaks.emit({ p: [c.x + sx * r, c.y + rv(0.4), c.z + sz * r], v: [(-sx * 1.2 - sz) * r * 7, 0, (-sz * 1.2 + sx) * r * 7], life: 0.13, w: 0.022, stretch: 0.03, minL: 0.1, maxL: 0.7, color: p.core, color1: p.glow, alpha: 0.9, alpha1: 0, drag: 2 });
       }
       if (el === 'storm' && rand() < dt * 18) this.arcs(c, 1, 0.4 * big, { width: 0.018 });
-      if (el === 'fire' && rand() < dt * 26) this.add.emit({ p: [c.x + rv(0.08), c.y, c.z + rv(0.08)], v: [rv(0.4), randRange(1, 2.2), rv(0.4)], life: 0.26, size: 0.18 * big, size1: 0.04, color: PAL.fire.core, color1: PAL.fire.deep, color2: PAL.fire.glow, alpha: 0.85, alpha1: 0, shape: 7 });
+      if (el === 'fire' && rand() < dt * 26) this.norm.emit({ p: [c.x + rv(0.08), c.y, c.z + rv(0.08)], v: [rv(0.4), randRange(1, 2.2), rv(0.4)], life: 0.26, size: 0.18 * big, size1: 0.04, color: PAL.fire.core, color1: PAL.fire.deep, color2: PAL.fire.glow, alpha: 0.85, alpha1: 0, shape: 7 });
       if (el === 'frost' && rand() < dt * 12) this.norm.emit({ p: [c.x, c.y, c.z], v: [rv(0.3), randRange(-0.5, -0.1), rv(0.3)], life: 0.6, size: 0.18, size1: 0.6, color: C(0.85, 0.94, 1), color1: C(0.8, 0.9, 1), alpha: 0.3, alpha1: 0, shape: 8 });
       if (el === 'water' && rand() < dt * 25) { const a = t * 14 + rand(); this.add.emit({ p: [c.x + Math.cos(a) * 0.28 * big, c.y + Math.sin(a * 0.7) * 0.16, c.z + Math.sin(a) * 0.28 * big], v: [0, 0, 0], life: 0.16, size: 0.08, size1: 0.02, color: PAL.water.core, color1: PAL.water.glow, alpha: 1, alpha1: 0, shape: 9 }); }
       if (el === 'wind' && rand() < dt * 20) { const a = t * 16 + rand(); this.add.emit({ p: [c.x + Math.cos(a) * 0.3 * big, c.y + rv(0.1), c.z + Math.sin(a) * 0.3 * big], v: [-Math.sin(a) * 3, 0.2, Math.cos(a) * 3], life: 0.16, size: 0.07, size1: 0.02, color: PAL.wind.core, color1: PAL.wind.glow, alpha: 0.9, alpha1: 0, shape: 6, stretch: 1 }); }
@@ -2120,7 +2127,7 @@ export class VFX {
           at.copy(c).addScaledVector(d, 0.1); at.y += 0.04 + r * 0.7;
           if (ball) ball.r = r; // null when the mini-sphere pool is exhausted
           acc += dt * (6 + 16 * e);
-          for (; acc >= 1; acc--) this.add.emit({ p: [at.x + rv(r * 0.5), at.y + r * 0.6, at.z + rv(r * 0.5)], v: [rv(0.25), randRange(0.8, 1.6), rv(0.25)], life: randRange(0.16, 0.28), size: randRange(0.1, 0.17) * (0.6 + e), size1: 0.03, color: EMBER_A, color2: EMBER_B, mid: 0.3, color1: PAL.fire.deep, alpha: 0.8, alpha1: 0, drag: 2, grav: -1.5, shape: 7 });
+          for (; acc >= 1; acc--) this.norm.emit({ p: [at.x + rv(r * 0.5), at.y + r * 0.6, at.z + rv(r * 0.5)], v: [rv(0.25), randRange(0.8, 1.6), rv(0.25)], life: randRange(0.16, 0.28), size: randRange(0.1, 0.17) * (0.6 + e), size1: 0.03, color: EMBER_A, color2: EMBER_B, mid: 0.3, color1: PAL.fire.deep, alpha: 0.8, alpha1: 0, drag: 2, grav: -1.5, shape: 7 });
           acc2 += dt * (rd ? 34 : 5 * e);
           for (; acc2 >= 1; acc2--) {
             if (rd) this.streaks.emit({ p: [at.x, at.y + r, at.z], v: [rv(2.2), randRange(2.5, 5), rv(2.2)], life: randRange(0.12, 0.22), w: 0.018, stretch: 0.03, minL: 0.05, maxL: 0.5, color: PAL.fire.core, color1: PAL.fire.glow, alpha: 1, alpha1: 0, grav: 14, drag: 1 });
@@ -2287,7 +2294,7 @@ export class VFX {
     }
     switch (el) {
       case 'fire':
-        for (let i = 0; i < 4 * n; i++) { coneDir(tmpV, dir, 0.5); const s = randRange(2.5, 6) * n; this.add.emit({ p: [origin.x, origin.y, origin.z], v: [tmpV.x * s, tmpV.y * s + 0.8, tmpV.z * s], life: randRange(0.16, 0.28), size: randRange(0.3, 0.5) * n, size1: 0.08, color: FIRE_WHITE, color2: PAL.fire.core, mid: 0.2, color1: PAL.fire.deep, alpha: 0.8, alpha1: 0, drag: 4, grav: -3, shape: 7 }); }
+        for (let i = 0; i < 4 * n; i++) { coneDir(tmpV, dir, 0.5); const s = randRange(2.5, 6) * n; this.norm.emit({ p: [origin.x, origin.y, origin.z], v: [tmpV.x * s, tmpV.y * s + 0.8, tmpV.z * s], life: randRange(0.16, 0.28), size: randRange(0.3, 0.5) * n, size1: 0.08, color: FIRE_WHITE, color2: PAL.fire.core, mid: 0.2, color1: PAL.fire.deep, alpha: 0.8, alpha1: 0, drag: 4, grav: -3, shape: 7 }); }
         this.sparks(origin, dir, 5 * n, { el: 'fire', spread: 0.55, speed: 11, grav: 5, life: 0.32 });
         if (big) this.chunks(origin, 'ember', 6, { dir, spread: 0.5, speed: 9, y: 0 });
         break;
@@ -2318,6 +2325,67 @@ export class VFX {
     }
   }
 
+  eruption(center, r, ground, column = false) {
+    // The shells share one prewarmed program. Each local Y axis points away
+    // from the contact; separate centres leave gaps all the way through the burst.
+    const count = column ? 3 : G.settings.quality === 'low' ? 4 : 6;
+    const phase = rand() * 6.28;
+    for (let i = 0; i < count; i++) {
+      const a = phase + (i + randRange(-0.23, 0.23)) * 6.28 / count;
+      const lift = column ? randRange(2.4, 4.0) : ground ? randRange(0.08, 1.0) : randRange(-0.58, 0.88);
+      const dir = new THREE.Vector3(Math.cos(a), lift, Math.sin(a)).normalize();
+      const width = r * randRange(0.145, 0.21);
+      const pos = center.clone().addScaledVector(dir, r * (column ? 0.15 : 0.22));
+      this.sphere('eruption', pos, { r0: width * 1.12, r1: width * 0.62, grow: 1.8,
+        dur: column ? 0.42 : randRange(0.21, 0.33), squash: column ? 3.4 : randRange(1.35, 1.95),
+        along: dir.clone().negate(), drift: dir.multiplyScalar(r * (column ? 2.9 : 1.7)),
+        fadeIn: 0.001, erode0: 0.10, erodeAt: 0.22, erode1: 0.94 });
+    }
+    if (column) return;
+    this.add.emit({ p: center, size: r * 2.65, size1: r * 2.8, life: 0.070, rot: phase,
+      color: PAL.fire.core, alpha: 1, alpha2: 1, mid: 0.44, alpha1: 0, shape: 21 });
+    this.sparks(center, null, 12, { el: 'fire', up: ground ? 0.85 : 0,
+      speed: 12 + r * 3.4, w: 0.038, minL: 0.17, maxL: 0.54, life: 0.41, grav: 8, drag: 1 });
+  }
+
+  fireImpact(pos, radius, ground) {
+    const at = pos.clone(), big = radius > 1.5;
+    const size = radius * 1.36;
+    const crown = at.clone();
+    if (ground) crown.y = big ? Math.max(at.y, ground.y + radius * 0.12) : at.y + radius * 0.35;
+    if (big) {
+      this.eruption(crown, radius, ground);
+    } else {
+      this.norm.emit({ p: crown, v: [0, radius * 0.7, 0], size: size * 0.75, size1: size * 1.32,
+        life: 0.16, ease: 0.48, color: PAL.fire.glow, alpha: 1, alpha1: 0.16, shape: 19, rot: rv(0.24) });
+      const phase = rand() * 6.28;
+      for (let i = 0; i < 4; i++) {
+        const a = phase + (i + randRange(-0.19, 0.19)) * 6.28 / 4;
+        const dx = Math.cos(a), dz = Math.sin(a), lift = randRange(0.30, 1.1);
+        const reach = radius * randRange(0.85, 1.30);
+        this.norm.emit({ p: [at.x + dx * radius * 0.21, crown.y, at.z + dz * radius * 0.21],
+          v: [dx * reach * 3.5, lift * reach * 3.5, dz * reach * 3.5], stretch: 0.6,
+          size: reach * 0.84, size1: reach * 1.18, life: randRange(0.16, 0.28), drag: 4,
+          color: PAL.fire.glow, alpha: 1, alpha1: 0.22, shape: 20 });
+      }
+      this.sparks(crown, null, 5, { el: 'fire', up: ground ? 0.9 : 0, speed: 12 + radius * 3,
+        color: FIRE_WHITE, color1: PAL.fire.glow, w: 0.03, minL: 0.22 * radius, maxL: radius, life: 0.18, drag: 1 });
+    }
+    this.flash(crown, PAL.fire.light, big ? 23 : 9, 5 + radius, 0.16);
+    if (ground) {
+      this.ring(ground, PAL.fire.glow, radius * 0.95, 0.15, { thick: 0.025, r0: radius * 0.35, alpha: 0.48 });
+      this.decal(ground, 'scorch', radius * 0.9, { dur: big ? 8 : 4, glowDur: 0.8 });
+      if (big) G.world?.grass?.gust(ground.x, ground.z, radius * 1.6, 2);
+    }
+    this.later(() => {
+      this.burst(crown, 'fire', big ? 3 : 1, { size: radius * 0.29, spread: radius * 0.4, speed: 2.4, life: 0.62 });
+      this.chunks(crown, 'ember', big ? 7 : 3, { speed: big ? 9 : 5, up: 0.8 });
+      this.burst(crown, 'ember', big ? 7 : 3, { speed: big ? 7 : 4 });
+    }, 48);
+    this.later(() => this.burst(crown, 'smoke', big ? 3 : 1, { size: big ? 1.4 : 0.65,
+      spread: radius * 0.34, alpha: 0.32, life: 0.52 }), 128);
+  }
+
   // Projectile / small-spell impact. o: dir (travel), ground, target, scale.
   // Layered on purpose, each layer on its own clock: frame 0 = hit spark and glint (the
   // read) with the element's own body, +35 ms = shock ring and thrown debris, then the
@@ -2338,6 +2406,7 @@ export class VFX {
     const at = pos.clone();
     const fwd = dir ? dir.clone().normalize() : UPV.clone();
     const gp = tmpV2.set(pos.x, gi.y, pos.z).clone();
+    if (el === 'fire') { this.fireImpact(at, s, ground ? gp : null); return; }
     // --- frame 0: the read
     this.pop(at, el, 1.5 * s, 0.13);
     this.glint(at, el, 1.9 * s, 2 / 60);
@@ -2357,17 +2426,6 @@ export class VFX {
           this.burst(at, 'arcane', 7 * s, { speed: 4 }); this.burst(at, 'glyph', 2 * s, { spread: 0.3 * s, size: 0.8 });
         }, 45);
         if (ground) this.later(() => this.decal(gp, 'rune', 0.9 * s, { dur: 1.6, glowDur: 0.8 }), 500);
-        break;
-      case 'fire':
-        // a fist of flame that rolls up into smoke, embers arcing away
-        this.sphere('fire', at, { r0: 0.16 * s, r1: 0.8 * s, dur: 0.38, grow: 3, erodeAt: 0.12, alpha: 1, speed: 1.6, rise: 1.4 });
-        this.later(() => {
-          this.sparks(at, sprayDir, 10 * s, { el, spread: 0.9, speed: 13, grav: 10, life: 0.5, w: 0.04 });
-          this.burst(at, 'fire', 4 * s, { speed: 3.5, size: 0.7 });
-          this.chunks(at, 'ember', Math.round(4 * s), { dir: sprayDir, spread: 0.8, speed: 7 });
-        }, 45);
-        if (s > 1.2 || rand() < 0.4) this.later(() => this.sphere('smoke', tmpV.copy(at).setY(at.y + 0.3 * s), { r0: 0.2 * s, r1: 0.5 * s, dur: 0.8, grow: 2, erodeAt: 0.2, rise: 1.3, emiss: 0.6, alpha: 0.5 }), 90);
-        if (ground) this.later(() => { this.decal(gp, 'scorch', 1.1 * s, { dur: 7, glowDur: 1.6 }); this.linger(gp, 'fire', 0.7 * s, 1.6); }, 500);
         break;
       case 'wind':
         this.slash(at, fwd, { el, radius: 0.9 * s, dur: 0.22, thick: 0.4, grow: 0.9, roll: rand() * 3.14 });
@@ -2462,7 +2520,7 @@ export class VFX {
       switch (el) {
         case 'fire':
           if (rand() < 0.4) this.add.emit({ p: [x, y, z], v: [rv(0.4), randRange(1.2, 3), rv(0.4)], life: randRange(0.6, 1.3), size: randRange(0.05, 0.1), size1: 0.02, color: FIRE_WHITE, color2: PAL.fire.core, mid: 0.2, color1: PAL.fire.glow, alpha: fade, alpha1: 0, drag: 1, grav: -0.5, shape: 1, turb: 3 });
-          else if (rand() < 0.7 * fade) this.add.emit({ p: [x, y, z], v: [rv(0.2), randRange(0.8, 1.6), rv(0.2)], life: randRange(0.35, 0.6), size: randRange(0.35, 0.7) * fade, size1: 0.12, ease: 0.7, color: FIRE_WHITE, color2: PAL.fire.core, mid: 0.2, color1: PAL.fire.deep, alpha: 0.85, alpha1: 0, drag: 2, grav: -2, shape: 7 });
+          else if (rand() < 0.7 * fade) this.norm.emit({ p: [x, y, z], v: [rv(0.2), randRange(0.8, 1.6), rv(0.2)], life: randRange(0.35, 0.6), size: randRange(0.35, 0.7) * fade, size1: 0.12, ease: 0.7, color: FIRE_WHITE, color2: PAL.fire.core, mid: 0.2, color1: PAL.fire.deep, alpha: 0.85, alpha1: 0, drag: 2, grav: -2, shape: 7 });
           else this.norm.emit({ p: [x, y + 0.2, z], v: [rv(0.3), randRange(0.6, 1.2), rv(0.3)], life: randRange(1.2, 2), size: 0.3, size1: 1.4, ease: 0.6, color: C(0.14, 0.12, 0.12), color1: C(0.32, 0.31, 0.32), alpha: 0.3 * fade, alpha1: 0, drag: 1, grav: -0.2, shape: 8, fadeIn: 0.2 });
           break;
         case 'frost':
@@ -2495,6 +2553,7 @@ export class VFX {
     const near = pos.y - gi.y < 2.5;
     const g = new THREE.Vector3(pos.x, gi.y, pos.z);
     const k = clamp(r / 4.5, 0.5, 2);
+    if (el === 'fire') { this.fireImpact(pos, r, near ? g : null); return; }
     if (o.graphic) {
       // Large finishers keep a hollow center: pressure reads through edges,
       // side jets and falling debris, never through an opaque sphere over a foe.
@@ -2505,14 +2564,6 @@ export class VFX {
       this.sparks(at, UPV, 12 * pulse, { el, spread: 0.45, speed: 15, grav: 12, life: 0.55, w: 0.035 });
       this.later(() => this.puffRing(g, el, r * 1.2, 0.35, { alpha: 0.45 }), 45);
       if (el === 'water') this.crownSplash(g, r * 0.7, { dur: 0.55, h: 0.9 });
-      else if (el === 'fire') {
-        const f = G.cameraRig?.forward || UPV;
-        const side = new THREE.Vector3(-f.z, 0, f.x).normalize();
-        for (const sign of [-1, 1]) {
-          const jet = g.clone().addScaledVector(side, r * 0.5 * sign);
-          this.sphere('fire', jet, { r0: 0.2, r1: 0.7, dur: 0.6, grow: 3, erodeAt: 0.12, squash: 2, alpha: 0.75, rise: 2.8, emiss: 0.7 });
-        }
-      }
       if (near) {
         this.decal(g, el === 'water' ? 'wet' : el === 'arcane' ? 'rune' : 'scorch', r * 0.8);
         G.world?.grass?.gust(g.x, g.z, r * 1.5, 2);
@@ -2538,21 +2589,6 @@ export class VFX {
       if (G.world) G.world.grass.gust(g.x, g.z, r * 1.6, 2);
     }
     switch (el) {
-      case 'fire': {
-        // bright rolling fireball that erodes into lit, rising smoke. The volumes are drawn at
-        // 70 % of the blast radius (rings and scorch still show the full reach), so a big blast
-        // reads as a ball of fire rather than a wall that swallows the screen.
-        const v = r * 0.7;
-        this.sphere('fire', pos, { r0: v * 0.25, r1: v * 0.9, dur: 1.15, grow: 4.5, erodeAt: 0.3, erode1: 1.05, alpha: 1, rise: 1.4 });
-        for (let i = 0; i < 3; i++) { sphereV(tmpV); tmpV.y = Math.abs(tmpV.y) * 0.6; this.sphere('fire', tmpV.multiplyScalar(v * 0.4).add(pos), { r0: v * 0.12, r1: v * randRange(0.4, 0.55), dur: randRange(0.8, 1.05), grow: 4, erodeAt: 0.3, alpha: 1, rise: 2.4, delay: randRange(0, 0.08) }); }
-        for (let i = 0; i < 3; i++) { sphereV(tmpV); tmpV.y = Math.abs(tmpV.y) * 0.5 + 0.35; const d = tmpV.clone(); this.sphere('smoke', tmpV.multiplyScalar(v * 0.3).add(pos), { r0: v * 0.22, r1: v * randRange(0.40, 0.55), dur: randRange(2.4, 3.2), grow: 2.2, erodeAt: 0.3, rise: randRange(1.0, 1.8), drift: d.multiplyScalar(v * 0.22), emiss: 1.1, emissPow: 2.5, delay: randRange(0.18, 0.32), alpha: 0.85 }); }
-        this.burst(pos, 'fire', 12 * k, { speed: 8, spread: 0.8, size: 1.2, alpha: 0.65 });
-        this.later(() => this.burst(at, 'ember', 16 * k, { speed: 10 }), 45);
-        this.chunks(pos, 'ember', Math.round(14 * k), { speed: 11, up: 0.7 });
-        this.later(() => this.burst(at, 'smoke', 4 * k, { spread: 1.4, size: 1.35 }), 100);
-        if (near) { this.decal(g, 'scorch', r * 0.95); this.linger(g, 'fire', r * 0.6, 3.5, { rate: 14 }); }
-        break;
-      }
       case 'water':
         this.sphere('water', pos, { r0: r * 0.2, r1: r * 0.95, dur: 0.6, grow: 2.6, erodeAt: 0.25, alpha: 0.85 });
         if (near) this.crownSplash(g, r * 0.95, { dur: 0.9, h: r * 0.9 });
@@ -2932,7 +2968,7 @@ export class VFX {
     const p = pal(el);
     switch (el) {
       case 'fire':
-        this.add.emit({ p: [g.x + rv(0.04), g.y + 0.02, g.z + rv(0.04)], v: [rv(0.15), randRange(0.5, 1.0), rv(0.15)], life: randRange(0.25, 0.4), size: randRange(0.1, 0.16), size1: 0.03, color: FIRE_WHITE, color2: PAL.fire.core, mid: 0.25, color1: PAL.fire.deep, alpha: 0.8, alpha1: 0, drag: 1, grav: -0.8, shape: 7 });
+        this.norm.emit({ p: [g.x + rv(0.04), g.y + 0.02, g.z + rv(0.04)], v: [rv(0.15), randRange(0.5, 1.0), rv(0.15)], life: randRange(0.25, 0.4), size: randRange(0.1, 0.16), size1: 0.03, color: FIRE_WHITE, color2: PAL.fire.core, mid: 0.25, color1: PAL.fire.deep, alpha: 0.8, alpha1: 0, drag: 1, grav: -0.8, shape: 7 });
         if (rand() < 0.25) this.add.emit({ p: [g.x, g.y, g.z], v: [rv(0.4), randRange(0.6, 1.4), rv(0.4)], life: randRange(0.5, 0.9), size: 0.035, size1: 0.01, color: FIRE_WHITE, color1: PAL.fire.glow, alpha: 1, alpha1: 0, drag: 1, turb: 3, shape: 1 });
         break;
       case 'frost':
@@ -2970,7 +3006,7 @@ export class VFX {
         s.t += dt;
         const k = clamp(1 - s.t / s.dur, 0, 1);
         s.l.intensity = s.peak * k * k;
-        if (k <= 0) { s.dur = 0; s.l.intensity = 0; }
+        if (k <= 0) { s.fireOwner = null; s.dur = 0; s.l.intensity = 0; }
       }
     }
     // perfect-dodge flourish (driven by G.slowmo so player code stays untouched)
@@ -3020,7 +3056,7 @@ const D = [0, 0, 0];
 // Cache four upper-surface vertices in bind pose, then skin just the emitting
 // vertex at each beat. Shared rig geometries need only one bounded search.
 const burnSites = new WeakMap();
-const BURN_TARGETS = [[0.12, 0.74, 0.66], [0.88, 0.72, 0.62], [0.34, 0.96, 0.61], [0.66, 0.89, 0.55]];
+const BURN_TARGETS = [[0.08, 0.66, 0.73], [0.92, 0.82, 0.70], [0.48, 1.0, 0.70]];
 function burningVertices(geo) {
   let sites = burnSites.get(geo);
   if (sites) return sites;
@@ -3039,7 +3075,6 @@ function burningVertices(geo) {
   burnSites.set(geo, sites);
   return sites;
 }
-const BURN_ORANGE = C(2.8, 0.76, 0.055), BURN_RED = C(1.48, 0.16, 0.018);
 const GREY = C(0.12, 0.11, 0.13), GREY2 = C(0.3, 0.29, 0.31);
 const FIREBALL_C0 = C(2.2, 0.8, 0.15), FIREBALL_C1 = C(0.5, 0.06, 0.01), FIRE_WHITE = C(4.4, 3.6, 2.2);
 // flame below white heat (keeps its colour over grass), cold breath, water drops
@@ -3049,38 +3084,32 @@ const EMBER_A = C(2.6, 1.6, 0.5), EMBER_B = C(2.0, 0.6, 0.08), BREATH_A = C(0.85
 // Particle presets. `this` = VFX.  (pos, opts, index, count)
 // ------------------------------------------------------------------
 VFX.prototype.presets = {
-  // flame licks (animated tongues) mixed with hot glow puffs; white-yellow → orange → deep red
+  // A painted flame carries its own three tones. Only flying embers use additive-over.
   fire(p, o) {
-    const s = o.spread ?? 0.4, sp = o.speed ?? 2;
-    sphereDir(D, sp);
-    const px = p.x + rv(s), py = p.y + rv(s), pz = p.z + rv(s);
-    const vx = D[0] + (o.vx || 0), vy = Math.abs(D[1]) + 1.5 + (o.vy || 0), vz = D[2] + (o.vz || 0);
-    const al = o.alpha ?? 0.8, sz = o.size || 1;
-    if (rand() < 0.62) {
-      this.add.emit({ p: [px, py, pz], v: [vx, vy, vz], life: randRange(0.35, 0.75) * (o.life || 1), size: randRange(0.7, 1.3) * sz, size1: randRange(0.2, 0.4) * sz, ease: 0.7,
-        color: FIRE_WHITE, color2: PAL.fire.core, mid: 0.22, color1: PAL.fire.deep, alpha: al, alpha2: al, alpha1: 0, drag: 2, grav: -2.8, shape: 7 });
-    } else {
-      this.add.emit({ p: [px, py, pz], v: [vx, vy, vz], life: randRange(0.3, 0.65) * (o.life || 1), size: randRange(0.5, 1.0) * sz, size1: randRange(0.1, 0.3) * sz,
-        color: rand() < 0.3 ? PAL.white.core : PAL.fire.core, color2: PAL.fire.glow, mid: 0.4, color1: PAL.fire.deep, alpha: al * 0.8, alpha1: 0, drag: 2, grav: -2.5, shape: 0 });
-    }
+    const spread = o.spread ?? 0.25, size = (o.size ?? 1) * randRange(0.84, 1.18);
+    sphereDir(D, o.speed ?? 1.4);
+    this.norm.emit({ p: [p.x + rv(spread), p.y + size * 0.32 + rv(spread * 0.22), p.z + rv(spread)],
+      v: [D[0] + (o.vx || 0), Math.abs(D[1]) + 0.32 + (o.vy || 0), D[2] + (o.vz || 0)],
+      life: randRange(0.30, 0.55) * (o.life ?? 1), size, size1: size * 0.62, color: PAL.fire.glow,
+      color2: PAL.fire.glow, mid: 0.66, alpha: o.alpha ?? 0.98, alpha2: o.alpha ?? 0.98, alpha1: 0.06, fadeIn: 0.12, drag: 2, shape: 7 });
   },
   // rolling fireball puffs expanding from the blast center
   fireball(p, o) {
     sphereDir(D, 1);
     const r = o.r ?? 1.5;
-    this.add.emit({ p: [p.x + D[0] * r * 0.3, p.y + Math.abs(D[1]) * r * 0.3, p.z + D[2] * r * 0.3], v: [D[0] * r * 2.5, Math.abs(D[1]) * r * 2 + 2, D[2] * r * 2.5], life: randRange(0.4, 0.7),
+    this.norm.emit({ p: [p.x + D[0] * r * 0.3, p.y + Math.abs(D[1]) * r * 0.3, p.z + D[2] * r * 0.3], v: [D[0] * r * 2.5, Math.abs(D[1]) * r * 2 + 2, D[2] * r * 2.5], life: randRange(0.4, 0.7),
       size: r * randRange(0.9, 1.4), size1: r * 1.9, ease: 0.6, color: FIRE_WHITE, color2: FIREBALL_C0, mid: 0.25, color1: FIREBALL_C1, alpha: 0.35, alpha1: 0, drag: 3, grav: -3, shape: 7 });
   },
   ember(p, o) {
     const sp = o.speed ?? 5;
     sphereDir(D, sp);
-    this.add.emit({ p: [p.x, p.y, p.z], v: [D[0], Math.abs(D[1]) * 1.2 + 1, D[2]], life: randRange(0.6, 1.4),
-      size: randRange(0.06, 0.14), color: FIRE_WHITE, color2: PAL.fire.core, mid: 0.2, color1: PAL.fire.glow, alpha: 1, alpha1: 0, drag: 1.8, grav: 3, shape: 1, turb: 4 });
+    this.add.emit({ p: [p.x, p.y, p.z], v: [D[0], Math.abs(D[1]) * 1.2 + 1, D[2]], life: randRange(0.42, 0.90),
+      size: randRange(0.045, 0.105), color: PAL.fire.glow, color2: EMBER_B, mid: 0.2, color1: PAL.fire.deep, alpha: 1, alpha1: 0, drag: 1.8, grav: 3, shape: 1, turb: 4 });
   },
   // soft billowing smoke that tatters apart as it ages
   smoke(p, o) {
     const s = o.spread ?? 0.6;
-    this.norm.emit({ p: [p.x + rv(s), p.y + rv(s) * 0.5, p.z + rv(s)], v: [rv(0.8), randRange(0.8, 2), rv(0.8)], life: randRange(1.4, 2.4),
+    this.norm.emit({ p: [p.x + rv(s), p.y + rv(s) * 0.5, p.z + rv(s)], v: [rv(0.8), randRange(0.8, 2), rv(0.8)], life: randRange(1.4, 2.4) * (o.life ?? 1),
       size: randRange(0.8, 1.4) * (o.size || 1), size1: randRange(2.1, 3.1) * (o.size || 1), ease: 0.55, color: o.color || GREY, color1: o.color1 || GREY2, alpha: o.alpha ?? 0.5, alpha1: 0, drag: 1.2, grav: -0.3, shape: 8, fadeIn: 0.08 });
   },
   spark(p, o) {

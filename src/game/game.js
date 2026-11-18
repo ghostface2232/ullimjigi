@@ -14,6 +14,7 @@ import { CameraRig } from './camera.js';
 import { Combat } from './combat.js';
 import { Spells } from './spells.js';
 import { EnemyManager, DEF } from './enemies.js';
+import { makeBrute } from './characters.js';
 import { NPCs, Companion } from './npcs.js';
 import { Player } from './player.js';
 import { Dialogue } from './dialogue.js';
@@ -182,6 +183,7 @@ export class Game {
   async warmup() {
     const grp = new THREE.Group();
     const rigs = Object.values(DEF).map((d) => d.make());
+    rigs.push(makeBrute('warden')); // the shrine boss's own body is not a DEF entry
     rigs.forEach((r, i) => { r.root.position.set(i * 2, -50, 0); grp.add(r.root); });
     const orb = G.vfx.orb('fire', 0.3); grp.add(orb);
     const tor = G.vfx.tornado(new THREE.Vector3(0, -50, 0)); tor.done = true;

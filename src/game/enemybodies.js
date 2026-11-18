@@ -11,6 +11,7 @@ import { tube, blob, sheet, sstep, mix, TAU, bodyMat, vnoise3, rotateTowards, ik
 import { CHAR, HumanRig, humanType, makeGhost } from './humanrig.js';
 import { glowBasic, glowTwin, Field, shard, shade, sheen, rigidType, spike, tatter, prism, megalith, builtFromModel, dress, rigids } from './creatures.js';
 import { model } from '../render/models.js';
+import { WardenShell } from './warden.js';
 
 const V3 = THREE.Vector3;
 const v = (x, y, z) => new V3(x, y, z);
@@ -302,7 +303,7 @@ function bruteCfg(frost) {
     },
   };
 }
-const BRUTE = { normal: bruteCfg(false), frost: bruteCfg(true) };
+const BRUTE = { normal: bruteCfg(false), frost: bruteCfg(true), warden: { ...bruteCfg(true), key: 'warden', model: { file: 'warden' } } };
 
 
 // overhead two-handed slam: raise with aimPitch < 0, smash down with aimPitch > 0
@@ -350,13 +351,23 @@ function stoneGeo(kind) {
 }
 
 export function makeBrute(variant = 'normal') {
-  const frost = variant === 'frost';
-  const T = enemyType(BRUTE[frost ? 'frost' : 'normal']);
+  const warden = variant === 'warden' && !!model('mn_warden');
+  const frost = variant === 'frost' || variant === 'warden';
+  const T = enemyType(BRUTE[warden ? 'warden' : frost ? 'frost' : 'normal']);
   const glow = glowBasic(frost ? 0x8fe3ff : 0xc080ff, 2.6);
   const M = { main: skinMat(0.5), glow };
-  if (frost) M.ice = iceMat();
-  const rig = new HumanRig(T, { mats: M, castPose: false, outline: 0.006, rim: 0.55, style: { armHang: 0.25, lift: 0.7, sway: 1.6 }, pose: (q, s, R) => { q.armLx -= 0.15; q.armRx -= 0.15; q.foreLx -= 0.25; q.foreRx -= 0.25; slamPose(q, s, R); } });
-  dress(rig, { variant: frost ? 'frost' : null, mat: { main: { spec: 0.45 }, ice: { spec: 1.6 } } });
+  if (frost) M.ice = warden ? skinMat(0.35) : iceMat();
+  const rig = new HumanRig(T, { mats: M, castPose: false, outline: 0.006, rim: 0.55, style: { armHang: 0.25, lift: 0.7, sway: 1.6 }, pose: (q, s, R) => {
+    q.armLx -= 0.15; q.armRx -= 0.15; q.foreLx -= 0.25; q.foreRx -= 0.25;
+    if (warden) { q.spinex += 0.14; q.chestx += 0.18; q.headx -= 0.16; }
+    slamPose(q, s, R);
+  } });
+  dress(rig, { variant: frost && !warden ? 'frost' : null, mat: { main: { spec: 0.45 }, ice: { spec: warden ? 0.65 : 1.6 } } });
+  if (warden) {
+    rig.wardenShell = new WardenShell(rig, rigids(rig, M));
+    rig.glowMat = glow; rig.eyeMat = glow; rig.height = 2.9;
+    return rig;
+  }
   const B = rig.B, L = rig.L;
   const P = (b, x, y, z) => local(rig, b, v(x, y, z));
   // armor stones: [back menhir, back L, back R (kept), shoulder cairn L, R, chest tablet (kept), bracer L, R]

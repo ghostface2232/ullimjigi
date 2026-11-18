@@ -276,6 +276,8 @@ Input → Audio/Music → Renderer(scene, camera) → VFX → World → CameraRi
 3. 보름의 첫 반응 대사는 `story.js`의 `onReaction`에 넣습니다.
 
 ### 적 추가
+
+- 서리봉 성소의 서리무덤 파수꾼은 이야기에서 `warden: true`로 소환합니다. 전용 `mn_warden.glb`는 돌무덤 뼈대를 공유합니다. `WardenShell`은 화상 동안 어깨·팔뚝의 겉얼음 네 장을 떼고 화상이 끝나면 6초에 걸쳐 다시 키웁니다. 체력 60%에서 안면 봉인이 갈라지고 25%에서 완전히 열리며 발밑에 서리 결정이 돋습니다.
 1. `enemies.js`의 `DEF`에 항목을 추가합니다(`name`, `hp`, `dmg`, `speed`, `radius`, `height`, `xp`, `aggro`, `resist`, `make`).
 2. `enemybodies.js`(사람형) 또는 `enemycreatures.js`(생물형)에 몸체 생성 함수를 만들고 `characters.js`에서 재수출합니다. `rig.mats`(개별 툰 재질, 피격 번쩍임·디졸브용)와 `rig.glowMats`(레벨 단계 색이 입혀지는 발광 재질)를 반드시 채우세요. 몸은 재질 그룹마다 스킨 메시 하나로 나뉘므로 메시마다 재질이 하나입니다. 발광 재질은 `glowBasic()`으로 만들면 디졸브 중간에 숨겨지고, 재 균열 재질(`crackMat`)에 그 색 객체를 넘기면 균열도 단계 색을 따릅니다.
 3. 행동이 다르면 `Enemy`를 상속한 클래스를 만들고 `EnemyManager.spawn()` 분기에 추가합니다.

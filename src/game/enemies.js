@@ -273,7 +273,7 @@ export class Enemy {
     this.brk = def.boss || opts.brk ? newBreak() : null;
     this.phase = 1; this.phaseMul = 1;
     this.atkGen = 0;
-    this.rig = def.make();
+    this.rig = opts.warden && type === 'bruteFrost' ? makeBrute('warden') : def.make();
     this.root = this.rig.root;
     this.root.rotation.order = 'YXZ';
     if (this.elite) {
@@ -1206,6 +1206,7 @@ class Brute extends Enemy {
     if (this.rig.armor) this.rig.armor.forEach((a, i) => { a.visible = !broken || i % 3 === 2; });
     if (broken && !this._wasBroken) { G.vfx.burst(this.center(), 'dust', 14, { speed: 6, color: new THREE.Color(0.5, 0.48, 0.45) }); G.audio.play('brute_slam', { pos: this.pos }); G.hud.floatText(this.center(), '갑옷 파괴!', '#ffd86a'); }
     this._wasBroken = broken;
+    this.rig.wardenShell?.update(this, dt);
     return super.update(dt);
   }
   enterPhase() {

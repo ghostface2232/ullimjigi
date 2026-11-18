@@ -423,6 +423,7 @@ function pavingParts() {
   }
   geo.computeBoundingBox(); geo.computeBoundingSphere();
   const srcMat = parts[0].material;
+  const rows = parts[0].userData.pavingRows || 4;
   const mat = toon(0xffffff, { nocache: true, rim: 0.12, noAO: true, noMoss: true });
   mat.map = srcMat.map; mat.normalMap = srcMat.normalMap; mat.aoMap = srcMat.aoMap;
   mat.normalScale.set(1.15, -1.15); mat.aoMapIntensity = 0.9;
@@ -431,7 +432,7 @@ function pavingParts() {
   mat.onBeforeCompile = (sh) => {
     patch(sh);
     sh.vertexShader = `attribute vec4 aPavingTile;
-      vec2 pavingOffset(float tile) { return vec2(mod(tile, 4.0), -floor(tile / 4.0)) * 0.25; }
+      vec2 pavingOffset(float tile) { return vec2(mod(tile, 4.0) * 0.25, -floor(tile / 4.0) / ${rows.toFixed(1)}); }
       ` + sh.vertexShader.replace('#include <uv_vertex>', `
       #include <uv_vertex>
       // The grout apron is a separate UV island at 12 mm. Its offsets never span a stone face.
@@ -453,8 +454,8 @@ function pavingParts() {
     // Authored normals use the valley's soft stone response without the procedural rock/grime layer.
     sh.fragmentShader = '#define TOON_SOFT\n' + sh.fragmentShader;
   };
-  mat.customProgramCacheKey = () => key + '|paving';
-  pavingKit = { geo, mat, parts, shapeCount: geos.length, hasAlternates };
+  mat.customProgramCacheKey = () => key + '|paving' + rows;
+  pavingKit = { geo, mat, parts, shapeCount: geos.length, hasAlternates, rows };
   return pavingKit;
 }
 
@@ -481,6 +482,7 @@ function pavingBatch(parent, entries, groundAt, tint = 0xffffff) {
   // Restrained warm/cool dressings break up ring-wise repetition without a patchwork floor.
   const tones = [[1.06, 1.015, 0.94], [0.88, 0.93, 0.97], [1.0, 0.94, 0.93],
     [0.93, 0.99, 0.92], [0.91, 0.88, 0.83], [1.025, 1.025, 1.01]];
+  const wornTiles = [0, 2, 5, 7]; // Their undented twins occupy the fifth atlas row.
   entries.forEach((e, i) => {
     const kind = e.kind, meta = kit.parts[kind].userData;
     const w = e.w || meta.width, d = e.d || meta.depth;
@@ -499,7 +501,14 @@ function pavingBatch(parent, entries, groundAt, tint = 0xffffff) {
     weights.morphTargetInfluences[kind + variant + (flip ? kit.shapeCount : 0)] = 1;
     m.setMorphAt(i, weights);
     // Full flags at both sites share the surface pool independently of their authored shape.
-    const tile = kind < 10 ? Math.floor(rnd() * 10) : kind;
+    let tile = kind < 10 ? Math.floor(rnd() * 10) : kind;
+    if (kit.rows === 5 && tint === 0xffffff) {
+      // Wear follows the middle promenade, the four thresholds and the market approach.
+      const alongWalk = (kind >= 3 && kind <= 5) || Math.min(Math.abs(e.x - 0.1 * e.z),
+        Math.abs(e.z + 0.1 * e.x), Math.abs(e.x - 0.69 * e.z)) < 1.75;
+      const twin = wornTiles.indexOf(tile);
+      if (!alongWalk && twin >= 0) tile = 16 + twin;
+    }
     // The noon sun comes from +Z. Reserve interrupted moss patches for sheltered northern
     // joints on the last three rings and kerb. Only these flags have moss on the shoulder.
     const shaded = tint === 0xffffff && e.z < -2 && (kind >= 6 && kind <= 8 || kind === 10);

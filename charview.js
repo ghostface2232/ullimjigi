@@ -46,6 +46,11 @@ const sd = new THREE.Vector3(0.45, 0.8, 0.55).normalize();
 sun.position.copy(sd); sun.castShadow = true;
 sun.shadow.bias = -0.00022; sun.shadow.normalBias = 0.05; sun.shadow.radius = 3.2; sun.shadow.camera.far = 40;
 scene.add(sun);
+// The game binds its comparison texture from World.sky. This isolated scene
+// owns its sun; its cascade atlas exists by the time the depth-effects pass runs.
+if (pipeline) Object.defineProperty(pipeline.fxMat.uniforms.tShadow, 'value', {
+  get: () => sun.shadow.map?.depthTexture ?? null,
+});
 U.sunDir.value.copy(sd);
 const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x7a8a5a, 1.2);
 scene.add(hemi);

@@ -534,7 +534,11 @@ const RIM_FRAG = `
       vec3 _nw = inverseTransformDirection(normal, viewMatrix);
       float _key = smoothstep(-0.2, 0.65, dot(_nw, uSunW));
       // A narrow sun-facing edge, rather than an ambient halo around the whole silhouette.
-      outgoingLight += uRimColor * smoothstep(0.62, 0.94, _r) * uRim * (0.12 + 0.88 * _key) * (0.3 + 0.7 * _lit);
+      vec3 rim = uRimColor * smoothstep(0.62, 0.94, _r) * uRim * (0.12 + 0.88 * _key) * (0.3 + 0.7 * _lit);
+      #ifdef ACTOR_CLOTH
+        if (_actorRow == 4.0) rim = outgoingLight * (0.16 * dot(rim, vec3(0.2126, 0.7152, 0.0722)));
+      #endif
+      outgoingLight += rim;
     #else
       outgoingLight += uRimColor * smoothstep(0.5, 1.0, _r) * uRim * (0.35 + 0.65 * _lit);
     #endif
@@ -586,6 +590,11 @@ float _isDir = 0.0;
 float _cloudSh = 1.0;
 float _ndlOff = 0.0;
 // detail-layer response: roughness, highlight strength (0 = none), cavity (1 = open)
+#ifdef ACTOR_RAMP
+uniform sampler2D uActorRamp;
+float _actorRow = -1.0, _actorMetal = 0.0, _facePlane = 0.0, _faceWeight = 0.0, _faceBack = 0.0;
+vec3 _skyFill = vec3(1.0), _nightBounce = vec3(0.0);
+#endif
 float _rough = 0.9;
 float _specK = 0.0;
 float _cav = 1.0;
@@ -618,13 +627,85 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
       // Thin warm transition between the cool shadow band and the lit paint.
       irr += directLight.color * vec3(0.12, 0.038, 0.009) * (4.0 * g * (1.0 - g) * _dirShadow * _cloudSh);
     #endif
+    #ifdef ACTOR_RAMP
+    if (_actorRow >= 0.0) {
+      #ifdef ACTOR_CREATURE
+        vec3 paintedKey = irr;
+        float paintedLit = lit;
+      #endif
+      float visibility = mix(_dirShadow, 1.0, _faceWeight) * _cloudSh;
+      #ifdef ACTOR_CLOTH
+        if (_actorRow == 4.0) visibility = mix(1.0, _dirShadow, 0.3) * _cloudSh;
+      #endif
+      float plane = mix(ndl, _facePlane, _faceWeight) - (1.0 - _cav) * 0.45;
+      float coord = mix(-1.0, plane, visibility) * 0.5 + 0.5;
+      float moon = (1.0 - smoothstep(0.28, 0.95, dot(directLight.color, vec3(0.25, 0.55, 0.2))))
+                 * (1.0 - smoothstep(0.08, 0.36, dot(uSkyRefl, vec3(0.25, 0.55, 0.2))));
+      float gold = smoothstep(0.22, 0.60, (directLight.color.r - directLight.color.b) / max(directLight.color.r, 0.01))
+                 * (1.0 - smoothstep(0.25, 0.65, uSunW.y));
+      float row = _actorRow * 3.0 + mix(gold, 2.0, moon);
+      vec4 ramp = texture2D(uActorRamp, vec2(clamp(coord, 0.0, 1.0), (row + 0.5) / 16.0));
+      // Keep the local time-of-day tint and cool ambient light inside the inked planes.
+      vec3 localShade = clamp(uShadeTint / vec3(0.30, 0.36, 0.52), vec3(0.62), vec3(1.28));
+      irr = directLight.color * ramp.rgb * mix(localShade, vec3(1.0), ramp.a) * _cav;
+      vec3 shadowFill = mix(vec3(0.70, 0.62, 0.82), vec3(1.0, 0.98, 0.94), _faceWeight);
+      _skyFill = mix(shadowFill, vec3(1.0), ramp.a);
+      // A moonlit face still picks up broad, blue sky fill. Scale by both the
+      // key and horizon so a daytime cast shadow cannot turn this fill on.
+      _nightBounce = moon * vec3(0.12, 0.15, 0.22) * mix(0.78, 1.0, ramp.a);
+      // Skylight reaches a face turned away from the key, including its outer cheek.
+      float grazing = 1.0 - max(dot(geometryNormal, geometryViewDir), 0.0);
+      _skyFill *= 1.0 + _faceBack * (0.22 + 0.14 * smoothstep(0.35, 0.85, grazing));
+      lit = ramp.a * visibility;
+      #ifdef ACTOR_CLOTH
+        if (_actorRow == 4.0) {
+          // The light supplies intensity and the atlas supplies pigment. Recolouring
+          // the unlit locks here would replace their painted chestnut/ochre shadows.
+          irr = directLight.color * ramp.g * mix(1.0, _cav, 0.55);
+          _skyFill = vec3(1.0);
+        }
+      #endif
+      #ifdef ACTOR_CREATURE
+        // These atlases already paint the planes. Preserve their daylight value;
+        // the ramp can turn their hue and still darken with the environment at night.
+        vec3 weights = material.diffuseColor * vec3(0.2126, 0.7152, 0.0722);
+        vec3 day = mix(paintedKey, irr, 0.40);
+        float gain = dot(paintedKey, weights) / max(dot(day, weights), 0.00001);
+        irr = mix(day * max(1.0, gain) * 1.15, irr, moon);
+        _skyFill = mix(vec3(1.08), _skyFill, moon);
+        lit = max(lit, paintedLit * (1.0 - moon));
+      #endif
+    }
+    #endif
     reflectedLight.directDiffuse += irr * BRDF_Lambert( material.diffuseColor );
     if ( _specK > 0.0 ) {
       vec3 hv = normalize( directLight.direction + geometryViewDir );
       float nh = max( dot( geometryNormal, hv ), 0.0 ), a = _rough * _rough, a2 = a * a;
       float dd = nh * nh * ( a2 - 1.0 ) + 1.0;
       float fr = 0.04 + 0.96 * pow( 1.0 - max( dot( hv, geometryViewDir ), 0.0 ), 5.0 );
-      reflectedLight.directDiffuse += directLight.color * ( min( a2 / ( 3.14159 * dd * dd ), 40.0 ) * fr * 0.25 * _specK * lit * max( ndl, 0.0 ) * _cav );
+      float gloss = min(a2 / (3.14159 * dd * dd), 40.0) * fr * 0.25 * _specK;
+      vec3 highlight = vec3(gloss);
+      #ifdef ACTOR_RAMP
+      if (_actorRow == 2.0) {
+        // A broad reflected plane and a narrow crest follow actual bevel normals.
+        // The paint tints the reflection: gold edging stays distinct from steel.
+        float aa = min(fwidth(nh), 0.045);
+        float polished = 1.0 - smoothstep(0.32, 0.86, _rough);
+        // Angular change per metre distinguishes a rolled rim from a broad breastplate.
+        // Unresolved relief cannot create a field of subpixel glints.
+        float turn = length(fwidth(geometryNormal));
+        float bend = smoothstep(7.0, 25.0, turn / max(length(fwidth(geometryPosition)), 0.0005));
+        bend *= 1.0 - smoothstep(0.18, 0.48, turn);
+        float grazing = 1.0 - max(dot(geometryNormal, geometryViewDir), 0.0);
+        float crest = smoothstep(0.945 - aa, 0.975 + aa, nh) * (0.045 + 0.25 * bend);
+        float edge = 0.14 * bend * smoothstep(0.28, 0.62, grazing) * smoothstep(0.08, 0.46, ndl);
+        float plate = smoothstep(0.76, 0.92, nh) * 0.045 + crest + edge;
+        vec3 paint = material.diffuseColor / max(max(material.diffuseColor.r, material.diffuseColor.g), max(0.035, material.diffuseColor.b));
+        vec3 tint = mix(vec3(1.0), sqrt(max(paint, vec3(0.0))), 0.78);
+        highlight = tint * (min(gloss, 0.75) + plate * polished);
+      }
+      #endif
+      reflectedLight.directDiffuse += directLight.color * highlight * lit * max(ndl, 0.0) * _cav;
     }
     #ifdef TOON_FOLIAGE
       float tr = pow( clamp( dot( -geometryViewDir, directLight.direction ), 0.0, 1.0 ), 3.0 );
@@ -642,7 +723,11 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
   }
 }
 void RE_IndirectDiffuse_Toon( const in vec3 irradiance, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in ToonMaterial material, inout ReflectedLight reflectedLight ) {
-  reflectedLight.indirectDiffuse += irradiance * BRDF_Lambert( material.diffuseColor ) * _cav;
+  vec3 sky = irradiance;
+  #ifdef ACTOR_RAMP
+    sky = sky * _skyFill + _nightBounce;
+  #endif
+  reflectedLight.indirectDiffuse += sky * BRDF_Lambert( material.diffuseColor ) * _cav;
 }
 #define RE_Direct RE_Direct_Toon
 #define RE_IndirectDiffuse RE_IndirectDiffuse_Toon
@@ -1229,67 +1314,259 @@ export function patch(m, opts = {}) {
   return m;
 }
 
-// Final material response for authored people. Kept here so the rig only selects materials;
-// skin, eyes and cloth retain charkit's maps, expressions and prewarm cache contract.
-export function characterMaterial(m, kind, head) {
-  const base = m.onBeforeCompile, key = m.customProgramCacheKey;
-  const portrait = { value: new THREE.Vector4(head.x, head.y, head.z, head.w) };
-  m.onBeforeCompile = (sh, r) => {
-    base.call(m, sh, r);
-    if (kind === 'skin') {
-      sh.uniforms.uPortraitHead = portrait;
-      sh.vertexShader = 'uniform vec4 uPortraitHead;\nvarying vec3 vPortraitP, vPortraitF, vPortraitR;\n' + sh.vertexShader
-        .replace('#include <defaultnormal_vertex>', `#include <defaultnormal_vertex>
-  vec3 _pf = vec3(0.0, 0.0, 1.0), _pr = vec3(1.0, 0.0, 0.0);
-  #ifdef USE_SKINNING
-    _pf = (skinMatrix * vec4(_pf, 0.0)).xyz;
-    _pr = (skinMatrix * vec4(_pr, 0.0)).xyz;
-  #endif
-  vPortraitF = normalMatrix * _pf; vPortraitR = normalMatrix * _pr;
-  vPortraitP = (position - uPortraitHead.xyz) / max(uPortraitHead.w, 0.01);`);
-      sh.fragmentShader = 'varying vec3 vPortraitP, vPortraitF, vPortraitR;\nvec3 _portraitLocal = vec3(0.0);\n' + sh.fragmentShader
-        .replace('reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );', 'vec3 _localIrr = irradiance * BRDF_Lambert( material.diffuseColor ); reflectedLight.directDiffuse += _localIrr; _portraitLocal += _localIrr;')
-        .replace('float _ndl = dot(normal, sunLights[0].direction);', `
-  // Broad facial planes follow the skinned head, never the camera. Nose/cheek relief
-  // remains in the sheen; it cannot chop the diffuse face into tiny shadow islands.
-  float _faceK = smoothstep(-0.9, -0.5, vPortraitP.y) * (1.0 - smoothstep(0.7, 1.1, vPortraitP.y)) * smoothstep(-0.2, 0.25, vPortraitP.z);
-  vec3 _faceN = normalize(normalize(vPortraitF) + normalize(vPortraitR) * clamp(vPortraitP.x, -1.0, 1.0) * 0.42 + normalize(cross(vPortraitF, vPortraitR)) * 0.12);
-  float _ndl = dot(normalize(mix(normal, _faceN, _faceK * 0.9)), sunLights[0].direction);`)
-        .replace('float _sh = _dirShadow * _cloudSh;', 'float _sh = mix(_dirShadow, 1.0, _faceK * 0.8) * _cloudSh;')
-        .replace('vec3 _base = reflectedLight.directDiffuse / mix(uShadeTint, vec3(1.0), _g * _sh);', 'vec3 _base = sunLights[0].color * BRDF_Lambert(diffuseColor.rgb) * mix(1.0, _cav, 0.55);')
-        .replace('sunLights[0].color * _spec + reflectedLight.indirectDiffuse', 'sunLights[0].color * _spec + _portraitLocal + reflectedLight.indirectDiffuse')
-        .replace('smoothstep(-0.3, 0.62, _ndl) * mix(0.16, 1.0, _sh)', '(0.88 * smoothstep(-0.18, 0.18, _ndl) + 0.12 * smoothstep(0.25, 0.85, _ndl)) * _sh')
-        .replace('vec3(0.3, 0.07, 0.03) * exp(-pow((_ndl - 0.02) / 0.3, 2.0))', 'vec3(0.18, 0.045, 0.018) * exp(-pow((_ndl - 0.02) / 0.18, 2.0))')
-        .replace('26.0) * 0.07 * _sh', '26.0) * 0.035 * _sh');
-    } else if (kind === 'cloth') {
-      sh.fragmentShader = sh.fragmentShader
-        .replace('float g = 0.6 * smoothstep( -0.14, 0.1, ndl ) + 0.4 * smoothstep( -0.1, 0.85, ndl );', 'float g = texture2D(gradientMap, vec2(clamp(ndl * 0.5 + 0.5, 0.0, 1.0), 0.5)).r;')
-        // A designed, soft anisotropic band; derivatives keep its edge calm at distance.
-        .replace('(pow(_s1, 9.0) * 0.2 + pow(_s1, 40.0) * 0.14)', '(smoothstep(0.82 - fwidth(_s1), 0.97 + fwidth(_s1), _s1) * 0.22 + pow(_s1, 40.0) * 0.08)');
+// Linear RGB multipliers for the key light. Each row has its own break position,
+// dyed shadow and warm turning plane. Alpha carries coverage for the sky fill.
+const ACTOR_RAMPS = [
+  { edge: 0.04, width: 0.63, shade: [0.66, 0.46, 0.39], turn: [0.94, 0.80, 0.70] }, // skin
+  { edge: 0.17, width: 0.15, shade: [0.15, 0.22, 0.45], turn: [0.77, 0.65, 0.59] }, // cloth
+  { edge: 0.29, width: 0.10, shade: [0.09, 0.15, 0.31], turn: [0.81, 0.74, 0.68] }, // metal
+  { edge: 0.09, width: 0.19, shade: [0.28, 0.16, 0.25], turn: [0.85, 0.54, 0.40] }, // leather
+  { edge: 0.10, width: 0.48, shade: [0.42, 0.42, 0.42], turn: [0.75, 0.75, 0.75] }, // hair
+];
+// Three adjacent texel centres per material let hardware interpolate time of day
+// in the same fetch as NdotL. The last row of the 256 x 16 table is reserved.
+const ACTOR_TIME_TINT = [
+  { shade: [1, 1, 1], turn: [1, 1, 1] },
+  { shade: [0.86, 0.92, 1.17], turn: [1.07, 0.95, 0.84] },
+  { shade: [0.96, 1.12, 1.20], turn: [0.91, 0.99, 1.09] },
+];
+let actorLUT;
+function actorRampTexture() {
+  if (actorLUT) return actorLUT;
+  const data = new Uint8Array(256 * 16 * 4);
+  ACTOR_RAMPS.forEach(({ edge, width, shade, turn }, row) => {
+    for (let i = 0; i < 256; i++) {
+      const n = i / 255 * 2 - 1;
+      const a = THREE.MathUtils.smoothstep(n, edge - width, edge);
+      const b = THREE.MathUtils.smoothstep(n, edge, edge + width * 0.75);
+      // Keep a painted cheek plane inside the shadow shape, with a firmer
+      // transition at the nose. Plate and fabric retain their distinct steps.
+      const shoulderWeight = row === 0 ? a + (1 - a) * 0.24 * THREE.MathUtils.smoothstep(n, -0.88, edge) : a;
+      ACTOR_TIME_TINT.forEach((tint, phase) => {
+        const pixel = ((row * 3 + phase) * 256 + i) * 4;
+        for (let k = 0; k < 3; k++) {
+          const shoulder = THREE.MathUtils.lerp(shade[k] * tint.shade[k], turn[k] * tint.turn[k], shoulderWeight);
+          data[pixel + k] = Math.round(255 * Math.min(1, THREE.MathUtils.lerp(shoulder, 1, b)));
+        }
+        data[pixel + 3] = Math.round(255 * (a + b) * 0.5);
+      });
     }
+  });
+  actorLUT = new THREE.DataTexture(data, 256, 16);
+  actorLUT.minFilter = actorLUT.magFilter = THREE.LinearFilter;
+  actorLUT.needsUpdate = true;
+  return actorLUT;
+}
+
+const FACE_COORDS = `
+  vec3 f = vec3(0.0, 0.0, 1.0), r = vec3(1.0, 0.0, 0.0);
+  #ifdef USE_SKINNING
+    f = mat3(skinMatrix) * f;
+    r = mat3(skinMatrix) * r;
+  #endif
+  vec3 l = mat3(viewMatrix) * uSunW;
+  vec3 front = normalize(normalMatrix * f), right = normalize(normalMatrix * r);
+  vFaceLight = vec3(dot(l, right), dot(l, normalize(cross(front, right))), dot(l, front));
+  vFacePoint = (position - uHead.xyz) / uHead.w;
+`;
+// Mirror the cheek gradient and the small nostril shadow in the head's bind frame.
+const FACE_FIELD = `
+  if (vSurfF < 0.5) {
+    _actorRow = 0.0;
+    vec3 p = vFacePoint;
+    float cheek = smoothstep(-1.16, -0.94, p.y) * (1.0 - smoothstep(0.92, 1.15, p.y))
+                 * smoothstep(-0.16, 0.32, p.z);
+    vec2 az = vFaceLight.xz / max(length(vFaceLight.xz), 0.15);
+    float x = p.x * sign(az.x), y = p.y - uNoseY;
+    // Broad convex cheek, then a short, soft occlusion tucked beside the nostril.
+    float cheekbone = exp(-9.0 * (y + 0.12) * (y + 0.12));
+    float plane = 0.14 + 0.81 * az.y + abs(az.x) * (0.90 * x - 0.12 + 0.10 * cheekbone);
+    vec2 wing = (vec2(x, y) - vec2(-0.135, -0.055)) / vec2(0.155, 0.092);
+    float nose = 1.0 - smoothstep(0.12, 1.0, dot(wing, wing));
+    _facePlane = plane + 0.13 * vFaceLight.y - 0.41 * abs(az.x) * nose;
+    _faceBack = cheek * smoothstep(0.05, 0.85, -az.y);
+    _faceWeight = cheek;
+  }
+`;
+const HAIR_BANDS = `
+if (vSurf > 2.5 && vSurf < 3.5) {
+  vec3 viewDir = normalize(vViewPosition), lightDir = sunLights[0].direction;
+  vec3 halfDir = normalize(lightDir + viewDir + vec3(0.00001));
+  // UV V follows each unrotated shell. The atlas tangent frame is evaluated on
+  // the posed surface, so the bands travel with a bouncing fringe or a braid.
+  vec3 shell = normalize(vHairN + nonPerturbedNormal);
+  vec3 flow = _hairT - shell * dot(shell, _hairT);
+  vec3 strand = normalize(mix(_hairT, flow, 0.64) + vec3(1e-6));
+  // Adjacent shells share the fall of the lock, but the UV still determines its
+  // twist. Fade the guide out at the crown, where projected down has no direction.
+  vec3 fall = vHairDown - shell * dot(shell, vHairDown);
+  float span = length(fall);
+  fall /= max(span, 0.001);
+  float agreement = dot(strand, fall);
+  float grouping = 0.59 * smoothstep(0.12, 0.78, span) * smoothstep(0.08, 0.55, abs(agreement));
+  strand = normalize(mix(strand, fall * sign(agreement), grouping));
+  float across = dot(strand, halfDir), bend = dot(shell, halfDir);
+  float primary = abs(across + 0.24 * bend);
+  float aa = fwidth(primary);
+  float band = (1.0 - smoothstep(0.0, 0.11 + min(aa, 0.06), primary)) * (1.0 - smoothstep(0.035, 0.14, aa));
+  float facing = smoothstep(-0.18, 0.60, dot(shell, lightDir));
+  // Keep the painted value grouping of the original fringe. Anchor its broad
+  // light to the head, so only the narrow strand highlight tracks the viewer.
+  vec3 paintAxis = normalize(lightDir + normalize(vHairFront) + vec3(1e-5));
+  vec3 fibre = normalize(_hairT + 0.55 * (normal - nonPerturbedNormal) + 0.14 * nonPerturbedNormal);
+  float along = dot(fibre, paintAxis);
+  float acrossLight = sqrt(max(0.0, 1.0 - along * along));
+  float wrap = smoothstep(-0.20, 0.60, dot(nonPerturbedNormal, lightDir))
+             * smoothstep(0.0, 0.5, dot(nonPerturbedNormal, normalize(vHairFront)));
+  float pigmentValue = dot(diffuseColor.rgb, vec3(0.3, 0.6, 0.1));
+  vec3 scatter = diffuseColor.rgb * mix(3.2, 0.45, smoothstep(0.08, 0.60, pigmentValue))
+               + vec3(0.05, 0.042, 0.035);
+  float brush = smoothstep(0.82, 0.97, acrossLight) * 0.22 + pow(acrossLight, 40.0) * 0.08;
+  outgoingLight += sunLights[0].color * scatter * brush * wrap
+                 * mix(0.3, 1.0, _dirShadow * _cloudSh) * _cav;
+  float key = dot(sunLights[0].color, vec3(0.2126, 0.7152, 0.0722));
+  // A small exposure change preserves the hue and all the brushwork underneath.
+  outgoingLight *= 1.0 + 0.16 * band * facing * _cloudSh * _cav * smoothstep(0.0, 1.6, key);
+}
+`;
+
+// The per-fragment row is set after the authored map and material-kind hooks,
+// before the lighting loop. Point lights, emissive markings and expressions keep
+// their existing paths. The cache key depends only on shader layout.
+export function characterMaterial(m, kind, options = {}) {
+  const base = m.onBeforeCompile, key = m.customProgramCacheKey;
+  const { head, noseY = -0.27, orm } = options;
+  m.onBeforeCompile = (sh, renderer) => {
+    base.call(m, sh, renderer);
+    sh.uniforms.uActorRamp = { value: actorRampTexture() };
+    let setup = '';
+    if (kind === 'skin' || kind === 'legacyFace') {
+      sh.uniforms.uHead = { value: head };
+      sh.uniforms.uNoseY = { value: noseY };
+      sh.uniforms.uSunW = U.sunDir;
+      const varyings = 'varying vec3 vFacePoint, vFaceLight;\n';
+      sh.vertexShader = varyings + 'uniform vec4 uHead; uniform vec3 uSunW;\n' + sh.vertexShader
+        .replace('#include <defaultnormal_vertex>', '#include <defaultnormal_vertex>\n' + FACE_COORDS);
+      sh.fragmentShader = varyings + 'uniform float uNoseY;\n' + sh.fragmentShader
+        .replace(/#if NUM_SUN_LIGHTS > 0\nif \(vSurfF < 0.5\) \{[\s\S]*?\n#endif/, '');
+      setup = FACE_FIELD;
+      if (kind === 'legacyFace') {
+        // The old face paints iris and catchlights on a dedicated UV region.
+        setup = FACE_FIELD.replace('vSurfF < 0.5', 'vSurfF < 1.5 && _eyeball < 0.5');
+        sh.fragmentShader = sh.fragmentShader.replace('if (vSurfF < 1.5) {\n  float _ndl', 'if (_actorRow < 0.0 && vSurfF < 1.5) {\n  float _ndl');
+      }
+      if (orm) {
+        sh.uniforms.uSkinOrm = { value: orm };
+        sh.fragmentShader = 'uniform sampler2D uSkinOrm;\n' + sh.fragmentShader;
+        setup += `
+        if (vSurfF < 0.5) {
+          vec3 mask = texture2D(uSkinOrm, vMapUv).rgb;
+          _rough = clamp(mask.g, 0.35, 1.0);
+          _specK = (1.0 - _rough) * 0.45;
+          _cav = mix(1.0, mask.r, mix(0.65, 0.24, _faceWeight));
+        }`;
+      }
+    } else if (kind === 'cloth') {
+      setup = '_actorRow = vSurf < 0.5 ? 1.0 : vSurf < 1.5 ? 3.0 : vSurf < 2.5 ? 2.0 : vSurf < 3.5 ? 4.0 : vSurf > 4.5 ? 2.0 : 1.0;';
+      if (m.map) {
+        sh.vertexShader = 'varying vec3 vHairDown, vHairFront;\n' + sh.vertexShader.replace('vHairN = normalMatrix * _hn;', `vHairN = normalMatrix * _hn;
+          vec3 fall = vec3(0.0, -1.0, 0.0), front = vec3(0.0, 0.0, 1.0);
+          #ifdef USE_SKINNING
+            fall = mat3(skinMatrix) * fall;
+            front = mat3(skinMatrix) * front;
+          #endif
+          vHairDown = normalize(normalMatrix * fall);
+          vHairFront = normalize(normalMatrix * front);`);
+        sh.fragmentShader = 'varying vec3 vHairDown, vHairFront;\n' + sh.fragmentShader;
+        // Missing normal maps still have UV V: derive the posed bitangent from
+        // the position/UV gradients when Three does not need its own TBN.
+        sh.fragmentShader = sh.fragmentShader.replace('_hairT = normalize(tbn[1] + vec3(1e-5));', `
+          #ifdef USE_NORMALMAP_TANGENTSPACE
+            _hairT = normalize(tbn[1] + vec3(1e-5));
+          #else
+            vec3 bv = dFdx(vViewPosition) * dFdy(vMapUv.x) - dFdy(vViewPosition) * dFdx(vMapUv.x);
+            float det = dFdx(vMapUv.x)*dFdy(vMapUv.y) - dFdy(vMapUv.x)*dFdx(vMapUv.y);
+            _hairT = normalize(bv * sign(det) + vec3(1e-8));
+          #endif
+        `).replace(/if \(vSurf > 2.5 && vSurf < 3.5\) \{\n  \/\/ a broad soft band[\s\S]*?\n\}/, HAIR_BANDS);
+        if (orm) {
+          sh.fragmentShader = sh.fragmentShader.replace('vec4 _mo = texture2D( uOrm, vMapUv );',
+            'vec4 _mo = texture2D(uOrm, vMapUv); _actorMetal = _mo.b;');
+          setup += '_specK *= mix(0.68, 1.75, _actorMetal);';
+        } else {
+          sh.fragmentShader = sh.fragmentShader.replace('texture2D( uOrm, vMapUv )', 'vec4(1.0, 0.62, 0.0, 1.0)');
+        }
+      }
+    } else {
+      setup = '_actorRow = mix(uBodyRow, 2.0, step(0.5, _actorMetal));';
+      sh.fragmentShader = 'uniform float uBodyRow;\n' + sh.fragmentShader;
+      sh.uniforms.uBodyRow = { value: options.row ?? 1 };
+    }
+    const variant = kind === 'creature' ? '#define ACTOR_CREATURE\n' : kind === 'cloth' ? '#define ACTOR_CLOTH\n' : '';
+    sh.fragmentShader = '#define ACTOR_RAMP\n' + variant + sh.fragmentShader.replace('_cloudSh = cloudShadowAt( vDWP );', setup + '\n_cloudSh = cloudShadowAt( vDWP );');
   };
-  m.customProgramCacheKey = () => key.call(m) + '|portrait2|' + kind;
+  m.customProgramCacheKey = () => key.call(m) + '|actor4|' + kind + '|' + !!orm;
   return m;
 }
 
-// charkit's welded, vertex-tinted hulls are shared materials: derive once, never mutate
-// the cache. Grow sublinearly with distance to avoid heavy close-up lines or vanishing ink.
-const portraitOutlineCache = new WeakMap();
-export function characterOutline(source) {
-  if (portraitOutlineCache.has(source)) return portraitOutlineCache.get(source);
-  const m = source.clone(), base = source.onBeforeCompile, key = source.customProgramCacheKey;
-  m.onBeforeCompile = (sh, r) => {
-    base.call(source, sh, r);
-    sh.vertexShader = sh.vertexShader.replace('vec3 transformed = position +', `
-      float _outlineD = max(-(modelViewMatrix * vec4(position, 1.0)).z, 0.1);
-      float _outlineScale = clamp(_outlineD * 0.18, 0.65, 2.8);
-      vec3 transformed = position +`)
-      .replace('* uOutline * olw;', '* uOutline * olw * _outlineScale;');
+
+// UV seams normally have two U values. At the apex of an exported hair strip
+// every triangle in the closing fan has a different U at the same bind position.
+// Feather that last ring and the distal finger bones while retaining the artist's olw.
+function addInkTaper(geometry, bones) {
+  if (geometry.hasAttribute('inkTaper')) return;
+  const { position, surf, uv, skinIndex, skinWeight } = geometry.attributes;
+  const fingers = bones.map(b => /^(f[1-4]|th)c[LR]$/.test(b.name) ? 0.56 : /^(f[1-4]|th)b[LR]$/.test(b.name) ? 0.26 : 0);
+  const locks = new Map();
+  const point = i => [position.getX(i), position.getY(i), position.getZ(i)].join(',');
+  for (let i = 0; i < position.count; i++) {
+    if (surf.getX(i) !== 3) continue;
+    const p = point(i);
+    if (!locks.has(p)) locks.set(p, new Set());
+    locks.get(p).add(uv.getX(i));
+  }
+  const taper = new Float32Array(position.count).fill(1);
+  for (let i = 0; i < taper.length; i++) {
+    if (surf.getX(i) === 3) taper[i] = locks.get(point(i)).size > 2 ? 0.26 : 0.85;
+    for (let j = 0; j < 4; j++) taper[i] -= fingers[skinIndex.getComponent(i, j)] * skinWeight.getComponent(i, j);
+  }
+  geometry.setAttribute('inkTaper', new THREE.BufferAttribute(taper, 1));
+}
+
+const actorInkCache = new Map();
+export function characterOutline(geo, pixels, map = null, bones = null) {
+  if (bones) addInkTaper(geo, bones);
+  const smooth = geo.hasAttribute('onrm'), taper = geo.hasAttribute('inkTaper');
+  const key = [pixels, map?.uuid, smooth, taper].join('|');
+  if (actorInkCache.has(key)) return actorInkCache.get(key);
+  const m = new THREE.MeshBasicMaterial({ side: THREE.BackSide, vertexColors: !map, map });
+  m.onBeforeCompile = sh => {
+    sh.uniforms.uInkPixels = { value: pixels };
+    sh.vertexShader = 'uniform float uInkPixels; attribute float olw;\n'
+      + (smooth ? 'attribute vec3 onrm;\n' : '') + (taper ? 'attribute float inkTaper;\n' : '')
+      + sh.vertexShader.replace('#include <beginnormal_vertex>', smooth ? 'vec3 objectNormal = onrm;' : '#include <beginnormal_vertex>')
+        .replace('#include <project_vertex>', `#include <project_vertex>
+          // BackSide flips transformedNormal. Offset the already posed vertex
+          // outwards in the view plane, in units of a 1080-line reference frame.
+          vec2 outward = -transformedNormal.xy;
+          float ink = uInkPixels * olw * ${taper ? 'inkTaper' : '1.0'};
+          ink *= mix(1.28, 0.88, smoothstep(1.0, 14.0, -mvPosition.z));
+          mvPosition.xy += outward / max(length(outward), 0.45) * ink *
+            (2.0 * gl_Position.w / (1080.0 * projectionMatrix[1][1]));
+          mvPosition.xyz += normalize(mvPosition.xyz) * (0.018 * olw);
+          gl_Position = projectionMatrix * mvPosition;`);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+      vec3 paint = diffuseColor.rgb;
+      // Linear albedo, reinforced chroma and a violet ink floor on dark shapes.
+      float grey = dot(paint, vec3(0.2126, 0.7152, 0.0722));
+      diffuseColor.rgb = max(mix(vec3(grey), paint, 1.35), vec3(0.0)) *
+        vec3(0.20, 0.135, 0.21) + vec3(0.016, 0.009, 0.022);`);
   };
-  m.customProgramCacheKey = () => key.call(source) + '|portrait-distance1';
-  portraitOutlineCache.set(source, m);
+  m.customProgramCacheKey = () => 'actor-ink3|' + smooth + '|' + taper;
+  actorInkCache.set(key, m);
   return m;
 }
+
 
 // Outline hull (inverted normals extrusion)
 const outlineCache = new Map();

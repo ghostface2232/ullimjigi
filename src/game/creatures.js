@@ -2,7 +2,7 @@
 // motion, LOD, springs, secondary chains) plus Boreum the wind fox and the cat.
 import * as THREE from 'three';
 import { G } from '../core/context.js';
-import { fresnelMat } from '../render/materials.js';
+import { fresnelMat, characterMaterial, characterOutline } from '../render/materials.js';
 import { damp, clamp, rand } from '../core/util.js';
 import { SkelDef, Sculpt, Part, tube, blob, sheet, sstep, mix, TAU, instance, bodyMat, Chain, Spring } from './charkit.js';
 import { Rig } from './humanrig.js';
@@ -96,8 +96,8 @@ function altMap(key, variant) {
   return ALT.get(id);
 }
 // Surface response of an authored model on a toon material: the baked maps drive the detail
-// layer hooks of the toon shader (_rough / _specK / _cav). The sculpt keeps the shared
-// two-band ramp, smooth and metallic texels mirror the sky, and the
+// layer hooks of the toon shader (_rough / _specK / _cav). The material group selects the
+// ramp, metallic texels use the metal row, smooth texels reflect the sky, and the
 // albedo's alpha is a glow mask lit with `glow` (a Color shared with the tier-coloured glow
 // material). o: { spec (highlight strength), metal (extra on metallic texels), ao, glowK, bump,
 // glowAlb (0..1: the glow takes the painted colour: lit eyes and marks), glowBoost (extra light
@@ -108,11 +108,16 @@ export function surfaced(m, tex, o = {}) {
   for (const t of [tex.map, tex.normalMap, tex.orm]) if (t) t.anisotropy = 4;
   const u = { uOrm: { value: tex.orm }, uSurfP: { value: new THREE.Vector4(o.spec ?? 0.6, o.metal ?? 3, o.ao ?? 0.4, o.glowK ?? 1) }, uGlowC: { value: o.glow || new THREE.Color(0, 0, 0) }, uGlowA: { value: new THREE.Vector2(o.glowAlb ?? 0, o.glowBoost ?? 0) } };
   m.userData.surf = u;
-  return extendMat(m, 'surfaced', u, (sh) => {
+  extendMat(m, 'surfaced|' + !!tex.orm + '|' + !!tex.map, u, (sh) => {
+    if (tex.orm) {
+      sh.vertexShader = 'varying vec2 vActorUv;\n' + sh.vertexShader.replace('#include <uv_vertex>', '#include <uv_vertex>\nvActorUv = uv;');
+      sh.fragmentShader = 'varying vec2 vActorUv;\n' + sh.fragmentShader;
+    }
     sh.fragmentShader = 'uniform sampler2D uOrm;\nuniform vec4 uSurfP;\nuniform vec3 uGlowC;\nuniform vec2 uGlowA;\n' + sh.fragmentShader
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-  vec4 _mo = texture2D( uOrm, vMapUv );
-  float _mGlow = 1.0 - texture2D( map, vMapUv ).a;
+  vec4 _mo = ${tex.orm ? 'texture2D(uOrm, vActorUv)' : 'vec4(1.0, 0.68, 0.0, 1.0)'};
+  _actorMetal = _mo.b;
+  float _mGlow = ${tex.map ? '1.0 - diffuseColor.a / max(opacity, 0.0001)' : '0.0'};
   _rough = clamp( _mo.g, 0.18, 1.0 ); _cav = mix( 1.0, _mo.r, uSurfP.z ); _specK = uSurfP.x * ( 1.0 + _mo.b * uSurfP.y );
   diffuseColor.rgb *= 1.0 - 0.5 * _mo.b;`)
       .replace('#include <opaque_fragment>', `{
@@ -134,6 +139,7 @@ export function surfaced(m, tex, o = {}) {
 }
 #include <opaque_fragment>`);
   });
+  return characterMaterial(m, 'creature', { row: o.row, orm: tex.orm });
 }
 // give a rig's toon materials the baked maps of its authored model (if it has one).
 // o: { variant (albedo of that name), glow (Color for the glow mask), mat: { group: surfaced() options } }
@@ -142,7 +148,12 @@ export function dress(rig, o = {}) {
   if (!tx) return rig;
   const tex = o.variant ? { ...tx, map: altMap(tx.key, o.variant) } : tx;
   const glow = o.glow || (rig.glowMats && rig.glowMats[0] && rig.glowMats[0].color);
-  for (const k in rig.M) { const m = rig.M[k]; if (m && m.isMeshToonMaterial && !m.userData.surf) surfaced(m, tex, { glow, ...(o.mat && o.mat[k]) }); }
+  for (const k in rig.M) {
+    const m = rig.M[k];
+    const row = k === 'fur' ? 4 : k === 'skin' || k === 'in' ? 0 : k === 'metal' || k === 'ice' ? 2 : 1;
+    if (m?.isMeshToonMaterial && !m.userData.surf) surfaced(m, tex, { glow, row, ...o.mat?.[k] });
+  }
+  if (rig.outline?.geometry.hasAttribute('olw')) rig.outline.material = characterOutline(rig.outline.geometry, 1.8, tex.map);
   return rig;
 }
 // meshes of the model's unskinned pieces, parented to their bones: rigids(rig, { group: material })

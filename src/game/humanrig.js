@@ -587,16 +587,29 @@ export class HumanRig extends Rig {
     } else this.faceU = null;
     M.main = clothMat({ rim: o.rim ?? 0.28, relief: 0.75, tex: T.v2 ? T.built.tex.main : null });
     M.main.userData.cloth.uHairC.value.set(T.L.HC.x, T.L.HC.y, T.L.HC.z, T.L.hr);
-    if (T.v2) {
-      const head = { x: T.L.HC.x, y: T.L.HC.y, z: T.L.HC.z, w: T.L.hr };
-      characterMaterial(M.skin, 'skin', head);
-      characterMaterial(M.main, 'cloth', head);
+    if (!o.mats) {
+      characterMaterial(M.main, 'cloth', { orm: T.built.tex?.main?.orm });
+      if (T.v2 || (F2 && M.skin.userData.face)) {
+        const head = new THREE.Vector4(T.L.HC.x, T.L.HC.y, T.L.HC.z, T.L.hr);
+        const pos = F2?.geo.attributes.position;
+        // The most forward central skin vertex anchors the nose on each sculpt.
+        let front = -Infinity, noseY = -0.27;
+        for (let i = 0; pos && i < pos.count; i++) {
+          const y = (pos.getY(i) - head.y) / head.w;
+          if (Math.abs(pos.getX(i) - head.x) < head.w * 0.17 && y > -0.65 && y < 0 && pos.getZ(i) > front) {
+            front = pos.getZ(i); noseY = y;
+          }
+        }
+        characterMaterial(M.skin, T.v2 ? 'skin' : 'legacyFace', { head, noseY, orm: T.built.tex?.skin?.orm });
+      }
     }
     if (o.mats) Object.assign(M, o.mats);
     this.mats = Object.values(M).filter((m) => m.isMeshToonMaterial);
     this.glowMats = Object.values(M).filter((m) => !m.isMeshToonMaterial);
-    const I = instance(body, T.def, T.built, M, { outline: o.outline ?? (c.outline ? (T.v2 ? 0.0024 : 0.0048) : 0), outlineTint: !o.mats, main: 'main' });
-    if (T.v2 && I.outline && I.outline.geometry.attributes.olw) I.outline.material = characterOutline(I.outline.material);
+    const I = instance(body, T.def, T.built, M, { outline: o.outline ?? (c.outline || (!o.mats && T.built.tex) ? (T.v2 ? 0.0024 : 0.0048) : 0), outlineTint: !o.mats, main: 'main' });
+    if (!o.mats && I.outline?.geometry.hasAttribute('olw')) {
+      I.outline.material = characterOutline(I.outline.geometry, 1.65, null, T.v2 ? I.bones : null);
+    }
     this.B = I.by; this.mesh = I.mesh; this.skeleton = I.skeleton; this.outline = I.outline;
     this.meshes = I.meshes;
     if (F2) {
@@ -606,7 +619,7 @@ export class HumanRig extends Rig {
       this.meshes.push(fm);
       this.morph = fm.morphTargetInfluences; this.morphIdx = Object.fromEntries(F2.morphs.map((n, i) => [n, i]));
       if (I.outline) {
-        const ol = new THREE.SkinnedMesh(F2.geo, I.outline.material);
+        const ol = new THREE.SkinnedMesh(F2.geo, !o.mats ? characterOutline(F2.geo, 0.88) : I.outline.material);
         ol.bind(I.skeleton, I.mesh.bindMatrix); ol.castShadow = false; ol.userData.isOutline = true; ol.boundingSphere = I.mesh.boundingSphere; ol.morphTargetInfluences = this.morph;
         body.add(ol);
       }

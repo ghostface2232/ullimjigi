@@ -404,9 +404,18 @@ function pavingParts() {
     g.applyMatrix4(m.matrixWorld);
     return g;
   });
-  const geo = geos[0];
-  geo.morphAttributes.position = geos.map((g) => g.attributes.position);
-  geo.morphAttributes.normal = geos.map((g) => g.attributes.normal);
+  const geo = geos[0], mirror = parts[0].userData.mirrorVertices;
+  geo.setIndex(parts[0].geometry.index);
+  // Reflect the wear across the tangent, preserving curvature, triangle winding and terrain fit.
+  for (const key of ['position', 'normal']) {
+    const shapes = geos.map((g) => g.attributes[key]);
+    const reflected = mirror ? shapes.map((a) => {
+      const b = a.clone();
+      mirror.forEach((j, i) => b.setXYZ(i, -a.getX(j), a.getY(j), a.getZ(j)));
+      return b;
+    }) : [];
+    geo.morphAttributes[key] = shapes.concat(reflected);
+  }
   geo.computeBoundingBox(); geo.computeBoundingSphere();
   const srcMat = parts[0].material;
   const mat = toon(0xffffff, { nocache: true, rim: 0.12, noAO: true, noMoss: true });
@@ -416,11 +425,16 @@ function pavingParts() {
   const patch = mat.onBeforeCompile, key = mat.customProgramCacheKey();
   mat.onBeforeCompile = (sh) => {
     patch(sh);
-    sh.vertexShader = 'attribute vec2 aPavingUV;\n' + sh.vertexShader.replace('#include <uv_vertex>', `
+    sh.vertexShader = `attribute vec4 aPavingTile;
+      vec2 pavingOffset(float tile) { return vec2(mod(tile, 4.0), -floor(tile / 4.0)) * 0.25; }
+      ` + sh.vertexShader.replace('#include <uv_vertex>', `
       #include <uv_vertex>
-      vMapUv += aPavingUV;
-      vNormalMapUv += aPavingUV;
-      vAoMapUv += aPavingUV;`);
+      // The grout apron is a separate UV island at 12 mm. Its offsets never span a stone face.
+      bool apron = abs(position.y - 0.012) < 0.0002;
+      float flipU = aPavingTile.w * (0.25 - 2.0 * uv.x);
+      vMapUv += pavingOffset(apron ? aPavingTile.z : aPavingTile.x) + vec2(flipU, 0.0);
+      vNormalMapUv = vMapUv; // Shallow dressing marks follow their colour tile.
+      vAoMapUv += pavingOffset(aPavingTile.y) + vec2(flipU, 0.0);`);
     // Authored normals use the valley's soft stone response without the procedural rock/grime layer.
     sh.fragmentShader = '#define TOON_SOFT\n' + sh.fragmentShader;
   };
@@ -442,13 +456,13 @@ function pavingBatch(parent, entries, groundAt, tint = 0xffffff) {
     }
     return null;
   }
-  const geo = kit.geo.clone(), uv = new Float32Array(entries.length * 2);
-  geo.setAttribute('aPavingUV', new THREE.InstancedBufferAttribute(uv, 2));
+  const geo = kit.geo.clone(), tiles = new THREE.InstancedBufferAttribute(new Float32Array(entries.length * 4), 4);
+  geo.setAttribute('aPavingTile', tiles);
   const m = new THREE.InstancedMesh(geo, kit.mat, entries.length);
   m.name = 'dressed-paving'; m.receiveShadow = true; m.castShadow = false;
   const dummy = new THREE.Object3D(), up = new THREE.Vector3(0, 1, 0), normal = new THREE.Vector3();
-  const yaw = new THREE.Quaternion(), weights = { morphTargetInfluences: Array(13).fill(0) };
-  const color = new THREE.Color(tint), rnd = mulberry32(6021);
+  const yaw = new THREE.Quaternion(), weights = { morphTargetInfluences: Array(geo.morphAttributes.position.length).fill(0) };
+  const color = new THREE.Color(tint), rnd = mulberry32(6021), wear = mulberry32(32831);
   // Restrained warm/cool dressings break up ring-wise repetition without a patchwork floor.
   const tones = [[1.06, 1.015, 0.94], [0.88, 0.93, 0.97], [1.0, 0.94, 0.93],
     [0.93, 0.99, 0.92], [0.91, 0.88, 0.83], [1.025, 1.025, 1.01]];
@@ -464,10 +478,19 @@ function pavingBatch(parent, entries, groundAt, tint = 0xffffff) {
     dummy.quaternion.multiply(yaw);
     dummy.scale.set(w / meta.width, 1, d / meta.depth); dummy.updateMatrix();
     m.setMatrixAt(i, dummy.matrix);
-    weights.morphTargetInfluences.fill(0); weights.morphTargetInfluences[kind] = 1; m.setMorphAt(i, weights);
+    const flip = geo.morphAttributes.position.length > kit.parts.length && wear() < 0.5;
+    weights.morphTargetInfluences.fill(0);
+    weights.morphTargetInfluences[kind + (flip ? kit.parts.length : 0)] = 1;
+    m.setMorphAt(i, weights);
     // Full flags at both sites share the surface pool independently of their authored shape.
     const tile = kind < 10 ? Math.floor(rnd() * 10) : kind;
-    uv[i * 2] = (tile % 4) / 4; uv[i * 2 + 1] = -Math.floor(tile / 4) / 4;
+    // The noon sun comes from +Z. Reserve interrupted moss patches for sheltered northern
+    // joints on the last three rings and kerb. Each swatch only colours part of the apron.
+    const shaded = tint === 0xffffff && e.z < -2 && (kind >= 6 && kind <= 8 || kind === 10);
+    const chance = (kind === 10 ? 0.68 : (kind - 5) * 0.11) * Math.min(1, -e.z / 8);
+    const moss = shaded && wear() < chance;
+    const grout = moss ? [7, 8, 10][Math.floor(wear() * 3)] : 0;
+    tiles.setXYZW(i, tile, kind, grout, Number(flip));
     const tone = tones[Math.floor(rnd() * tones.length)];
     m.setColorAt(i, color.clone().multiply(new THREE.Color().setRGB(...tone)));
   });

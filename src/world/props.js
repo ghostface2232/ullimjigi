@@ -1012,8 +1012,8 @@ function layeredRock(seed, detail, o = {}) {
   }
   return mergeGeometries(parts);
 }
-// Sculpted rock from public/models/pr_rocks.glb (ref/blender/props/rocks.py): near or far model
-// of the named rock, or null when the file is missing. Cloned: the scatter adds `aFade` to it.
+// Sculpted rock from public/models/pr_rocks.glb (restyled scans, see public/models/README.md): near
+// or far model of the named rock, or null when the file is missing. Cloned: the scatter adds `aFade` to it.
 export function rockModel(name, lod) {
   const P = authoredParts('rocks'), part = P && P[name + (lod ? '_f' : '_n')];
   if (!part) return null;
@@ -1024,14 +1024,14 @@ export function rockModel(name, lod) {
   return g;
 }
 // Material of the scattered rocks. The sculpted ones are painted in an atlas (albedo, moss
-// included, public/models/pr_rocktex.glb); their chiselled edges are in the meshes, so the
-// atlas carries no normal map. The world-space rock layer of the toon shader adds the grain.
+// included, and a normal map with the designed planes and the scan's fine relief:
+// public/models/pr_rocktex.glb). The world-space rock layer of the toon shader adds the grain.
 export function rockMaterial(o = {}) {
   const tex = authoredParts('rocks') && authoredTex('rocktex');
   if (!tex) return toon(0xffffff, { vertexColors: true, flat: true, rim: 0.15, tex: 'rock', ...o });
   const m = toon(0xffffff, { vertexColors: true, rim: 0.15, tex: 'rock', noMoss: true, nocache: true, ...o });
   m.map = tex.map;
-  if (tex.normalMap) { m.normalMap = tex.normalMap; m.normalScale.set(1, -1); }   // (an atlas baked before the chips moved into the meshes)
+  if (tex.normalMap) { m.normalMap = tex.normalMap; m.normalScale.set(1, -1); }
   return m;
 }
 // the authored rock standing in for each code-built variant (kind + seed)

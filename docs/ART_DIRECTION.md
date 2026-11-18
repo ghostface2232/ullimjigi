@@ -93,6 +93,15 @@ ornate in an original voice (resonance, bells, memory), intuitive at a glance, a
 of play. **No left-edge accent bars** on panels, list items or cards: mark focus and importance with
 halos, symmetric ornamental caps, filigree, crystal markers or shape changes instead.
 
+## References first
+
+No model, costume, hair, shader or effect is started from imagination. Before any work on an
+asset: read the shared library in `ref/targets/` (local, gitignored; the user's own picks are in
+`ref/targets/user-refs-*`), gather 4–8 further high-quality references for that specific asset, and
+write a reference board and a one-page spec (silhouette, proportions, construction, palette, what is
+taken from which image). The user approves the board before modelling. Every review shows the result
+beside its references.
+
 ## Review rubric
 
 Every review scores 1–10 on each line, names the single weakest thing, and shows a capture.

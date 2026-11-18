@@ -111,10 +111,11 @@ function boulderGeo() {
   return ng;
 }
 // The authored boulder is painted like the scattered rocks (props.js rockMaterial): its own
-// albedo under the toon shader's rock surface. No normal map: every chip is in the mesh.
+// albedo and normal map under the toon shader's rock surface.
 function boulderMat(tex) {
   const m = toon(0xffffff, { vertexColors: true, rim: 0.15, tex: 'rock', noMoss: true, nocache: true });
   m.map = tex.map;
+  if (tex.normalMap) { m.normalMap = tex.normalMap; m.normalScale.set(1, -1); }
   return m;
 }
 

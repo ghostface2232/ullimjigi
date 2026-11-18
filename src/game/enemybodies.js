@@ -351,7 +351,7 @@ function stoneGeo(kind) {
 }
 
 export function makeBrute(variant = 'normal') {
-  const warden = variant === 'warden' && !!model('mn_warden');
+  const warden = variant === 'warden' && model('mn_warden');
   const frost = variant === 'frost' || variant === 'warden';
   const T = enemyType(BRUTE[warden ? 'warden' : frost ? 'frost' : 'normal']);
   const glow = glowBasic(frost ? 0x8fe3ff : 0xc080ff, 2.6);
@@ -359,11 +359,20 @@ export function makeBrute(variant = 'normal') {
   if (frost) M.ice = warden ? skinMat(0.35) : iceMat();
   const rig = new HumanRig(T, { mats: M, castPose: false, outline: 0.006, rim: 0.55, style: { armHang: 0.25, lift: 0.7, sway: 1.6 }, pose: (q, s, R) => {
     q.armLx -= 0.15; q.armRx -= 0.15; q.foreLx -= 0.25; q.foreRx -= 0.25;
-    if (warden) { q.spinex += 0.14; q.chestx += 0.18; q.headx -= 0.16; }
+    if (warden) { q.spinex += 0.09; q.chestx += 0.09; q.headx -= 0.19; }
     slamPose(q, s, R);
   } });
   dress(rig, { variant: frost && !warden ? 'frost' : null, mat: { main: { spec: 0.45 }, ice: { spec: warden ? 0.65 : 1.6 } } });
   if (warden) {
+    // Apply the authored parent scale to the rebuilt skeleton and its rigid attachments.
+    const stature = warden.scene.getObjectByName('WardenStature');
+    if (stature) rig.body.scale.multiply(stature.scale);
+    rig.eyePulse = new THREE.Uniform(1.65);
+    glow.onBeforeCompile = (shader) => {
+      shader.uniforms.uWardenEyePulse = rig.eyePulse;
+      shader.fragmentShader = 'uniform float uWardenEyePulse;\n' + shader.fragmentShader.replace(
+        '#include <opaque_fragment>', 'outgoingLight *= uWardenEyePulse;\n#include <opaque_fragment>');
+    };
     rig.wardenShell = new WardenShell(rig, rigids(rig, M));
     rig.glowMat = glow; rig.eyeMat = glow; rig.height = 2.9;
     return rig;

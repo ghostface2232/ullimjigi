@@ -2386,9 +2386,17 @@ export function pillarBroken(h = 3, rnd = Math.random) {
 // line where it meets the gate's lip. Half sizes rx, ry; uAlpha fades the whole disc.
 function riftPortal(rx, ry) {
   const mat = new THREE.ShaderMaterial({
-    uniforms: { uTime: U.time, uAlpha: { value: 1 } },
-    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    // Shares the scene's fog uniforms (not a clone) so the portal sits behind the same aerial
+    // perspective as the gate stones instead of reading crisp from across the map.
+    uniforms: { ...THREE.UniformsLib.fog, uTime: U.time, uAlpha: { value: 1 } },
+    fog: true,
+    vertexShader: `#include <fog_pars_vertex>
+      varying vec2 vUv;
+      void main(){ vUv = uv; vec4 mvPosition = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mvPosition;
+      #include <fog_vertex>
+      }`,
     fragmentShader: `uniform float uTime; uniform float uAlpha; varying vec2 vUv;
+      #include <fog_pars_fragment>
       float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
         return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y); }
@@ -2406,7 +2414,9 @@ function riftPortal(rx, ry) {
         col *= 1.0 - core * 0.92;
         float rim = smoothstep(0.8, 0.95, r) * smoothstep(1.0, 0.95, r);
         col += vec3(1.5, 1.05, 2.5) * rim * (0.8 + 0.2 * sin(uTime * 0.9));
-        gl_FragColor = vec4(col, smoothstep(1.0, 0.97, r) * uAlpha); }`,
+        gl_FragColor = vec4(col, smoothstep(1.0, 0.97, r) * uAlpha);
+        #include <fog_fragment>
+      }`,
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
   });
   return new THREE.Mesh(new THREE.PlaneGeometry(rx * 2, ry * 2), mat);

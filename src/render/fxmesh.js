@@ -148,12 +148,15 @@ void main(){
     alpha *= mix(0.55, 1.0, pow(fres, 0.6));
   } else {
     // energy shell (additive): bright fresnel skin with flowing filaments, thin core
-    float fil = smoothstep(0.55, 0.95, 1.0 - abs(n2)) * 0.8 + smoothstep(0.35, 0.8, vN1 * 0.5 + 0.5) * 0.35;
-    float sk = mix(0.1, 1.0, pow(fres, 1.1));
-    col = mix(uCool, uMid, sk) + uHot * (fil * 0.55 + pow(fres, 3.0) * uGlow);
-    float edge = smoothstep(uErode + 0.1, uErode + 0.02, mask) * step(0.001, uErode);
-    col += uHot * edge * uEdge;
-    alpha *= clamp(sk * 0.8 + fil * 0.45, 0.0, 1.0);
+    float flow = n2 + vN1 * 0.42;
+    float filament = 1.0 - smoothstep(0.022, 0.10 + fwidth(flow), abs(flow - 0.12));
+    float sk = pow(fres, 1.2);
+    vec3 body = mix(uCool, uMid, 0.22 + 0.78 * sk);
+    body /= max(1.0, dot(body, vec3(0.2126, 0.7152, 0.0722)));
+    float edge = (1.0 - smoothstep(0.02, 0.10, mask - uErode)) * step(0.001, uErode);
+    float core = max(filament * smoothstep(-0.35, 0.3, vN1), max(pow(fres, 3.0) * uGlow, edge * uEdge));
+    col = body + uHot * core * (1.3 - 0.85 * uAmb);
+    alpha *= clamp(0.08 + sk * 0.76 + filament * 0.48, 0.0, 1.0);
   }
   float fk = fxFog(vW);
   if (uAdd > 0.5) gl_FragColor = vec4(col * (1.0 - fk), alpha);

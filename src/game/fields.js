@@ -156,7 +156,9 @@ export class Fields {
     f.visualAcc = 0;
     if (f.decal) V.endDecal(f.decal, f.decalSeq, grow ? 0.3 : 0.8);
     f.decal = null;
-    if (def.decal) {
+    // The wet surface already supplies the dark bed and glancing reflection.
+    // Keep the flat wet decal as a fallback when the surface pool is full.
+    if (def.decal && !(def.decal === 'wet' && f.surface)) {
       const glowDur = def.decal === 'scorch' || def.decal === 'char' ? left * 0.7 : undefined;
       f.decal = V.decal(f.pos, def.decal, f.r * (def.decal === 'wet' ? 1.05 : 0.95), { dur: left + (def.decal === 'scorch' || def.decal === 'char' ? 5 : 1.5), glowDur, glowA: 0.3, alpha: 0.55 });
       f.decalSeq = f.decal ? f.decal.seq : 0;

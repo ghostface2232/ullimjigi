@@ -543,7 +543,7 @@ export class Combat {
     const V = G.vfx;
     if (st.burn > 0) {
       st.burn -= dt; st.burnTick -= dt;
-      if (rand() < dt * 25) V.burst(tmp.copy(c).add(new THREE.Vector3(randRange(-0.3, 0.3), randRange(-0.5, 0.6) * t.height * 0.5, randRange(-0.3, 0.3))), 'fire', 1, { spread: 0.2, size: 0.8 });
+      if (st.burn > 0 && st.wet <= 0) V.burning(t, c, dt);
       if (st.burnTick <= 0) {
         st.burnTick = 0.5;
         this.hit(t, { dmg: st.burnDmg, el: 'fire', noReact: true, noStatus: true, pos: c, hitstop: 0, shake: 0, source: 'dot' });

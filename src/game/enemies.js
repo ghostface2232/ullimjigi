@@ -996,8 +996,9 @@ export class Enemy {
     this.root.rotation.set(rx, this.yaw, rz);
     // emissive tint: hit flash > frozen > burning > telegraph
     let r = 0, g = 0, b = 0;
+    const burnRim = !frozen && st.burn > 0 ? 0.22 + 0.09 * Math.sin(G.time * 13 + this.slot) : 0;
     if (frozen) { r = 0.1; g = 0.35; b = 0.6; }
-    else if (st.burn > 0) { const p = 0.25 + Math.sin(G.time * 12) * 0.1; r = p; g = p * 0.35; }
+    else if (burnRim) { r = burnRim * 0.077; g = r * 0.22; }
     else if (st.chill > 0) { const k = Math.min(st.chill, 3) / 3; r = 0.03 * k; g = 0.14 * k; b = 0.26 * k; } // frost creeping in, deepening per stack
     if (st.wet > 0 && !frozen) { const p = 0.05 + Math.max(0, Math.sin(G.time * 3 + this.pos.x)) * 0.05; g += p * 0.5; b += p; } // cool wet sheen
     if (shocked) { const p = rand() * 0.35; r += p; g += p; b += p * 0.3; }
@@ -1005,7 +1006,18 @@ export class Enemy {
     if (this.telegraph) { const p = 0.3 + Math.sin(G.time * 30) * 0.25; r += p; g += p * 0.1; }
     if (this.vulnerable) { const p = 0.2 + Math.sin(G.time * 10) * 0.15; r += p; g += p * 0.8; }
     r += this.flash * 1.4 + this.glintFlash * 0.32; g += this.flash * 1.4 + this.glintFlash * 0.28; b += this.flash * 1.4 + this.glintFlash * 0.2;
-    for (const m of this.rig.mats || []) m.emissive.setRGB(r, g, b);
+    for (const m of this.rig.mats || []) {
+      m.emissive.setRGB(r, g, b);
+      const data = m.userData;
+      if (data.rim && burnRim) {
+        // Keep each part's authored (or elite) rim when the status ends.
+        data.burnBaseRim ??= data.rim.value;
+        data.rim.value = data.burnBaseRim + burnRim;
+      } else if (data.burnBaseRim != null) {
+        data.rim.value = data.burnBaseRim;
+        data.burnBaseRim = null;
+      }
+    }
     if (disabled && frozen) return;
     const s = this.animState ? this.animState() : { speed: this.curSpeed, grounded: !this.airborne };
     if (this.state === 'down' || (this.state === 'getup' && this.stateT < 0.25)) s.down = true;

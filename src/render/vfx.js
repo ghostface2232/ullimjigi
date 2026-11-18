@@ -11,7 +11,7 @@ import { FXU, SPHERE_LOOK, Debris, Distort, iceMaterial, iceSpikeGeometry, makeS
 import { crystalMaterial, crystalGeometry } from './crystal.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { G, EL_INFO } from '../core/context.js';
-import { randRange, rand, easeOutBack, clamp, mulberry32 } from '../core/util.js';
+import { randRange, rand, easeOutBack, clamp, lerp, mulberry32 } from '../core/util.js';
 
 const C = (r, g, b) => new THREE.Color(r, g, b);
 export const PAL = {
@@ -102,7 +102,9 @@ function softDiscTexture() {
   const S = 128, cv = document.createElement('canvas'); cv.width = cv.height = S;
   const g = cv.getContext('2d');
   const gr = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
-  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.5, 'rgba(255,255,255,0.5)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.12, 'rgba(255,255,255,0.78)');
+  gr.addColorStop(0.35, 'rgba(255,255,255,0.20)'); gr.addColorStop(0.68, 'rgba(255,255,255,0.045)');
+  gr.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = gr; g.fillRect(0, 0, S, S);
   return new THREE.CanvasTexture(cv);
 }
@@ -323,7 +325,8 @@ const RIBBON_FS = `
     float k = clamp(vK, 0.0, 1.0);
     float fade = pow(1.0 - k, 1.35);
     float wob = 1.0 + uWave * 0.35 * sin(k * 40.0 - uTime * 30.0);
-    vec3 col = mix(uGlow, uCore, pow(e, 3.0) * (1.0 - k * 0.8));
+    vec3 dye = uGlow / max(1.0, dot(uGlow, vec3(0.2126, 0.7152, 0.0722)));
+    vec3 col = mix(dye, uCore, smoothstep(0.74, 0.98, e) * (1.0 - k * 0.8));
     // an additive trail that leaves from beside the lens covers a large part of the frame for
     // its first metres: it thins out there and reaches full strength about 7 m out
     float near = mix(0.22, 1.0, smoothstep(1.0, 7.0, vD));
@@ -364,18 +367,36 @@ const DECAL_FS = `
 // only broken rims and travelling accents bloom. Kind is a uniform, never a
 // shader define, so transformations cannot create a new program variant.
 const FIELD_KINDS = ['blaze', 'plasma', 'rime', 'frostfog', 'puddle', 'steam', 'charged', 'shockfog', 'shockwater'];
+const FIELD_VS = `
+  uniform sampler2D uGrass, uPath, uHeight; uniform vec4 uHeightP; uniform float uFogDensity;
+  varying vec2 vUv; varying vec3 vWorld; varying float vFog, vGrass;
+  void main() {
+    vUv = uv; vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
+    vec2 uvGround = (vWorld.xz + uHeightP.x) * uHeightP.y + uHeightP.z;
+    float pathDist = texture2D(uPath, uvGround).r * uHeightP.w;
+    float clearance = vWorld.y - texture2D(uHeight, uvGround).r;
+    vGrass = texture2D(uGrass, uvGround).r * smoothstep(0.9, 2.2, pathDist)
+           * (1.0 - smoothstep(0.20, 0.65, clearance));
+    vec4 mv = viewMatrix * vec4(vWorld, 1.0);
+    vFog = 1.0 - exp(-uFogDensity * uFogDensity * mv.z * mv.z);
+    gl_Position = projectionMatrix * mv;
+  }`;
 const FIELD_FS = `
-  uniform vec3 uColor, uCore; uniform float uKind, uAlpha, uTime, uAge, uFogDensity;
-  varying vec2 vUv; varying float vFog;
+  uniform vec3 uColor, uCore, uSky, uSun; uniform float uKind, uAlpha, uTime, uAge, uAmb;
+  uniform sampler2D uHeight; uniform vec4 uHeightP;
+  varying vec2 vUv; varying vec3 vWorld; varying float vFog, vGrass;
   float line(float d, float w) { return 1.0 - smoothstep(w, w + 0.008, abs(d)); }
   void main() {
     vec2 p = vUv * 2.0 - 1.0;
     float r = length(p), a = atan(p.y, p.x), t = uTime;
-    float edge = 0.84 + 0.035 * sin(a * 3.0 + 0.8) + 0.025 * sin(a * 7.0);
+    float fringe = sin(vWorld.x * 4.1 + sin(vWorld.z * 3.2)) * cos(vWorld.z * 2.7);
+    float edge = 0.84 + 0.035 * sin(a * 3.0 + 0.8) + 0.025 * sin(a * 7.0)
+               - vGrass * (0.08 + 0.06 * fringe);
     float mask = 1.0 - smoothstep(edge - 0.05, edge, r);
     float reveal = 1.0 - smoothstep(uAge * 3.5, uAge * 3.5 + 0.1, r);
     float rim = line(r - edge + 0.035, 0.012) * (0.5 + 0.5 * sin(a * 5.0 + 0.6));
     float mark = 0.0, fill = 0.0; vec3 tint = uColor;
+    vec3 reflection = vec3(0.0);
     if (uKind < 1.5) {
       // Three sweeping ember seams; open centre preserves feet and shadows.
       float seam = sin(a * 3.0 + r * 14.0 - t * 1.5);
@@ -393,11 +414,30 @@ const FIELD_FS = `
       fill = uKind < 2.5 ? 0.16 : 0.07;
       rim *= uKind < 2.5 ? 0.7 : 0.35;
     } else if (uKind < 5.5 || uKind > 7.5) {
-      // Puddle: calm glossy body, two narrow travelling ripples, broken reflection.
-      float wave = fract(r * 2.5 - t * 0.45);
-      mark = line(wave - 0.5, 0.016) * 0.35;
-      mark += pow(max(0.0, sin(a + r * 6.0 + 0.5)), 24.0) * 0.2;
-      fill = uKind < 4.5 || uKind > 7.5 ? 0.26 : 0.07;
+      // Reflect the sky about the fitted surface and keep the uphill lip dry.
+      vec3 N = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+      N *= N.y < 0.0 ? -1.0 : 1.0;
+      mask *= smoothstep(0.70, 0.95, N.y) * (1.0 - vGrass * smoothstep(0.40, 0.82, r) * 0.66);
+      float wave = sin(r * 28.0 - t * 3.0 + 0.55 * sin(a * 3.0));
+      N.xz = N.xz * 0.45 + vec2(p.x, -p.y) * wave * 0.09 + 0.025 * sin(vWorld.zx * 3.0 + t);
+      N = normalize(N);
+      vec3 V = normalize(cameraPosition - vWorld);
+      vec3 reflected = reflect(-V, N);
+      float fresnel = pow(1.0 - clamp(dot(V, N), 0.0, 1.0), 3.0);
+      float wet = abs(uKind - 5.0) < 0.5 ? 0.22 : 1.0;
+      fill = wet * mix(0.36, 0.76, fresnel);
+      // Two height samples silhouette the nearby bank against the reflected sky.
+      // Never read the scene target the puddle is currently being blended into.
+      vec3 bank = vWorld + reflected * 8.0, ridge = vWorld + reflected * 28.0;
+      float h0 = texture2D(uHeight, (bank.xz + uHeightP.x) * uHeightP.y + uHeightP.z).r;
+      float h1 = texture2D(uHeight, (ridge.xz + uHeightP.x) * uHeightP.y + uHeightP.z).r;
+      float sky = smoothstep(-0.45, 0.9, min(bank.y - h0, ridge.y - h1));
+      reflection = mix(tint * vec3(0.08, 0.19, 0.23) * uAmb, uSky * 1.15, sky)
+                 * mix(0.48, 1.35, fresnel);
+      reflection += vec3(1.0, 0.91, 0.70) * pow(max(0.0, dot(reflected, uSun)), 96.0) * uAmb;
+      mark = smoothstep(0.87, 0.98, wave) * (0.22 + 0.43 * fresnel)
+           * smoothstep(-0.25, 0.6, sin(a * 2.0 + r * 4.0)) * wet;
+      rim *= 0.70;
       if (uKind > 7.5) {
         float arc = pow(max(0.0, cos(a * 4.0 + r * 25.0 + floor(t * 9.0))), 48.0);
         mark += arc * 0.65; tint = mix(tint, vec3(1.0, 0.7, 0.14), arc);
@@ -411,7 +451,7 @@ const FIELD_FS = `
     float hot = (mark + rim * 0.65) * mask;
     float alpha = (fill * mask + hot * 0.45) * uAlpha * reveal * (1.0 - vFog);
     if (alpha < 0.003) discard;
-    vec3 base = tint * (0.09 + fill * 0.2);
+    vec3 base = tint * (0.09 + fill * 0.2) * uAmb + reflection;
     vec3 col = base * fill * mask + mix(tint, uCore, 0.18) * hot * 0.65;
     gl_FragColor = vec4(col * uAlpha * reveal * (1.0 - vFog), alpha);
   }`;
@@ -815,8 +855,10 @@ export class VFX {
     for (let i = 0; i < 16; i++) {
       const geo = new THREE.PlaneGeometry(2, 2, 12, 12).rotateX(-Math.PI / 2);
       const mat = new THREE.ShaderMaterial({
-        uniforms: { uColor: { value: new THREE.Color() }, uCore: { value: new THREE.Color() }, uKind: { value: 0 }, uAlpha: { value: 0 }, uAge: { value: 0 }, uTime: U.time, uFogDensity: this.fogU.density },
-        vertexShader: DECAL_VS, fragmentShader: FIELD_FS, transparent: true, depthWrite: false,
+        uniforms: { uColor: { value: new THREE.Color() }, uCore: { value: new THREE.Color() }, uKind: { value: 0 }, uAlpha: { value: 0 }, uAge: { value: 0 },
+          uTime: U.time, uFogDensity: this.fogU.density, uSky: U.skyRefl, uSun: U.sunDir, uAmb: this.ambU,
+          uHeight: U.heightTex, uHeightP: U.heightP, uGrass: U.splatTex, uPath: U.pathTex },
+        vertexShader: FIELD_VS, fragmentShader: FIELD_FS, transparent: true, depthWrite: false,
         blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendEquation: THREE.AddEquation,
         polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
       });
@@ -846,6 +888,9 @@ export class VFX {
   prewarm() {
     const R = G.renderer && G.renderer.renderer;
     if (!R || !G.camera) return;
+    // The two always-visible Points materials compile with the game scene.
+    // Upload their shared array here even when both draw ranges are empty.
+    R.initTexture(this.add.mat.uniforms.uStamps.value);
     const sc = new THREE.Scene();
     const add = (mat, geo = this.planeGeo) => { const m = new THREE.Mesh(geo, mat); m.position.set(0, -500, 0); m.frustumCulled = false; sc.add(m); };
     add(this.decals[0].m.material, this.decalGeo);
@@ -1003,6 +1048,44 @@ export class VFX {
   releaseLight(s) { if (s) { s.held = false; s.t = 0; s.dur = 0.15; s.peak = s.l.intensity; } }
 
   // ---------------- particles ----------------
+  burning(target, center, dt) {
+    if (target.rig?.body?.visible === false) return;
+    const st = target.st;
+    st.burnEmitT = (st.burnEmitT ?? 0) - dt;
+    if (st.burnEmitT > 0) return;
+    const interval = G.settings.quality === 'low' ? 0.10 : 0.065;
+    st.burnEmitT = Math.max(0, st.burnEmitT + interval);
+    const beat = st.burnBeat ?? 0;
+    st.burnBeat = (beat + 1) % 12;
+    const site = beat % 4;
+    // A brute's removable shoulder stones sit outside its skinned shoulders.
+    const armor = target.rig?.armor?.[3 + site % 2];
+    const mesh = site < 2 && armor?.visible ? armor : target.rig?.mesh;
+    const p = tmpV3;
+    if (mesh?.geometry?.attributes.position) {
+      const sites = burningVertices(mesh.geometry);
+      mesh.getVertexPosition(sites[site], p).applyMatrix4(mesh.matrixWorld);
+    } else {
+      // Exposed non-rigged cores also accept the burning status.
+      const angle = site * Math.PI * 0.5;
+      p.copy(center); p.x += Math.cos(angle) * target.radius * 0.52;
+      p.z += Math.sin(angle) * target.radius * 0.52; p.y += target.height * 0.23;
+    }
+    const size = clamp(target.height * 0.21, 0.19, 0.57) * randRange(0.86, 1.14);
+    p.y += size * 0.28;
+    this.norm.emit({ p, v: [(target.vel?.x || 0) * 0.65, 0.20, (target.vel?.z || 0) * 0.65],
+      life: randRange(0.23, 0.34), size, size1: size * 0.72, color: BURN_ORANGE, color1: BURN_RED,
+      alpha: 0.96, alpha1: 0, fadeIn: 0.08, grav: -0.55, shape: 18 });
+    if (beat % 4 === 1) {
+      this.add.emit({ p, v: [rv(0.20), randRange(0.65, 1.2), rv(0.20)], life: 0.58,
+        size: size * 0.24, size1: size * 0.08, color: EMBER_A, color1: BURN_RED, alpha: 0.94, alpha1: 0, shape: 1 });
+    } else if (beat === 6) {
+      p.y += size * 0.58;
+      this.norm.emit({ p, v: [rv(0.15), 0.63, rv(0.15)], life: 1.1,
+        size: size * 0.64, size1: size * 1.7, color: GREY, color1: GREY2, alpha: 0.40, alpha1: 0, fadeIn: 0.18, shape: 8 });
+    }
+  }
+
   burst(pos, preset, n = 12, o = {}) {
     const P = this.presets[preset];
     if (!P) return;
@@ -1640,7 +1723,7 @@ export class VFX {
         t += dt;
         if (ending || (dur > 0 && t > dur)) fade = Math.max(0, fade - dt * 3);
         u.uAge.value = t;
-        u.uAlpha.value = Math.min(1, t * 8) * fade;
+        u.uAlpha.value = Math.min(1, t * 8) * fade * fade * (3 - 2 * fade);
         if (fade <= 0) { m.visible = false; slot.busy = false; return false; }
         return true;
       },
@@ -2257,8 +2340,7 @@ export class VFX {
     const gp = tmpV2.set(pos.x, gi.y, pos.z).clone();
     // --- frame 0: the read
     this.pop(at, el, 1.5 * s, 0.13);
-    this.glint(at, el, 1.9 * s, 0.08);
-    this.burst(at, 'glow', 1, { el, size: 0.6 * s, size1: 0.9 * s, life: 0.07, alpha: 0.5 });
+    this.glint(at, el, 1.9 * s, 2 / 60);
     this.flash(at, p.light, 10 * s, 6 * s, 0.14);
     // --- a beat later: ring
     this.later(() => {
@@ -2270,20 +2352,22 @@ export class VFX {
         // a star that snaps shut: a thin shell, glyphs thrown out, motes drifting up
         this.sphere('arcane', at, { r0: 0.1 * s, r1: 0.7 * s, dur: 0.22, grow: 3, erodeAt: 0.1, alpha: 0.75 });
         this.burst(at, 'star', 1, { el, size: 1.5 * s, life: 0.12 });
-        this.sparks(at, sprayDir, 8 * s, { el, spread: 0.85, speed: 12, grav: 2, life: 0.3 });
-        this.later(() => { this.burst(at, 'arcane', 7 * s, { speed: 4 }); this.burst(at, 'glyph', 2 * s, { spread: 0.3 * s, size: 0.8 }); }, 35);
-        if (ground) this.decal(gp, 'rune', 0.9 * s, { dur: 1.6, glowDur: 0.8 });
+        this.later(() => {
+          this.sparks(at, sprayDir, 8 * s, { el, spread: 0.85, speed: 12, grav: 2, life: 0.3 });
+          this.burst(at, 'arcane', 7 * s, { speed: 4 }); this.burst(at, 'glyph', 2 * s, { spread: 0.3 * s, size: 0.8 });
+        }, 45);
+        if (ground) this.later(() => this.decal(gp, 'rune', 0.9 * s, { dur: 1.6, glowDur: 0.8 }), 500);
         break;
       case 'fire':
         // a fist of flame that rolls up into smoke, embers arcing away
         this.sphere('fire', at, { r0: 0.16 * s, r1: 0.8 * s, dur: 0.38, grow: 3, erodeAt: 0.12, alpha: 1, speed: 1.6, rise: 1.4 });
-        this.sparks(at, sprayDir, 12 * s, { el, spread: 0.9, speed: 13, grav: 10, life: 0.5, w: 0.04 });
         this.later(() => {
-          this.burst(at, 'fire', 6 * s, { speed: 3.5, size: 0.8 });
+          this.sparks(at, sprayDir, 10 * s, { el, spread: 0.9, speed: 13, grav: 10, life: 0.5, w: 0.04 });
+          this.burst(at, 'fire', 4 * s, { speed: 3.5, size: 0.7 });
           this.chunks(at, 'ember', Math.round(4 * s), { dir: sprayDir, spread: 0.8, speed: 7 });
-          if (s > 1.2 || rand() < 0.4) this.sphere('smoke', tmpV.copy(at).setY(at.y + 0.3 * s), { r0: 0.2 * s, r1: 0.5 * s, dur: 0.8, grow: 2, erodeAt: 0.2, rise: 1.3, emiss: 0.8, alpha: 0.5 });
-        }, 50);
-        if (ground) { this.decal(gp, 'scorch', 1.1 * s, { dur: 7, glowDur: 1.6 }); this.linger(gp, 'fire', 0.7 * s, 1.6); }
+        }, 45);
+        if (s > 1.2 || rand() < 0.4) this.later(() => this.sphere('smoke', tmpV.copy(at).setY(at.y + 0.3 * s), { r0: 0.2 * s, r1: 0.5 * s, dur: 0.8, grow: 2, erodeAt: 0.2, rise: 1.3, emiss: 0.6, alpha: 0.5 }), 90);
+        if (ground) this.later(() => { this.decal(gp, 'scorch', 1.1 * s, { dur: 7, glowDur: 1.6 }); this.linger(gp, 'fire', 0.7 * s, 1.6); }, 500);
         break;
       case 'wind':
         this.slash(at, fwd, { el, radius: 0.9 * s, dur: 0.22, thick: 0.4, grow: 0.9, roll: rand() * 3.14 });
@@ -2291,30 +2375,40 @@ export class VFX {
         this.burst(at, 'wind', 8 * s, { radius: 0.6 });
         this.swirl(at, 8 * s, { el, r: 0.8 * s, h: 0.4, speed: 10, life: 0.8, out: 0.6 });
         if (dir) this.windLine(at, dir, { len: 3 * s, dur: 0.3, width: 0.04, loop: 0.5, loopR: 0.5 });
-        if (ground) { this.decal(gp, 'swirl', 1.6 * s, { dur: 1.8 }); this.burst(gp, 'dust', 5, { speed: 5, size: 0.6 }); }
+        if (ground) {
+          this.later(() => this.burst(gp, 'dust', 4, { speed: 5, size: 0.6 }), 90);
+          this.later(() => this.decal(gp, 'swirl', 1.6 * s, { dur: 1.8 }), 500);
+        }
         break;
       case 'frost':
         // it breaks rather than bursts: opaque splinters and a cold breath, no ball of light
         for (let i = 0; i < 9 * s; i++) { coneDir(tmpV, sprayDir, 1.1); const sp = randRange(4, 10); this.norm.emit({ p: [at.x, at.y, at.z], v: [tmpV.x * sp, tmpV.y * sp + 2, tmpV.z * sp], life: randRange(0.4, 0.75), size: randRange(0.1, 0.22) * s, size1: 0.05, color: C(0.84, 0.95, 1.0), color1: C(0.5, 0.76, 0.96), alpha: 0.95, alpha1: 0.25, drag: 1.2, grav: 18, shape: 2 }); }
         this.sparks(at, sprayDir, 8 * s, { el, spread: 0.9, speed: 11, grav: 14, life: 0.35, w: 0.03 });
         this.chunks(at, 'ice', Math.round(3 * s), { dir: sprayDir, spread: 0.9, speed: 6, size: 0.1 });
-        this.later(() => { this.burst(at, 'frostmist', 2, { size: 0.55 * s, spread: 0.3 }); this.burst(at, 'snowflake', 3 * s, { spread: 0.35 }); }, 45);
-        if (ground) { this.decal(gp, 'frost', 1.0 * s, { dur: 6 }); if (rand() < 0.5) this.crystal(gp, randRange(0.3, 0.5) * s, { life: 0.8, quiet: true }); }
+        this.later(() => this.burst(at, 'snowflake', 3 * s, { spread: 0.35 }), 45);
+        this.later(() => this.burst(at, 'frostmist', 2, { size: 0.55 * s, spread: 0.3 }), 90);
+        if (ground) this.later(() => { this.decal(gp, 'frost', 1.0 * s, { dur: 6 }); if (rand() < 0.5) this.crystal(gp, randRange(0.3, 0.5) * s, { life: 0.8, quiet: true }); }, 500);
         break;
       case 'water':
         this.burst(at, 'water', 12 * s, { speed: 5 });
         this.crown(at, 10 * s, { speed: 6 * s });
-        if (ground) { this.crownSplash(gp, 1.1 * s, { dur: 0.55, h: 0.9 * s }); this.decal(gp, 'wet', 1.3 * s, { dur: 6 }); this.ring(gp, PAL.water.core, 1.6 * s, 0.35, { thick: 0.2 }); }
+        if (ground) {
+          this.crownSplash(gp, 1.1 * s, { dur: 0.55, h: 0.9 * s });
+          this.later(() => this.ring(gp, PAL.water.core, 1.6 * s, 0.35, { thick: 0.2 }), 45);
+          this.later(() => this.decal(gp, 'wet', 1.3 * s, { dur: 6 }), 500);
+        }
         else this.sphere('water', at, { r0: 0.15 * s, r1: 0.75 * s, dur: 0.3, grow: 2.5, erodeAt: 0.1, alpha: 0.85 });
         this.later(() => this.burst(at, 'splash', 3, { size: 0.7 * s }), 45);
         break;
       case 'storm':
         this.sphere('storm', at, { r0: 0.1 * s, r1: 0.6 * s, dur: 0.16, grow: 3, erodeAt: 0.05, alpha: 0.85 });
-        this.burst(at, 'electric', 8 * s, { speed: 6 });
-        this.sparks(at, sprayDir, 10 * s, { el, spread: 1.0, speed: 16, grav: 8, life: 0.3, w: 0.035 });
+        this.later(() => {
+          this.burst(at, 'electric', 7 * s, { speed: 6 });
+          this.sparks(at, sprayDir, 8 * s, { el, spread: 1.0, speed: 16, grav: 8, life: 0.3, w: 0.035 });
+        }, 45);
         this.arcs(at, 2, 0.9 * s);
         this.later(() => this.arcs(at, 2, 1.2 * s, { width: 0.025 }), 70);
-        if (ground) { this.decal(gp, 'char', 1.1 * s, { dur: 5 }); this.linger(gp, 'storm', 0.8 * s, 1.2); }
+        if (ground) this.later(() => { this.decal(gp, 'char', 1.1 * s, { dur: 5 }); this.linger(gp, 'storm', 0.8 * s, 1.2); }, 500);
         break;
     }
   }
@@ -2427,18 +2521,16 @@ export class VFX {
     }
     // the read: a spiked spark and a hairline glint (no screen-filling glow), ring a beat later
     this.pop(pos, el, Math.min(4.5, r), 0.18);
-    this.glint(pos, el, Math.min(6, r * 1.4), 0.13, { grow: 1.6 });
-    this.burst(pos, 'glow', 1, { el, size: Math.min(1.8, r * 0.4), size1: Math.min(2.6, r * 0.6), life: 0.1, alpha: 0.45 });
+    this.glint(pos, el, Math.min(6, r * 1.4), 2 / 60, { grow: 1.6 });
     const at = pos.clone();
     this.later(() => this.puffRing(at, el, Math.min(9, r * 2.2), 0.3, { alpha: 0.75 }), 45);
     this.flash(pos, p.light, 44 * k, r * 4.5, 0.45);
-    this.sparks(pos, null, 26 * k, { el, speed: 18, grav: 10, life: 0.55, w: 0.06, up: 0.6 });
+    this.later(() => this.sparks(at, null, 18 * k, { el, speed: 18, grav: 10, life: 0.55, w: 0.05, up: 0.6 }), 45);
     this.distort.shell(pos, r * 1.5, 0.3, { amp: 0.032, flat: near ? 0.7 : 1 }); // quick: a lingering shell reads as a soap bubble
     if (near) {
       this.distort.ring(g, r * 2.2, 0.55, { flat: true, amp: 0.04, width: 0.1 });
-      this.ring(g, p.glow, r * 1.35, 0.5, { thick: 0.22 });
-      this.ring(g, p.core, r * 0.9, 0.3, { thick: 0.4, alpha: 0.7 });
-      this.burst(g, 'dust', 10 * k, { speed: 9 });
+      this.later(() => this.ring(g, p.glow, r * 1.35, 0.5, { thick: 0.14 }), 35);
+      this.later(() => this.burst(g, 'dust', 6 * k, { speed: 9 }), 90);
       if (el !== 'water' && !gi.water) {
         this.chunks(g, 'rock', Math.round(9 * k), { speed: 9 + r, up: 0.9, size: 0.14 + r * 0.02 });
         for (let i = 0; i < 3; i++) { const a = rand() * 6.28; this.sphere('dust', tmpV.set(g.x + Math.cos(a) * r * 0.6, g.y + 0.2, g.z + Math.sin(a) * r * 0.6), { r0: 0.22 * r, r1: 0.46 * r, dur: 1.2, grow: 2, erodeAt: 0.15, squash: 0.4, drift: new THREE.Vector3(Math.cos(a), 0, Math.sin(a)).multiplyScalar(r * 0.7), alpha: 0.42, delay: 0.05 }); }
@@ -2453,11 +2545,11 @@ export class VFX {
         const v = r * 0.7;
         this.sphere('fire', pos, { r0: v * 0.25, r1: v * 0.9, dur: 1.15, grow: 4.5, erodeAt: 0.3, erode1: 1.05, alpha: 1, rise: 1.4 });
         for (let i = 0; i < 3; i++) { sphereV(tmpV); tmpV.y = Math.abs(tmpV.y) * 0.6; this.sphere('fire', tmpV.multiplyScalar(v * 0.4).add(pos), { r0: v * 0.12, r1: v * randRange(0.4, 0.55), dur: randRange(0.8, 1.05), grow: 4, erodeAt: 0.3, alpha: 1, rise: 2.4, delay: randRange(0, 0.08) }); }
-        for (let i = 0; i < 5; i++) { sphereV(tmpV); tmpV.y = Math.abs(tmpV.y) * 0.5 + 0.35; const d = tmpV.clone(); this.sphere('smoke', tmpV.multiplyScalar(v * 0.3).add(pos), { r0: v * 0.22, r1: v * randRange(0.45, 0.6), dur: randRange(2.4, 3.2), grow: 2.2, erodeAt: 0.3, rise: randRange(1.0, 1.8), drift: d.multiplyScalar(v * 0.22), emiss: 2.2, emissPow: 2.5, delay: randRange(0.18, 0.32), alpha: 1 }); }
-        this.burst(pos, 'fire', 20 * k, { speed: 8, spread: 0.8, size: 1.4, alpha: 0.7 });
-        this.burst(pos, 'ember', 22 * k, { speed: 10 });
+        for (let i = 0; i < 3; i++) { sphereV(tmpV); tmpV.y = Math.abs(tmpV.y) * 0.5 + 0.35; const d = tmpV.clone(); this.sphere('smoke', tmpV.multiplyScalar(v * 0.3).add(pos), { r0: v * 0.22, r1: v * randRange(0.40, 0.55), dur: randRange(2.4, 3.2), grow: 2.2, erodeAt: 0.3, rise: randRange(1.0, 1.8), drift: d.multiplyScalar(v * 0.22), emiss: 1.1, emissPow: 2.5, delay: randRange(0.18, 0.32), alpha: 0.85 }); }
+        this.burst(pos, 'fire', 12 * k, { speed: 8, spread: 0.8, size: 1.2, alpha: 0.65 });
+        this.later(() => this.burst(at, 'ember', 16 * k, { speed: 10 }), 45);
         this.chunks(pos, 'ember', Math.round(14 * k), { speed: 11, up: 0.7 });
-        this.burst(pos, 'smoke', 6 * k, { spread: 1.4, size: 1.7 });
+        this.later(() => this.burst(at, 'smoke', 4 * k, { spread: 1.4, size: 1.35 }), 100);
         if (near) { this.decal(g, 'scorch', r * 0.95); this.linger(g, 'fire', r * 0.6, 3.5, { rate: 14 }); }
         break;
       }
@@ -2897,6 +2989,7 @@ export class VFX {
     if (fog && fog.density !== undefined) this.fogU.density.value = fog.density;
     const sky = G.world && G.world.sky;
     if (sky) this.ambU.value = 1 - 0.65 * clamp(sky.night ?? 0, 0, 1);
+    this.add.mat.uniforms.uLightK.value = this.norm.mat.uniforms.uLightK.value = this.lightK();
     this._updateDecals(dt);
     if (fog) { FXU.fogD.value = fog.density ?? 0.004; FXU.fogC.value.copy(fog.color); }
     FXU.amb.value = this.ambU.value;
@@ -2924,6 +3017,29 @@ function coneDir(out, dir, spread) {
   return out.normalize();
 }
 const D = [0, 0, 0];
+// Cache four upper-surface vertices in bind pose, then skin just the emitting
+// vertex at each beat. Shared rig geometries need only one bounded search.
+const burnSites = new WeakMap();
+const BURN_TARGETS = [[0.12, 0.74, 0.66], [0.88, 0.72, 0.62], [0.34, 0.96, 0.61], [0.66, 0.89, 0.55]];
+function burningVertices(geo) {
+  let sites = burnSites.get(geo);
+  if (sites) return sites;
+  if (!geo.boundingBox) geo.computeBoundingBox();
+  const lo = geo.boundingBox.min, hi = geo.boundingBox.max, attr = geo.attributes.position;
+  const stride = Math.max(1, Math.floor(attr.count / 1024));
+  sites = BURN_TARGETS.map(([x, y, z]) => {
+    const px = lerp(lo.x, hi.x, x), py = lerp(lo.y, hi.y, y), pz = lerp(lo.z, hi.z, z);
+    let best = 0, dist = Infinity;
+    for (let i = 0; i < attr.count; i += stride) {
+      const score = (attr.getX(i) - px) ** 2 + (attr.getY(i) - py) ** 2 + (attr.getZ(i) - pz) ** 2;
+      if (score < dist) { best = i; dist = score; }
+    }
+    return best;
+  });
+  burnSites.set(geo, sites);
+  return sites;
+}
+const BURN_ORANGE = C(2.8, 0.76, 0.055), BURN_RED = C(1.48, 0.16, 0.018);
 const GREY = C(0.12, 0.11, 0.13), GREY2 = C(0.3, 0.29, 0.31);
 const FIREBALL_C0 = C(2.2, 0.8, 0.15), FIREBALL_C1 = C(0.5, 0.06, 0.01), FIRE_WHITE = C(4.4, 3.6, 2.2);
 // flame below white heat (keeps its colour over grass), cold breath, water drops
@@ -2965,7 +3081,7 @@ VFX.prototype.presets = {
   smoke(p, o) {
     const s = o.spread ?? 0.6;
     this.norm.emit({ p: [p.x + rv(s), p.y + rv(s) * 0.5, p.z + rv(s)], v: [rv(0.8), randRange(0.8, 2), rv(0.8)], life: randRange(1.4, 2.4),
-      size: randRange(0.8, 1.4) * (o.size || 1), size1: randRange(2.4, 3.6) * (o.size || 1), ease: 0.55, color: o.color || GREY, color1: o.color1 || GREY2, alpha: o.alpha ?? 0.5, alpha1: 0.15, drag: 1.2, grav: -0.3, shape: 8, fadeIn: 0.08 });
+      size: randRange(0.8, 1.4) * (o.size || 1), size1: randRange(2.1, 3.1) * (o.size || 1), ease: 0.55, color: o.color || GREY, color1: o.color1 || GREY2, alpha: o.alpha ?? 0.5, alpha1: 0, drag: 1.2, grav: -0.3, shape: 8, fadeIn: 0.08 });
   },
   spark(p, o) {
     const c = PAL[o.el || 'fire'] || PAL.fire;
@@ -3082,7 +3198,7 @@ VFX.prototype.presets = {
   steam(p, o) {
     const s = o.spread ?? 1;
     this.norm.emit({ p: [p.x + rv(s), p.y + rv(s) * 0.4, p.z + rv(s)], v: [rv(2), randRange(1.5, 4), rv(2)], life: randRange(1.2, 2.2),
-      size: randRange(1, 2) * (o.size || 1), size1: randRange(3.5, 5) * (o.size || 1), ease: 0.55, color: C(0.97, 0.98, 1.02), color1: C(0.86, 0.89, 0.93), alpha: 0.55, alpha1: 0.05, drag: 1.4, grav: -0.5, shape: 8, fadeIn: 0.06 });
+      size: randRange(0.9, 1.6) * (o.size || 1), size1: randRange(2.8, 4.0) * (o.size || 1), ease: 0.55, color: C(0.97, 0.98, 1.02), color1: C(0.86, 0.89, 0.93), alpha: 0.5, alpha1: 0, drag: 1.4, grav: -0.5, shape: 8, fadeIn: 0.06 });
   },
   // fast upward jet of steam (evaporate / scald / geysers)
   steamjet(p, o) {
@@ -3127,6 +3243,6 @@ VFX.prototype.presets = {
   },
   snow(p, o) {
     this.norm.emit({ p: [p.x + rv(o.spread ?? 16), p.y + randRange(4, 12), p.z + rv(o.spread ?? 16)], v: [randRange(0.5, 1.5), randRange(-1.6, -0.8), rv(0.4)], life: randRange(4, 7),
-      size: randRange(0.06, 0.14), color: C(1, 1, 1), color1: C(1, 1, 1), alpha: 0.95, alpha1: 0.5, drag: 0, shape: 0, turb: 0.8, fadeIn: 0.1 });
+      size: randRange(0.11, 0.17), color: C(0.90, 0.94, 1), color1: C(0.78, 0.85, 0.94), alpha: 0.95, alpha1: 0, drag: 0, shape: 10, turb: 0.8, fadeIn: 0.1 });
   },
 };

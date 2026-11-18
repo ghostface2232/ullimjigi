@@ -3,7 +3,7 @@
 //        7 flame tongue, 8 dissolving wisp (smoke that breaks up as it ages),
 //        9 droplet (specular water drop), 10 snowflake, 11 leaf, 12 rune glyph,
 //        13 electric spark (jagged, flickering), 14 bubble, 15 glint (hairline cross flare),
-//        16 shock ring (thins with age), 17 hit spark (spiked burst that hollows out)
+//        16 shock ring (thins with age), 17 hit spark (spiked burst), 18 surface flame
 // Sprites can rotate (rot/spin) and stretch along their screen-space velocity
 // (sparks, streaks and droplets do by default). Colour runs through up to three
 // keys (color → color2 at `mid` → color1) and size follows an ease curve.
@@ -11,6 +11,74 @@
 // of the camera.
 import * as THREE from 'three';
 import { U } from './materials.js';
+
+// Eight independently filtered stamps. RG stores a puff's tangent normal, B the
+// painted highlight / relief, A coverage. Array layers keep the mip chains apart.
+let stamps;
+function particleStamps() {
+  if (stamps) return stamps;
+  const size = 64, layers = 8;
+  const data = new Uint8Array(size * size * layers * 4);
+  const sat = (v) => Math.max(0, Math.min(1, v));
+  const puffs = [
+    [[-0.31, 0.16, 0.51], [0.20, 0.18, 0.59], [-0.10, -0.28, 0.55], [0.44, -0.19, 0.32]],
+    [[-0.28, -0.05, 0.54], [0.22, -0.26, 0.49], [0.27, 0.22, 0.50], [-0.36, 0.37, 0.30]],
+  ];
+  for (let layer = 0; layer < layers; layer++) {
+    const variant = layer % 2;
+    for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) {
+      const x = (i + 0.5) * 2 / size - 1, y = (j + 0.5) * 2 / size - 1;
+      let nx = 0, ny = 0, relief = 0, alpha = 0;
+      if (layer < 2) {
+        // A rolled bank of lobes. Blend their normals in the overlap to keep
+        // the shared ridge from turning into a stepped seam on a large puff.
+        let weight = 0;
+        for (const [cx, cy, r] of puffs[variant]) {
+          const dx = (x - cx) / r, dy = (y - cy) / r;
+          const dome = 1 - dx * dx - dy * dy;
+          alpha = Math.max(alpha, sat(dome * 2.4));
+          const height = r * Math.sqrt(Math.max(0, dome));
+          const w = height ** 7;
+          weight += w; nx += dx * w; ny += dy * w;
+          relief = Math.max(relief, height);
+        }
+        if (weight > 0) { nx /= weight; ny /= weight; }
+        relief *= 1.6;
+      } else if (layer < 4) {
+        // A folded cinder, wide at its leading edge with a swept, tapering tail.
+        const t = sat((y + 0.85) / 1.7);
+        const axis = (variant ? -0.27 : 0.18) * (1 - t) ** 2;
+        const width = Math.min(t * (variant ? 0.52 : 0.68), (1 - t) * 1.25);
+        alpha = sat((width - Math.abs(x - axis)) * 19);
+        relief = sat(1 - Math.abs(x - axis - width * 0.28) / (0.025 + width * 0.31)) * t;
+      } else if (layer < 6) {
+        // Slender willow and broad oval leaf, each divided by a bent midrib.
+        const t = sat((y + 0.9) / 1.8), arch = Math.sin(t * Math.PI);
+        const axis = (variant ? 0.19 : -0.22) * arch;
+        const dx = x - axis, width = (variant ? 0.42 : 0.27) * arch * (1.28 - 0.6 * t);
+        alpha = sat((width - Math.abs(dx)) * 22);
+        relief = 0.27 + 0.44 * sat(0.5 + dx * 16) + 0.22 * sat(1 - Math.abs(dx) * 40);
+      } else {
+        // Fold six radial sectors onto one stem. Branchlets grow from the stem,
+        // leaving six open wedges even when the flake is only a few pixels wide.
+        const angle = Math.abs(((Math.atan2(y, x) + Math.PI * 13 / 6) % (Math.PI / 3)) - Math.PI / 6);
+        const r = Math.hypot(x, y), along = r * Math.cos(angle), across = r * Math.sin(angle);
+        const stem = Math.max(across - 0.042, along - 0.86);
+        const twig = Math.max(Math.abs(along - 0.34 - across) - 0.049, across - 0.20);
+        const tip = Math.max(Math.abs(along - 0.59 - across) - 0.037, across - 0.13);
+        alpha = sat(0.5 - Math.min(stem, twig, variant ? tip : 1) * 25);
+        relief = sat(1 - r);
+      }
+      const k = ((layer * size + j) * size + i) * 4;
+      data[k] = Math.round((nx * 0.5 + 0.5) * 255); data[k + 1] = Math.round((ny * 0.5 + 0.5) * 255);
+      data[k + 2] = Math.round(sat(relief) * 255); data[k + 3] = Math.round(alpha * 255);
+    }
+  }
+  stamps = new THREE.DataArrayTexture(data, size, size, layers);
+  stamps.minFilter = THREE.LinearMipmapLinearFilter; stamps.magFilter = THREE.LinearFilter;
+  stamps.generateMipmaps = true; stamps.needsUpdate = true;
+  return stamps;
+}
 
 const VS = /* glsl */ `
 attribute float aSize;
@@ -32,6 +100,7 @@ varying float vDist;
 varying vec2 vDir;
 varying float vStretch;
 varying vec2 vMisc;
+varying vec3 vGround;
 void main(){
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   vec4 clip = projectionMatrix * mv;
@@ -58,8 +127,21 @@ void main(){
   vFog = 1.0 - exp(-uFogDensity * uFogDensity * dd * dd);
   // soften sprites that sink into the ground
   vec4 wp = modelMatrix * vec4(position, 1.0);
-  float gh = texture2D(uHeightTex, (wp.xz + uHeightP.x) * uHeightP.y + uHeightP.z).r;
+  vec2 groundUV = (wp.xz + uHeightP.x) * uHeightP.y + uHeightP.z;
+  float gh = texture2D(uHeightTex, groundUV).r;
   float above = wp.y - gh;
+  vGround = vec3(2.0, 0.0, 0.0);
+  bool puff = abs(aShape - 3.0) < 0.5 || abs(aShape - 8.0) < 0.5;
+  if (puff && above < aSize * 1.5) {
+    // Project the local heightfield tangent across the billboard. Only large
+    // contact puffs pay the extra two vertex reads; all fragments share them.
+    float cell = 1.0 / float(textureSize(uHeightTex, 0).x);
+    vec2 delta = vec2(texture2D(uHeightTex, groundUV + vec2(cell, 0.0)).r,
+                      texture2D(uHeightTex, groundUV + vec2(0.0, cell)).r) - gh;
+    vec2 slope = delta * (uHeightP.y / cell);
+    vec3 normalV = mat3(viewMatrix) * vec3(-slope.x, 1.0, -slope.y);
+    vGround = vec3(above / max(aSize, 0.01), normalV.x * 0.5, -normalV.y * 0.5);
+  }
   vColor.a *= mix(0.4, 1.0, smoothstep(-aSize * 0.2, aSize * 0.3, above));
   // tiny sprites (sub-pixel) would shimmer; fade them instead
   vColor.a *= smoothstep(0.6, 2.0, size);
@@ -75,6 +157,9 @@ uniform float uAdditive;
 uniform float uOcc;
 uniform float uTime;
 uniform sampler2D uNoise;
+uniform highp sampler2DArray uStamps;
+uniform vec3 uSun;
+uniform float uLightK;
 varying vec4 vColor;
 varying float vShape;
 varying float vFog;
@@ -82,6 +167,7 @@ varying float vDist;
 varying vec2 vDir;
 varying float vStretch;
 varying vec2 vMisc;
+varying vec3 vGround;
 float h21(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 // value noise, one lattice cell per unit: the shared noise texture's A channel is the same
 // smoothstep-interpolated value noise with 32 cells per tile, so one fetch replaces four hashes
@@ -96,11 +182,17 @@ void main(){
   float seed = vMisc.x, age = vMisc.y;
   float a;
   vec3 tint = vec3(1.0);
-  if (vShape < 0.5) { a = pow(max(1.0 - d, 0.0), 1.7); }
+  float variant = step(0.5, seed);
+  vec2 stampUV = clamp(p * 0.5 + 0.5, 0.0, 1.0);
+  if (vShape < 0.5) {
+    float core = 1.0 - smoothstep(0.04, 0.34, abs(p.x) + abs(p.y) * 0.8);
+    a = core + 0.24 * pow(max(1.0 - d, 0.0), 2.0);
+  }
   else if (vShape < 1.5) {
     // hot spark: bright core, tapered tail
-    a = pow(max(1.0 - d, 0.0), 2.6) + smoothstep(0.3, 0.0, d) * 0.9;
-    a *= mix(1.0, 0.6, smoothstep(0.0, -1.0, p.y));
+    vec4 ink = texture(uStamps, vec3(stampUV, 2.0 + variant));
+    a = ink.a * (0.65 + 0.65 * ink.b);
+    tint = mix(vec3(0.85, 0.68, 0.53), vec3(1.18), ink.b);
   }
   else if (vShape < 2.5) {
     float q = abs(p.x) * 1.8 + abs(p.y) * 0.9;
@@ -108,12 +200,18 @@ void main(){
     a *= 0.75 + 0.35 * step(0.0, p.x * 0.6 + p.y * 0.3); // two-tone facet
     a += smoothstep(0.28, 0.0, q) * 0.8;
   }
-  else if (vShape < 3.5) {
-    // lumpy smoke puff with a soft lit top
-    float n = vn(p * 2.2 + vDir * 3.0) * 0.6 + vn(p * 4.7 - vDir.yx * 2.0) * 0.4;
-    float r = d + (n - 0.5) * 0.55;
-    a = smoothstep(1.0, 0.25, r) * 0.9;
-    tint = vec3(mix(0.82, 1.08, smoothstep(0.6, -0.6, p0.y)));
+  else if (vShape < 3.5 || abs(vShape - 8.0) < 0.5) {
+    vec4 puff = texture(uStamps, vec3(stampUV, variant));
+    vec2 n = puff.rg * 2.0 - 1.0;
+    // Undo sprite rotation and the downward point UV axis before lighting.
+    vec2 screenN = vec2(dot(n, vec2(vDir.x, -vDir.y)), -dot(n, vDir.yx));
+    vec3 normalV = vec3(screenN, sqrt(max(0.0, 1.0 - dot(n,n))));
+    float key = smoothstep(-0.24, 0.54, dot(normalV, mat3(viewMatrix) * uSun));
+    tint = mix(vec3(0.54, 0.63, 0.77), vec3(1.15, 1.09, 0.98), key);
+    tint *= mix(1.0, 0.54, smoothstep(0.45, 1.0, uLightK));
+    float grain = vn(p * 2.9 + vec2(seed * 11.0, -uTime * 0.28));
+    a = puff.a * smoothstep(age * age * 0.92 - 0.20, age * age * 0.92 + 0.14, puff.b * 0.60 + grain * 0.40);
+    a *= smoothstep(-0.02, 0.22, vGround.x + dot(p0, vGround.yz));
   }
   else if (vShape < 4.5) {
     float cx = smoothstep(0.14, 0.0, abs(p.x)) * smoothstep(1.0, 0.0, abs(p.y));
@@ -137,39 +235,23 @@ void main(){
     float core = smoothstep(w * 0.55, 0.0, abs(x)) * smoothstep(0.35, -0.7, q.y);
     tint = vec3(1.0) + vec3(0.9, 0.7, 0.35) * core * (1.0 - age);
   }
-  else if (vShape < 8.5) {
-    // dissolving wisp: fbm cloud that breaks into tatters as it ages
-    vec2 q = p * 1.1 + vec2(seed * 13.0, seed * 7.0);
-    float n = fbm(q * 1.6 + vec2(uTime * 0.15, -uTime * 0.25));
-    float body = smoothstep(1.0, 0.2, d + (n - 0.5) * 0.7);
-    float thr = mix(0.0, 0.62, age * age);
-    a = smoothstep(thr, thr + 0.3, n * body + body * 0.25) * body;
-    tint = vec3(mix(0.78, 1.12, smoothstep(0.7, -0.7, p0.y)));
-  }
   else if (vShape < 9.5) {
-    // droplet: dense body, bright rim (fresnel) and a specular glint
-    float body = smoothstep(1.0, 0.82, d);
-    float rim = smoothstep(0.55, 0.95, d) * body;
-    float spec = smoothstep(0.32, 0.0, length(p0 - vec2(-0.3, -0.34)));
-    a = body * 0.55 + rim * 0.5 + spec;
-    tint = vec3(0.75) + vec3(0.6) * rim + vec3(1.6) * spec;
+    // A round leading bead trails a drawn-out neck along the projected motion.
+    vec2 bead = vec2(p.x / mix(0.30, 0.73, smoothstep(-0.9, 0.35, p.y)), (p.y - 0.05) * 1.1);
+    float radius = length(bead);
+    float body = 1.0 - smoothstep(0.88, 1.0, radius);
+    float rim = smoothstep(0.62, 0.94, radius);
+    float spec = 1.0 - smoothstep(0.10, 0.27, length((bead - vec2(-0.26, 0.24)) * vec2(1.0, 0.58)));
+    a = body * (0.46 + 0.44 * rim + 0.64 * spec);
+    tint = mix(vec3(0.32, 0.55, 0.79), vec3(0.94, 1.02, 1.1), rim) + vec3(1.35) * spec;
   }
   else if (vShape < 10.5) {
-    // six-armed snowflake with side branches
-    float ang = atan(p.y, p.x);
-    float k = abs(sin(ang * 3.0));
-    float arm = smoothstep(0.09, 0.0, d * k) * smoothstep(1.0, 0.7, d);
-    float br = smoothstep(0.07, 0.0, abs(d - 0.55) * 1.0 + abs(k - 0.35) * 0.4) * 0.8;
-    a = max(arm, br) + smoothstep(0.22, 0.0, d);
+    vec4 ink = texture(uStamps, vec3(stampUV, 6.0 + variant));
+    a = ink.a; tint = mix(vec3(0.74, 0.87, 1.0), vec3(1.12), ink.b);
   }
   else if (vShape < 11.5) {
-    // leaf: pointed ellipse with a midrib, lit on one side
-    vec2 q = p * vec2(1.0, 0.55);
-    float e = length(vec2(q.x * (1.0 + abs(q.y) * 1.4), q.y));
-    float body = smoothstep(0.62, 0.5, e);
-    float rib = smoothstep(0.05, 0.0, abs(p.x)) * body;
-    a = body;
-    tint = vec3(mix(0.7, 1.15, step(0.0, p.x))) * (1.0 - rib * 0.35);
+    vec4 ink = texture(uStamps, vec3(stampUV, 4.0 + variant));
+    a = ink.a; tint = mix(vec3(0.54, 0.64, 0.51), vec3(1.32, 1.18, 0.86), ink.b);
   }
   else if (vShape < 12.5) {
     // rune glyph: ring + seeded strokes
@@ -207,7 +289,7 @@ void main(){
     float n = vn(vec2(atan(p.y, p.x) * 2.6, seed * 23.0));
     a = smoothstep(w, w * 0.3, abs(d - (1.0 - w))) * smoothstep(age * 1.1 - 0.35, age * 1.1 + 0.05, n + 0.1);
   }
-  else {
+  else if (vShape < 17.5) {
     // hit spark: seven hard spikes of uneven length, hollowing out from the middle with age
     float t = atan(p.y, p.x) * (7.0 / 6.2831853) + seed * 7.0;
     float f = abs(fract(t) - 0.5);
@@ -216,13 +298,28 @@ void main(){
     a = smoothstep(w, w * 0.45, f) * step(d, len) * smoothstep(age * 0.85 - 0.2, age * 0.85, d);
     a += smoothstep(0.2, 0.0, d) * (1.0 - age);
   }
+  else {
+    // Sideways curl above a low coal bed. Only a sliver at the root is hot.
+    float h = 0.5 - 0.5 * p0.y;
+    float curl = sin(h * 6.8 - age * 3.8 + seed * 12.0);
+    float x = p0.x - h * h * (0.48 * curl + seed - 0.5);
+    float width = (0.27 + 0.19 * sin(h * 3.14)) * (1.0 - h * h);
+    float edge = abs(x) / max(width, 0.015);
+    a = (1.0 - smoothstep(0.62, 1.0, edge)) * smoothstep(0.0, 0.17, h);
+    float coal = (1.0 - smoothstep(0.08, 0.36, edge)) * (1.0 - smoothstep(0.19, 0.49, h));
+    tint = mix(vec3(0.82, 0.40, 0.14), vec3(1.9, 1.65, 0.72), coal);
+  }
   if (a < 0.004) discard;
   float al = vColor.a * a;
   if (uAdditive > 0.5) {
     al *= smoothstep(0.3, 2.0, vDist);
     // "additive-over": premultiplied colour plus a little coverage, so glowing sprites
     // also dim what's behind them and keep their hue over bright sky / snow
-    gl_FragColor = vec4(vColor.rgb * tint * (1.0 - vFog * 0.9) * al, al * uOcc);
+    vec3 ink = vColor.rgb * tint;
+    float lum = dot(ink, vec3(0.2126, 0.7152, 0.0722));
+    vec3 body = ink * min(1.0, 1.0 / max(lum, 0.001));
+    vec3 radiance = mix(body, ink, smoothstep(0.68, 1.0, a) * clamp(uLightK, 0.0, 1.0));
+    gl_FragColor = vec4(radiance * (1.0 - vFog * 0.9) * al, min(al, 1.0) * uOcc);
   } else {
     al *= smoothstep(0.2, 1.2, vDist);
     gl_FragColor = vec4(mix(vColor.rgb * tint, uFogColor, vFog), min(al, 1.0));
@@ -275,6 +372,7 @@ export class Particles {
         uHeightP: U.heightP,
         uTime: U.time,
         uNoise: U.noise,
+        uStamps: { value: particleStamps() }, uSun: U.sunDir, uLightK: { value: 0.45 },
       },
       transparent: true, depthWrite: false,
       blending: additive ? THREE.CustomBlending : THREE.NormalBlending,

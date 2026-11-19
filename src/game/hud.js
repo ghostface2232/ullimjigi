@@ -68,6 +68,7 @@ export class HUD {
     this.skTree = 'arcane'; this.skSel = null;
     this.floats = [];
     this.barPool = new Map();
+    this.awarenessMarks = new Map();
     this.lastHp = -1;
     this.bannerQ = []; this.bannerBusy = false;
     this.hintT = 0; this.hintAge = 0; this.hintQ = []; this.compT = 0;
@@ -379,6 +380,20 @@ export class HUD {
     if (f.vis !== p.vis) { f.vis = p.vis; f.el.style.display = p.vis ? '' : 'none'; }
     if (p.vis) this.at(f.el, p.x, p.y);
   }
+  showAwareness(e) {
+    const p = this.project(v3.copy(e.pos).setY(e.pos.y + e.height + 0.65));
+    let mark = this.awarenessMarks.get(e);
+    if (!p.vis) { if (mark) mark.hidden = true; return; }
+    if (!mark) {
+      mark = document.createElement('div');
+      mark.className = 'awareness-mark'; mark.setAttribute('aria-label', '경계 중');
+      mark.innerHTML = ICON.point + '<i></i>';
+      this.el.bars.appendChild(mark); this.awarenessMarks.set(e, mark);
+    }
+    mark.hidden = false;
+    mark.style.setProperty('--awareness', e.awareness.toFixed(2));
+    this.at(mark, p.x, p.y);
+  }
   alertMark(e) {
     const d = document.createElement('div');
     d.className = 'alert-mark'; d.innerHTML = ICON.alert;
@@ -616,8 +631,12 @@ export class HUD {
     for (const e of G.enemies.list) {
       if (!e.alive || (e.boss && e === this.bossTarget)) continue;
       const d = e.pos.distanceTo(P.pos);
+      if (e.state === 'investigate') this.showAwareness(e);
       e._barD = (e.barT > 0 || (e.aggroed && d < 30) || P.lockTarget === e) && d < 45 ? d : -1;
       if (e._barD >= 0 && d < nd) { nd = d; nearest = e; }
+    }
+    for (const [e, mark] of this.awarenessMarks) if (!e.alive || e.state !== 'investigate') {
+      mark.remove(); this.awarenessMarks.delete(e);
     }
     const lockE = P.lockTarget && P.lockTarget.alive && P.lockTarget._barD >= 0 ? P.lockTarget : null;
     const named = lockE || (aimed && aimed._barD >= 0 ? aimed : nearest);

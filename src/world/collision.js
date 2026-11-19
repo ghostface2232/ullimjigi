@@ -91,6 +91,28 @@ export class Colliders {
       }
     return best;
   }
+  // A walking body's feet start to rise as its leading edge meets a low
+  // obstacle. Use the same continuous support for route probes and motion.
+  strideTop(x, z, y, floor, radius, step) {
+    let best = floor;
+    this.query(x, z, radius, c => {
+      if (c.noTop || c.h1 <= best || c.h0 > y + step) return;
+      const dx = x - c.x, dz = z - c.z;
+      let gap;
+      if (c.type === 'circle') gap = Math.hypot(dx, dz) - c.r;
+      else {
+        const ox = Math.abs(dx * c.cos - dz * c.sin) - c.hw;
+        const oz = Math.abs(dx * c.sin + dz * c.cos) - c.hd;
+        gap = Math.hypot(Math.max(0, ox), Math.max(0, oz));
+      }
+      if (gap >= radius) return;
+      const top = this.topAt(c, x, z);
+      if (top > Math.max(y, floor) + step) return;
+      const t = 1 - Math.max(0, gap) / radius;
+      best = Math.max(best, floor + (top - floor) * t * t * (3 - 2 * t));
+    });
+    return best;
+  }
   // Nearest grabbable wall around a body at (x, y..y+height, z).
   // Returns { c, px, pz, nx, nz, d, top } (contact point, outward normal, gap, top at contact) or null.
   wallNear(x, y, z, reach = 0.9, height = 1.6) {

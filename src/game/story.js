@@ -443,7 +443,7 @@ export class Story {
       this.hint(`${KBD('Shift')} 짧게 누르기: 순간이동 — 잠깐 무적 · ${KBD('T')} 대상 고정`, 10);
       this.obj('q_morning', '허깨비 물리치기');
       const lv = 1;
-      const wave = (defs) => defs.map(([t, x, z]) => { const e = G.enemies.spawn(t, V(x, 0, z), lv); e.aggro(); G.vfx.burst(e.center(), 'hush', 10, { size: 1 }); return e; });
+      const wave = (defs) => defs.map(([t, x, z]) => { const e = G.enemies.spawn(t, V(x, 0, z), lv); G.vfx.burst(e.center(), 'hush', 10, { size: 1 }); return e; });
       const yard = V(8, 0, 126);
       await this.scriptedWave(() => wave([['ashling', 10, 124], ['ashling', 4, 120], ['ashling', 16, 130]]), yard, 45);
       await this.sleep(1.2);
@@ -582,7 +582,7 @@ export class Story {
     this.cSay('온다. 셋… 아니, 기척이 훨씬 많구나. 한 놈도 마을 안에 들이지 마라!');
     G.hud.bark(this.npc('bau'), '이놈들! 종은 못 쳐도 창은 쓸 줄 알어!');
     const lv = G.enemies.levelFor(0);
-    const spawnAt = (t, x, z) => { const e = G.enemies.spawn(t, V(x + randRange(-2, 2), 0, z + randRange(-2, 2)), lv); e.aggro(); G.vfx.burst(e.center(), 'hush', 10, { size: 1 }); return e; };
+    const spawnAt = (t, x, z) => { const e = G.enemies.spawn(t, V(x + randRange(-2, 2), 0, z + randRange(-2, 2)), lv); G.vfx.burst(e.center(), 'hush', 10, { size: 1 }); return e; };
     const waves = [
       { say: '북쪽 길이다!', units: [['ashling', 0, -26], ['ashling', 4, -28], ['ashling', -4, -24], ['moth', 0, -30], ['moth', 2, -30]] },
       { say: '서쪽! 호수 쪽에서도 기어 온다!', units: [['ashling', -44, 16], ['ooze', -46, 20], ['ashling', -44, 22], ['wailer', -48, 12]] },
@@ -733,7 +733,7 @@ export class Story {
         G.audio.play('boss_roar', { pos: b.pos });
         G.hud.bossBar(b, '서리무덤 파수꾼 — 무엇을 지키는지 잊은 것');
         const adds = [G.enemies.spawn('ashlingFrost', V(S.pos.x + 5, 0, S.pos.z - 2), lv - 1), G.enemies.spawn('ashlingFrost', V(S.pos.x - 5, 0, S.pos.z - 2), lv - 1)];
-        adds.forEach((e) => e.aggro());
+        adds.forEach((e) => { e.scripted = true; e.aggro(); });
         this.cSay('서리무덤이다! 저 얼음 갑옷에 서리는 안 먹힌다. 불을 붙여라— 타는 동안엔 갑옷이 녹느니라!', null, 6);
         return b;
       }, S.pos, 30, '숨은 돌렸느냐. 저놈 갑옷은 불이 붙어 있는 동안에만 무른다. 불부터 붙이고 몰아치거라.');
@@ -924,6 +924,7 @@ export class Story {
   async scriptedWave(spawn, center, radius = 70) {
     for (;;) {
       const es = spawn();
+      for (const e of es) { e.scripted = true; e.aggro(); }
       const inArea = () => G.enemies.list.filter((e) => e.alive && !e.boss && e.pos && Math.hypot(e.pos.x - center.x, e.pos.z - center.z) < radius);
       const res = await this.wait(() => (es.every((e) => !e.alive) && inArea().length === 0 ? 'win' : G.player.dead ? 'lose' : null));
       if (res === 'win') return;

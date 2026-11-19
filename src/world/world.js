@@ -235,6 +235,10 @@ export class World {
     }
   }
 
+  placeFence(x, z, rot, length) {
+    const fence = this.place(B.fence(length), x, z, rot);
+    this.col.addBox(x, z, length / 2, 0.08, rot, fence.position.y - 0.1, fence.position.y + 0.94);
+  }
   buildVillage() {
     const plaza = { x: 6, z: 14 };
     const rnd = mulberry32(88);
@@ -332,7 +336,7 @@ export class World {
     for (const [x, z] of [[-12, 6], [-4, -6], [-12, -8]]) this.place(B.bench(), x, z, this.faceTo(x, z, -8, -2) + Math.PI);
     // fences at village edge
     // (the south run stands either side of the tower road, which crosses z = 58 at x = 4)
-    for (const [x, z, r, l] of [[40, 30, 1.4, 12], [38, 4, 1.8, 10], [-38, 30, 1.7, 10], [-36, 2, 1.3, 12], [15, 58.3, 0.1, 12], [-6.5, 57.8, -0.08, 9]]) this.place(B.fence(l), x, z, r);
+    for (const [x, z, r, l] of [[40, 30, 1.4, 12], [38, 4, 1.8, 10], [-38, 30, 1.7, 10], [-36, 2, 1.3, 12], [15, 58.3, 0.1, 12], [-6.5, 57.8, -0.08, 9]]) this.placeFence(x, z, r, l);
     // dry-stone walls flanking the north road (the village gate) and at the edges
     for (const [x, z, r, l] of [[-12, -17, 0.25, 7], [4, -18, -0.2, 7], [-40, -1, 1.45, 6], [38, -9, 2.0, 6]]) {
       const w = B.stoneWall(l, rnd); this.place(w, x, z, r);
@@ -459,7 +463,7 @@ export class World {
     const rnd = mulberry32(21);
     const wr = B.weaponRack(rnd); this.place(wr, 12.6, 141, -Math.PI / 2); this.col.addBox(12.6, 141, 1.05, 0.25, -Math.PI / 2, -10, this.h(12.6, 141) + 1.3).climb = false;
     for (const [x, z] of [[12, 134.5], [11.5, 148.5]]) { const st = B.strawTarget(); this.place(st, x, z, this.faceTo(x, z, -6, 142)); this.col.addCircle(x, z, 0.5, -10, this.h(x, z) + 1.9).climb = false; }
-    for (const [x, z, r, l] of [[14.5, 137, Math.PI / 2 + 0.05, 9], [14.2, 148, Math.PI / 2 - 0.08, 7]]) this.place(B.fence(l), x, z, r);
+    for (const [x, z, r, l] of [[14.5, 137, Math.PI / 2 + 0.05, 9], [14.2, 148, Math.PI / 2 - 0.08, 7]]) this.placeFence(x, z, r, l);
     for (const [x, z, r] of [[9.5, 152, 0.4], [-31.5, 162, 1.2]]) {
       const g = new THREE.Group(); B.hayBale(g, 0, 0.3, 0, 1, 0); B.hayBale(g, 1.15, 0.3, 0.1, 1, 0.1); B.hayBale(g, 0.55, 0.85, 0.05, 0.95, -0.2);
       this.place(g, x, z, r); this.col.addBox(x, z, 1.2, 0.4, r, -10, this.h(x, z) + 1.15);
@@ -556,6 +560,20 @@ export class World {
       this.scene.add(s);
       this.col.addPlatform({ type: 'disc', x: p.x, z: p.z, r: 10.6, top: y + 0.35 });
       this.col.addPlatform({ type: 'disc', x: p.x, z: p.z, r: 9.3, top: y + 0.8 });
+      // Four diagonal flights have narrow cheek walls either side of the treads.
+      for (let i = 0; i < 4; i++) {
+        const rot = Math.PI / 4 + i * Math.PI / 2, sn = Math.sin(rot), cs = Math.cos(rot);
+        for (let k = 0; k < 3; k++) {
+          const r = 11.3 - 0.5 * k;
+          this.col.addPlatform({ type: 'box', x: p.x + sn * r, z: p.z + cs * r,
+            rot, hw: 1.6, hd: 0.32, top: s.position.y + 0.16 + 0.24 * k });
+        }
+        for (const side of [-1.9, 1.9]) {
+          const x = p.x + cs * side + sn * 10.7, z = p.z - sn * side + cs * 10.7;
+          const rail = this.col.addBox(x, z, 0.25, 1, rot, s.position.y - 0.13, s.position.y + 1.72);
+          rail.topFn = (lx, lz) => s.position.y + 1.35 - 0.27 * Math.max(-1, Math.min(1, lz));
+        }
+      }
       this.noClimb(this.col.addBox(p.x, p.z, 1.3, 1.3, 0, y, y + 3));
       for (let i = 0; i < 8; i++) {
         const a = (i / 8) * Math.PI * 2 + Math.PI / 8;

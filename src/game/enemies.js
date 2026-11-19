@@ -108,7 +108,7 @@ function phaseCheck(t, at) {
 // Incremental local A*: one shared queue caps work for a whole camp. Static
 // clearance/height samples belong to a job, so doors and new barriers are read
 // again on the next route. No map-wide allocation or per-frame rebuild.
-const NAV_STEP = 2, NAV_LIMIT = 768, ENEMY_STEP = 0.5, WATER_DEPTH = 0.6;
+const NAV_STEP = 2, NAV_LIMIT = 768, WATER_DEPTH = 0.6;
 const STUN_INTERRUPT = 0.3, RETURN_TIMEOUT = 6;
 const INTERRUPT_RECOVERY = new Set(['ashling', 'brute', 'shield', 'knight', 'watcher']);
 const KEEP_ON_INTERRUPT = new Set(['stagger', 'down', 'getup', 'dormant']);
@@ -119,11 +119,16 @@ const KNIGHT_SLASH = [0.5, 0.32, 0.62], KNIGHT_SLASH_PHASE3 = [0.45, 0.3, 0.3, 0
 const tokenFrom = new THREE.Vector3(), tokenTo = new THREE.Vector3();
 class EnemyNavigation {
   constructor() { this.jobs = []; }
+  ground(e, x, z, y) {
+    const W = G.world, step = e.strideHeight;
+    const floor = Math.max(W.h(x, z), W.col.platformTop(x, z, y, step));
+    return W.col.strideTop(x, z, y, floor, e.radius, step);
+  }
   clear(e, x, z, tx, tz, y = e.pos.y, pad = 0.15, avoidWater = true, checkColliders = true) {
     const W = G.world, d = Math.hypot(tx - x, tz - z);
     const n = Math.max(1, Math.ceil(d / 0.5));
     const flying = e.flying;
-    let px0 = x, pz0 = z, prev = flying ? W.h(x, z) : W.ground(x, z, y);
+    let px0 = x, pz0 = z, prev = flying ? W.h(x, z) : this.ground(e, x, z, y);
     const radius = pad === 0 ? Math.max(0.05, e.radius - 0.02) : e.radius + pad;
     const maxRise = d / n * 0.75 + 0.08, waterFloor = W.water.level - WATER_DEPTH;
     const hover = flying && pad !== 0 ? Math.max(0.7, y - W.h(e.pos.x, e.pos.z)) : 0;
@@ -137,14 +142,15 @@ class EnemyNavigation {
         prev = h;
         continue;
       }
-      const h = W.ground(px, pz, prev), rise = Math.abs(h - prev);
-      const climbableStep = rise > maxRise && rise <= ENEMY_STEP + 1e-4
+      const h = this.ground(e, px, pz, prev), rise = Math.abs(h - prev);
+      const climbableStep = rise > maxRise && rise <= e.strideHeight + 1e-4
         && (h > W.h(px, pz) + 0.02 || prev > W.h(px0, pz0) + 0.02);
       if ((avoidWater && h < waterFloor && (prev >= waterFloor || h < prev - 0.001))
         || (rise > maxRise && !climbableStep)
-        || (checkColliders && W.col.navBlocked(px, h, pz, radius, e.height, ENEMY_STEP))) return false;
+        || (checkColliders && W.col.navBlocked(px, h, pz, radius, e.height, e.strideHeight))) return false;
       prev = h; px0 = px; pz0 = pz;
     }
+    this.endY = flying ? y : prev;
     return true;
   }
   request(e, tx, tz) {
@@ -152,16 +158,16 @@ class EnemyNavigation {
     e.navRepath = false;
     let sx = Math.round(e.pos.x / NAV_STEP), sz = Math.round(e.pos.z / NAV_STEP);
     const cx = sx, cz = sz;
-    let nearest = Infinity;
+    let nearest = Infinity, startY = e.pos.y;
     for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
       const x = (cx + dx) * NAV_STEP, z = (cz + dz) * NAV_STEP;
       const distance = Math.hypot(x - e.pos.x, z - e.pos.z);
-      if (distance < nearest && this.clear(e, e.pos.x, e.pos.z, x, z, e.pos.y, 0)) { sx = cx + dx; sz = cz + dz; nearest = distance; }
+      if (distance < nearest && this.clear(e, e.pos.x, e.pos.z, x, z, e.pos.y, 0)) { sx = cx + dx; sz = cz + dz; nearest = distance; startY = this.endY; }
     }
     if (!Number.isFinite(nearest)) { e.navRetry = G.time + 0.7; return; }
     const gx = Math.round(tx / NAV_STEP), gz = Math.round(tz / NAV_STEP);
     const job = { e, tx, tz, sx, sz, gx, gz, nodes: new Map(), open: [], count: 0, closest: null, closestDist: Infinity };
-    const start = { x: sx, z: sz, g: 0, f: Math.hypot(gx - sx, gz - sz), parent: null, closed: false };
+    const start = { x: sx, z: sz, y: startY, g: 0, f: Math.hypot(gx - sx, gz - sz), parent: null, closed: false };
     job.nodes.set(`${sx},${sz}`, start); job.open.push(start);
     e.navJob = job; this.jobs.push(job);
   }
@@ -201,9 +207,9 @@ class EnemyNavigation {
           if (old?.closed) continue;
           const ng = p.g + Math.hypot(dx, dz);
           if (old && ng >= old.g) continue;
-          if (!this.clear(e, x, z, nx * NAV_STEP, nz * NAV_STEP)) continue;
+          if (!this.clear(e, x, z, nx * NAV_STEP, nz * NAV_STEP, p.y)) continue;
           const node = old || { x: nx, z: nz, closed: false };
-          node.g = ng; node.f = ng + Math.hypot(j.gx - nx, j.gz - nz); node.parent = p;
+          node.y = this.endY; node.g = ng; node.f = ng + Math.hypot(j.gx - nx, j.gz - nz); node.parent = p;
           if (!old) { j.nodes.set(key, node); j.open.push(node); }
         }
       }
@@ -260,6 +266,9 @@ export class Enemy {
     this.navStallT = 0; this.navSideT = 0;
     this.returnDistance = Infinity; this.returnStuck = 0; this.returnHitGrace = 0;
     this.lostT = 0; this.slipT = 0;
+    this.awareness = 0; this.sightRate = 0; this.sightIn = (this.slot % 7) * 0.021;
+    this.lastKnown = pos.clone(); this.searchTime = 0;
+    this.scripted = !!opts.scripted;
     this.st = newStatus();
     this.alive = true; this.hittable = true;
     this.state = opts.state ?? 'idle'; this.stateT = 0;
@@ -306,10 +315,11 @@ export class Enemy {
 
   center() { return new THREE.Vector3(this.pos.x, this.pos.y + this.height * 0.55, this.pos.z); }
   receive(h) { return G.combat.resolve(this, h); }
+  get strideHeight() { return clamp(this.height * 0.74, 0.3, 1.65); }
   get flying() { return !!this.def.flying && this.st.frozen <= 0; }
   dist2Player() { return Math.hypot(G.player.pos.x - this.pos.x, G.player.pos.z - this.pos.z); }
   fwd(out = tmp) { return out.set(Math.sin(this.yaw), 0, Math.cos(this.yaw)); }
-  pastLeash(extra = 0) { return this.returnHitGrace <= 0 && this.pos.distanceTo(this.home) > this.leash + extra; }
+  pastLeash(extra = 0) { return !this.scripted && this.returnHitGrace <= 0 && this.pos.distanceTo(this.home) > this.leash + extra; }
 
   setState(s) {
     if (this.warning) { this.warning.done = true; this.warning = null; }
@@ -321,14 +331,15 @@ export class Enemy {
     }
     this.state = s; this.stateT = 0; this.glinted = false; this.telegraph = false;
     if (s === 'return') {
+      this.awareness = this.sightRate = this.searchTime = 0;
       this.aggroed = false; this.releaseToken(); this.atkGen++;
       this.returnDistance = Infinity; this.returnStuck = 0;
     }
   }
   aggro(fromHit = false) {
     if (this.aggroed || !this.alive || (!fromHit && this.state === 'return' && this.pos.distanceTo(this.home) > 3)) return;
-    this.aggroed = true;
-    if (this.state === 'idle' || this.state === 'return') this.setState('alert');
+    this.aggroed = true; this.awareness = 1;
+    if (this.state === 'idle' || this.state === 'investigate' || this.state === 'return') this.setState('alert');
     G.hud.alertMark(this);
     G.audio.play(this.base === 'brute' ? 'brute_roar' : this.base === 'wailer' ? 'wailer_wail' : 'enemy_alert', { pos: this.pos, gap: 0.2 });
     // wake neighbors of the same camp
@@ -433,6 +444,66 @@ export class Enemy {
   }
   pull(v) { if (this.kbResist < 0.8) { this.pos.x += v.x; this.pos.z += v.z; } }
 
+  hear(pos) {
+    if (this.aggroed || !this.alive || !['idle', 'buried', 'investigate'].includes(this.state)) return;
+    this.lastKnown.copy(pos); this.searchTime = 2.5;
+    this.awareness = Math.max(this.awareness, 0.2);
+  }
+  perceive(dt) {
+    if (this.state !== 'idle' && this.state !== 'buried' && this.state !== 'investigate') return false;
+    const P = G.player, p = P.pos, q = this.pos;
+    if (!P.seen()) {
+      this.awareness = this.sightRate = this.searchTime = 0;
+      if (this.state === 'investigate') this.setState(this.ghost ? 'buried' : 'idle');
+      return false;
+    }
+    if (this.scripted || this.brk || this.boss) { this.aggro(); return true; }
+
+    // Sample eyes on staggered ticks. Only a confirmed observation updates the
+    // location, so breaking cover cannot steer a search through the wall.
+    this.sightIn -= dt;
+    if (this.sightIn <= 0) {
+      this.sightIn = 0.15; this.sightRate = 0;
+      const dx = p.x - q.x, dz = p.z - q.z, eyeY = q.y + this.height * 0.82;
+      const distance = Math.hypot(dx, dz, p.y + 0.95 - eyeY);
+      const facing = this.yaw + (this.headYaw || 0);
+      const dot = (dx * Math.sin(facing) + dz * Math.cos(facing)) / Math.max(0.01, distance);
+      if (distance < this.def.aggro && dot > 0.5) {
+        const from = tokenFrom.set(q.x, eyeY, q.z), to = tokenTo.set(p.x, p.y + 0.95, p.z);
+        if (this.lineOfSight(from, to)) {
+          this.sightRate = 0.26 + 0.72 * (1 - distance / this.def.aggro) + 0.62 * (dot - 0.5) * 2;
+          this.lastKnown.copy(p); this.searchTime = 2.5;
+        }
+      }
+      if (!this.sightRate) {
+        const sound = P.castHold > 0 ? 9 : P.sprinting ? 6 : P.grounded && Math.hypot(P.vel.x, P.vel.z) > 4.6 ? 2.8 : 0;
+        if (distance < sound) this.hear(p);
+      }
+    }
+    this.searchTime = Math.max(0, this.searchTime - dt);
+    this.awareness = clamp(this.awareness + dt * (this.sightRate || (this.searchTime > 0 ? 0 : -0.65)), 0, 1);
+    if (this.awareness >= 1) { this.aggro(); return true; }
+    if (this.state !== 'investigate') {
+      if (this.awareness < 0.18) return false;
+      this.setState('investigate');
+    }
+    if (this.awareness <= 0) {
+      this.wanderTo = null; this.setState(this.ghost ? 'buried' : 'idle'); return false;
+    }
+    const dx = this.lastKnown.x - q.x, dz = this.lastKnown.z - q.z;
+    if (this.headYaw) this.headYaw = damp(this.headYaw, 0, 5, dt);
+    if (Math.hypot(dx, dz) > 0.25) this.yaw = angleDamp(this.yaw, Math.atan2(dx, dz), 4, dt);
+    if (this.stateT > 0.22 && Math.hypot(dx, dz) > 1.2) {
+      this.moveToward(this.lastKnown.x, this.lastKnown.z, this.def.speed * this.speedMul * 0.42, dt, false);
+    }
+    if (this.flying) this.pos.y = damp(q.y, Math.max(G.world.h(q.x, q.z), G.world.water.level) + (this.hover ?? this.alt), 3, dt);
+    return true;
+  }
+  lineOfSight(from, to) {
+    const dir = tmp.subVectors(to, from); const L = dir.length(); dir.normalize();
+    const t = G.world.terrain.raycast(from, dir, L);
+    return (t === null || t > L - 0.6) && G.world.col.navSight(from, to, 0.12);
+  }
   hasPlayerSight() {
     const p = G.player.pos, q = this.pos;
     return G.world.col.navSight(tokenFrom.set(q.x, q.y + this.height * 0.55, q.z), tokenTo.set(p.x, p.y + 0.95, p.z));
@@ -704,6 +775,7 @@ export class Enemy {
     if (d < 0.05) return d;
     const nav = G.enemies.nav;
     const target = this.ghost ? null : nav.steer(this, tx, tz);
+    if (!this.ghost && !target) return d;
     const dx = (target?.x ?? tx) - x, dz = (target?.z ?? tz) - z;
     const side = this.navSideT > 0 ? this.navSide * 0.65 : 0;
     const vx = dx - dz * side, vz = dz + dx * side, length = Math.hypot(vx, vz);
@@ -832,7 +904,7 @@ export class Enemy {
     this.returnHitGrace = Math.max(0, this.returnHitGrace - dt);
     this.navSideT = Math.max(0, this.navSideT - dt);
     this.navMoving = false;
-    if (!this.boss && !this.brk && this.aggroed) {
+    if (!this.scripted && !this.boss && !this.brk && this.aggroed) {
       this.lostT = G.player.seen() && !G.player.dead ? 0 : this.lostT + dt;
       if (this.pastLeash(8) || this.lostT > 3) this.setState('return');
     }
@@ -842,7 +914,9 @@ export class Enemy {
     }
     // physics
     const W = G.world;
-    const ground = W.ground(this.pos.x, this.pos.z, this.pos.y + 1);
+    const walking = !this.def.flying && !this.ghost && !this.airborne;
+    const ground = walking ? G.enemies.nav.ground(this, this.pos.x, this.pos.z, this.pos.y)
+      : W.ground(this.pos.x, this.pos.z, this.pos.y + 1);
     const frozenFlyer = this.def.flying && st.frozen > 0;
     if (frozenFlyer && this.pos.y > ground + 0.3) this.airborne = true;
     if (this.flying && !this.airborne) {
@@ -889,7 +963,7 @@ export class Enemy {
       else if (this.state === 'dodge') { this.facePlayer(dt, 8); if (this.stateT > 0.42) this.setState(this.aggroed ? 'chase' : 'idle'); }
       else if (!this.airborne && !this.avoidFields(dt)) {
         if (this.aggroed && !this.tryDodge(dt)) this.think(dt, this.speedMul);
-        else if (!this.aggroed) this.think(dt, this.speedMul);
+        else if (!this.aggroed && !this.perceive(dt)) this.think(dt, this.speedMul);
       }
     }
     if (!disabled) this.warnAttack();
@@ -918,7 +992,7 @@ export class Enemy {
       if (d < m && Math.abs(this.pos.y - P.y) < 1.8) { this.pos.x += (dx / d) * (m - d); this.pos.z += (dz / d) * (m - d); }
     }
     if (!this.ghost) {
-      W.col.resolve(this.pos, this.radius, this.height, this.flying || this.airborne ? 0.45 : ENEMY_STEP);
+      W.col.resolve(this.pos, this.radius, this.height, this.flying || this.airborne ? 0.45 : this.strideHeight);
       // Keep planning clearance separate from physical contact: a body pushed
       // against a wall must still be able to leave it. Airborne arcs can clear
       // low cover but cannot enter a higher cliff and snap up onto its top.
@@ -927,13 +1001,13 @@ export class Enemy {
       } else if (!this.flying) {
         const blocked = this.airborne ? W.h(this.pos.x, this.pos.z) > this.pos.y + 0.2
           : !G.enemies.nav.clear(this, oldX, oldZ, this.pos.x, this.pos.z, oldY, 0, false)
-            && !W.col.navBlocked(oldX, oldY, oldZ, Math.max(0.05, this.radius - 0.02), this.height, ENEMY_STEP);
+            && !W.col.navBlocked(oldX, oldY, oldZ, Math.max(0.05, this.radius - 0.02), this.height, this.strideHeight);
         if (blocked) { this.pos.x = oldX; this.pos.z = oldZ; this.vel.x *= -0.1; this.vel.z *= -0.1; }
       }
     }
     if (!this.flying && !this.airborne && !this.ghost) {
-      const floor = W.ground(this.pos.x, this.pos.z, this.pos.y);
-      if (Math.abs(floor - this.pos.y) < 0.6) this.pos.y = floor;
+      const floor = G.enemies.nav.ground(this, this.pos.x, this.pos.z, this.pos.y);
+      if (Math.abs(floor - this.pos.y) <= this.strideHeight) this.pos.y = floor;
     }
     if (this.navMoving) {
       if (this.navStallT === 0) { this.navProgressX = oldX; this.navProgressZ = oldZ; }
@@ -1051,7 +1125,6 @@ export class Enemy {
         this.wanderT -= dt;
         if (this.wanderT <= 0) { this.wanderT = randRange(3, 6); this.wanderTo = new THREE.Vector3(this.home.x + randRange(-6, 6), 0, this.home.z + randRange(-6, 6)); }
         if (this.wanderTo) { if (this.moveToward(this.wanderTo.x, this.wanderTo.z, 1.3 * mul, dt) < 0.3) this.wanderTo = null; }
-        if (canSee && d < this.def.aggro) this.aggro();
         break;
       case 'alert':
         this.facePlayer(dt, 12);
@@ -1142,7 +1215,6 @@ class Wailer extends Enemy {
         this.wanderT -= dt;
         if (this.wanderT <= 0) { this.wanderT = randRange(3, 6); this.wanderTo = new THREE.Vector3(this.home.x + randRange(-8, 8), 0, this.home.z + randRange(-8, 8)); }
         if (this.wanderTo) this.moveToward(this.wanderTo.x, this.wanderTo.z, 1.5 * mul, dt);
-        if (canSee && d < this.def.aggro) this.aggro();
         break;
       case 'alert': this.facePlayer(dt); if (this.stateT > 0.6) this.setState('chase'); break;
       case 'chase': {
@@ -1242,7 +1314,6 @@ class Brute extends Enemy {
         this.wanderT -= dt;
         if (this.wanderT <= 0) { this.wanderT = randRange(4, 7); this.wanderTo = new THREE.Vector3(this.home.x + randRange(-5, 5), 0, this.home.z + randRange(-5, 5)); }
         if (this.wanderTo && this.moveToward(this.wanderTo.x, this.wanderTo.z, 1.0 * mul, dt) < 0.4) this.wanderTo = null;
-        if (canSee && d < this.def.aggro) this.aggro();
         break;
       case 'alert':
         this.facePlayer(dt, 6);
@@ -1401,7 +1472,6 @@ class Ooze extends Enemy {
     switch (this.state) {
       case 'idle':
         if (this.hopT <= 0) { this.hopT = randRange(1.5, 3); hop(this.home.x + randRange(-4, 4), this.home.z + randRange(-4, 4), 1.5); }
-        if (canSee && d < this.def.aggro) this.aggro();
         break;
       case 'alert': this.facePlayer(dt); if (this.stateT > 0.4) this.setState('chase'); break;
       case 'chase':
@@ -1516,7 +1586,6 @@ class Moth extends Enemy {
     switch (this.state) {
       case 'idle':
         flyTo(this.home.x + Math.cos(this.ang) * 3, gy + this.alt + Math.sin(G.time * 3 + this.rad) * 0.4, this.home.z + Math.sin(this.ang) * 3, 2);
-        if (canSee && d < this.def.aggro) this.aggro();
         break;
       case 'alert': if (this.stateT > 0.3) this.setState('chase'); break;
       case 'chase': {
@@ -1625,7 +1694,6 @@ class ShieldBearer extends Enemy {
         this.wanderT -= dt;
         if (this.wanderT <= 0) { this.wanderT = randRange(4, 7); this.wanderTo = new THREE.Vector3(this.home.x + randRange(-5, 5), 0, this.home.z + randRange(-5, 5)); }
         if (this.wanderTo && this.moveToward(this.wanderTo.x, this.wanderTo.z, 1.1 * mul, dt) < 0.4) this.wanderTo = null;
-        if (canSee && d < this.def.aggro) this.aggro();
         break;
       case 'alert':
         this.facePlayer(dt, 6);
@@ -1749,11 +1817,6 @@ class Archer extends Enemy {
   die(h) { this.endLine(); super.die(h); }
   remove() { this.endLine(); super.remove(); }
   bowTip() { return this.center().addScaledVector(this.fwd(tmp2), 0.55).setY(this.pos.y + this.height * 0.82); }
-  lineOfSight(from, to) {
-    const dir = tmp.subVectors(to, from); const L = dir.length(); dir.normalize();
-    const t = G.world.terrain.raycast(from, dir, L);
-    return (t === null || t > L - 0.6) && G.world.col.navSight(from, to, 0.12);
-  }
   think(dt, mul) {
     const P = G.player;
     const d = this.dist2Player();
@@ -1764,7 +1827,6 @@ class Archer extends Enemy {
         this.wanderT -= dt;
         if (this.wanderT <= 0) { this.wanderT = randRange(3, 6); this.wanderTo = new THREE.Vector3(this.home.x + randRange(-6, 6), 0, this.home.z + randRange(-6, 6)); }
         if (this.wanderTo && this.moveToward(this.wanderTo.x, this.wanderTo.z, 1.2 * mul, dt) < 0.3) this.wanderTo = null;
-        if (canSee && d < this.def.aggro) this.aggro();
         break;
       case 'alert':
         this.facePlayer(dt, 10);
@@ -1855,10 +1917,10 @@ class RootHand extends Enemy {
   receive(h) { if (!this.hittable) return 0; return super.receive(h); }
   aggro(fromHit = false) {
     if (this.aggroed || !this.alive || (!fromHit && this.state === 'return' && this.pos.distanceTo(this.home) > 3)) return;
-    this.aggroed = true;
+    this.aggroed = true; this.awareness = 1;
     G.hud.alertMark(this);
     G.audio.play('burrow', { pos: this.pos, gap: 0.3 });
-    if (this.state === 'buried' || this.state === 'return') this.setState('burrow');
+    if (this.state === 'buried' || this.state === 'idle' || this.state === 'investigate' || this.state === 'return') this.setState('burrow');
     if (this.camp) for (const e of this.camp.members) if (e !== this && e.alive && !e.aggroed && e.pos.distanceTo(this.pos) < 20) G.later(() => e.aggro(), randRange(150, 500));
   }
   setBuried(b) { this.ghost = b; this.hittable = !b; if (b && G.player.lockTarget === this) G.player.lockTarget = null; }
@@ -1880,7 +1942,6 @@ class RootHand extends Enemy {
       case 'idle':
         this.setBuried(true);
         this.emerge = damp(this.emerge, 0, 5, dt);
-        if (canSee && d < this.def.aggro) this.aggro();
         break;
       case 'alert': this.setState('burrow'); break;
       case 'burrow': {
@@ -2047,7 +2108,6 @@ class Watcher extends Enemy {
         this.wanderT -= dt;
         if (this.wanderT <= 0) { this.wanderT = randRange(5, 9); this.wanderTo = new THREE.Vector3(this.home.x + randRange(-6, 6), 0, this.home.z + randRange(-6, 6)); }
         if (this.wanderTo && this.moveToward(this.wanderTo.x, this.wanderTo.z, 1.0 * mul, dt) < 0.5) this.wanderTo = null;
-        if (canSee && d < this.def.aggro) this.aggro();
         break;
       case 'alert':
         this.headYaw = clamp(this.relYaw(toP), -1.6, 1.6);
@@ -2604,7 +2664,7 @@ class Heart {
       const p = this.center0.clone().add(new THREE.Vector3(Math.cos(a) * 14, 0, Math.sin(a) * 14));
       p.y = G.world.ground(p.x, p.z);
       G.vfx.burst(p, 'hush', 12, { size: 1.2 });
-      const e = G.enemies.spawn(i === 2 && this.phase >= 3 ? 'wailer' : 'ashling', p, Math.max(1, this.level - 1));
+      const e = G.enemies.spawn(i === 2 && this.phase >= 3 ? 'wailer' : 'ashling', p, Math.max(1, this.level - 1), { scripted: true });
       e.aggro();
     }
   }
@@ -2703,6 +2763,13 @@ export class EnemyManager {
     this.pickups = [];
     this.camps = CAMPS.map((c) => ({ ...c, members: [], spawned: false, cleared: false }));
     this.checkT = 0;
+  }
+
+  hearImpact(pos, radius) {
+    if (!G.player.seen()) return;
+    for (const e of this.list) {
+      if (!e.aggroed && e.alive && e.pos.distanceToSquared(pos) <= radius * radius) e.hear?.(pos);
+    }
   }
 
   levelFor(offset = 0) {

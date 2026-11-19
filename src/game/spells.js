@@ -173,6 +173,7 @@ export class Spells {
   // notify the world systems (wildfire, weather, water ice...) if present.
   // kind: 'bolt' | 'heavy' | 'weave' | 'ult' | 'field' | 'charged'
   touch(el, pos, r = 1, kind = 'bolt', source = 'player') {
+    if (pos && source === 'player' && kind !== 'field') G.enemies.hearImpact(pos, clamp(5 + r, 6, 12));
     if (!pos || this.airHit) return; // a hit on a raised target (lantern, brazier, crystal…) never reaches the ground
     this.fields.infuse(el, pos, r, kind, source);
     const env = G.env;

@@ -52,7 +52,7 @@ export class Colliders {
     return c;
   }
   // Shapes are solid from h0 to h1. Optional fields set after creation:
-  //   climb: false  → can't be grabbed (trees, seals, thin poles)
+  //   climb: false  → can't be climbed (trees, seals, towers)
   //   noTop: true   → the top isn't a floor (tall trunks, magic barriers)
   //   topFn(lx, lz) → local top height (e.g. a gable roof); defaults to h1
   addCircle(x, z, r, h0 = -1e9, h1 = 1e9, tag = null) { return this._insert({ type: 'circle', x, z, r, h0, h1, tag, _s: 0 }); }
@@ -113,12 +113,12 @@ export class Colliders {
     });
     return best;
   }
-  // Nearest grabbable wall around a body at (x, y..y+height, z).
+  // Nearest wall around a body at (x, y..y+height, z). By default skip walls without a grip.
   // Returns { c, px, pz, nx, nz, d, top } (contact point, outward normal, gap, top at contact) or null.
-  wallNear(x, y, z, reach = 0.9, height = 1.6) {
+  wallNear(x, y, z, reach = 0.9, height = 1.6, includeUnclimbable = false) {
     let best = null;
     this.query(x, z, reach + 1, (c) => {
-      if (c.climb === false || y + height < c.h0 || y > c.h1 - 0.1) return;
+      if ((!includeUnclimbable && c.climb === false) || y + height < c.h0 || y > c.h1 - 0.1) return;
       // standing on (or above) this shape's sloped top: it's the floor, not a wall
       if (c.topFn && this.inside(c, x, z, 0.1) && y > this.topAt(c, x, z) - 0.35) return;
       let px, pz, nx, nz, d;

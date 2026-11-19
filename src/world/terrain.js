@@ -142,7 +142,9 @@ export class Terrain {
       return { ...p, segs, total, x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) };
     });
     this.paths = lines(PATHS, () => 0);
-    this.passes = lines(PASSES, (p, i) => p.pts[i][2]);
+    // A short gully joins the outer cliff pocket to the lower ground on its east side.
+    const outerGully = { w: 4, pts: [[-334, -340, 69], [-328, -343, 69], [-321, -345, 69], [-314, -346, 70]] };
+    this.passes = lines([...PASSES, outerGully], (p, i) => p.pts[i][2]);
     // everything farther than this from a road's bounding box is unaffected by it
     this.pathBox = this.paths.reduce((b, p) => ({ x0: Math.min(b.x0, p.x0), x1: Math.max(b.x1, p.x1), z0: Math.min(b.z0, p.z0), z1: Math.max(b.z1, p.z1) }), { x0: 1e9, x1: -1e9, z0: 1e9, z1: -1e9 });
     const N = this.N;
@@ -469,8 +471,7 @@ export class Terrain {
     return h11 + (h01 - h11) * (1 - u) + (h10 - h11) * (1 - v);
   }
 
-  normal(x, z, out = new THREE.Vector3(), g = this) {
-    const e = 1.0;
+  normal(x, z, out = new THREE.Vector3(), g = this, e = 1) {
     const hl = this.height(x - e, z, g), hr = this.height(x + e, z, g), hd = this.height(x, z - e, g), hu = this.height(x, z + e, g);
     return out.set(hl - hr, 2 * e, hd - hu).normalize();
   }

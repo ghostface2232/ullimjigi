@@ -304,7 +304,8 @@ export class World {
     this.place(bt, POI.bellTower.x, POI.bellTower.z, 0.1);
     { // the authored tower gives its roof line; the code-built one keeps a flat top
       const u = bt.userData, by = bt.position.y;
-      this.solid(bt, u.roofTop ? { hw: 2.7, hd: 2.7, rot: 0.1, top: by + u.top, topFn: (lx, lz) => by + u.roofTop(lx, lz) } : { hw: 2.7, hd: 2.7, rot: 0.1 });
+      this.solid(bt, { hw: 2.7, hd: 2.7, rot: 0.1, climb: false,
+        ...(u.roofTop ? { top: by + u.top, topFn: (lx, lz) => by + u.roofTop(lx, lz) } : {}) });
     }
     this.bellTower = bt;
     this.bellSwing = 0;
@@ -326,7 +327,7 @@ export class World {
     this.place(wm, 34, 50, this.faceTo(34, 50, 6, 14));
     { // conical cap over a gallery ring
       const by = wm.position.y;
-      this.solid(wm, { r: 3.2, top: by + 12.3, topFn: (lx, lz) => { const r = Math.hypot(lx, lz); return by + (r < 2.8 ? 12.3 - (r / 2.8) * 3.2 : 8.4); } });
+      this.solid(wm, { r: 3.2, climb: false, top: by + 12.3, topFn: (lx, lz) => { const r = Math.hypot(lx, lz); return by + (r < 2.8 ? 12.3 - (r / 2.8) * 3.2 : 8.4); } });
     }
     this.anims.push((dt) => { wm.userData.rotor.rotation.z += dt * 0.6 * U.wind.value; });
     // well, stalls, benches
@@ -408,11 +409,12 @@ export class World {
     this.place(t, POI.tower.x, POI.tower.z, 0);
     { // witch-hat roof: roughly a cone from the brim (r 5.6, +16 m) to the tip (+24 m)
       const by = t.position.y;
-      this.solid(t, { r: 4.6, top: by + 24, topFn: (lx, lz) => by + 16 + Math.max(0, 1 - Math.hypot(lx, lz) / 5.6) * 8 });
+      this.solid(t, { r: 4.6, climb: false, top: by + 24, topFn: (lx, lz) => by + 16 + Math.max(0, 1 - Math.hypot(lx, lz) / 5.6) * 8 });
     }
     const an = t.children.find((c) => c.userData && c.userData.roofTop);
     const ty = t.position.y;
     this.annexCol = this.col.addBox(POI.tower.x - 2, POI.tower.z - 6.2, an ? an.userData.w / 2 : 2.9, an ? an.userData.d / 2 : 2.5, 0, -10, ty + (an ? an.userData.height : 6));
+    this.annexCol.climb = false;
     if (an) this.annexCol.topFn = (lx, lz) => ty + an.userData.roofTop(lx, lz);
     if (an) this.solidParts(an, an.userData.solids);
     this.tower = t;

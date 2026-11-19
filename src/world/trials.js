@@ -295,15 +295,15 @@ class EmberClimb {
     // the climb is all gliding on hot air: it wakes once Borum has lent the wind (story flag 'glide')
     if (!this.started && d < 30 && G.mode === 'free' && S && S.flag('glide')) { this.started = true; banner(this.name, '가장 높은 망대의 꼭대기에 서자'); }
     if (!this.started) return;
-    // standing on a post top lights its lamp; the last one ends the trial
+    // Only the next post counts when the player lands on it.
     const pl = G.player;
-    for (const [i, p] of this.posts.entries()) {
-      if (p.lit || !pl.grounded) continue;
-      if (Math.hypot(P.x - p.x, P.z - p.z) < p.r * 1.15 && P.y > p.top - 0.4 && P.y < p.top + 1.6) {
-        this.light(p);
-        this.reached = Math.max(this.reached, i + 1);
-        if (p.goal) this.finish();
-      }
+    const post = this.posts[this.reached];
+    if (post && pl.grounded && Math.hypot(P.x - post.x, P.z - post.z) < post.r * 1.15 &&
+        P.y > post.top - 0.4 && P.y < post.top + 1.6) {
+      this.light(post);
+      this.reached++;
+      this.linger = 0;
+      if (post.goal) { this.finish(); return; }
     }
     // Borum helps only when the player has been stuck at the next post for a while
     const next = this.posts[this.reached];

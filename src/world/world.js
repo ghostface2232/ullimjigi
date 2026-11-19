@@ -23,6 +23,22 @@ import { rand, randRange, mulberry32, TAU } from '../core/util.js';
 
 const tmp = new THREE.Vector3();
 
+// A baked static mesh never changes and nothing reads it on the CPU again: store normals as
+// normalized int16 and let the arrays go once they are on the GPU (bounds are kept for culling).
+function compactStatic(geo) {
+  const n = geo.attributes.normal;
+  if (n && n.array instanceof Float32Array) {
+    const q = new Int16Array(n.array.length);
+    for (let i = 0; i < q.length; i++) q[i] = Math.round(Math.max(-1, Math.min(1, n.array[i])) * 32767);
+    geo.setAttribute('normal', new THREE.BufferAttribute(q, 3, true));
+  }
+  geo.computeBoundingBox();
+  geo.computeBoundingSphere();
+  const free = function () { this.array = null; };
+  for (const k in geo.attributes) geo.attributes[k].onUpload(free);
+  if (geo.index) geo.index.onUpload(free);
+}
+
 export const LANTERNS = [
   { id: 'tower', name: '모라의 언덕', x: -10, z: 127 },
   { id: 'village', name: '하늬 마을', x: 8, z: 31 },
@@ -134,7 +150,10 @@ export class World {
       // textured materials (authored props) keep their texture coordinates through the merge
       const uv = !!(b.mat.map || b.mat.normalMap || b.mat.emissiveMap);
       for (const m of b.list) {
-        let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+        // keep each source's index (expanding to triangles tripled the vertices); merging needs
+        // one either way, so unindexed sources get the trivial one
+        const g = m.geometry.clone();
+        if (!g.index) { const n = g.attributes.position.count, ix = n > 65535 ? new Uint32Array(n) : new Uint16Array(n); for (let i = 0; i < n; i++) ix[i] = i; g.setIndex(new THREE.BufferAttribute(ix, 1)); }
         for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && !(k === 'color' && b.mat.vertexColors) && !(k === 'uv' && uv)) g.deleteAttribute(k);
         if (!g.attributes.normal) g.computeVertexNormals();
         if (b.mat.vertexColors && !g.attributes.color) {
@@ -150,6 +169,7 @@ export class World {
       }
       const geo = mergeGeometries(geos, false);
       if (!geo) continue;
+      compactStatic(geo);
       const mesh = new THREE.Mesh(geo, b.mat);
       mesh.castShadow = b.cast; mesh.receiveShadow = true;
       mesh.matrixAutoUpdate = false;

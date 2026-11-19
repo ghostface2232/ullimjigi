@@ -271,6 +271,7 @@ export class Grass {
     mesh.frustumCulled = true;
     mesh.receiveShadow = true;
     mesh.castShadow = false;
+    mesh.matrixAutoUpdate = false; // world-space instances at the origin
     mesh.userData.noBake = true;
     return mesh;
   }

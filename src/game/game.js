@@ -8,7 +8,7 @@ import { Renderer } from '../render/renderer.js';
 import { suggestTier } from '../render/quality.js';
 import { U } from '../render/materials.js';
 import { preloadFireVolume } from '../render/flame.js';
-import { preloadModels } from '../render/models.js';
+import { preloadModels, uploadModelTextures } from '../render/models.js';
 import { VFX } from '../render/vfx.js';
 import { World, LANTERNS } from '../world/world.js';
 import { POI, regionAt } from '../world/layout.js';
@@ -124,6 +124,7 @@ export class Game {
     this.bindUI();
     this.progress(0.88, '마법을 예열하는 중…');
     await nextFrame();
+    uploadModelTextures(G.renderer.renderer);
     await this.warmup();
     this.progress(1, '준비되었습니다');
     G.state = 'title';

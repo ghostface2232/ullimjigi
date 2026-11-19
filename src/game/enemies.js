@@ -117,6 +117,7 @@ const LINE_WARNING = new Set(['chargeWind', 'shoveWind', 'dashWind']);
 const WINDUP_POSE = new Set(['windup', 'slashWind', 'slapWind']);
 const KNIGHT_SLASH = [0.5, 0.32, 0.62], KNIGHT_SLASH_PHASE3 = [0.45, 0.3, 0.3, 0.62];
 const tokenFrom = new THREE.Vector3(), tokenTo = new THREE.Vector3();
+const lineFrom = new THREE.Vector3(), lineTo = new THREE.Vector3();
 class EnemyNavigation {
   constructor() { this.jobs = []; }
   ground(e, x, z, y) {
@@ -194,7 +195,7 @@ class EnemyNavigation {
         budget--; j.count++;
         let best = 0;
         for (let i = 1; i < j.open.length; i++) if (j.open[i].f < j.open[best].f) best = i;
-        const p = j.open.splice(best, 1)[0]; p.closed = true;
+        const p = j.open[best]; j.open[best] = j.open[j.open.length - 1]; j.open.pop(); p.closed = true;
         if (p.x === j.gx && p.z === j.gz) { this.finish(j, p); break; }
         const distance = p.f - p.g;
         if (distance < j.closestDist) { j.closest = p; j.closestDist = distance; }
@@ -800,8 +801,8 @@ export class Enemy {
     const p = G.player.pos;
     this.yaw = angleDamp(this.yaw, Math.atan2(p.x - this.pos.x, p.z - this.pos.z), k, dt);
     if (this.warning?.set && LINE_WARNING.has(this.state)) {
-      const from = this.pos.clone().setY(this.pos.y + 0.15);
-      const to = from.clone().addScaledVector(this.fwd(), this.state === 'dashWind' ? 9 : 14);
+      const from = lineFrom.copy(this.pos).setY(this.pos.y + 0.15);
+      const to = lineTo.copy(from).addScaledVector(this.fwd(), this.state === 'dashWind' ? 9 : 14);
       to.y = G.world.ground(to.x, to.z, this.pos.y + 1) + 0.15;
       this.warning.set(from, to);
     }
@@ -1005,7 +1006,8 @@ export class Enemy {
         if (blocked) { this.pos.x = oldX; this.pos.z = oldZ; this.vel.x *= -0.1; this.vel.z *= -0.1; }
       }
     }
-    if (!this.flying && !this.airborne && !this.ghost) {
+    // Only a settled body follows the floor; hops, dodges, lifts and bubbles keep their arc.
+    if (!this.flying && !this.airborne && !this.ghost && this.vel.y === 0) {
       const floor = G.enemies.nav.ground(this, this.pos.x, this.pos.z, this.pos.y);
       if (Math.abs(floor - this.pos.y) <= this.strideHeight) this.pos.y = floor;
     }
@@ -2452,7 +2454,6 @@ class Plate {
     G.audio.play('shatter', { pos: this.pos });
     G.hud.floatText(this.pos, '결계 붕괴!', '#ffd86a');
     G.hitstop = Math.max(G.hitstop, 0.1); G.cameraRig.shake(0.4);
-    const i = G.enemies.list.indexOf(this); if (i >= 0) G.enemies.list.splice(i, 1);
   }
   update(dt) {
     if (!this.alive) return false;
@@ -2482,6 +2483,8 @@ class Plate {
     this.mesh.removeFromParent();
     if (this.ink) this.ink.dispose();
     this.ink = null; this.alive = false; this.hittable = false;
+    // The manager never updates plates, so a plate has to leave its list on removal.
+    const i = G.enemies.list.indexOf(this); if (i >= 0) G.enemies.list.splice(i, 1);
   }
 }
 

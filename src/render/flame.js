@@ -8,7 +8,9 @@ export const firePaint = {
 };
 // Shared by the point, volume and fuel-bed shaders. Loaded with the authored models.
 export async function preloadFireVolume(texture) {
-  texture.image = await new ImageLoader().loadAsync('./textures/fire-density.png');
+  // Like the model preload, a failed fetch must not stall boot: the flames then read an empty texture.
+  try { texture.image = await new ImageLoader().loadAsync('./textures/fire-density.png'); }
+  catch (err) { console.warn('fire-density.png failed to load', err); return; }
   texture.generateMipmaps = false;
   texture.minFilter = LinearFilter;
   texture.needsUpdate = true;

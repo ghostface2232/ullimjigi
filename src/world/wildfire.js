@@ -19,6 +19,7 @@ const MAX_BURNING = 360;
 // cell to cell, so one spark scorches a patch of meadow, not the whole forest.
 const VIGOR_DECAY = 0.72, VIGOR_DECAY_DOWNWIND = 0.8, VIGOR_MIN = 0.32;
 const EDGE_X = [1, 0, -1, 0], EDGE_Z = [0, 1, 0, -1];
+const TMP = new THREE.Vector3();
 const FLAMES = 180;           // flame cards drawn around the camera
 
 // Each instance is a wind-blown fuel particle. Successive births stay tied
@@ -112,6 +113,7 @@ export class Wildfire {
     this.particles = new THREE.InstancedBufferAttribute(new Float32Array(FLAMES * 4), 4).setUsage(THREE.DynamicDrawUsage);
     // Key phases to cells so culling, distance sorting and regrowth cannot pop the tongues.
     this.flamePhases = Float32Array.from({ length: FLAMES }, () => rand() * 10);
+    this.candBuf = []; this.orderBuf = []; this.edgeBuf = []; this.innerBuf = [];
     this.cycles = new THREE.InstancedBufferAttribute(new Float32Array(FLAMES * 2), 2).setUsage(THREE.DynamicDrawUsage);
     g.setAttribute('iFuel', this.particles); g.setAttribute('iCycle', this.cycles);
     g.instanceCount = 0;
@@ -232,7 +234,7 @@ export class Wildfire {
 
   // Each pocket spans several neighboring emitters on the advancing edge.
   // Layer short convecting puffs in the gaps and a billowing crown in the pockets.
-  writeEdge(cell, side, layer, n) {
+  writeEdge(cell, side, layer, n, force = false) {
     const phase = this.flamePhases[(cell + side * 13 + layer * 37) % FLAMES] * 0.1;
     const nx = EDGE_X[side], nz = EDGE_Z[side], ix = cell % this.N, iz = Math.floor(cell / this.N);
     const along = ((layer * 0.618034 + phase * 0.27 + cell * 0.271) % 1 - 0.5) * 0.95;
@@ -241,7 +243,7 @@ export class Wildfire {
     const z = (iz + nz * depth + nx * along) * this.step - this.half;
     const pocket = smoothstep(-0.79, 0.82, Math.sin(x * 0.65 + 1.46 * Math.cos(z * 0.41)) + 0.61 * Math.sin(z * 0.69 - x * 0.24));
     const growth = smoothstep(0, 0.27, G.time - this.heatSince.get(cell));
-    if (pocket < 0.14 + 0.14 * phase && (layer > 0 || phase < 0.70)) return n;
+    if (!force && pocket < 0.14 + 0.14 * phase && (layer > 0 || phase < 0.70)) return n;
     const width = (1.20 + phase * 1.04) * (0.44 + 0.77 * pocket) * (0.73 + 0.27 * growth);
     this.particles.setXYZW(n, x, this.T.h[cell], z, width);
     this.cycles.setXY(n, phase, -(0.72 + pocket * (0.15 + phase * 0.49)));
@@ -254,7 +256,7 @@ export class Wildfire {
     const rain = W.weather ? W.weather.rain : 0;
     const wind = G.wind;
     this.acc += dt;
-    const tmp = new THREE.Vector3();
+    const tmp = TMP;
     while (this.acc >= TICK) {
       this.acc -= TICK;
       if (this.burning.size) {
@@ -300,14 +302,14 @@ export class Wildfire {
     let n = this.writeBraziers(W.flames || [], camPos, FLAMES * q);
     let lx = 0, lz = 0, ly = 0, ln = 0;
     if (this.burning.size) {
-      const cand = [];
+      const cand = this.candBuf; cand.length = 0;
       for (const i of this.burning) {
         this.cellPos(i, tmp);
         const d = (tmp.x - camPos.x) ** 2 + (tmp.z - camPos.z) ** 2;
         if (d < 110 * 110) cand.push(d, i);
       }
       // keep the nearest cells (pairs of [dist, idx])
-      const order = [];
+      const order = this.orderBuf; order.length = 0;
       for (let k = 0; k < cand.length; k += 2) order.push(k);
       if (order.length > FLAMES * q / 2) order.sort((a, b) => cand[a] - cand[b]);
       const limit = FLAMES * q;
@@ -315,20 +317,28 @@ export class Wildfire {
         if (cand[k] >= 40 * 40) continue;
         this.cellPos(cand[k + 1], tmp); lx += tmp.x; ly += tmp.y; lz += tmp.z; ln++;
       }
-      const edges = [];
+      const edges = this.edgeBuf, inner = this.innerBuf;
+      edges.length = 0; inner.length = 0;
       for (const k of order) {
-        const id = cand[k + 1], ix = id % this.N, iz = Math.floor(id / this.N);
+        const id = cand[k + 1], ix = id % this.N, iz = Math.floor(id / this.N), before = edges.length;
         for (let face = 0; face < 4; face++) {
           const x = ix + EDGE_X[face], z = iz + EDGE_Z[face], neighbor = z * this.N + x;
           if (x >= 0 && x < this.N && z >= 0 && z < this.N && this.state[neighbor] === 0 && this.fuel[neighbor] >= 0.12) {
             edges.push(id * 4 + face);
           }
         }
+        // A cell with no unburned neighbour (isolated, or ringed by fire or ash) still burns and hurts.
+        if (edges.length === before) inner.push(id);
       }
+      // The front's first layer comes first, then one flame per inner cell, then the remaining layers.
       for (let layer = 0; layer < 12 && n < limit; layer++) {
         for (const edge of edges) {
           n = this.writeEdge(Math.floor(edge / 4), edge % 4, layer, n);
           if (n === limit) break;
+        }
+        if (layer === 0) for (const id of inner) {
+          if (n === limit) break;
+          n = this.writeEdge(id, id % 4, 0, n, true);
         }
       }
       this.fxT -= dt;

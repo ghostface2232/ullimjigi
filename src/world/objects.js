@@ -434,8 +434,8 @@ export class WorldObjects {
         const rel = (a.vel.x - c.vel.x) * nx + (a.vel.z - c.vel.z) * nz;
         const invA = 1 / a.mass, invC = 1 / c.mass, sum = invA + invC;
         const push = Math.max(0, m - d - 0.005) * 0.8;
-        a.pos.x -= nx * push * invA / sum; a.pos.z -= nz * push * invA / sum;
-        c.pos.x += nx * push * invC / sum; c.pos.z += nz * push * invC / sum;
+        this.shove(a, -nx * push * invA / sum, -nz * push * invA / sum);
+        this.shove(c, nx * push * invC / sum, nz * push * invC / sum);
         if (rel > 0) {
           const imp = rel * (rel > 1 ? 1.18 : 1) / sum;
           a.vel.x -= nx * imp / a.mass; a.vel.z -= nz * imp / a.mass;
@@ -482,6 +482,14 @@ export class WorldObjects {
     }
     this.planks.count = this.debris.length;
     if (this.debris.length) this.planks.instanceMatrix.needsUpdate = true;
+  }
+
+  // Pair correction obeys the same cliff-lip rule as integrate(): it never lifts a body onto higher ground.
+  shove(b, dx, dz) {
+    const W = this.W, x = b.pos.x + dx, z = b.pos.z + dz;
+    const g0 = W.ground(b.pos.x, b.pos.z, b.pos.y + 0.5), g = W.ground(x, z, b.pos.y + 0.5);
+    if (g - g0 > 0.45 && g > b.pos.y + 0.4) return;
+    b.pos.x = x; b.pos.z = z;
   }
 
   step(b, dt) {

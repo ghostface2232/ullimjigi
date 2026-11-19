@@ -363,21 +363,26 @@ export class Grass {
     const S = this.chunk, R = this.radius;
     const ccx = Math.floor(camPos.x / S), ccz = Math.floor(camPos.z / S);
     const rc = Math.ceil(R / S);
-    let built = 0;
+    // missing chunks, nearest first, a few milliseconds' worth per frame (a dense chunk takes
+    // ~10 ms: three at once stalled frames after a teleport)
+    const want = this._want || (this._want = []);
+    want.length = 0;
     for (let dz = -rc; dz <= rc; dz++) for (let dx = -rc; dx <= rc; dx++) {
       const cx = ccx + dx, cz = ccz + dz;
-      const key = cx + ',' + cz;
       const d = Math.hypot((cx + 0.5) * S - camPos.x, (cz + 0.5) * S - camPos.z);
-      if (d > R + S) continue;
-      if (!this.chunks.has(key)) {
-        if (built >= 3) continue;
-        const H = this.terrain.half; // chunks lying on the map (edges included: the last one ends exactly at ±half)
-        if (cx * S < -H || cz * S < -H || (cx + 1) * S > H || (cz + 1) * S > H) { this.chunks.set(key, { mesh: null, cx, cz }); continue; }
-        const r = this.build(cx, cz);
-        if (r) { this.group.add(r.mesh); if (r.flowers) this.group.add(r.flowers); }
-        this.chunks.set(key, { mesh: r ? r.mesh : null, flowers: r ? r.flowers : null, cx, cz });
-        built++;
-      }
+      if (d > R + S || this.chunks.has(cx + ',' + cz)) continue;
+      want.push({ cx, cz, d });
+    }
+    want.sort((a, b) => a.d - b.d);
+    const t0 = performance.now();
+    for (const { cx, cz } of want) {
+      if (performance.now() - t0 > 4) break;
+      const key = cx + ',' + cz;
+      const H = this.terrain.half; // chunks lying on the map (edges included: the last one ends exactly at ±half)
+      if (cx * S < -H || cz * S < -H || (cx + 1) * S > H || (cz + 1) * S > H) { this.chunks.set(key, { mesh: null, cx, cz }); continue; }
+      const r = this.build(cx, cz);
+      if (r) { this.group.add(r.mesh); if (r.flowers) this.group.add(r.flowers); }
+      this.chunks.set(key, { mesh: r ? r.mesh : null, flowers: r ? r.flowers : null, cx, cz });
     }
     for (const [key, c] of this.chunks) {
       if (c.cx === undefined) continue;

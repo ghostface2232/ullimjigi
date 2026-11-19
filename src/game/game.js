@@ -9,6 +9,7 @@ import { suggestTier } from '../render/quality.js';
 import { U } from '../render/materials.js';
 import { preloadFireVolume } from '../render/flame.js';
 import { preloadModels, uploadModelTextures } from '../render/models.js';
+import { preloadVariants, variantTextures } from './creatures.js';
 import { VFX } from '../render/vfx.js';
 import { World, LANTERNS } from '../world/world.js';
 import { POI, regionAt } from '../world/layout.js';
@@ -102,7 +103,7 @@ export class Game {
     G.scene = G.renderer.scene; G.camera = G.renderer.camera;
     G.vfx = new VFX(G.scene);
     await nextFrame();
-    await Promise.all([preloadModels(), preloadFireVolume(U.fireVolume.value)]);
+    await Promise.all([preloadModels(), preloadFireVolume(U.fireVolume.value), preloadVariants()]);
     G.world = new World(G.scene, (p, t) => this.progress(p, t));
     G.atlas = new Atlas(G.world.terrain);
     this.progress(0.75, '사람들을 깨우는 중…');
@@ -125,6 +126,7 @@ export class Game {
     this.progress(0.88, '마법을 예열하는 중…');
     await nextFrame();
     uploadModelTextures(G.renderer.renderer);
+    for (const t of variantTextures()) G.renderer.renderer.initTexture(t);
     await this.warmup();
     this.progress(1, '준비되었습니다');
     G.state = 'title';

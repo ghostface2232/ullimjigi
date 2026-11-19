@@ -104,6 +104,50 @@ const P = {
   plaza: hex(0xc0b29a),
 };
 
+// The large steps of a cliff mesh, a few milliseconds at a time (see Terrain.update): in
+// one go a fine mesh's normals or array copies stalled a frame for a quarter of a second.
+// What three's computeVertexNormals gives: area-weighted face normals summed, normalised.
+function* vertexNormals(pos, idx, out) {
+  for (let t = 0; t < idx.length; t += 3) {
+    if (t % 49152 === 49149) yield;
+    const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+    const ux = pos[c] - pos[b], uy = pos[c + 1] - pos[b + 1], uz = pos[c + 2] - pos[b + 2];
+    const vx = pos[a] - pos[b], vy = pos[a + 1] - pos[b + 1], vz = pos[a + 2] - pos[b + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    out[a] += nx; out[a + 1] += ny; out[a + 2] += nz;
+    out[b] += nx; out[b + 1] += ny; out[b + 2] += nz;
+    out[c] += nx; out[c + 1] += ny; out[c + 2] += nz;
+  }
+  for (let i = 0; i < out.length; i += 3) {
+    if (i % 98304 === 98301) yield;
+    const l = Math.hypot(out[i], out[i + 1], out[i + 2]) || 1;
+    out[i] /= l; out[i + 1] /= l; out[i + 2] /= l;
+  }
+}
+function* typed(Ctor, arr) {
+  const out = new Ctor(arr.length);
+  for (let i = 0; i < arr.length; i += 65536) { out.set(arr.slice(i, i + 65536), i); yield; }
+  return out;
+}
+// what computeBoundingBox / computeBoundingSphere give
+function* bounds(g) {
+  const P = g.attributes.position.array, box = new THREE.Box3();
+  for (let i = 0; i < P.length; i += 3) {
+    if (i % 196608 === 196605) yield;
+    box.min.set(Math.min(box.min.x, P[i]), Math.min(box.min.y, P[i + 1]), Math.min(box.min.z, P[i + 2]));
+    box.max.set(Math.max(box.max.x, P[i]), Math.max(box.max.y, P[i + 1]), Math.max(box.max.z, P[i + 2]));
+  }
+  const c = box.getCenter(new THREE.Vector3());
+  let r2 = 0;
+  for (let i = 0; i < P.length; i += 3) {
+    if (i % 196608 === 196605) yield;
+    const x = P[i] - c.x, y = P[i + 1] - c.y, z = P[i + 2] - c.z;
+    r2 = Math.max(r2, x * x + y * y + z * z);
+  }
+  g.boundingBox = box;
+  g.boundingSphere = new THREE.Sphere(c, Math.sqrt(r2));
+}
+
 // Area-weighted vertex normals of a heightfield grid (what computeVertexNormals gives the mesh).
 function gridNormals(H, N, st) {
   const nrm = new Float32Array(N * N * 3), seg = N - 1;
@@ -921,13 +965,15 @@ export class Terrain {
     const wall = this.skinK[2] * (k ? 1.8 : 1);
     const tris = wall > 0 ? yield* this.sculpt(pos, edge, wv, idx, wall) : idx;
     yield;
+    const P = yield* typed(Float32Array, pos), I = tris instanceof Uint32Array ? tris : yield* typed(Uint32Array, tris);
+    const nor = new Float32Array(P.length);
+    yield* vertexNormals(P, I, nor);
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute('aEdge', new THREE.Float32BufferAttribute(edge, 2));
-    g.setIndex(new THREE.BufferAttribute(tris instanceof Uint32Array ? tris : new Uint32Array(tris), 1));
-    g.computeVertexNormals();
-    yield;
-    g.computeBoundingBox(); g.computeBoundingSphere();
+    g.setAttribute('position', new THREE.BufferAttribute(P, 3));
+    g.setAttribute('aEdge', new THREE.BufferAttribute(yield* typed(Float32Array, edge), 2));
+    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    g.setIndex(new THREE.BufferAttribute(I, 1));
+    yield* bounds(g);
     const m = new THREE.Mesh(g, this.cliffMat);
     m.castShadow = true; m.receiveShadow = true; m.matrixAutoUpdate = false; m.visible = false;
     this.mesh.add(m);
@@ -962,7 +1008,7 @@ export class Terrain {
       return m;
     };
     for (let t = 0; t < idx.length; t += 3) {
-      if ((t & 8191) === 8190) yield;
+      if (t % 3072 === 3069) yield;
       if (idx[t] === idx[t + 1] || idx[t + 1] === idx[t + 2] || idx[t] === idx[t + 2]) continue;
       stack.push(idx[t], idx[t + 1], idx[t + 2]);
       while (stack.length) {
@@ -975,15 +1021,11 @@ export class Terrain {
       }
     }
     // the face's normal: of the mesh before anything moves
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setIndex(tris);
     yield;
-    g.computeVertexNormals();
-    const N = g.attributes.normal.array, cs = CH * this.step;
-    g.dispose();
+    const N = new Float32Array(pos.length), cs = CH * this.step;
+    yield* vertexNormals(yield* typed(Float32Array, pos), tris, N);
     for (let v = 0, n = pos.length / 3; v < n; v++) {
-      if ((v & 4095) === 4095) yield;
+      if ((v & 1023) === 1023) yield;
       const ny = N[v * 3 + 1], x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
       // (nothing moves along a chunk's border: the neighbour's mesh has to meet this one)
       const bx = (x + this.half) % cs, bz = (z + this.half) % cs, rim = Math.min(bx, cs - bx, bz, cs - bz);
@@ -998,7 +1040,7 @@ export class Terrain {
       // hollows sit in shade
       edge[v * 2] *= 1 - 0.3 * clamp(-d / BAMP, 0, 1);
     }
-    return new Uint32Array(tris);
+    return yield* typed(Uint32Array, tris);
   }
 
   // a quality change alters how finely the rock is meshed

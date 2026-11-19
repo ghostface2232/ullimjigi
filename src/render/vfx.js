@@ -549,7 +549,7 @@ class Streaks {
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     g.setIndex(new THREE.BufferAttribute(idx, 1));
     g.setDrawRange(0, 0);
-    this.mat = new THREE.ShaderMaterial({ vertexShader: STREAK_VS, fragmentShader: STREAK_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+    this.mat = new THREE.ShaderMaterial({ vertexShader: STREAK_VS, fragmentShader: STREAK_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, forceSinglePass: true });
     this.mesh = new THREE.Mesh(g, this.mat);
     this.mesh.frustumCulled = false; this.mesh.renderOrder = 10;
     scene.add(this.mesh);
@@ -640,7 +640,7 @@ class RibbonPool {
     for (let i = 0; i < RIB_PTS; i++) { aS[i * 2] = -1; aS[i * 2 + 1] = 1; }
     this.baseMat = new THREE.ShaderMaterial({
       uniforms: { uCore: { value: new THREE.Color() }, uGlow: { value: new THREE.Color() }, uAlpha: { value: 1 }, uTime: U.time, uWave: { value: 0 } },
-      vertexShader: RIBBON_VS, fragmentShader: RIBBON_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      vertexShader: RIBBON_VS, fragmentShader: RIBBON_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, forceSinglePass: true,
     });
     for (let i = 0; i < n; i++) {
       const g = new THREE.BufferGeometry();
@@ -820,7 +820,7 @@ export class VFX {
     for (let i = 0; i < 6; i++) {
       const m = new THREE.Mesh(this.cylGeo, new THREE.ShaderMaterial({
         uniforms: { uColor: { value: new THREE.Color() }, uCore: { value: new THREE.Color() }, uAlpha: { value: 0 }, uTime: U.time },
-        vertexShader: PILLAR_VS, fragmentShader: PILLAR_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+        vertexShader: PILLAR_VS, fragmentShader: PILLAR_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, forceSinglePass: true,
       }));
       m.visible = false; m.renderOrder = 9; m.frustumCulled = false;
       scene.add(m); this.pillars.push({ m, busy: false });
@@ -937,7 +937,7 @@ export class VFX {
         [new THREE.MeshDepthMaterial({ depthPacking: THREE.BasicDepthPacking, side: THREE.DoubleSide }), this.crystalGeo],
       ];
       // noise spheres switch to double-sided for additive / inside-camera looks (another program variant)
-      const ds = this.spheres[0].m.material.clone(); ds.side = THREE.DoubleSide; ds.blending = THREE.AdditiveBlending;
+      const ds = this.spheres[0].m.material.clone(); ds.side = THREE.DoubleSide; ds.blending = THREE.AdditiveBlending; ds.forceSinglePass = true;
       this._templates.push([ds, this.spheres[0].m.geometry]);
     }
     for (const [mat, geo] of this._templates) add(mat, geo);
@@ -1012,7 +1012,7 @@ export class VFX {
   _newRing() {
     const m = new THREE.Mesh(this.ringGeo, new THREE.ShaderMaterial({
       uniforms: { uColor: { value: new THREE.Color() }, uAlpha: { value: 1 }, uThick: { value: 0.2 }, uFill: { value: 0 }, uTime: U.time, uNoise: { value: 0 } },
-      vertexShader: RING_VS, fragmentShader: RING_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      vertexShader: RING_VS, fragmentShader: RING_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, forceSinglePass: true,
     }));
     m.visible = false; m.renderOrder = 8; m.frustumCulled = false;
     this.scene.add(m);
@@ -1026,7 +1026,7 @@ export class VFX {
     geo.setAttribute('position', pos); geo.setAttribute('uv', new THREE.BufferAttribute(this.strandUv, 2)); geo.setIndex(this.strandIdx);
     const mat = new THREE.ShaderMaterial({
       uniforms: { uColor: { value: new THREE.Color() }, uAlpha: { value: 1 }, uHard: { value: 1 } },
-      vertexShader: BOLT_VS, fragmentShader: BOLT_FS, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      vertexShader: BOLT_VS, fragmentShader: BOLT_FS, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true,
     });
     mat.color = mat.uniforms.uColor.value;
     Object.defineProperty(mat, 'opacity', { get() { return mat.uniforms.uAlpha.value; }, set(v) { if (mat.uniforms) mat.uniforms.uAlpha.value = v; }, configurable: true });
@@ -1250,7 +1250,7 @@ export class VFX {
     if (reuse) { reuse.color.copy(c).multiplyScalar(o.intensity ?? 1.05); reuse.opacity = 0; reuse.userData.reveal.value = 1; return reuse; }
     const mat = new THREE.MeshBasicMaterial({
       map: o.bold ? this.runeTex3 : o.alt ? this.runeTex2 : this.runeTex, color: (color instanceof THREE.Color ? color.clone() : new THREE.Color(color)).multiplyScalar(o.intensity ?? 1.05),
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, opacity: 0,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, forceSinglePass: true, opacity: 0,
     });
     const rev = mat.userData.reveal = { value: 1 };
     mat.onBeforeCompile = (sh) => {
@@ -1528,7 +1528,7 @@ export class VFX {
   _tornadoMat(p, sp) {
     return new THREE.ShaderMaterial({
       uniforms: { uColor: { value: p.glow.clone() }, uCore: { value: p.core.clone() }, uAlpha: { value: 0 }, uTime: U.time, uSpeed: { value: sp }, uGraphic: { value: 0 }, uNoise: U.noise },
-      vertexShader: TORNADO_VS, fragmentShader: TORNADO_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      vertexShader: TORNADO_VS, fragmentShader: TORNADO_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, forceSinglePass: true,
     });
   }
   tornado(pos, o = {}) {
@@ -1607,7 +1607,7 @@ export class VFX {
   _beamMat(core, glow, flow, soft) {
     return new THREE.ShaderMaterial({
       uniforms: { uCore: { value: core.clone() }, uGlow: { value: glow.clone() }, uAlpha: { value: 0 }, uTime: U.time, uLen: { value: 10 }, uFlow: { value: flow }, uSoft: { value: soft }, uNoise: U.noise },
-      vertexShader: BEAM_VS, fragmentShader: BEAM_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      vertexShader: BEAM_VS, fragmentShader: BEAM_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, forceSinglePass: true,
     });
   }
   beam(el, o = {}) {
@@ -1674,7 +1674,7 @@ export class VFX {
   telegraph(pos, radius, dur, color = 0xff3a2a, o = {}) {
     const mat = new THREE.ShaderMaterial({
       uniforms: { uColor: { value: new THREE.Color(color).multiplyScalar(1.5) }, uAlpha: { value: 0 }, uThick: { value: 0.08 }, uFill: { value: 0.35 }, uTime: U.time, uNoise: { value: 0 } },
-      vertexShader: RING_VS, fragmentShader: RING_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      vertexShader: RING_VS, fragmentShader: RING_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, forceSinglePass: true,
     });
     const m = new THREE.Mesh(this.ringGeo, mat);
     m.position.copy(pos); m.position.y += 0.2; m.renderOrder = 8;

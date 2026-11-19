@@ -24,6 +24,7 @@ uniform vec4 uHeightP;
 uniform sampler2D tRefl;
 uniform mat4 uReflMat;
 uniform float uRefl;
+uniform vec2 uReflMax;
 uniform vec3 uShallow, uDeep, uFoam, uSunDir, uSunColor, uSky, uSkyTop, uCloudLight;
 uniform float uNight, uSunVisible, uValleyLight;
 uniform sampler2D uCloudDome;
@@ -92,7 +93,7 @@ void main(){
   }
   if (uRefl > 0.5) {
     vec4 rc = uReflMat * vec4(vW.x + nd.x * (0.7 + dist * 0.02), vW.y, vW.z + nd.y * (0.7 + dist * 0.02), 1.0);
-    vec3 rf = texture2D(tRefl, clamp(rc.xy / rc.w, 0.002, 0.998)).rgb;
+    vec3 rf = texture2D(tRefl, clamp(rc.xy / rc.w, vec2(0.002), uReflMax)).rgb;
     sky = rf;
   }
   // a still lake mirrors more than physics alone would give it (this is the Mirror Lake), but
@@ -124,6 +125,8 @@ const CELL = 64; // water lookup grid (m) for "is any water in view"
 const _f = new THREE.Vector3(), _u = new THREE.Vector3(), _t = new THREE.Vector3();
 const _plane = new THREE.Plane(), _clip = new THREE.Vector4(), _q = new THREE.Vector4();
 const _fr = new THREE.Frustum(), _pm = new THREE.Matrix4(), _sph = new THREE.Sphere();
+const _win = new THREE.Matrix4(), _box = [0, 0, 0, 0];
+const _cq = [0, 1, 2, 3].map(() => new THREE.Vector4());
 
 export class Water {
   constructor(scene, terrain) {
@@ -133,7 +136,7 @@ export class Water {
       uShallow: { value: new THREE.Color(0x5fd0c8) }, uDeep: { value: new THREE.Color(0x1d5f96) },
       uFoam: { value: new THREE.Color(0xf4fbff) }, uSunDir: { value: new THREE.Vector3(0, 1, 0) },
       uSunColor: { value: new THREE.Color(1, 1, 1) }, uSky: { value: new THREE.Color(0xbcd6ec) }, uSkyTop: { value: new THREE.Color(0x3f7fd8) },
-      uNight: { value: 0 }, tRefl: { value: null }, uReflMat: { value: new THREE.Matrix4() }, uRefl: { value: 0 },
+      uNight: { value: 0 }, tRefl: { value: null }, uReflMat: { value: new THREE.Matrix4() }, uRefl: { value: 0 }, uReflMax: { value: new THREE.Vector2(0.998, 0.998) },
     }]);
     this.uni.uCloudDome = { value: null };
     this.uni.uCloudLit = { value: new THREE.Color() }; this.uni.uCloudShade = { value: new THREE.Color() };
@@ -161,44 +164,75 @@ export class Water {
     // cells of the map that hold open water, for the reflection pass's "is it needed" test
     this.cells = [];
     const T = terrain, n = Math.ceil(T.size / CELL), per = CELL / T.step;
+    // each also keeps the box of its wet samples, which bounds the reflection's window
     for (let cz = 0; cz < n; cz++) for (let cx = 0; cx < n; cx++) {
-      let wet = false;
-      for (let iz = cz * per; iz <= Math.min(T.seg, (cz + 1) * per) && !wet; iz += 2) for (let ix = cx * per; ix <= Math.min(T.seg, (cx + 1) * per); ix += 2) if (T.h[iz * T.N + ix] < -0.15) { wet = true; break; }
-      if (wet) this.cells.push(new THREE.Vector3(-T.half + (cx + 0.5) * CELL, 0, -T.half + (cz + 0.5) * CELL));
+      let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+      for (let iz = cz * per; iz <= Math.min(T.seg, (cz + 1) * per); iz += 2) for (let ix = cx * per; ix <= Math.min(T.seg, (cx + 1) * per); ix += 2) {
+        if (T.h[iz * T.N + ix] >= -0.15) continue;
+        const x = -T.half + ix * T.step, z = -T.half + iz * T.step;
+        x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z);
+      }
+      if (x0 > x1) continue;
+      const c = new THREE.Vector3(-T.half + (cx + 0.5) * CELL, 0, -T.half + (cz + 0.5) * CELL);
+      c.box = [x0, z0, x1, z1];
+      this.cells.push(c);
     }
     this.vcam = new THREE.PerspectiveCamera();
     this.frustum = new THREE.Frustum(); // the mirrored view (props keep what it sees, Props.update)
     this.reflecting = false;
+    this.seen = []; // wet cells in the last view
+    this.skip = []; // objects left out of the mirrored view
+    this.sea = false;
   }
 
-  // Is open water within reach of this view?
+  // Is open water within reach of this view? Keeps the wet cells it sees for window().
   inView(camera) {
     _pm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     _fr.setFromProjectionMatrix(_pm);
-    const p = camera.position;
+    const p = camera.position, seen = this.seen;
+    seen.length = 0;
     _sph.radius = CELL * 0.75;
     for (const c of this.cells) {
       if (Math.abs(c.x - p.x) > 520 || Math.abs(c.z - p.z) > 520) continue;
       _sph.center.copy(c);
-      if (_fr.intersectsSphere(_sph)) return true;
+      if (_fr.intersectsSphere(_sph)) seen.push(c);
     }
     // the southern sea runs past the map edge
-    return p.z > 300 && camera.getWorldDirection(_f).z > -0.3;
+    this.sea = p.z > 300 && camera.getWorldDirection(_f).z > -0.3;
+    return seen.length > 0 || this.sea;
+  }
+
+  // Where water can show in the mirror image: the outline of the wet boxes in view on the
+  // water plane (points on the plane land at the same pixel in both views), clipped to the
+  // near plane, as an NDC box of the view matrix m. false = the whole view (the open sea).
+  window(m) {
+    if (this.sea) return false;
+    const e = m.elements, L = this.level, M = 2 * 2 + 6, EPS = 0.05; // sample spacing + wave lookup offset
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const add = (x, y, w) => { x /= w; y /= w; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; };
+    for (const c of this.seen) {
+      for (let i = 0; i < 4; i++) {
+        const B = c.box, x = i === 1 || i === 2 ? B[2] + M : B[0] - M, z = i >= 2 ? B[3] + M : B[1] - M;
+        _cq[i].set(e[0] * x + e[4] * L + e[8] * z + e[12], e[1] * x + e[5] * L + e[9] * z + e[13], 0, e[3] * x + e[7] * L + e[11] * z + e[15]);
+      }
+      for (let i = 0; i < 4; i++) {
+        const a = _cq[i], b = _cq[(i + 1) & 3];
+        if (a.w > EPS) add(a.x, a.y, a.w);
+        if ((a.w > EPS) !== (b.w > EPS)) { const t = (EPS - a.w) / (b.w - a.w); add(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, EPS); }
+      }
+    }
+    _box[0] = Math.max(-1, x0); _box[1] = Math.max(-1, y0); _box[2] = Math.min(1, x1); _box[3] = Math.min(1, y1);
+    return _box;
   }
 
   // Planar reflection: draw the scene from the camera mirrored in the water plane into a
   // half-size target. Called by the renderer before the main pass. scale 0 = off.
+  // Only the window where water can show is drawn: three then also culls everything the
+  // window cannot see, which is most of the scene unless the camera looks over the lake.
   reflect(renderer, scene, camera, scale, w, h) {
-    const on = scale > 0 && camera.position.y > this.level + 0.05 && this.inView(camera);
-    this.uni.uRefl.value = on ? 1 : 0;
-    this.reflecting = on;
-    if (!on) return;
+    const off = () => { this.uni.uRefl.value = 0; this.reflecting = false; };
+    if (!(scale > 0 && camera.position.y > this.level + 0.05 && this.inView(camera))) return off();
     const W = Math.max(4, Math.round(w * scale)), H = Math.max(4, Math.round(h * scale));
-    if (!this.rt) {
-      this.rt = new THREE.WebGLRenderTarget(W, H, { type: THREE.HalfFloatType });
-      this.uni.tRefl.value = this.rt.texture;
-    }
-    if (this.rt.width !== W || this.rt.height !== H) this.rt.setSize(W, H);
     const v = this.vcam, L = this.level;
     camera.getWorldDirection(_f);
     _u.set(0, 1, 0).applyQuaternion(camera.quaternion);
@@ -208,8 +242,36 @@ export class Water {
     v.near = camera.near; v.far = camera.far;
     v.updateMatrixWorld();
     v.projectionMatrix.copy(camera.projectionMatrix);
-    v.projectionMatrixInverse.copy(camera.projectionMatrixInverse);
-    this.uni.uReflMat.value.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1).multiply(v.projectionMatrix).multiply(v.matrixWorldInverse);
+    // the window in whole target pixels (2 px apron for filtering), then exactly that sub-frustum
+    _pm.multiplyMatrices(v.projectionMatrix, v.matrixWorldInverse);
+    const box = this.window(_pm);
+    let px0 = 0, py0 = 0, px1 = W, py1 = H;
+    if (box) {
+      px0 = Math.max(0, Math.floor((box[0] * 0.5 + 0.5) * W) - 2); px1 = Math.min(W, Math.ceil((box[2] * 0.5 + 0.5) * W) + 2);
+      py0 = Math.max(0, Math.floor((box[1] * 0.5 + 0.5) * H) - 2); py1 = Math.min(H, Math.ceil((box[3] * 0.5 + 0.5) * H) + 2);
+    }
+    if (px1 - px0 < 4 || py1 - py0 < 4) return off();
+    this.uni.uRefl.value = 1;
+    this.reflecting = true;
+    if (!this.rt) {
+      this.rt = new THREE.WebGLRenderTarget(W, H, { type: THREE.HalfFloatType });
+      this.rt.scissorTest = true;
+      this.uni.tRefl.value = this.rt.texture;
+    }
+    if (this.rt.width !== W || this.rt.height !== H) this.rt.setSize(W, H);
+    const sw = px1 - px0, sh = py1 - py0;
+    const nx0 = px0 / W * 2 - 1, nx1 = px1 / W * 2 - 1, ny0 = py0 / H * 2 - 1, ny1 = py1 / H * 2 - 1;
+    v.projectionMatrix.premultiply(_win.set(
+      2 / (nx1 - nx0), 0, 0, -(nx1 + nx0) / (nx1 - nx0),
+      0, 2 / (ny1 - ny0), 0, -(ny1 + ny0) / (ny1 - ny0),
+      0, 0, 1, 0, 0, 0, 0, 1));
+    v.projectionMatrixInverse.copy(v.projectionMatrix).invert();
+    // the window fills [0, sw/W] x [0, sh/H] of the target
+    const fx = sw / W, fy = sh / H;
+    this.rt.viewport.set(0, 0, sw, sh);
+    this.rt.scissor.set(0, 0, sw, sh);
+    this.uni.uReflMax.value.set(fx - 0.5 / W, fy - 0.5 / H);
+    this.uni.uReflMat.value.set(0.5 * fx, 0, 0, 0.5 * fx, 0, 0.5 * fy, 0, 0.5 * fy, 0, 0, 0.5, 0.5, 0, 0, 0, 1).multiply(v.projectionMatrix).multiply(v.matrixWorldInverse);
     _pm.multiplyMatrices(v.projectionMatrix, v.matrixWorldInverse);
     this.frustum.setFromProjectionMatrix(_pm);
     // oblique near plane (Lengyel): nothing below the surface gets into the mirror image
@@ -226,8 +288,10 @@ export class Water {
     const auto = renderer.shadowMap.autoUpdate;
     renderer.shadowMap.autoUpdate = false;
     this.mesh.visible = false;
+    const shown = this.skip.map((o) => { const s = o.visible; o.visible = false; return s; });
     renderer.setRenderTarget(this.rt);
     renderer.render(scene, v);
+    this.skip.forEach((o, i) => { o.visible = shown[i]; });
     this.mesh.visible = true;
     renderer.shadowMap.autoUpdate = auto;
   }

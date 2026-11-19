@@ -606,9 +606,13 @@ export class Renderer {
     // water mirrors the world on the top tier: that view is drawn first
     // (once the sun's shadow map exists: the mirrored view reuses it)
     const water = G.world && G.world.water;
-    if (water && (!r.shadowMap.enabled || G.world.sky.sun.shadow.map)) water.reflect(r, this.scene, cam, tier().reflect, this.sceneRT.width, this.sceneRT.height);
+    // one scene-graph update serves the mirrored and the main view
+    const sc = this.scene, auto = sc.matrixWorldAutoUpdate;
+    if (auto) { sc.updateMatrixWorld(); sc.matrixWorldAutoUpdate = false; }
+    if (water && (!r.shadowMap.enabled || G.world.sky.sun.shadow.map)) water.reflect(r, sc, cam, tier().reflect, this.sceneRT.width, this.sceneRT.height);
     r.setRenderTarget(this.sceneRT);
-    r.render(this.scene, cam);
+    r.render(sc, cam);
+    sc.matrixWorldAutoUpdate = auto;
     this.bloom.render(r, null, this.sceneRT);
     if (this.fxOn) this.fxPass();
     r.setRenderTarget(null);

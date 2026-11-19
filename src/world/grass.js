@@ -203,6 +203,13 @@ const FLOWER_COLORS = [0xf4f0e2, 0xffd445, 0x9d82e6, 0x7fa8f2, 0xf49cc2].map((h)
 export class Grass {
   constructor(scene, terrain, water) {
     this.scene = scene; this.terrain = terrain;
+    // chunks live in one group so the water's mirrored view can leave them out (tufts are
+    // sub-pixel at reflection resolution but cost dozens of draws and their vertex load)
+    this.group = new THREE.Group();
+    this.group.name = 'grass';
+    this.group.userData.noBake = true;
+    scene.add(this.group);
+    if (water) water.skip.push(this.group);
     this.chunk = 16;
     this.radius = 64;
     this.flowerRadius = 30;
@@ -240,8 +247,8 @@ export class Grass {
   }
 
   disposeChunk(c) {
-    if (c.mesh) { this.scene.remove(c.mesh); c.mesh.geometry.dispose(); }
-    if (c.flowers) { this.scene.remove(c.flowers); c.flowers.geometry.dispose(); }
+    if (c.mesh) { this.group.remove(c.mesh); c.mesh.geometry.dispose(); }
+    if (c.flowers) { this.group.remove(c.flowers); c.flowers.geometry.dispose(); }
   }
 
   // Wind burst that flattens grass (used by wind spells / explosions)
@@ -366,7 +373,7 @@ export class Grass {
         const H = this.terrain.half; // chunks lying on the map (edges included: the last one ends exactly at ±half)
         if (cx * S < -H || cz * S < -H || (cx + 1) * S > H || (cz + 1) * S > H) { this.chunks.set(key, { mesh: null, cx, cz }); continue; }
         const r = this.build(cx, cz);
-        if (r) { this.scene.add(r.mesh); if (r.flowers) this.scene.add(r.flowers); }
+        if (r) { this.group.add(r.mesh); if (r.flowers) this.group.add(r.flowers); }
         this.chunks.set(key, { mesh: r ? r.mesh : null, flowers: r ? r.flowers : null, cx, cz });
         built++;
       }

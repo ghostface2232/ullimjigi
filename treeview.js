@@ -5,12 +5,13 @@
 //   both=1 near and far of each next to one another   gap spacing (m)   h hour   q quality tier
 //   ex,ey,ez / lx,ly,lz  eye and look-at (default: a view of the whole row)   fov
 //   atlas=1 shows the foliage atlas instead
+//   t also accepts fern, flowers, reeds, mushroom, log, stump (COVER variants).
+//   still=1 draws once; __tv.step() redraws after changing view/sky. time fixes wind phase.
 import * as THREE from 'three';
 import { G } from './src/core/context.js';
 import { Renderer, SHADOW_LAYER } from './src/render/renderer.js';
 import { Sky } from './src/world/sky.js';
 import { toon, U, leafTexture } from './src/render/materials.js';
-import { preloadModels } from './src/render/models.js';
 
 const q = new URLSearchParams(location.search);
 const num = (k, d) => (q.has(k) ? +q.get(k) : d);
@@ -21,7 +22,7 @@ R.resize();
 const sky = new Sky(R.scene);
 G.world = { sky };
 sky.setHour(num('h', 12));
-await preloadModels();
+// These are procedural assets. Loading every character/building here only consumes memory.
 const P = await import('./src/world/props.js');
 
 const ground = new THREE.Mesh(new THREE.CircleGeometry(600, 48), toon(0x6f9a52, { noAO: true }));
@@ -31,23 +32,29 @@ R.scene.add(ground);
 // the materials of Props (without the per-instance LOD fade, which needs instancing)
 const leafy = { vertexColors: true, rim: 0.35, tex: 'bark', leafy: true, cards: true };
 const MAT = {
+  cutWood: P.cutWoodMaterial(),
   tree: toon(0xffffff, { ...leafy, sway: 0.028, swayBase: 2.4 }),
   fir: toon(0xffffff, { ...leafy, rim: 0.3, sway: 0.02, swayBase: 1.6 }),
   shrub: toon(0xffffff, { ...leafy, rim: 0.3, sway: 0.05, swayBase: 0 }),
   solid: toon(0xffffff, { vertexColors: true, rim: 0.3, tex: 'bark' }),
+  ground: toon(0xffffff, { vertexColors: true, sway: 0.09, swayBase: 0.05, rim: 0.25, side: THREE.DoubleSide }),
+  small: toon(0xffffff, { vertexColors: true, rim: 0.3 }),
 };
-const matOf = (kind) => (kind.startsWith('pine') ? MAT.fir : kind === 'bush' ? MAT.shrub : kind === 'dead' ? MAT.solid : MAT.tree);
+const matOf = (kind) => (kind.startsWith('pine') ? MAT.fir : kind === 'bush' ? MAT.shrub : kind === 'dead' ? MAT.solid : ['log', 'stump'].includes(kind) ? MAT.cutWood : kind === 'mushroom' ? MAT.small : P.COVER[kind] ? MAT.ground : MAT.tree);
 
 const items = [];
 const gap = num('gap', 7), far = num('far', 0), both = num('both', 0), see = num('see', 0);
 let x = 0;
 const put = (kind, v, lod) => {
   const mat = matOf(kind);
-  const m = new THREE.Mesh(P.TREES[kind][v](!!lod), mat);
+  const variants = P.TREES[kind] || P.COVER[kind];
+  if (!variants?.[v]) throw new Error(`Unknown vegetation variant: ${kind}:${v}`);
+  const m = new THREE.Mesh(variants[v](!!lod), mat);
   m.receiveShadow = true;
   // shadows as in the game: from the far model, in the shadow pass only
-  if (kind !== 'bush') { const sh = new THREE.Mesh(P.TREES[kind][v](true), mat); sh.castShadow = true; sh.layers.set(SHADOW_LAYER); m.add(sh); }
-  m.scale.set(1, kind === 'bush' ? 1 : 1.18, 1);
+  if (P.TREES[kind] && kind !== 'bush') { const sh = new THREE.Mesh(variants[v](true), mat); sh.castShadow = true; sh.layers.set(SHADOW_LAYER); m.add(sh); }
+  if (kind === 'log' || kind === 'stump') m.castShadow = true;
+  m.scale.set(1, kind === 'bush' || P.COVER[kind] ? 1 : 1.18, 1);
   m.position.x = x; x += gap;
   R.scene.add(m); items.push(m);
   return m;
@@ -73,7 +80,7 @@ const view = { eye: [num('ex', 0), num('ey', 3.2), num('ez', span * 0.9 + 6)], l
 let last = performance.now(), frames = 0;
 function frame() {
   const now = performance.now(), dt = Math.min(0.1, (now - last) / 1000); last = now;
-  G.realTime = now / 1000; G.time = G.realTime;
+  G.realTime = num('still', 0) ? num('time', 8) : now / 1000; G.time = G.realTime;
   U.time.value = G.time; U.wind.value = 1 + Math.sin(G.time * 0.3) * 0.35;
   cam.position.set(...view.eye); cam.lookAt(...view.look);
   cam.updateMatrixWorld();
@@ -87,6 +94,7 @@ function frame() {
   R.render(dt);
   frames++;
 }
-setInterval(frame, 16);
-const tris = () => items.map((m) => Math.round(m.geometry.index.count / 3));
-window.__tv = { R, sky, cam, view, items, G, P, U, tris, get frames() { return frames; } };
+const tris = () => items.map((m) => Math.round((m.geometry.index?.count ?? m.geometry.attributes.position.count) / 3));
+window.__tv = { R, sky, cam, view, items, G, P, U, tris, step: frame, get frames() { return frames; } };
+if (num('still', 0)) frame();
+else setInterval(frame, 16);

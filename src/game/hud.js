@@ -27,9 +27,11 @@ function heartSVG(q) {
   ];
   let fill = '';
   for (let i = 0; i < 4; i++) if (i < q) fill += quads[i];
-  return `<svg viewBox="0 0 26 24"><path d="${HEART_PATH}" fill="rgba(12,10,24,.86)" stroke="#fff4dc" stroke-width="1.7" stroke-linejoin="round"/>
+  // dark rim for any backdrop, the filled quarters, a glint on the upper lobe, then a fine cream edge
+  return `<svg viewBox="0 0 26 24"><path d="${HEART_PATH}" fill="rgba(10,10,24,.8)" stroke="rgba(7,9,20,.9)" stroke-width="3.4" stroke-linejoin="round"/>
     <g clip-path="url(#heartClip)" fill="url(#heartFill)">${fill}</g>
-    ${q ? '<path d="M6.3 6.6c1.2-1.5 3.1-1.3 4.1.3" stroke="rgba(255,255,255,.75)" stroke-width="1.3" fill="none" stroke-linecap="round"/>' : ''}</svg>`;
+    ${q ? '<ellipse cx="7" cy="7.3" rx="1.9" ry=".9" transform="rotate(-40 7 7.3)" fill="#fff" fill-opacity=".55"/>' : ''}
+    <path d="${HEART_PATH}" fill="none" stroke="#ffe9d8" stroke-opacity="${q ? 0.9 : 0.45}" stroke-width="1.1" stroke-linejoin="round"/></svg>`;
 }
 // 'verb — target' labels: the part after the dash is set apart
 const dashed = (t) => { const i = t.indexOf(' — '); return i < 0 ? [t, ''] : [t.slice(0, i), t.slice(i + 3)]; };
@@ -44,7 +46,7 @@ export class HUD {
   constructor() {
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     defs.setAttribute('width', 0); defs.setAttribute('height', 0); defs.style.position = 'absolute';
-    defs.innerHTML = `<defs><clipPath id="heartClip"><path d="${HEART_PATH}"/></clipPath><linearGradient id="heartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff7d8c"/><stop offset="1" stop-color="#f03653"/></linearGradient></defs>`;
+    defs.innerHTML = `<defs><clipPath id="heartClip"><path d="${HEART_PATH}"/></clipPath><linearGradient id="heartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff8d98"/><stop offset=".55" stop-color="#ec3a55"/><stop offset="1" stop-color="#b81f3f"/></linearGradient></defs>`;
     document.body.appendChild(defs);
     fillIcons();
     this.el = {
@@ -66,6 +68,7 @@ export class HUD {
     this.skTree = 'arcane'; this.skSel = null;
     this.floats = [];
     this.barPool = new Map();
+    this.awarenessMarks = new Map();
     this.lastHp = -1;
     this.bannerQ = []; this.bannerBusy = false;
     this.hintT = 0; this.hintAge = 0; this.hintQ = []; this.compT = 0;
@@ -233,14 +236,15 @@ export class HUD {
       this.el.weaveIcons.innerHTML = info.els.map((e) => `<span style="color:${EL_INFO[e].css}">${EL_SVG[e]}</span>`).join('');
       this.el.weaveName.textContent = info.name;
     } else { this.el.weaveIcons.innerHTML = ''; this.el.weaveName.textContent = !wKnown ? '엮기' : P.unlocked.size > 1 ? '속성을 바꿔 엮기' : '엮기'; }
-    this.el.weaveCost.innerHTML = wKnown ? `<i></i>${WEAVE_COST}` : '미습득';
+    // Slots show whether a skill can be cast through their colour (.nomana), not a mana number.
+    this.el.weaveCost.innerHTML = wKnown ? '' : '미습득';
     const hKnown = P.canHeavy();
     this.el.heavySlot.classList.toggle('locked', !hKnown);
     this.el.heavySlot.classList.toggle('hidden', !hKnown && !(G.skills && Object.values(SIG).some((id) => G.skills.has(id))));
     this.el.heavyName.textContent = HEAVY[P.element].name;
     this.el.heavySlot.style.setProperty('--c', EL_INFO[P.element].css);
     this.el.heavyIco.innerHTML = hKnown ? EL_SVG[P.element] : ICON.lock;
-    this.el.heavyCost.innerHTML = hKnown ? `<i></i>${HEAVY[P.element].cost}` : '미습득';
+    this.el.heavyCost.innerHTML = hKnown ? '' : '미습득';
     this.el.tickH.style.setProperty('--tc', EL_INFO[P.element].css);
     if (!wKnown) this.el.weaveIcons.innerHTML = `<span>${ICON.lock}</span>`;
     this.updateUlt();
@@ -334,15 +338,21 @@ export class HUD {
     const d = document.createElement('div');
     d.className = 'dmg' + (crit ? ' crit' : '') + (small ? ' small' : '');
     d.style.color = EL_INFO[el]?.css ?? '#fff';
-    d.textContent = crit ? `${n}!` : n;
-    this.addFloat(d, pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.8, 0.3 + Math.random() * 0.5, (Math.random() - 0.5) * 0.8)), 1000);
+    // each number drifts a little to its own side as it rises, so a burst of hits fans out
+    d.style.setProperty('--dx', `${Math.round((Math.random() - 0.5) * 36)}px`);
+    if (crit) d.innerHTML = `<i>${ICON.spark}</i><span>${n}</span>`; else d.textContent = n;
+    // spread sideways rather than upwards: the nameplate stands just above a short enemy's centre
+    this.addFloat(d, pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.9, 0.05 + Math.random() * 0.4, (Math.random() - 0.5) * 0.9)), 1000);
   }
-  reaction(pos, info) {
+  // A reaction's name stands just above the struck enemy's nameplate (found from the hit position
+  // when the caller does not pass the target), so it never lands on the plate or the numbers.
+  reaction(pos, info, target) {
     const d = document.createElement('div');
     d.className = 'dmg react';
     d.style.color = info.color;
     d.textContent = info.name;
-    this.addFloat(d, pos.clone().add(new THREE.Vector3(0, 1.3, 0)), 1400);
+    target ||= G.enemies && G.enemies.list.find((e) => e.alive && e.center().distanceToSquared(pos) < 0.01);
+    this.addFloat(d, pos.clone().add(new THREE.Vector3(0, 1.3, 0)), 1400, target);
   }
   floatText(pos, text, color = '#fff', cls = 'info') {
     const d = document.createElement('div');
@@ -351,22 +361,44 @@ export class HUD {
     d.textContent = text;
     this.addFloat(d, pos.clone().add(new THREE.Vector3(0, 0.8, 0)), 1200);
   }
-  addFloat(el, pos, ms) {
+  addFloat(el, pos, ms, plateOf = null) {
     this.el.dmg.appendChild(el);
-    const f = { el, pos, t: ms / 1000 };
+    const f = { el, pos, t: ms / 1000, plateOf };
     this.floats.push(f);
     this.placeFloat(f);
     if (this.floats.length > 60) { const o = this.floats.shift(); o.el.remove(); }
   }
   placeFloat(f) {
+    // riding on a nameplate: its top edge as placed this frame (after stacking)
+    const b = f.plateOf && this.barPool.get(f.plateOf);
+    if (b && b._sx !== undefined) {
+      if (!f.vis) { f.vis = true; f.el.style.display = ''; }
+      this.at(f.el, b._sx, b._sy - b._sh - 16 * Math.max(1, this.uiScale || 1));
+      return;
+    }
     const p = this.project(f.pos);
     if (f.vis !== p.vis) { f.vis = p.vis; f.el.style.display = p.vis ? '' : 'none'; }
     if (p.vis) this.at(f.el, p.x, p.y);
   }
+  showAwareness(e) {
+    const p = this.project(v3.copy(e.pos).setY(e.pos.y + e.height + 0.65));
+    let mark = this.awarenessMarks.get(e);
+    if (!p.vis) { if (mark) mark.hidden = true; return; }
+    if (!mark) {
+      mark = document.createElement('div');
+      mark.className = 'awareness-mark'; mark.setAttribute('aria-label', '경계 중');
+      mark.innerHTML = ICON.point + '<i></i>';
+      this.el.bars.appendChild(mark); this.awarenessMarks.set(e, mark);
+    }
+    mark.hidden = false;
+    mark.style.setProperty('--awareness', e.awareness.toFixed(2));
+    this.at(mark, p.x, p.y);
+  }
   alertMark(e) {
     const d = document.createElement('div');
     d.className = 'alert-mark'; d.innerHTML = ICON.alert;
-    this.addFloat(d, e.center().add(new THREE.Vector3(0, e.height * 0.7, 0)), 900);
+    // anchored where the nameplate is (styles.css lifts it above the plate), not on top of it
+    this.addFloat(d, e.center().setY(e.pos.y + e.height + 0.5), 900);
   }
   playerHurt(n) {
     G.renderer.grade.uniforms.uHurt.value = 1;
@@ -537,6 +569,14 @@ export class HUD {
     this.el.stamina.classList.toggle('tired', P.exhausted);
     const sp = this.project(v3.set(P.pos.x, P.pos.y + 1.2, P.pos.z));
     if (showSt) this.at(this.el.stamina, sp.x + 70, sp.y - 30);
+    // the HUD steps aside when nothing needs it (styles.css #hud.calm / #hud.fight): calm after a few
+    // seconds out of a fight with health, mana, stamina and cooldowns all full
+    const fight = this.inCombat();
+    const still = G.mode === 'free' && !fight && P.hp >= P.maxHp && P.mana >= P.maxMana && sf >= 0.995 && P.cd.heavy <= 0 && P.cd.weave <= 0 && !P.lockTarget;
+    this.calmT = still ? (this.calmT || 0) + dt : 0;
+    const calm = this.calmT > 4;
+    if (this.calm !== calm) { this.calm = calm; this.el.hud.classList.toggle('calm', calm); }
+    if (this.fight !== fight) { this.fight = fight; this.el.hud.classList.toggle('fight', fight); }
     // cooldowns
     this.coolSlot(this.el.weaveSlot, this.el.weaveT, P.cd.weave, WEAVE_CD);
     this.coolSlot(this.el.heavySlot, this.el.heavyT, P.cd.heavy, P.cd.heavyMax || 0);
@@ -591,8 +631,12 @@ export class HUD {
     for (const e of G.enemies.list) {
       if (!e.alive || (e.boss && e === this.bossTarget)) continue;
       const d = e.pos.distanceTo(P.pos);
+      if (e.state === 'investigate') this.showAwareness(e);
       e._barD = (e.barT > 0 || (e.aggroed && d < 30) || P.lockTarget === e) && d < 45 ? d : -1;
       if (e._barD >= 0 && d < nd) { nd = d; nearest = e; }
+    }
+    for (const [e, mark] of this.awarenessMarks) if (!e.alive || e.state !== 'investigate') {
+      mark.remove(); this.awarenessMarks.delete(e);
     }
     const lockE = P.lockTarget && P.lockTarget.alive && P.lockTarget._barD >= 0 ? P.lockTarget : null;
     const named = lockE || (aimed && aimed._barD >= 0 ? aimed : nearest);
@@ -624,6 +668,7 @@ export class HUD {
         b._fill = b.querySelector('.efill'); b._ghost = b.querySelector('.eghost'); b._st = b.querySelector('.st'); b._ar = b.querySelector('.armor');
       }
       this.at(b, p.x, p.y);
+      b._sx = p.x; b._sy = p.y; b._sh = bh; // where reaction names ride (placeFloat)
       if (b._full !== full) { b._full = full; b.classList.toggle('brief', !full); }
       // health in half-percent steps: the bar (and its trailing ghost) is only written when it moves
       const hp = Math.round(clamp(e.hp / e.maxHp, 0, 1) * 200) / 2;

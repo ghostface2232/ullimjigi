@@ -8,12 +8,13 @@ import { G } from '../core/context.js';
 import { U } from '../render/materials.js';
 import { rand, randRange, damp, clamp, smoothstep, lerp } from '../core/util.js';
 import { regionAt } from './layout.js';
+import { WIND_GLSL, windUniforms } from './wind.js';
 
 // State targets: cloud cover, precipitation, storm (lightning), wind strength
 const STATES = {
-  clear: { cloud: 0, rain: 0, storm: 0, wind: 0.35, name: '맑음' },
-  cloudy: { cloud: 0.55, rain: 0, storm: 0, wind: 0.55, name: '흐림' },
-  rain: { cloud: 0.85, rain: 0.75, storm: 0, wind: 0.7, name: '비' },
+  clear: { cloud: 0, rain: 0, storm: 0, wind: 0, name: '맑음' },
+  cloudy: { cloud: 0.55, rain: 0, storm: 0, wind: 0.15, name: '흐림' },
+  rain: { cloud: 0.85, rain: 0.75, storm: 0, wind: 0.55, name: '비' },
   storm: { cloud: 1, rain: 1, storm: 1, wind: 1, name: '뇌우' },
 };
 // Region climate: weights for the next state
@@ -32,7 +33,7 @@ attribute float aSeed;
 uniform vec3 uCam;
 uniform float uTime;
 uniform float uSnow;
-uniform vec2 uWind;
+${WIND_GLSL}
 uniform float uAmount;
 varying float vA;
 varying float vSnow;
@@ -41,14 +42,14 @@ void main(){
   float speed = mix(19.0, 1.6, uSnow);
   float fall = mod(p.y * ${RAIN_H.toFixed(1)} - uTime * speed * (0.85 + aSeed * 0.3), ${RAIN_H.toFixed(1)});
   vec3 w;
-  w.x = mod(p.x + uCam.x * -1.0 + uWind.x * uTime * mix(2.5, 1.2, uSnow), ${(RAIN_BOX * 2).toFixed(1)}) - ${RAIN_BOX.toFixed(1)} + uCam.x;
-  w.z = mod(p.z + uCam.z * -1.0 + uWind.y * uTime * mix(2.5, 1.2, uSnow), ${(RAIN_BOX * 2).toFixed(1)}) - ${RAIN_BOX.toFixed(1)} + uCam.z;
+  w.xz = mod(p.xz - uCam.xz + uWindTravel * 0.72, ${(RAIN_BOX * 2).toFixed(1)}) - ${RAIN_BOX.toFixed(1)} + uCam.xz;
   w.y = uCam.y - 5.0 + fall;
   // snow flutters, rain streaks along its velocity
   w.x += uSnow * sin(uTime * 1.3 + aSeed * 40.0) * 0.6;
   w.z += uSnow * cos(uTime * 1.1 + aSeed * 23.0) * 0.6;
   float tip = normal.y; // 0 = head, 1 = tail of the streak
-  vec3 vel = normalize(vec3(uWind.x * 0.25, -1.0, uWind.y * 0.25));
+  vec2 drift = uWindFlow.xy * (windStrength(w, uTime).x * 4.0 / speed);
+  vec3 vel = normalize(vec3(drift.x, -1.0, drift.y));
   w -= vel * tip * mix(0.85, 0.07, uSnow);
   // width across the view (after wrapping, so a streak never straddles the box edge)
   vec3 side = normalize(cross(vel, w - cameraPosition));
@@ -74,11 +75,9 @@ export class Weather {
     this.state = 'clear';
     this.next = 'clear';
     this.stateT = randRange(150, 260);     // seconds until the sky reconsiders
-    this.cloud = 0; this.rain = 0; this.storm = 0; this.windS = 0.35;
+    this.cloud = 0; this.rain = 0; this.storm = 0; this.windS = 0;
     this.snow = 0;                          // 0 rain … 1 snow at the player's location
     this.wet = 0;                           // how soaked exposed surfaces are (lags rain)
-    this.windAng = 0.49;
-    this.windVec = { x: Math.cos(this.windAng), z: Math.sin(this.windAng), s: this.windS };
     this.locked = null;
     this.strikeT = randRange(6, 12);
     this.soakT = 0;
@@ -102,7 +101,7 @@ export class Weather {
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
     g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
-    this.uni = { uCam: { value: new THREE.Vector3() }, uTime: U.time, uSnow: { value: 0 }, uWind: { value: new THREE.Vector2() }, uAmount: { value: 0 }, uTint: { value: new THREE.Color(0.7, 0.78, 0.9) } };
+    this.uni = { uCam: { value: new THREE.Vector3() }, uTime: U.time, uSnow: { value: 0 }, ...windUniforms, uAmount: { value: 0 }, uTint: { value: new THREE.Color(0.7, 0.78, 0.9) } };
     this.mesh = new THREE.Mesh(g, new THREE.ShaderMaterial({ vertexShader: RAIN_VS, fragmentShader: RAIN_FS, uniforms: this.uni, transparent: true, depthWrite: false }));
     this.mesh.frustumCulled = false;
     this.mesh.userData.noBake = true;
@@ -147,15 +146,12 @@ export class Weather {
     this.rain = damp(this.rain, T.rain * smoothstep(0.5, 0.85, this.cloud), k(this.rain, T.rain) * 4, dt);
     this.storm = damp(this.storm, T.storm, 0.12, dt);
     this.windS = damp(this.windS, T.wind, 0.1, dt);
-    this.windAng += dt * 0.004 * Math.sin(G.time * 0.013);
-    this.windVec.x = Math.cos(this.windAng); this.windVec.z = Math.sin(this.windAng); this.windVec.s = this.windS;
     // in the vale: north and high up; beyond the ring, wherever snow lies on the ground
     const out = smoothstep(236, 300, Math.hypot(playerPos.x, playerPos.z));
     const cold = lerp(smoothstep(-80, -120, playerPos.z) * 0.6 + smoothstep(36, 46, playerPos.y) * 0.8, G.world.terrain.snowAt(playerPos.x, playerPos.z) * 1.2, out);
     this.snow = damp(this.snow, clamp(cold, 0, 1) > 0.5 ? 1 : 0, 0.5, dt);
     this.wet = damp(this.wet, this.rain * (1 - this.snow), this.rain > this.wet ? 0.15 : 0.02, dt);
     U.wet.value = this.wet;
-    U.wind.value *= 1 + this.windS * 0.8; // grass and trees bend harder in rough weather
 
     // sky & light
     const sky = G.world.sky;
@@ -169,7 +165,6 @@ export class Weather {
       this.uni.uCam.value.copy(camPos);
       this.uni.uAmount.value = amt * (G.settings.quality === 'low' ? 0.6 : 1);
       this.uni.uSnow.value = this.snow;
-      this.uni.uWind.value.set(this.windVec.x * this.windS * 4, this.windVec.z * this.windS * 4);
       const n = sky.night || 0;
       this.uni.uTint.value.setRGB(0.62 - n * 0.35, 0.7 - n * 0.35, 0.82 - n * 0.3);
     }

@@ -5,6 +5,7 @@ import { G } from './src/core/context.js';
 import { U, toon } from './src/render/materials.js';
 import * as HR from './src/game/humanrig.js';
 import { preloadModels } from './src/render/models.js';
+import { Renderer } from './src/render/renderer.js';
 
 await preloadModels();
 
@@ -23,24 +24,46 @@ for (const load of [() => import('./src/game/creatures.js'), () => import('./src
 }
 
 const q = new URLSearchParams(location.search);
-const W = +(q.get('w') || 960), H = +(q.get('h') || 540);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(W, H); renderer.setPixelRatio(1);
+const pipelineOn = q.has('pipeline');
+const W = pipelineOn ? innerWidth : +(q.get('w') || 960), H = pipelineOn ? innerHeight : +(q.get('h') || 540);
+G.settings.quality = q.get('q') || 'high';
+const pipeline = pipelineOn ? new Renderer(document.createElement('canvas')) : null;
+const renderer = pipeline ? pipeline.renderer : new THREE.WebGLRenderer({ antialias: true });
+if (!pipeline) { renderer.setSize(W, H); renderer.setPixelRatio(1); }
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NeutralToneMapping; renderer.toneMappingExposure = 0.92;
-renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
+if (!pipeline) renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 document.body.appendChild(renderer.domElement);
-const scene = new THREE.Scene();
+const scene = pipeline ? pipeline.scene : new THREE.Scene();
 scene.background = new THREE.Color(0x9cc4e0);
-const cam = new THREE.PerspectiveCamera(30, W / H, 0.05, 200);
+const cam = pipeline ? pipeline.camera : new THREE.PerspectiveCamera(30, W / H, 0.05, 200);
+cam.fov = 30; cam.near = 0.05; cam.far = 200; cam.updateProjectionMatrix();
 G.scene = scene; G.camera = cam;
+if (pipeline) G.renderer = pipeline;
 const sun = new SunLight(0xffffff, 2.5);   // the game's key light, so the toon and skin shading match
 const sd = new THREE.Vector3(0.45, 0.8, 0.55).normalize();
 sun.position.copy(sd); sun.castShadow = true;
 sun.shadow.bias = -0.00022; sun.shadow.normalBias = 0.05; sun.shadow.radius = 3.2; sun.shadow.camera.far = 40;
 scene.add(sun);
+// The game binds its comparison texture from World.sky. This isolated scene
+// owns its sun; its cascade atlas exists by the time the depth-effects pass runs.
+if (pipeline) Object.defineProperty(pipeline.fxMat.uniforms.tShadow, 'value', {
+  get: () => sun.shadow.map?.depthTexture ?? null,
+});
 U.sunDir.value.copy(sd);
-scene.add(new THREE.HemisphereLight(0xbfd8ff, 0x7a8a5a, 1.2));
+const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x7a8a5a, 1.2);
+scene.add(hemi);
+function light(night = false) {
+  scene.background.set(night ? 0x142139 : 0x9cc4e0);
+  sun.color.set(night ? 0xb4caff : 0xffffff); sun.intensity = night ? 0.45 : 2.5;
+  hemi.color.set(night ? 0x6b83b4 : 0xbfd8ff); hemi.groundColor.set(night ? 0x424452 : 0x7a8a5a); hemi.intensity = night ? 0.4 : 1.2;
+  U.rimColor.value.copy(sun.color).multiplyScalar(night ? 0.22 : 0.9);
+  U.skyRefl.value.set(night ? 0x45577e : 0xa4bfdf);
+  U.cloud.value.w = 0;
+}
+light(q.has('night'));
+if (pipeline) pipeline.grade.uniforms.uSat.value = +(q.get('sat') || 1.12);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), toon(0x7fa860, { noAO: true }));
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
 
@@ -111,7 +134,13 @@ function step(n = 1, dt = 1 / 30) {
     for (const r of rigs) { const s = typeof r.state === 'function' ? r.state(t) : r.state; r.update(dt, s); }
   }
 }
-function render() { renderer.render(scene, cam); }
+function render() {
+  if (pipeline) {
+    renderer.info.autoReset = false; renderer.info.reset();
+    pipeline.render(1 / 60);
+    renderer.info.autoReset = true;
+  } else renderer.render(scene, cam);
+}
 let tris = 0;
 const info = {};
 for (const r of rigs) {
@@ -137,14 +166,111 @@ function look(x, y, z, dist, yaw = 0, el = 0, fov = 30) {
 // post the canvas to the local capture receiver (dev tooling)
 async function shot(name) {
   render();
+  // Pass an explicit receiver belonging to this viewer's operator; no shared capture port.
+  const receiver = q.get('receiver');
+  if (!receiver) return renderer.domElement.toDataURL('image/png');
   const blob = await new Promise((r) => renderer.domElement.toBlob(r, 'image/jpeg', 0.93));
-  await fetch('http://127.0.0.1:5197/' + name + '.jpg', { method: 'POST', mode: 'no-cors', body: blob });
+  await fetch(receiver.replace(/\/$/, '') + '/' + name + '.jpg', { method: 'POST', mode: 'no-cors', body: blob });
   return name;
 }
 function setSun(x, y, z) { sd.set(x, y, z).normalize(); sun.position.copy(sd); U.sunDir.value.copy(sd); }
-window.V = { THREE, G, C, rigs, scene, cam, step, render, frame, info, buildMs, sim, look, shot, setSun, renderer, setAll(s) { for (const r of rigs) r.state = s; } };
+// Deterministic motion bench. All time comes from fixed simulation steps; samples
+// include solved ankles as well as the contact targets, so a locked target alone
+// cannot conceal an unreachable/sliding foot. No wall clock or rAF is involved.
+const motion = { name: '', time: 0, trace: [], follow: true };
+const floor = (x, z) => motion.name === 'slope' ? z * 0.32 + x * 0.1 : motion.name === 'stairs' ? Math.max(0, Math.min(8, Math.floor((z + 1) / 0.65))) * 0.12 : 0;
+const steps = new THREE.Group(); scene.add(steps);
+function terrain() {
+  ground.visible = motion.name !== 'stairs';
+  ground.rotation.x = -Math.PI / 2;
+  ground.rotation.y = ground.rotation.z = 0;
+  const gp = ground.geometry.attributes.position;
+  for (let i = 0; i < gp.count; i++) gp.setZ(i, motion.name === 'slope' ? floor(gp.getX(i), -gp.getY(i)) : 0);
+  gp.needsUpdate = true; ground.geometry.computeVertexNormals(); ground.geometry.computeBoundingSphere();
+  for (const m of [...steps.children]) { steps.remove(m); m.geometry.dispose(); }
+  if (motion.name === 'stairs') for (let i = -12; i < 32; i++) {
+    const z = (i + 0.5) * 0.65 - 1, h = floor(0, z);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(8, h + 0.15, 0.65), ground.material);
+    m.position.set(0, (h - 0.15) / 2, z); m.receiveShadow = true; steps.add(m);
+  }
+  G.world = { ground: (x, z) => floor(x, z), h: floor };
+}
+motion.start = (name = 'flat') => {
+  motion.name = name; motion.time = 0; motion.trace = []; terrain();
+  for (const r of rigs) {
+    r.root.position.set(0, r.key === 'fox' ? 1.3 : 0, 0); r.root.rotation.set(0, 0, 0);
+    r.prevPos = null; r.prevYaw = 0; r.yawRate = 0; r.vel?.set(0, 0, 0); r.acc?.set(0, 0, 0);
+    if (r.feet) for (const f of r.feet) f.init = false;
+    for (const ch of r.chains || []) ch.init = false;
+    r.phase = 0; r.gestures?.splice(0);
+    if (r.p.staff) {
+      const g = r.p.staff; r.B.handR.add(g); g.position.set(-0.004, -r.L.hand * 0.36, 0.004); g.quaternion.identity(); g.scale.setScalar(1);
+      r.stowed = false; r.stowK = 1;
+    }
+    r.t = 0;
+    if (r.idle) Object.assign(r.idle, { side: 1, sideV: 1, sideT: 20, breath: 0, fidT: 30 });
+    if (r.cast) { r.cast.wt = -1; r.cast.rt = 9; r.cast.clip = null; }
+    for (const sp of [r.land, r.drive, r.bank, r.castSp]) if (sp) sp.x = sp.v = 0;
+    if (r.w) for (const k of Object.keys(r.w)) r.w[k] = 0;
+    r.prevGrounded = true; r.ikW = 1; r.pelvisDrop = 0;
+    r.update(1 / 60, { grounded: true });
+  }
+  render(); return name;
+};
+motion.step = (n = 1, dt = 1 / 60) => {
+  for (let i = 0; i < n; i++) {
+    const prev = motion.time; motion.time += dt; const at = motion.time, name = motion.name;
+    t += dt; G.time = t; G.realTime = t; U.time.value = t;
+    for (const r of rigs) {
+      let speed = 0, yaw = 0, vy = 0, grounded = true;
+      const state = {};
+      if (['flat', 'slope', 'stairs', 'transition', 'fox'].includes(name)) {
+        speed = at < 0.3 ? 0 : at < 0.7 ? (at - 0.3) / 0.4 * 1.4 : at < 1.7 ? 1.4 : at < 2 ? 1.4 + (at - 1.7) / 0.3 * 4.2 : 5.6;
+        if (name === 'transition') { yaw = Math.PI * 0.5 * THREE.MathUtils.smoothstep(at, 2.2, 2.8); speed *= 1 - THREE.MathUtils.smoothstep(at, 3, 3.45); }
+      }
+      if (name === 'landing' || name === 'jump') {
+        const a = at - 0.35, v = name === 'jump' ? 9.6 : 0, y0 = name === 'jump' ? 0 : 4;
+        const y = y0 + v * a - 13 * a * a;
+        grounded = name === 'jump' && a < 0 || a >= 0 && y <= 0; vy = grounded || a < 0 ? 0 : v - 26 * a;
+        r.root.position.y = grounded ? 0 : a < 0 ? y0 : y;
+      }
+      if (['glide', 'swim', 'climb', 'mantle', 'dodge'].includes(name)) {
+        state.glide = name === 'glide'; state.swim = name === 'swim'; state.climb = name === 'climb' || name === 'mantle';
+        grounded = name === 'dodge'; speed = name === 'dodge' && at > 0.35 && at < 0.51 ? 42 : 0;
+        state.dash = speed > 16; state.climbMove = 1; state.climbPhase = at * 0.8;
+        state.mantle = name === 'mantle' ? Math.min(1, at / 1.5) : 0; vy = name === 'glide' ? -2.6 : 0;
+        r.root.position.y = name === 'glide' ? 1.2 : 0;
+      }
+      if (name === 'cast') {
+        state.cast = at > 0.3 && at < 2.7; state.aimPitch = 0.12;
+        if (prev < 0.35 && at >= 0.35) r.windup('heavy', 0.2, 'fire');
+        if (prev < 0.55 && at >= 0.55) r.flick('heavy', 'fire');
+        if (prev < 1.5 && at >= 1.5) r.windup('ult', 0.4, 'arcane');
+        if (prev < 1.9 && at >= 1.9) r.flick('ult', 'arcane');
+      }
+      if (name === 'talk') state.talk = true;
+      r.root.rotation.y = yaw;
+      r.root.position.x += Math.sin(yaw) * speed * dt; r.root.position.z += Math.cos(yaw) * speed * dt;
+      if (['flat', 'slope', 'stairs', 'transition'].includes(name)) r.root.position.y = floor(r.root.position.x, r.root.position.z);
+      r.update(dt, { ...state, speed, grounded, vy }); r.root.updateMatrixWorld(true);
+      const row = { time: at, key: r.key, root: r.root.position.toArray(), speed, grounded, plants: r.footPlants?.map(f => f.n) || [], feet: [] };
+      for (const f of r.feet || []) {
+        const ankle = r.B['foot' + f.n].getWorldPosition(new THREE.Vector3()), target = r.ankleOf(f, new THREE.Vector3());
+        row.feet.push({ side: f.n, planted: f.planted && !f.stepping && grounded && r.ikW > 0.99, sole: f.pos.toArray(), ankle: ankle.toArray(), target: target.toArray(), error: ankle.distanceTo(target), pitch: f.pitch, slopePitch: f.slopePitch || 0 });
+      }
+      motion.trace.push(row);
+    }
+  }
+  if (motion.follow && rigs[0]) {
+    const p = rigs[0].root.position;
+    look(p.x, p.y + 0.95, p.z, rigs[0].key === 'fox' ? 4 : 5.7, 38, 6, 30);
+  }
+  render(); return motion.trace.at(-1);
+};
+window.V = { THREE, G, C, rigs, scene, cam, step, render, frame, info, buildMs, sim, look, shot, setSun, light, renderer, pipeline, motion, setAll(s) { for (const r of rigs) r.state = s; } };
 step(10);
 render();
+if (q.has('motion')) { motion.start(q.get('motion')); motion.step(Math.max(0, Math.min(600, +(q.get('frame') || 0)))); }
 renderer.info.autoReset = true;
 window.V.ready = true;
 document.getElementById('lab').textContent = 'build ' + buildMs.toFixed(0) + 'ms  draws ' + renderer.info.render.calls + '  tris ' + renderer.info.render.triangles;

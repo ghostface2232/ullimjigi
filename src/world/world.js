@@ -9,7 +9,7 @@ import { Water } from './water.js';
 import { Grass } from './grass.js';
 import { Weather } from './weather.js';
 import { Wildfire } from './wildfire.js';
-import { Env } from './env.js';
+import { Wind, WindEnv } from './wind.js';
 import { WorldObjects } from './objects.js';
 import { Puzzles } from './puzzles.js';
 import { Trials } from './trials.js';
@@ -68,12 +68,13 @@ export class World {
     this.terrain = new Terrain(1337);
     scene.add(this.terrain.mesh);
     onProgress(0.3, '하늘을 칠하는 중…');
+    G.wind = new Wind();
     this.sky = new Sky(scene);
     this.water = new Water(scene, this.terrain);
     this.grass = new Grass(scene, this.terrain, this.water);
     this.weather = new Weather(scene);
     this.fire = new Wildfire(scene, this.terrain);
-    G.env = new Env(this);
+    G.env = new WindEnv(this);
     onProgress(0.45, '숲을 가꾸는 중…');
     this.props = new Props(scene, this.terrain, this.col, G.settings.quality);
     this.dressCliffs();
@@ -94,6 +95,8 @@ export class World {
     onProgress(0.72, '돌을 다듬는 중…');
     this.bakeStatics();
     this.objects = new WorldObjects(scene, this);
+    this.props.finishPlacement();
+    this.objects.seatBoulders();
     this.terrain.dropLegacy();
   }
 
@@ -232,6 +235,10 @@ export class World {
     }
   }
 
+  placeFence(x, z, rot, length) {
+    const fence = this.place(B.fence(length), x, z, rot);
+    this.col.addBox(x, z, length / 2, 0.08, rot, fence.position.y - 0.1, fence.position.y + 0.94);
+  }
   buildVillage() {
     const plaza = { x: 6, z: 14 };
     const rnd = mulberry32(88);
@@ -260,7 +267,20 @@ export class World {
     // plaza: flagstone rings around the bell tower with a kerb
     const pv = new THREE.Group();
     const bx = POI.bellTower.x, bz = POI.bellTower.z, by0 = this.h(bx, bz);
+    // Keep the dressed surface clear of scattered rocks and tall grass. The grass mask
+    // is sampled on a coarse grid, so include its interpolation footprint at the kerb.
+    this.props.clear(bx, bz, 11.9, ['rock', 'rockBig', 'pebbles']);
+    const T = this.terrain, clearR = 11.85 + Math.SQRT2 * T.step;
+    const ix0 = Math.max(0, Math.floor((bx - clearR + T.half) / T.step)), ix1 = Math.min(T.seg, Math.ceil((bx + clearR + T.half) / T.step));
+    const iz0 = Math.max(0, Math.floor((bz - clearR + T.half) / T.step)), iz1 = Math.min(T.seg, Math.ceil((bz + clearR + T.half) / T.step));
+    for (let iz = iz0; iz <= iz1; iz++) for (let ix = ix0; ix <= ix1; ix++) {
+      if (Math.hypot(ix * T.step - T.half - bx, iz * T.step - T.half - bz) <= clearR) T.gf[iz * T.N + ix] = 0;
+    }
     pv.position.set(bx, by0, bz); this.scene.add(pv);
+    const paving = B.pavingPlaza((x, z) => this.h(bx + x, bz + z) - by0);
+    if (paving) pv.add(paving);
+    // Consume the original dressing RNG even with the authored kit, so neighbouring
+    // lamps, gardens and planters keep their established arrangement.
     const tones = [0xb8ad9a, 0xa89e8c, 0xc2b8a4, 0x9c9282, 0xb0a490];
     for (let r = 3.8; r < 11.2; r += 0.92) {
       const n = Math.max(8, Math.round((TAU * r) / (1.05 + rnd() * 0.3)));
@@ -270,20 +290,22 @@ export class World {
         const a = a0 + (i / n) * TAU, arc = (TAU * r) / n;
         const x = Math.cos(a) * r, z = Math.sin(a) * r;
         const dy = this.h(bx + x, bz + z) - by0;
-        B.pstone(pv, arc * 0.93, 0.1, 0.84, tones[Math.floor(rnd() * tones.length)], x, dy + 0.03 + rnd() * 0.02, z, -a + Math.PI / 2);
+        const tone = tones[Math.floor(rnd() * tones.length)], lift = rnd() * 0.02;
+        if (!paving) B.pstone(pv, arc * 0.93, 0.1, 0.84, tone, x, dy + 0.03 + lift, z, -a + Math.PI / 2);
       }
     }
     for (let i = 0; i < 64; i++) {
       const a = (i / 64) * TAU, r = 11.65;
       const x = Math.cos(a) * r, z = Math.sin(a) * r;
-      B.pstone(pv, (TAU * r) / 64 * 0.96, 0.18, 0.36, 0x8b8377, x, this.h(bx + x, bz + z) - by0 + 0.05, z, -a + Math.PI / 2);
+      if (!paving) B.pstone(pv, (TAU * r) / 64 * 0.96, 0.18, 0.36, 0x8b8377, x, this.h(bx + x, bz + z) - by0 + 0.05, z, -a + Math.PI / 2);
     }
     // bell tower
     const bt = B.bellTower();
     this.place(bt, POI.bellTower.x, POI.bellTower.z, 0.1);
     { // the authored tower gives its roof line; the code-built one keeps a flat top
       const u = bt.userData, by = bt.position.y;
-      this.solid(bt, u.roofTop ? { hw: 2.7, hd: 2.7, rot: 0.1, top: by + u.top, topFn: (lx, lz) => by + u.roofTop(lx, lz) } : { hw: 2.7, hd: 2.7, rot: 0.1 });
+      this.solid(bt, { hw: 2.7, hd: 2.7, rot: 0.1, climb: false,
+        ...(u.roofTop ? { top: by + u.top, topFn: (lx, lz) => by + u.roofTop(lx, lz) } : {}) });
     }
     this.bellTower = bt;
     this.bellSwing = 0;
@@ -305,7 +327,7 @@ export class World {
     this.place(wm, 34, 50, this.faceTo(34, 50, 6, 14));
     { // conical cap over a gallery ring
       const by = wm.position.y;
-      this.solid(wm, { r: 3.2, top: by + 12.3, topFn: (lx, lz) => { const r = Math.hypot(lx, lz); return by + (r < 2.8 ? 12.3 - (r / 2.8) * 3.2 : 8.4); } });
+      this.solid(wm, { r: 3.2, climb: false, top: by + 12.3, topFn: (lx, lz) => { const r = Math.hypot(lx, lz); return by + (r < 2.8 ? 12.3 - (r / 2.8) * 3.2 : 8.4); } });
     }
     this.anims.push((dt) => { wm.userData.rotor.rotation.z += dt * 0.6 * U.wind.value; });
     // well, stalls, benches
@@ -315,7 +337,7 @@ export class World {
     for (const [x, z] of [[-12, 6], [-4, -6], [-12, -8]]) this.place(B.bench(), x, z, this.faceTo(x, z, -8, -2) + Math.PI);
     // fences at village edge
     // (the south run stands either side of the tower road, which crosses z = 58 at x = 4)
-    for (const [x, z, r, l] of [[40, 30, 1.4, 12], [38, 4, 1.8, 10], [-38, 30, 1.7, 10], [-36, 2, 1.3, 12], [15, 58.3, 0.1, 12], [-6.5, 57.8, -0.08, 9]]) this.place(B.fence(l), x, z, r);
+    for (const [x, z, r, l] of [[40, 30, 1.4, 12], [38, 4, 1.8, 10], [-38, 30, 1.7, 10], [-36, 2, 1.3, 12], [15, 58.3, 0.1, 12], [-6.5, 57.8, -0.08, 9]]) this.placeFence(x, z, r, l);
     // dry-stone walls flanking the north road (the village gate) and at the edges
     for (const [x, z, r, l] of [[-12, -17, 0.25, 7], [4, -18, -0.2, 7], [-40, -1, 1.45, 6], [38, -9, 2.0, 6]]) {
       const w = B.stoneWall(l, rnd); this.place(w, x, z, r);
@@ -375,7 +397,7 @@ export class World {
     for (let i = 0; i < 70; i++) {
       const a = rnd() * TAU, r = 16 + rnd() * 22;
       const x = 3 + Math.cos(a) * r, z = 18 + Math.sin(a) * r;
-      if (this.col.pointHit(x, this.h(x, z) + 0.5, z, 1.2) || this.terrain.pathAt(x, z) > 0.3) continue;
+      if (this.col.pointHit(x, this.h(x, z) + 0.5, z, 1.2) || this.terrain.legacy().pathAt(x, z) > 0.3) continue;
       if (Math.hypot(x - bx, z - bz) < 13) continue;
       if (rnd() < 0.45) P.add('bush', x, z, 0.6 + rnd() * 0.5);
       else P.add('flowers', x, z, 0.8 + rnd() * 0.4);
@@ -387,11 +409,12 @@ export class World {
     this.place(t, POI.tower.x, POI.tower.z, 0);
     { // witch-hat roof: roughly a cone from the brim (r 5.6, +16 m) to the tip (+24 m)
       const by = t.position.y;
-      this.solid(t, { r: 4.6, top: by + 24, topFn: (lx, lz) => by + 16 + Math.max(0, 1 - Math.hypot(lx, lz) / 5.6) * 8 });
+      this.solid(t, { r: 4.6, climb: false, top: by + 24, topFn: (lx, lz) => by + 16 + Math.max(0, 1 - Math.hypot(lx, lz) / 5.6) * 8 });
     }
     const an = t.children.find((c) => c.userData && c.userData.roofTop);
     const ty = t.position.y;
     this.annexCol = this.col.addBox(POI.tower.x - 2, POI.tower.z - 6.2, an ? an.userData.w / 2 : 2.9, an ? an.userData.d / 2 : 2.5, 0, -10, ty + (an ? an.userData.height : 6));
+    this.annexCol.climb = false;
     if (an) this.annexCol.topFn = (lx, lz) => ty + an.userData.roofTop(lx, lz);
     if (an) this.solidParts(an, an.userData.solids);
     this.tower = t;
@@ -442,7 +465,7 @@ export class World {
     const rnd = mulberry32(21);
     const wr = B.weaponRack(rnd); this.place(wr, 12.6, 141, -Math.PI / 2); this.col.addBox(12.6, 141, 1.05, 0.25, -Math.PI / 2, -10, this.h(12.6, 141) + 1.3).climb = false;
     for (const [x, z] of [[12, 134.5], [11.5, 148.5]]) { const st = B.strawTarget(); this.place(st, x, z, this.faceTo(x, z, -6, 142)); this.col.addCircle(x, z, 0.5, -10, this.h(x, z) + 1.9).climb = false; }
-    for (const [x, z, r, l] of [[14.5, 137, Math.PI / 2 + 0.05, 9], [14.2, 148, Math.PI / 2 - 0.08, 7]]) this.place(B.fence(l), x, z, r);
+    for (const [x, z, r, l] of [[14.5, 137, Math.PI / 2 + 0.05, 9], [14.2, 148, Math.PI / 2 - 0.08, 7]]) this.placeFence(x, z, r, l);
     for (const [x, z, r] of [[9.5, 152, 0.4], [-31.5, 162, 1.2]]) {
       const g = new THREE.Group(); B.hayBale(g, 0, 0.3, 0, 1, 0); B.hayBale(g, 1.15, 0.3, 0.1, 1, 0.1); B.hayBale(g, 0.55, 0.85, 0.05, 0.95, -0.2);
       this.place(g, x, z, r); this.col.addBox(x, z, 1.2, 0.4, r, -10, this.h(x, z) + 1.15);
@@ -477,11 +500,11 @@ export class World {
   makeBrazier(x, z, id) {
     const b = B.brazier(); this.place(b, x, z);
     this.noClimb(this.col.addCircle(x, z, 0.5, -10, this.h(x, z) + 1.6));
-    const fl = { pos: new THREE.Vector3(x, this.h(x, z) + b.userData.fireY, z), lit: false, scale: 1 };
+    const fl = { pos: new THREE.Vector3(x, this.h(x, z) + b.userData.fireY, z), lit: false, brazier: true, scale: 1 };
     this.flames.push(fl);
     const tgt = this.addTarget({ id, pos: fl.pos.clone().add(new THREE.Vector3(0, -0.2, 0)), r: 1.1, obj: b, flame: fl, lit: false, onHit: null });
     // lit and cold coal, shared by every brazier (swapped, never rebuilt)
-    COAL.lit ||= new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 1.2, 0.3) });
+    COAL.lit ||= new THREE.MeshBasicMaterial({ color: new THREE.Color(1.10, 0.21, 0.026) });
     COAL.cold ||= new THREE.MeshBasicMaterial({ color: new THREE.Color(0.15, 0.1, 0.1) });
     tgt.baseHit = (el) => {
       if (el === 'fire' && !tgt.lit) {
@@ -539,6 +562,20 @@ export class World {
       this.scene.add(s);
       this.col.addPlatform({ type: 'disc', x: p.x, z: p.z, r: 10.6, top: y + 0.35 });
       this.col.addPlatform({ type: 'disc', x: p.x, z: p.z, r: 9.3, top: y + 0.8 });
+      // Four diagonal flights have narrow cheek walls either side of the treads.
+      for (let i = 0; i < 4; i++) {
+        const rot = Math.PI / 4 + i * Math.PI / 2, sn = Math.sin(rot), cs = Math.cos(rot);
+        for (let k = 0; k < 3; k++) {
+          const r = 11.3 - 0.5 * k;
+          this.col.addPlatform({ type: 'box', x: p.x + sn * r, z: p.z + cs * r,
+            rot, hw: 1.6, hd: 0.32, top: s.position.y + 0.16 + 0.24 * k });
+        }
+        for (const side of [-1.9, 1.9]) {
+          const x = p.x + cs * side + sn * 10.7, z = p.z - sn * side + cs * 10.7;
+          const rail = this.col.addBox(x, z, 0.25, 1, rot, s.position.y - 0.13, s.position.y + 1.72);
+          rail.topFn = (lx, lz) => s.position.y + 1.35 - 0.27 * Math.max(-1, Math.min(1, lz));
+        }
+      }
       this.noClimb(this.col.addBox(p.x, p.z, 1.3, 1.3, 0, y, y + 3));
       for (let i = 0; i < 8; i++) {
         const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
@@ -832,15 +869,19 @@ export class World {
   // ------------------------------------------------------------
   update(dt, camPos, playerPos) {
     U.time.value = G.time;
-    U.wind.value = 1 + Math.sin(G.time * 0.3) * 0.35 + Math.sin(G.time * 1.1) * 0.15;
     // thin out leaves between the camera and the player (forests); off for far cameras (cutscenes)
     U.seeA.value.copy(camPos);
     U.seeB.value.set(playerPos.x, playerPos.y + 1.3, playerPos.z);
     const camD = camPos.distanceTo(U.seeB.value);
     U.seeR.value = camD < 14 ? 2.1 : 0;
     this.weather.update(dt, camPos, playerPos);
+    G.wind.update(dt, this.sky.hour, this.weather.windS, playerPos);
+    U.wind.value = G.wind.flow.z;
     if (G.player) { this.fire.update(dt, camPos, playerPos); this.objects.update(dt, playerPos); this.puzzles.update(dt, playerPos); this.trials.update(dt, playerPos); }
     this.sky.update(dt, playerPos, G.travel && G.travel.on && G.travel.frozen ? 0 : 1, camPos);
+    // Match the legacy foliage cloud shadows to the visible cloud transport.
+    U.cloud.value.x = G.wind.cloudOffset.x * 0.36;
+    U.cloud.value.y = G.wind.cloudOffset.y * 0.36;
     this.water.update(this.sky);
     this.grass.update(dt, camPos, playerPos, this.sky);
     this.props.update(G.camera, this.water.reflecting ? this.water.frustum : null);
@@ -855,7 +896,25 @@ export class World {
       if (!f.lit) continue;
       const d = f.pos.distanceTo(camPos);
       if (d > 60) continue;
-      if (rand() < dt * 30 * q * f.scale) G.vfx.burst(f.pos, 'fire', 1, { spread: 0.18 * f.scale, speed: 0.6, size: 0.9 * f.scale, life: 0.9 });
+      const brazier = f.brazier;
+      if (brazier && d < 18) {
+        G.vfx.fireLight(f, tmp.copy(f.pos).setY(f.pos.y + 0.25), 14, 4.5);
+        if (d < 10) G.vfx.distort.fireHaze(tmp, 1.35 * f.scale);
+      }
+      f.emit = (f.emit || 0) + dt * (brazier ? 21 : 13) * q;
+      while (f.emit >= 1) {
+        f.emit--; f.beat = ((f.beat || 0) + 1) % 3;
+        const phase = f.beat * 2.094 + f.pos.x;
+        const ring = (f.beat === 0 ? 0.08 : 0.28) * f.scale;
+        tmp.copy(f.pos); tmp.x += Math.cos(phase) * ring; tmp.z += Math.sin(phase) * ring;
+        if (brazier && f.beat === 0) tmp.y += 0.54 * f.scale;
+        G.vfx.burst(tmp, 'fire', 1, { spread: 0.07 * f.scale, speed: 0.22,
+          size: (brazier ? 0.46 + f.beat * 0.07 : f.beat === 0 ? 1.34 : 0.88) * f.scale, life: 1.05 });
+        if (brazier) {
+          f.emberBeat = (f.emberBeat || 0) + 1;
+          G.vfx.fireAir(tmp, f.emberBeat, f.scale, f.emberBeat % 4 === 0);
+        }
+      }
       if (rand() < dt * 3 * q) G.vfx.burst(f.pos, 'ember', 1, { speed: 2 });
     }
     // lantern flame flicker

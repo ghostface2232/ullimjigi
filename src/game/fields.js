@@ -20,8 +20,6 @@ const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
 const C = (r, g, b) => new THREE.Color(r, g, b);
 const STEAM_C = C(0.92, 0.95, 1.0), STEAM_C1 = C(0.82, 0.86, 0.92);
 const MIST_C = C(0.86, 0.95, 1.05), MIST_C1 = C(0.75, 0.88, 1.0);
-const SMOKE_C = C(0.14, 0.12, 0.12), SMOKE_C1 = C(0.32, 0.31, 0.32);
-const FIRE_W = C(3.2, 2.6, 1.8);
 const MAX_FIELDS = 12;
 
 // el: the element the field carries (what a wind blade picks up, what it applies)
@@ -150,16 +148,26 @@ export class Fields {
   dress(f, grow = false) {
     const V = G.vfx, def = f.def;
     const left = Math.max(0.5, f.dur - f.t);
+    f.visualFloor = G.world.h(f.pos.x, f.pos.z) < -0.2 && G.world.ground(f.pos.x, f.pos.z, f.pos.y + 2) < f.pos.y - 0.3 ? f.pos.y : -Infinity;
+    if (f.surface) f.surface.end();
+    f.surface = V.fieldSurface(f.kind, f.pos, f.r, 0);
+    f.surfaceR = f.r;
+    f.visualAcc = 0;
     if (f.decal) V.endDecal(f.decal, f.decalSeq, grow ? 0.3 : 0.8);
     f.decal = null;
-    if (def.decal) {
+    // The wet surface already supplies the dark bed and glancing reflection.
+    // Keep the flat wet decal as a fallback when the surface pool is full.
+    if (def.decal && !(def.decal === 'wet' && f.surface)) {
       const glowDur = def.decal === 'scorch' || def.decal === 'char' ? left * 0.7 : undefined;
-      f.decal = V.decal(f.pos, def.decal, f.r * (def.decal === 'wet' ? 1.05 : 0.95), { dur: left + (def.decal === 'scorch' || def.decal === 'char' ? 5 : 1.5), glowDur, glowA: f.kind === 'shockwater' ? 1.4 : 1 });
+      f.decal = V.decal(f.pos, def.decal, f.r * (def.decal === 'wet' ? 1.05 : 0.95), { dur: left + (def.decal === 'scorch' || def.decal === 'char' ? 5 : 1.5), glowDur, glowA: 0.3, alpha: 0.55 });
       f.decalSeq = f.decal ? f.decal.seq : 0;
     }
     if (f.haze) { f.haze.end(); f.haze = null; }
     // heat shimmer only over real fire seas: a live haze keeps the screen-refraction pass on
-    if ((f.kind === 'blaze' || f.kind === 'plasma') && f.r >= 3) f.haze = V.distort.haze(f.pos, f.r * 1.8, 0, { h: 1.3, amp: 0.012 });
+    if ((f.kind === 'blaze' || f.kind === 'plasma') && f.r >= 3) f.haze = V.distort.haze(f.pos, f.r * 1.3, 0, { h: 0.65, amp: 0.007 });
+    if (!grow) {
+      V.ring(f.pos, PAL[def.el].glow, f.r, 0.35, { r0: f.r * 0.55, thick: 0.025, alpha: 0.45 });
+    }
     if (!grow) {
       if (f.snd) f.snd.stop(0.4);
       f.snd = def.loop ? this.loop(def.loop, f.pos, f.kind === 'blaze' ? 0.7 : 0.5) : NOLOOP;
@@ -170,8 +178,8 @@ export class Fields {
       for (let i = 0; i < n; i++) {
         const a = (i / n) * 6.28 + rand() * 0.5, rr = f.r * randRange(0.35, 0.85);
         const p = tmp.set(f.pos.x + Math.cos(a) * rr, f.pos.y, f.pos.z + Math.sin(a) * rr).clone();
-        p.y = G.world.ground(p.x, p.z, f.pos.y + 1.5);
-        V.crystal(p, randRange(0.45, 0.85), { width: randRange(0.3, 0.55), life: Math.min(6, left), quiet: true, tiltX: Math.sin(a) * 0.5, tiltZ: -Math.cos(a) * 0.5 });
+        p.y = Math.max(f.visualFloor, G.world.ground(p.x, p.z, f.pos.y + 1.5));
+        V.crystal(p, randRange(0.45, 0.85), { width: randRange(0.3, 0.55), life: Math.min(6, left), quiet: true, active: () => !f.ended && f.kind === 'rime', tiltX: Math.sin(a) * 0.5, tiltZ: -Math.cos(a) * 0.5 });
       }
     }
   }
@@ -190,6 +198,7 @@ export class Fields {
       if (!stain) G.vfx.endDecal(f.decal, f.decalSeq, fade);
     }
     if (f.haze) { f.haze.end(); f.haze = null; }
+    if (f.surface) { f.surface.end(); f.surface = null; }
     if (f.snd) { f.snd.stop(0.5); f.snd = null; }
     if (f.zone && !f.zone.over) f.zone.kill = true;
   }
@@ -258,8 +267,7 @@ export class Fields {
       case 'blaze+storm':
       case 'charged+fire': {
         const rr = f.r * 1.15;
-        V.explode('fire', tmp.copy(c).setY(c.y + 0.6), rr * 0.9);
-        V.strike(c, rr * 0.6, { dim: true });
+        V.react('overload', tmp.copy(c).setY(c.y + 0.6), { r: rr });
         A.play('overload', { pos: c });
         hitAll(this.inside(f, 0.5, rr), { dmg: P * 1.4, el: 'fire', knock: 10, lift: 4, heavy: true, status: 1 });
         for (const e of this.inside(f, 0.5, rr)) if (e.st) e.st.armorBroken = Math.max(e.st.armorBroken, 6);
@@ -278,8 +286,7 @@ export class Fields {
       case 'blaze+water':
       case 'puddle+fire': {
         A.play('steam', { pos: c }); A.play('fizzle', { pos: c });
-        V.burst(tmp.copy(c).setY(c.y + 0.4), 'steamjet', 14, { speed: 9 });
-        V.burst(c, 'steam', 16, { spread: f.r * 0.6, size: 1.5 });
+        V.react('evaporate', tmp.copy(c).setY(c.y + 0.4), { r: f.r });
         if (f.kind === 'blaze') for (const e of this.inside(f, 0.4)) if (e.st) e.st.burn = 0;
         hitAll(this.inside(f, 0.4), { dmg: P * (R('h_scald') ? 0.9 : 0.5), el: 'fire', noStatus: true, knock: 3, lift: 2 });
         this.morph(f, 'steam', { dur: 4.5, r: f.r * 1.1 });
@@ -287,9 +294,7 @@ export class Fields {
       }
       case 'blaze+wind': {
         const nr = Math.min(7.5, f.r * 1.45);
-        V.ring(c, PAL.fire.core, nr * 1.2, 0.5, { thick: 0.35 });
-        V.radial(c, 22, { el: 'fire', speed: 14, up: 0.2, life: 0.45 });
-        V.burst(c, 'fire', 22, { spread: nr * 0.6, speed: 4, size: 1.5 });
+        V.react('firestorm', tmp.copy(c).setY(c.y + 0.5), { r: nr });
         A.play('react_firestorm', { pos: c }); A.play('gale', { pos: c, v: 0.6 });
         for (const e of this.inside(f, 2, nr)) CB.ignite(e, 5, P * 0.18);
         f.r = nr; f.dur = Math.max(f.dur, f.t + 3.5) + 2; f.dmg *= 1.2;
@@ -301,7 +306,7 @@ export class Fields {
       case 'rime+fire': {
         V.react('melt', tmp.copy(c).setY(c.y + 0.5));
         A.play('melt', { pos: c }); A.play('steam', { pos: c, v: 0.5 });
-        V.burst(c, 'steam', 12, { spread: f.r * 0.5, size: 1.2 });
+        V.burst(c, 'steam', 3, { spread: f.r * 0.5, size: 0.6, alpha: 0.2 });
         hitAll(this.inside(f, 0.4), { dmg: P * 0.8, el: 'fire', noStatus: true, status: 0 });
         for (const e of this.inside(f, 0.4)) if (e.st) { e.st.chill = 0; e.st.wet = Math.max(e.st.wet, 6); }
         this.morph(f, 'puddle', { dur: 6 });
@@ -309,7 +314,7 @@ export class Fields {
       }
       case 'rime+storm': {
         V.react('shatter', tmp.copy(c).setY(c.y + 0.6), { r: f.r });
-        V.chunks(c, 'ice', 18, { speed: 11, up: 0.8, size: 0.14 });
+        V.chunks(c, 'ice', 6, { speed: 11, up: 0.8, size: 0.14 });
         for (let i = 0; i < 4; i++) { const a = rand() * 6.28, rr = f.r * randRange(0.3, 1); V.lightning(tmp.copy(c).setY(c.y + 0.1), tmp2.set(c.x + Math.cos(a) * rr, c.y + 0.2, c.z + Math.sin(a) * rr).clone(), { width: 0.06, dur: 0.25, branches: 1, jag: 0.25, segs: 8 }); }
         A.play('shatter', { pos: c }); A.play('zap', { pos: c });
         hitAll(this.inside(f, 0.5), { dmg: P * 1.3, el: 'frost', knock: 5, lift: 3, heavy: true, noStatus: true });
@@ -329,7 +334,7 @@ export class Fields {
       case 'puddle+frost':
       case 'shockwater+frost': {
         V.react('flashfreeze', tmp.copy(c).setY(c.y + 0.6));
-        V.ring(c, PAL.frost.core, f.r * 1.3, 0.5, { thick: 0.25 });
+        V.ring(c, PAL.frost.glow, f.r * 1.3, 0.5, { thick: 0.035, alpha: 0.55 });
         A.play('react_flashfreeze', { pos: c });
         for (const e of this.inside(f, 0.3)) if (e.alive && e.st && e.rig && !e.boss) CB.freeze(e, 2.4); else if (e.alive) CB.applyStatus(e, 'frost', 2, P);
         this.morph(f, 'rime', { dur: 7, r: f.r });
@@ -364,8 +369,7 @@ export class Fields {
         break;
       }
       case 'steam+frost': {
-        V.burst(tmp.copy(c).setY(c.y + 1), 'snowflake', 30, { spread: f.r * 0.6 });
-        V.burst(c, 'frostmist', 10, { spread: f.r * 0.6, size: 1.6 });
+        V.react('blizzard', tmp.copy(c).setY(c.y + 0.4), { r: f.r });
         A.play('freeze', { pos: c }); A.play('react_blizzard', { pos: c, v: 0.6 });
         for (const e of this.inside(f, 0.5)) CB.applyStatus(e, 'frost', 1.5, P);
         this.morph(f, 'frostfog', { dur: 3.5 });
@@ -373,8 +377,7 @@ export class Fields {
         break;
       }
       case 'steam+fire': {
-        V.explode('fire', tmp.copy(c).setY(c.y + 1), f.r * 0.8);
-        V.burst(c, 'steamjet', 18, { speed: 12 });
+        V.steamBurst(c, f.r);
         A.play('react_scald', { pos: c }); A.play('explosion', { pos: c, v: 0.6 });
         hitAll(this.inside(f, 0.5), { dmg: P * 1.1, el: 'fire', knock: 8, lift: 3, heavy: true, noStatus: true });
         this.end(f, 0.4);
@@ -401,7 +404,7 @@ export class Fields {
       case 'plasma+water':
       case 'shockwater+fire':
       case 'frostfog+fire': {
-        A.play('steam', { pos: c }); V.burst(c, 'steam', 16, { spread: f.r * 0.6, size: 1.5 });
+        A.play('steam', { pos: c }); V.react('evaporate', tmp.copy(c).setY(c.y + 0.4));
         this.morph(f, 'steam', { dur: 3.5 });
         break;
       }
@@ -440,14 +443,17 @@ export class Fields {
 
   mixWhirl(f, el, kind) {
     const z = f.zone, V = G.vfx, A = G.audio, c = f.pos;
+    const graphic = () => { for (const m of f.tor?.grp?.children || []) { const u = m.material?.uniforms?.uGraphic; if (u) u.value = 1; } };
     if (el === 'arcane') return kind === 'bolt' ? false : this.detonate(f);
     if (el === f.el || el === z.infused) return false;
     if (f.el === 'wind') {
       if (z.infused) return false;
       z.infused = el;
       if (f.tor && f.tor.setEl) f.tor.setEl(el);
-      V.burst(tmp.copy(c).setY(c.y + 1.5), el === 'storm' ? 'electric' : el === 'frost' ? 'ice' : el, 24, { speed: 7 });
-      V.ring(c, PAL[el].core, f.r, 0.5, { thick: 0.2 });
+      graphic();
+      V.orbitLines(c, el, f.r * 0.8, 1.1, { rate: 4, alpha: 0.5 });
+      V.burst(tmp.copy(c).setY(c.y + 1.5), el === 'storm' ? 'electric' : el === 'frost' ? 'ice' : el, 8, { speed: 7 });
+      V.ring(c, PAL[el].glow, f.r, 0.5, { thick: 0.035, alpha: 0.65 });
       A.play('cast_' + el, { pos: c }); A.play('gale', { pos: c, v: 0.6 });
       f.mixCD = 0.4;
       this.announce('whirl:wind', c, `${EL_INFO[el].name} 회오리`);
@@ -469,11 +475,12 @@ export class Fields {
       this.add('rime', c, { r: f.r * 0.8, dur: 7, P, noGround: true });
       this.announce('whirl:water', c, '얼어붙은 소용돌이');
     } else if (el === 'fire') {
-      A.play('steam', { pos: c }); V.burst(c, 'steamjet', 18, { speed: 10 });
+      A.play('steam', { pos: c }); V.steamBurst(c, f.r * 0.65);
       z.kill = true;
       this.add('steam', c, { r: f.r * 0.8, dur: 4.5, P, noGround: true });
       this.announce('whirl:water', c, '끓는 소용돌이');
     } else return false;
+    graphic();
     f.mixCD = 0.5;
     return true;
   }
@@ -553,53 +560,81 @@ export class Fields {
     }
   }
 
-  // ambient emission for each field kind (rate scales with area, capped)
+  // Small clustered accents ride a persistent ground drawing. All nine kinds share
+  // the existing combat emission budget; fog stays below knees, with open gaps.
   visuals(f, dt, k) {
     const V = G.vfx, c = f.pos, r = f.r;
-    const area = Math.min(2.4, (r * r) / 5 + 0.4) * (this.rateK ?? 1);
-    const pt = () => { const a = rand() * 6.28, rr = Math.sqrt(rand()) * r; return tmp.set(c.x + Math.cos(a) * rr, c.y + 0.08, c.z + Math.sin(a) * rr); };
-    const every = (rate) => rand() < dt * rate * area * k;
-    switch (f.kind) {
-      case 'blaze':
-      case 'plasma': {
-        // flame tongues standing above the grass, denser toward the middle
-        for (let i = 0; i < 4; i++) if (every(10)) {
-          const a = rand() * 6.28, rr = Math.pow(rand(), 0.7) * r, p = tmp.set(c.x + Math.cos(a) * rr, c.y + randRange(0.05, 0.3), c.z + Math.sin(a) * rr);
-          const hk = 1 - 0.5 * (rr / r);
-          V.add.emit({ p: [p.x, p.y, p.z], v: [randRange(-0.3, 0.3), randRange(1.4, 2.8) * hk, randRange(-0.3, 0.3)], life: randRange(0.4, 0.8), size: randRange(0.6, 1.15) * hk * (0.4 + 0.6 * k), size1: 0.12, ease: 0.7, color: FIRE_W, color2: PAL.fire.core, mid: 0.2, color1: PAL.fire.deep, alpha: 0.9, alpha1: 0, drag: 2, grav: -2.5, shape: 7 });
+    if (f.surface && f.surfaceR !== r) { f.surface.resize(r); f.surfaceR = r; }
+    if (f.kind === 'blaze' && c.distanceToSquared(G.camera.position) < 18 * 18) {
+      V.fireLight(f, tmp.copy(c).setY(c.y + 0.48), 10, 2.5 + r);
+    }
+    const area = Math.min(1.8, 0.5 + r * 0.25) * (this.rateK ?? 1);
+    f.visualAcc = (f.visualAcc || 0) + dt * area * k * 8;
+    let budget = 0;
+    while (f.visualAcc >= 1 && budget++ < 4) {
+      f.visualAcc--;
+      // Cluster detail at three islands, leaving most of the footprint quiet.
+      const island = Math.floor(rand() * 3), a = island * 2.094 + randRange(-0.28, 0.28) + 0.4;
+      const rr = r * randRange(0.45, 0.88);
+      const reach = f.kind === 'blaze' ? rr * 0.56 : rr;
+      const p = tmp.set(c.x + Math.cos(a) * reach, c.y + 0.1, c.z + Math.sin(a) * reach);
+      p.y = Math.max(f.visualFloor ?? -Infinity, G.world.ground(p.x, p.z, c.y + 2)) + 0.1;
+      switch (f.kind) {
+        case 'blaze':
+        case 'plasma': {
+          const s = randRange(0.7, 1.05) * (f.kind === 'blaze' ? Math.min(2.45, 0.8 + r * 0.47) : 1);
+          V.norm.emit({ p: [p.x, p.y + s * 0.34, p.z], v: [Math.sin(a) * 0.16, 0.18, -Math.cos(a) * 0.16], life: 0.54, size: s, size1: s * 0.7, color: PAL.fire.glow, alpha: 0.98 * k, alpha1: 0.25, fadeIn: 0.12, shape: 7 });
+          if (f.kind === 'blaze') {
+            const seed = (rr * 2.71 + f.t * 0.84) % 1;
+            // Overlapping billows move from the hot centre to the draft side.
+            for (let j = 0; j < 3; j++) {
+              const fseed = (seed + j * 0.382) % 1, travel = 0.08 + j * 0.32;
+              const x = c.x + (p.x - c.x) * travel, z = c.z + (p.z - c.z) * travel;
+              const y = Math.max(f.visualFloor ?? -Infinity, G.world.ground(x, z, c.y + 2));
+              const width = s * (1.38 - j * 0.16);
+              V.norm.emit({ p: [x, y + width * 0.24, z], v: [G.wind.flow.x * 0.44, 0.64 + fseed * 0.66, G.wind.flow.y * 0.44],
+                life: 0.42 + fseed * 0.20, size: width, size1: width * 0.64,
+                color: PAL.fire.core, alpha: k * 0.87, alpha1: 0, fadeIn: 0.10, shape: 7, seed: fseed });
+            }
+            V.fireAir(p, Math.floor((f.t + rr) * 211), 0.60, island === 0 && seed > 0.58);
+          }
+          if (rand() < 0.25) V.burst(p, 'ember', 1, { speed: 2, size: 0.06 });
+          if (f.kind === 'plasma' && rand() < 0.2) {
+            const end = p.clone().add(new THREE.Vector3(-Math.sin(a), 0.2, Math.cos(a)));
+            V.lightning(p.clone(), end, { width: 0.025, dur: 0.12, branches: 0, segs: 6 });
+          }
+          if (rand() < 0.03) G.audio.play('sizzle', { pos: c, gap: 0.4, v: 0.35 });
+          break;
         }
-        if (every(3)) { const p = pt(); V.add.emit({ p: [p.x, p.y + 0.15, p.z], v: [0, 0.3, 0], life: 0.5, size: randRange(1.2, 1.8), size1: 0.6, color: PAL.fire.glow, color1: PAL.fire.deep, alpha: 0.18 * k, alpha1: 0, shape: 0 }); }
-        if (every(4)) V.burst(pt(), 'ember', 1, { speed: 3 });
-        if (every(1.6)) { const p = pt(); V.norm.emit({ p: [p.x, p.y + 0.5, p.z], v: [randRange(-0.3, 0.3), randRange(0.8, 1.4), randRange(-0.3, 0.3)], life: randRange(1.4, 2.2), size: 0.4, size1: 1.8, ease: 0.6, color: SMOKE_C, color1: SMOKE_C1, alpha: 0.28 * k, alpha1: 0, drag: 1, grav: -0.2, shape: 8, fadeIn: 0.2 }); }
-        if (f.kind === 'plasma' && every(2.5)) { const a = pt().clone(); V.lightning(a, pt().clone().setY(c.y + randRange(0.3, 1)), { width: 0.05, dur: 0.14, branches: 0, segs: 8 }); }
-        if (every(0.5)) G.audio.play('sizzle', { pos: c, gap: 0.4, v: 0.35 });
-        break;
+        case 'rime':
+          V.glint(p.clone().setY(p.y + 0.12), 'frost', randRange(0.22, 0.4), 0.25, { alpha: 0.55 * k });
+          break;
+        case 'frostfog':
+          if (rand() < 0.6) V.norm.emit({ p: [p.x, p.y + 0.1, p.z], v: [-Math.sin(a) * 0.5, 0.06, Math.cos(a) * 0.5], life: 0.85, size: 0.35, size1: 1.1, color: MIST_C, color1: MIST_C1, alpha: 0.16 * k, alpha1: 0, shape: 8, fadeIn: 0.2 });
+          else V.burst(p.clone().setY(p.y + 0.4), 'snowflake', 1, { spread: 0.15, size: 0.18 });
+          break;
+        case 'puddle':
+          if (rand() < 0.15) V.ring(p, PAL.water.glow, randRange(0.35, 0.65), 0.7, { thick: 0.025, alpha: 0.4 * k, y: 0.025, r0: 0.03 });
+          break;
+        case 'steam':
+        case 'shockfog':
+          if (rand() < 0.6) V.norm.emit({ p: [p.x, p.y + 0.08, p.z], v: [Math.sin(a) * 0.25, 0.45, Math.cos(a) * 0.25], life: 0.95, size: 0.3, size1: 0.9, ease: 0.7, color: STEAM_C, color1: STEAM_C1, alpha: 0.2 * k, alpha1: 0, drag: 0.8, shape: 8, fadeIn: 0.15 });
+          if (f.kind === 'shockfog' && rand() < 0.17) {
+            V.lightning(p.clone().setY(p.y + 0.55), p.clone().add(new THREE.Vector3(-Math.sin(a) * 1.3, 0.25, Math.cos(a) * 1.3)), { width: 0.025, dur: 0.13, branches: 0, segs: 6 });
+            G.audio.play('zap', { pos: p, gap: 0.12, v: 0.5 });
+          }
+          break;
+        case 'charged':
+        case 'shockwater': {
+          if (rand() < 0.4) {
+            const end = p.clone().add(new THREE.Vector3(-Math.sin(a) * 1.2, 0.06, Math.cos(a) * 1.2));
+            V.lightning(p.clone(), end, { width: 0.025, dur: 0.12, branches: 0, segs: 6, jag: 0.2, color: f.kind === 'shockwater' ? PAL.water.core : PAL.storm.core });
+          }
+          if (f.kind === 'shockwater' && rand() < 0.15) V.ring(p, PAL.water.glow, 0.55, 0.6, { thick: 0.025, alpha: 0.4, r0: 0.03, y: 0.025 });
+          else V.add.emit({ p: [p.x, p.y, p.z], v: [Math.cos(a), 1, Math.sin(a)], life: 0.18, size: 0.14, size1: 0.02, color: PAL.storm.core, color1: PAL.storm.glow, alpha: k, alpha1: 0, grav: 6, shape: 13 });
+          break;
+        }
       }
-      case 'rime':
-        if (every(4)) { const p = pt(); V.norm.emit({ p: [p.x, p.y + 0.1, p.z], v: [randRange(-0.4, 0.4), randRange(0.05, 0.25), randRange(-0.4, 0.4)], life: randRange(1.4, 2.2), size: 0.5, size1: randRange(1.6, 2.4), ease: 0.6, color: MIST_C, color1: MIST_C1, alpha: 0.22 * k, alpha1: 0, drag: 1.2, shape: 8, fadeIn: 0.25 }); }
-        // rime glints on the grass tips + a cold ground haze
-        for (let i = 0; i < 2; i++) if (every(7)) { const p = pt(); V.add.emit({ p: [p.x, p.y + randRange(0.1, 0.55), p.z], v: [0, randRange(0.02, 0.12), 0], life: randRange(0.35, 0.7), size: randRange(0.12, 0.24), size1: 0.02, color: PAL.frost.core, color1: PAL.frost.glow, alpha: k, alpha1: 0, shape: rand() < 0.5 ? 10 : 4 }); }
-        if (every(1.2)) { const p = pt(); V.norm.emit({ p: [p.x, p.y + 0.25, p.z], v: [0, 0.05, 0], life: 1.6, size: 1.4, size1: 2.2, color: MIST_C, color1: MIST_C1, alpha: 0.16 * k, alpha1: 0, drag: 1, shape: 8, fadeIn: 0.3 }); }
-        break;
-      case 'frostfog':
-        for (let i = 0; i < 2; i++) if (every(5)) { const p = pt(); V.norm.emit({ p: [p.x, p.y + randRange(0.2, 1.6), p.z], v: [randRange(-0.8, 0.8), randRange(-0.1, 0.3), randRange(-0.8, 0.8)], life: randRange(1.2, 1.8), size: 0.7, size1: randRange(1.8, 2.4), ease: 0.6, color: MIST_C, color1: MIST_C1, alpha: 0.26 * k, alpha1: 0, drag: 1, shape: 8, fadeIn: 0.25 }); }
-        if (every(10)) V.burst(pt().setY(c.y + randRange(0.5, 2.5)), 'snowflake', 1, { spread: 0.3 });
-        break;
-      case 'puddle':
-        if (every(0.9)) V.ring(pt(), PAL.water.core, randRange(0.4, 0.9), 0.7, { thick: 0.06, alpha: 0.35, y: 0.06, r0: 0.05 });
-        if (every(2)) { const p = pt(); V.norm.emit({ p: [p.x, p.y + 0.05, p.z], v: [randRange(-0.2, 0.2), randRange(0.3, 0.7), randRange(-0.2, 0.2)], life: randRange(0.8, 1.3), size: 0.3, size1: 1.0, color: STEAM_C, color1: STEAM_C1, alpha: 0.1 * k, alpha1: 0, drag: 1, shape: 8, fadeIn: 0.2 }); }
-        break;
-      case 'steam':
-      case 'shockfog':
-        for (let i = 0; i < 2; i++) if (every(5)) { const p = pt(); V.norm.emit({ p: [p.x, p.y + randRange(0.1, 1.4), p.z], v: [randRange(-0.4, 0.4), randRange(0.4, 1.1), randRange(-0.4, 0.4)], life: randRange(1.3, 2.1), size: 0.8, size1: randRange(1.9, 2.6), ease: 0.6, color: STEAM_C, color1: STEAM_C1, alpha: 0.3 * k, alpha1: 0, drag: 1, grav: -0.2, shape: 8, fadeIn: 0.3 }); }
-        if (f.kind === 'shockfog' && every(3.5)) { const a = pt().clone().setY(c.y + randRange(0.4, 2)); V.lightning(a, pt().clone().setY(c.y + randRange(0.4, 2)), { width: 0.05, dur: 0.16, branches: 1, segs: 8, jag: 0.25 }); if (rand() < 0.4) G.audio.play('zap', { pos: a, gap: 0.12, v: 0.5 }); }
-        break;
-      case 'charged':
-      case 'shockwater':
-        if (every(4)) { const a = pt().clone(); a.y += 0.1; V.lightning(a, pt().clone().setY(c.y + 0.15), { width: 0.045, dur: 0.14, branches: 0, segs: 8, jag: 0.28, color: f.kind === 'shockwater' ? PAL.water.core : undefined }); }
-        if (every(6)) { const p = pt(); V.add.emit({ p: [p.x, p.y + 0.05, p.z], v: [randRange(-1.2, 1.2), randRange(0.5, 2), randRange(-1.2, 1.2)], life: randRange(0.1, 0.25), size: randRange(0.12, 0.24), size1: 0.03, color: PAL.storm.core, color1: PAL.storm.glow, alpha: k, alpha1: 0, drag: 5, shape: 13 }); }
-        if (f.kind === 'shockwater' && every(0.8)) V.ring(pt(), PAL.storm.core, randRange(0.4, 0.8), 0.5, { thick: 0.06, alpha: 0.35, y: 0.06, r0: 0.05 });
-        break;
     }
   }
 }

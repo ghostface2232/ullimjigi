@@ -20,6 +20,26 @@ import * as B from './buildings.js';
 const tmp = new THREE.Vector3();
 const XP = 80;
 
+// Trial assets use unit height so the authored top follows the existing collider exactly.
+// Missing or incomplete assets leave the original code-built trial available.
+function trialModel(name, parent, sx, sy, sz, runeMaterial = null) {
+  const parts = B.authoredParts(name);
+  if (!parts?.body?.length || (runeMaterial && !parts.rune?.length)) return null;
+  const root = new THREE.Group();
+  root.scale.set(sx, sy, sz);
+  let rune = null;
+  for (const group of runeMaterial ? ['body', 'rune'] : ['body']) {
+    for (const { geo, mat } of parts[group]) {
+      const mesh = new THREE.Mesh(geo, group === 'rune' ? runeMaterial : mat);
+      mesh.castShadow = group !== 'rune'; mesh.receiveShadow = true;
+      root.add(mesh);
+      if (group === 'rune') rune = mesh;
+    }
+  }
+  parent.add(root);
+  return { root, rune };
+}
+
 function banner(name, sub) { G.hud.banner('시련', name, sub, '#f1d48a', 4200); }
 // Rewards are granted in the same step as the flag (which marks the story for saving),
 // so an auto-save can never keep the completion without them. Only the banner waits.
@@ -71,10 +91,15 @@ class SingingStones {
       const a = (i / STONES.length) * TAU - Math.PI / 2;
       const sx = this.x + Math.cos(a) * 6.5, sz = this.z + Math.sin(a) * 6.5, h = HEIGHT[m];
       const g = new THREE.Group(); g.userData.noBake = true;
-      B.box(0.9, h, 0.55, B.MAT.ruin, 0, h / 2, 0, g, { ry: rnd() * 0.2 });
-      B.box(1.05, 0.25, 0.7, B.MAT.stoneDark, 0, 0.12, 0, g);
-      const rune = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.12, 0.6), new THREE.MeshBasicMaterial({ color: RUNE_IDLE.clone() }));
-      rune.position.y = h * 0.72; g.add(rune);
+      const runeMaterial = new THREE.MeshBasicMaterial({ color: RUNE_IDLE.clone() });
+      const authored = trialModel('singstone', g, 1, h, 1, runeMaterial);
+      let rune = authored?.rune;
+      if (!authored) {
+        B.box(0.9, h, 0.55, B.MAT.ruin, 0, h / 2, 0, g, { ry: rnd() * 0.2 });
+        B.box(1.05, 0.25, 0.7, B.MAT.stoneDark, 0, 0.12, 0, g);
+        rune = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.12, 0.6), runeMaterial);
+        rune.position.y = h * 0.72; g.add(rune);
+      }
       W.place(g, sx, sz, Math.atan2(this.x - sx, this.z - sz));
       W.col.addBox(sx, sz, 0.45, 0.28, g.rotation.y, -10, W.h(sx, sz) + h);
       const st = { m, g, rune, h, x: sx, z: sz, glow: 0, frozen: false, ice: null };
@@ -232,10 +257,12 @@ class EmberClimb {
       W.props.clear(p.x, p.z, p.r + 3);
       const y = W.h(p.x, p.z);
       const g = new THREE.Group(); g.userData.noBake = true;
-      // a hexagonal basalt column with a slightly wider cap and a lamp on top
-      B.cyl(p.r * 0.92, p.r * 1.08, p.h, 6, basalt, 0, p.h / 2, 0, g);
-      B.cyl(p.r * 1.12, p.r, 0.35, 6, B.MAT.stoneDark, 0, p.h - 0.17, 0, g);
-      B.cyl(p.r * 1.3, p.r * 1.45, 0.5, 6, B.MAT.stoneDark, 0, 0.1, 0, g);
+      if (!trialModel('basaltpost', g, p.r, p.h, p.r)) {
+        // A hexagonal basalt column with a slightly wider cap and a lamp on top.
+        B.cyl(p.r * 0.92, p.r * 1.08, p.h, 6, basalt, 0, p.h / 2, 0, g);
+        B.cyl(p.r * 1.12, p.r, 0.35, 6, B.MAT.stoneDark, 0, p.h - 0.17, 0, g);
+        B.cyl(p.r * 1.3, p.r * 1.45, 0.5, 6, B.MAT.stoneDark, 0, 0.1, 0, g);
+      }
       const lamp = B.brazier(); lamp.scale.setScalar(p.goal ? 0.9 : 0.55);
       lamp.position.set(p.r * 0.5, p.h, 0); g.add(lamp);
       W.place(g, p.x, p.z, i * 0.7);
@@ -268,15 +295,15 @@ class EmberClimb {
     // the climb is all gliding on hot air: it wakes once Borum has lent the wind (story flag 'glide')
     if (!this.started && d < 30 && G.mode === 'free' && S && S.flag('glide')) { this.started = true; banner(this.name, '가장 높은 망대의 꼭대기에 서자'); }
     if (!this.started) return;
-    // standing on a post top lights its lamp; the last one ends the trial
+    // Only the next post counts when the player lands on it.
     const pl = G.player;
-    for (const [i, p] of this.posts.entries()) {
-      if (p.lit || !pl.grounded) continue;
-      if (Math.hypot(P.x - p.x, P.z - p.z) < p.r * 1.15 && P.y > p.top - 0.4 && P.y < p.top + 1.6) {
-        this.light(p);
-        this.reached = Math.max(this.reached, i + 1);
-        if (p.goal) this.finish();
-      }
+    const post = this.posts[this.reached];
+    if (post && pl.grounded && Math.hypot(P.x - post.x, P.z - post.z) < post.r * 1.15 &&
+        P.y > post.top - 0.4 && P.y < post.top + 1.6) {
+      this.light(post);
+      this.reached++;
+      this.linger = 0;
+      if (post.goal) { this.finish(); return; }
     }
     // Borum helps only when the player has been stuck at the next post for a while
     const next = this.posts[this.reached];

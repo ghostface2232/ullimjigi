@@ -38,7 +38,7 @@ const K = () => G.skills;
 const R = (id) => (G.skills ? G.skills.r(id) : 0);
 
 export class Combat {
-  constructor() { this.killCount = 0; this.hs = { frame: -1, base: 0, max: 0, sum: 0, light: -9 }; }
+  constructor() { this.killCount = 0; this.hs = { frame: -1, base: 0, max: 0, sum: 0, light: -9, strong: -9 }; }
 
   // Hitstop aggregation: within one frame the strongest stop wins plus 30% of the
   // rest (capped), and light stops (< 0.04 s) are rate-limited so rapid multi-hit
@@ -47,6 +47,12 @@ export class Combat {
     if (!(v > 0)) return;
     const S = this.hs, now = G.realTime;
     if (S.frame !== now) { S.frame = now; S.base = G.hitstop; S.max = 0; S.sum = 0; }
+    // Cross-frame chain reactions retain the first accent without pinning the
+    // player for the entire cascade. The single-frame cap still applies below.
+    if (force && v < 0.14 && S.max === 0) {
+      if (now - S.strong < 0.09) v *= 0.45;
+      else S.strong = now;
+    }
     if (v < 0.04 && !force) {
       if (S.max === 0 && now - S.light < 0.3) return;
       S.light = now;
@@ -347,11 +353,14 @@ export class Combat {
 
     // feedback
     if (h.source !== 'enemy' && h.source !== 'dot') {
-      this.stop(hs + (crit ? 0.025 : 0), !!reaction || crit);
+      // Fields and secondary strikes explicitly suppress hit-stop, even when
+      // they trigger a reaction. Large bodies lend the main hit a little weight.
+      const weight = clamp(0.92 + (t.radius || 0.5) * 0.12, 0.95, 1.15);
+      this.stop(h.hitstop === 0 ? 0 : hs * weight + (crit ? 0.025 : 0), !!reaction || crit);
       G.cameraRig.shake(shake);
       G.hud.damage(c, dmg, el, crit, reaction);
       if (reaction && REACTIONS[reaction]) {
-        G.hud.reaction(c, REACTIONS[reaction]);
+        G.hud.reaction(c, REACTIONS[reaction], t);
         if (K() && K().discover(reaction)) G.hud.discovered && G.hud.discovered(reaction);
       }
       if (reaction && G.story) G.story.onReaction(reaction);
@@ -373,7 +382,7 @@ export class Combat {
     t.onHit && t.onHit(h, dmg, reaction);
     if (t.hp <= 0) {
       t.hp = 0;
-      if (h.source !== 'enemy') { this.stop(h.source === 'dot' ? 0.05 : 0.09, true); G.cameraRig.shake(0.2); }
+      if (h.source !== 'enemy' && h.source !== 'dot') { this.stop(0.09, true); G.cameraRig.shake(0.2); }
       if (byPlayer) {
         A.play('kill', { pos: c, gap: 0.06 });
         V.kill(c, el);
@@ -534,7 +543,7 @@ export class Combat {
     const V = G.vfx;
     if (st.burn > 0) {
       st.burn -= dt; st.burnTick -= dt;
-      if (rand() < dt * 25) V.burst(tmp.copy(c).add(new THREE.Vector3(randRange(-0.3, 0.3), randRange(-0.5, 0.6) * t.height * 0.5, randRange(-0.3, 0.3))), 'fire', 1, { spread: 0.2, size: 0.8 });
+      if (st.burn > 0 && st.wet <= 0 && st.frozen <= 0) V.burning(t, c, dt);
       if (st.burnTick <= 0) {
         st.burnTick = 0.5;
         this.hit(t, { dmg: st.burnDmg, el: 'fire', noReact: true, noStatus: true, pos: c, hitstop: 0, shake: 0, source: 'dot' });

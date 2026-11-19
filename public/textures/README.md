@@ -10,3 +10,8 @@ Only the relief is used; colour is painted by the terrain shader.
 
 `_n`: R, G = tangent-space normal (OpenGL convention), B = ambient occlusion. `_h`: height,
 stretched to the full range. Made from the 2k JPEG maps, resized to 1024.
+
+`fire-density.png` is an original procedural fire atlas generated for this game.
+Its 96 frames contain a rising plume, expanding gas and smaller grass-fire eddies.
+Each 128 × 128 projection stores heat, emissive density, soot and coverage in RGBA.
+The shaders interpolate consecutive frames in linear space before calculating HDR emission.

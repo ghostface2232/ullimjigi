@@ -5,6 +5,7 @@
 // Everything is generated in code; geometry is built once per character type
 // and shared between instances (each instance gets its own bones/materials).
 import * as THREE from 'three';
+import { G } from '../core/context.js';
 import { toon, outlineMat, U } from '../render/materials.js';
 
 const V3 = THREE.Vector3;
@@ -1289,6 +1290,7 @@ export function setWorldQuat(o, q, w = 1) {
 // bones: consecutive bones (bones[k+1] child of bones[k]); tail: end offset in
 // the last bone's space. Rest shape comes from the bones' animated rotations
 // at the time of step() (shape memory `stiff`).
+const chainWind = new V3();
 export class Chain {
   constructor(bones, tail, o = {}) {
     this.bones = bones;
@@ -1324,45 +1326,53 @@ export class Chain {
     if (!this.init || !sim) { this.reset(); if (!sim) return; }
     if (this.p[0].distanceToSquared(this.t[0]) > 4) this.reset();
     for (let k = 0; k < this.n - 1; k++) this.len[k] = this.t[k].distanceTo(this.t[k + 1]);
-    const h = Math.min(dt, 1 / 30);
-    this.p[0].copy(this.t[0]); this.q[0].copy(this.t[0]);
     const tmp = _t;
-    for (let k = 1; k < this.n; k++) {
-      const P = this.p[k], Q = this.q[k];
-      tmp.subVectors(P, Q).multiplyScalar(1 - this.damp);
-      Q.copy(P);
-      P.add(tmp);
-      P.y -= this.grav * h * h;
-      if (wind && this.drag > 0) P.addScaledVector(wind, this.drag * h * h * (k / (this.n - 1)));
-      const s = mix(this.stiff, this.stiffTip, (k - 1) / Math.max(1, this.n - 2));
-      P.lerp(this.t[k], s);
-    }
-    for (let it = 0; it < 2; it++) {
+    const air = this.drag > 0 && dt > 0 ? G.wind?.sample(this.t[0], chainWind) : null;
+    const span = Math.min(Math.max(dt, 0), 0.1);
+    const steps = Math.ceil(span * 120), h = span / (steps || 1);
+    for (let i = 0; i < steps; i++) {
+      const ratio = this.prevH ? Math.min(2, h / this.prevH) : 1;
+      this.p[0].copy(this.t[0]); this.q[0].copy(this.t[0]);
       for (let k = 1; k < this.n; k++) {
-        const A = this.p[k - 1], P = this.p[k];
-        tmp.subVectors(P, A);
-        const d = tmp.length() || 1e-6;
-        P.copy(A).addScaledVector(tmp, this.len[k - 1] / d);
-        for (const c of this.colliders) {
-          if (c.b) {
-            // capsule (a limb): pushed straight out from its axis, so cloth lies along it
-            if (!c.wa) { c.wa = new V3(); c.wb = new V3(); }
-            if (it === 0 && k === 1) { c.wa.copy(c.a).applyMatrix4(c.obj.matrixWorld); c.wb.copy(c.b).applyMatrix4(c.obj.matrixWorld); }
-            _n.subVectors(c.wb, c.wa);
-            const u = Math.min(1, Math.max(0, tmp.subVectors(P, c.wa).dot(_n) / _n.lengthSq()));
-            tmp.addScaledVector(_n, -u);
+        const P = this.p[k], Q = this.q[k];
+        tmp.subVectors(P, Q).multiplyScalar(ratio * Math.pow(1 - this.damp, h * 60));
+        Q.copy(P);
+        P.add(tmp);
+        P.y -= this.grav * h * h;
+        const drag = this.drag * h * h * (k / (this.n - 1));
+        if (wind && drag > 0) P.addScaledVector(wind, drag);
+        if (air) P.addScaledVector(air, drag * 1.8);
+        const s = mix(this.stiff, this.stiffTip, (k - 1) / Math.max(1, this.n - 2));
+        P.lerp(this.t[k], 1 - Math.pow(1 - s, (h * 60) ** 2));
+      }
+      for (let it = 0; it < 2; it++) {
+        for (let k = 1; k < this.n; k++) {
+          const A = this.p[k - 1], P = this.p[k];
+          tmp.subVectors(P, A);
+          const d = tmp.length() || 1e-6;
+          P.copy(A).addScaledVector(tmp, this.len[k - 1] / d);
+          for (const c of this.colliders) {
+            if (c.b) {
+              // capsule (a limb): pushed straight out from its axis, so cloth lies along it
+              if (!c.wa) { c.wa = new V3(); c.wb = new V3(); }
+              if (it === 0 && k === 1) { c.wa.copy(c.a).applyMatrix4(c.obj.matrixWorld); c.wb.copy(c.b).applyMatrix4(c.obj.matrixWorld); }
+              _n.subVectors(c.wb, c.wa);
+              const u = Math.min(1, Math.max(0, tmp.subVectors(P, c.wa).dot(_n) / _n.lengthSq()));
+              tmp.addScaledVector(_n, -u);
+              const dl = tmp.length();
+              if (dl < c.r && dl > 1e-6) P.addScaledVector(tmp, (c.r - dl) / dl);
+              continue;
+            }
+            if (!c.w) c.w = new V3();
+            c.w.copy(c.off).applyMatrix4(c.obj.matrixWorld);
+            const r = c.r * (c.obj.matrixWorld.elements[0] ** 2 + c.obj.matrixWorld.elements[1] ** 2 + c.obj.matrixWorld.elements[2] ** 2) ** 0.5;
+            tmp.subVectors(P, c.w);
             const dl = tmp.length();
-            if (dl < c.r && dl > 1e-6) P.addScaledVector(tmp, (c.r - dl) / dl);
-            continue;
+            if (dl < r && dl > 1e-6) P.addScaledVector(tmp, (r - dl) / dl);
           }
-          if (!c.w) c.w = new V3();
-          c.w.copy(c.off).applyMatrix4(c.obj.matrixWorld);
-          const r = c.r * (c.obj.matrixWorld.elements[0] ** 2 + c.obj.matrixWorld.elements[1] ** 2 + c.obj.matrixWorld.elements[2] ** 2) ** 0.5;
-          tmp.subVectors(P, c.w);
-          const dl = tmp.length();
-          if (dl < r && dl > 1e-6) P.addScaledVector(tmp, (r - dl) / dl);
         }
       }
+      this.prevH = h;
     }
     if (!defer) this.orient();
   }
@@ -1383,5 +1393,13 @@ export class Chain {
 // critically-damped-ish spring on a scalar
 export class Spring {
   constructor(k = 120, c = 14, x = 0) { this.k = k; this.c = c; this.x = x; this.v = 0; }
-  step(target, dt) { const h = Math.min(dt, 1 / 30); this.v += (this.k * (target - this.x) - this.c * this.v) * h; this.x += this.v * h; return this.x; }
+  step(target, dt) {
+    // Integrate all elapsed time; a long frame must not slow the recovery down.
+    for (let t = Math.min(Math.max(dt, 0), 0.1); t > 1e-6;) {
+      const h = Math.min(t, 1 / 120);
+      this.v += (this.k * (target - this.x) - this.c * this.v) * h;
+      this.x += this.v * h; t -= h;
+    }
+    return this.x;
+  }
 }

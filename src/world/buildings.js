@@ -12,6 +12,7 @@ import { toon, fresnelMat, glowMat, U } from '../render/materials.js';
 import { mulberry32 } from '../core/util.js';
 import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
 import { model } from '../render/models.js';
+import { WIND_GLSL, windUniforms } from './wind.js';
 
 export const MAT = {
   stone: toon(0xb8ad9a, { flat: true, rim: 0.2, tex: 'stone' }),
@@ -195,10 +196,10 @@ function amat() {
   };
   AMAT = {
     paint: mk({ rim: 0.2 }),
-    cloth: mk({ rim: 0.15, side: THREE.DoubleSide }),
+    cloth: mk({ rim: 0.15, roughness: 0.95, specular: 0.06, side: THREE.DoubleSide }),
     stone: mk({ rim: 0.25, tex: 'rock' }),
-    metal: mk({ rim: 0.9, emissive: 0x1c1204 }),
-    iron: mk({ rim: 0.5 }),
+    metal: mk({ rim: 0.9, roughness: 0.38, specular: 1, emissive: 0x1c1204 }),
+    iron: mk({ rim: 0.5, roughness: 0.55, specular: 0.8 }),
     glass: windowMat,
   };
   return AMAT;
@@ -310,8 +311,8 @@ function bmat() {
   };
   BMAT = {
     wall: mk({ rim: 0.2 }),
-    metal: mk({ rim: 0.9, emissive: 0x1c1204 }),
-    cloth: mk({ rim: 0.15, side: THREE.DoubleSide }),
+    metal: mk({ rim: 0.9, roughness: 0.38, specular: 1, emissive: 0x1c1204 }),
+    cloth: mk({ rim: 0.15, roughness: 0.95, specular: 0.06, side: THREE.DoubleSide }),
     glass: windowMat,
   };
   return BMAT;
@@ -381,6 +382,201 @@ function bdPlants(P, parent, rnd) {
 
 // Paving stone (vertex-coloured, stone surface), rotated about y
 export function pstone(p, w, h, d, color, x, y, z, ry = 0) { return pbox(w, h, d, color, x, y, z, p, { mat: MAT.paintStone, ry, cast: false }); }
+
+// Dressed paving kit: identical topology, thirteen authored shapes and one atlas. Instanced
+// morph weights select a whole stone (never interpolate), keeping each paved site to one draw.
+let pavingKit = null;
+function pavingParts() {
+  if (pavingKit) return pavingKit;
+  const src = model('pr_paving');
+  if (!src) return null;
+  const names = [...Array.from({ length: 9 }, (_, i) => 'ring' + i), 'fill', 'kerb', 'corner', 'step'];
+  src.scene.updateMatrixWorld(true);
+  const parts = names.map((name) => src.scene.getObjectByName(name));
+  if (parts.some((m) => !m?.isMesh)) return null;
+  const variants = names.map((name) => src.scene.getObjectByName(name + '_alternate'));
+  const hasAlternates = variants.every((m) => m?.isMesh);
+  const geos = (hasAlternates ? parts.concat(variants) : parts).map((m) => {
+    const g = new THREE.BufferGeometry();
+    for (const key of ['position', 'normal', 'uv']) {
+      const a = m.geometry.attributes[key], values = new Float32Array(a.count * a.itemSize);
+      for (let i = 0; i < a.count; i++) for (let j = 0; j < a.itemSize; j++) values[i * a.itemSize + j] = a.getComponent(i, j);
+      g.setAttribute(key, new THREE.BufferAttribute(values, a.itemSize));
+    }
+    g.applyMatrix4(m.matrixWorld);
+    return g;
+  });
+  const geo = geos[0], mirror = parts[0].userData.mirrorVertices;
+  geo.setIndex(parts[0].geometry.index);
+  // The shared bevel profile stores its uncut height and signed value change at each band.
+  const finish = parts[0].geometry.attributes._finish;
+  if (finish) geo.setAttribute('aPavingFinish', finish);
+  // Reflect the wear across the tangent, preserving curvature, triangle winding and terrain fit.
+  for (const key of ['position', 'normal']) {
+    const shapes = geos.map((g) => g.attributes[key]);
+    const reflected = mirror ? shapes.map((a) => {
+      const b = a.clone();
+      mirror.forEach((j, i) => b.setXYZ(i, -a.getX(j), a.getY(j), a.getZ(j)));
+      return b;
+    }) : [];
+    geo.morphAttributes[key] = shapes.concat(reflected);
+  }
+  geo.computeBoundingBox(); geo.computeBoundingSphere();
+  const srcMat = parts[0].material;
+  const rows = parts[0].userData.pavingRows || 4;
+  const mat = toon(0xffffff, { nocache: true, rim: 0.12, roughness: 0.69, specular: 0.45, noAO: true, noMoss: true });
+  mat.map = srcMat.map; mat.normalMap = srcMat.normalMap; mat.aoMap = srcMat.aoMap;
+  mat.normalScale.set(1.15, -1.15); mat.aoMapIntensity = 0.9;
+  for (const t of [mat.map, mat.normalMap, mat.aoMap]) if (t) t.anisotropy = 8;
+  const patch = mat.onBeforeCompile, key = mat.customProgramCacheKey();
+  mat.onBeforeCompile = (sh) => {
+    patch(sh);
+    sh.vertexShader = `attribute vec4 aPavingTile;
+      vec2 pavingOffset(float tile) { return vec2(mod(tile, 4.0) * 0.25, -floor(tile / 4.0) / ${rows.toFixed(1)}); }
+      ` + sh.vertexShader.replace('#include <uv_vertex>', `
+      #include <uv_vertex>
+      // The grout apron is a separate UV island at 12 mm. Its offsets never span a stone face.
+      bool apron = abs(position.y - 0.012) < 0.0002;
+      float flipU = aPavingTile.w * (0.25 - 2.0 * uv.x);
+      // The three moss swatches contain continuous growth from grout to stone shoulder.
+      float tile = aPavingTile.z >= 13.0 || apron ? aPavingTile.z : aPavingTile.x;
+      vMapUv += pavingOffset(tile) + vec2(flipU, 0.0);
+      vNormalMapUv = vMapUv; // Shallow dressing marks follow their colour tile.
+      vAoMapUv = vMapUv;`);
+    if (finish) {
+      sh.vertexShader = 'attribute vec2 aPavingFinish; varying float vPavingFinish;\n' + sh.vertexShader
+        .replace('#include <morphtarget_vertex>', `#include <morphtarget_vertex>
+          float flake = clamp((aPavingFinish.x - transformed.y - 0.001) * 230.0, 0.0, 1.0);
+          vPavingFinish = 1.0 + aPavingFinish.y * flake;`);
+      sh.fragmentShader = 'varying float vPavingFinish;\n' + sh.fragmentShader
+        .replace('#include <map_fragment>', '#include <map_fragment>\n diffuseColor.rgb *= vPavingFinish;');
+    }
+    // Authored normals use the valley's soft stone response without the procedural rock/grime layer.
+    sh.fragmentShader = '#define TOON_SOFT\n' + sh.fragmentShader;
+  };
+  mat.customProgramCacheKey = () => key + '|paving' + rows;
+  pavingKit = { geo, mat, parts, shapeCount: geos.length, hasAlternates, rows };
+  return pavingKit;
+}
+
+// groundAt is local to the parent, including its placement offset. A tangent plane fitted
+// over each footprint follows the terrain. The authored low grout apron fills the recessed
+// joint in the same draw, without colliders or a separate terrain material.
+function pavingBatch(parent, entries, groundAt, tint = 0xffffff) {
+  const kit = pavingParts();
+  if (!kit) {
+    for (const e of entries) {
+      const m = pstone(parent, e.w || 1.18, 0.12, e.d || 0.892, tint === 0xffffff ? 0xb8ad9a : tint, e.x, groundAt(e.x, e.z) - 0.015, e.z, e.ry || 0);
+      const n = new THREE.Vector3(groundAt(e.x - 0.25, e.z) - groundAt(e.x + 0.25, e.z), 0.5, groundAt(e.x, e.z - 0.25) - groundAt(e.x, e.z + 0.25)).normalize();
+      m.quaternion.premultiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n));
+    }
+    return null;
+  }
+  const geo = kit.geo.clone(), tiles = new THREE.InstancedBufferAttribute(new Float32Array(entries.length * 4), 4);
+  geo.setAttribute('aPavingTile', tiles);
+  const m = new THREE.InstancedMesh(geo, kit.mat, entries.length);
+  m.name = 'dressed-paving'; m.receiveShadow = true; m.castShadow = false;
+  const dummy = new THREE.Object3D(), up = new THREE.Vector3(0, 1, 0), normal = new THREE.Vector3();
+  const yaw = new THREE.Quaternion(), weights = { morphTargetInfluences: Array(geo.morphAttributes.position.length).fill(0) };
+  const color = new THREE.Color(tint), rnd = mulberry32(6021), wear = mulberry32(32831), variantRng = mulberry32(75503);
+  // Restrained warm/cool dressings break up ring-wise repetition without a patchwork floor.
+  const tones = [[1.06, 1.015, 0.94], [0.88, 0.93, 0.97], [1.0, 0.94, 0.93],
+    [0.93, 0.99, 0.92], [0.91, 0.88, 0.83], [1.025, 1.025, 1.01]];
+  const wornTiles = [0, 2, 5, 7]; // Their undented twins occupy the fifth atlas row.
+  entries.forEach((e, i) => {
+    const kind = e.kind, meta = kit.parts[kind].userData;
+    const w = e.w || meta.width, d = e.d || meta.depth;
+    const dx = Math.max(0.15, w / 2), dz = Math.max(0.15, d / 2);
+    normal.set((groundAt(e.x - dx, e.z) - groundAt(e.x + dx, e.z)) / (2 * dx), 1,
+      (groundAt(e.x, e.z - dz) - groundAt(e.x, e.z + dz)) / (2 * dz)).normalize();
+    dummy.position.set(e.x, groundAt(e.x, e.z) + (rnd() - 0.5) * 0.002, e.z);
+    dummy.quaternion.setFromUnitVectors(up, normal);
+    yaw.setFromAxisAngle(up, (e.ry || 0) + (rnd() - 0.5) * 0.0008);
+    dummy.quaternion.multiply(yaw);
+    dummy.scale.set(w / meta.width, 1, d / meta.depth); dummy.updateMatrix();
+    m.setMatrixAt(i, dummy.matrix);
+    const flip = geo.morphAttributes.position.length > kit.shapeCount && wear() < 0.5;
+    const variant = kit.hasAlternates && variantRng() < 0.5 ? kit.parts.length : 0;
+    weights.morphTargetInfluences.fill(0);
+    weights.morphTargetInfluences[kind + variant + (flip ? kit.shapeCount : 0)] = 1;
+    m.setMorphAt(i, weights);
+    // Full flags at both sites share the surface pool independently of their authored shape.
+    let tile = kind < 10 ? Math.floor(rnd() * 10) : kind;
+    if (kit.rows === 5 && tint === 0xffffff) {
+      // Wear follows the middle promenade, the four thresholds and the market approach.
+      const alongWalk = (kind >= 3 && kind <= 5) || Math.min(Math.abs(e.x - 0.1 * e.z),
+        Math.abs(e.z + 0.1 * e.x), Math.abs(e.x - 0.69 * e.z)) < 1.75;
+      const twin = wornTiles.indexOf(tile);
+      if (!alongWalk && twin >= 0) tile = 16 + twin;
+    }
+    // The noon sun comes from +Z. Reserve interrupted moss patches for sheltered northern
+    // joints on the last three rings and kerb. Only these flags have moss on the shoulder.
+    const shaded = tint === 0xffffff && e.z < -2 && (kind >= 6 && kind <= 8 || kind === 10);
+    const chance = (kind === 10 ? 0.68 : (kind - 5) * 0.11) * Math.min(1, -e.z / 8);
+    const swatch = shaded && wear() < chance ? Math.floor(wear() * 3) : -1;
+    let grout = 0;
+    if (swatch >= 0) grout = kit.hasAlternates ? 13 + swatch : [7, 8, 10][swatch];
+    else if (shaded && kit.hasAlternates && variantRng() < 0.09) grout = 13 + Math.floor(variantRng() * 3);
+    tiles.setXYZW(i, tile, kind, grout, Number(flip));
+    const tone = tones[Math.floor(rnd() * tones.length)];
+    m.setColorAt(i, color.clone().multiply(new THREE.Color().setRGB(...tone)));
+  });
+  m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; m.morphTexture.needsUpdate = true;
+  m.computeBoundingBox(); m.computeBoundingSphere(); parent.add(m);
+  return m;
+}
+
+export function pavingPlaza(groundAt = () => 0) {
+  if (!pavingParts()) return null;
+  const g = new THREE.Group(), entries = [];
+  for (let k = 0; k < 9; k++) {
+    const r = k === 8 ? 11.079 : 3.8 + k * 0.92, n = Math.round(TAU * r / 1.23), phase = (k % 2) * Math.PI / n;
+    for (let i = 0; i < n; i++) {
+      const a = i / n * TAU + phase;
+      entries.push({ kind: k, x: Math.cos(a) * r, z: Math.sin(a) * r, ry: -a - Math.PI / 2 });
+    }
+  }
+  for (let i = 0; i < 64; i++) {
+    const a = i / 64 * TAU;
+    entries.push({ kind: 10, x: Math.cos(a) * 11.65, z: Math.sin(a) * 11.65, ry: -a - Math.PI / 2 });
+  }
+  // Narrow dressed thresholds fill the four tower approaches; the tower's plinth covers
+  // their inner ends. The original radial footprint and terrain grass mask remain aligned.
+  for (let side = 0; side < 4; side++) {
+    const a = side * Math.PI / 2 + 0.1;
+    for (let j = -1; j <= 1; j++) {
+      const x = j * 0.60, z = 3.14;
+      entries.push({ kind: j ? 11 : 12, x: x * Math.cos(a) + z * Math.sin(a), z: z * Math.cos(a) - x * Math.sin(a), ry: a, w: 0.585, d: 0.40 });
+    }
+  }
+  pavingBatch(g, entries, groundAt);
+  return g;
+}
+
+// Replace only the authored approach's flags/kerbs, leaving the seal and gate architecture.
+function riftPaving(g, groundAt, authored = false) {
+  if (authored) {
+    for (const m of g.children) {
+      if (!m.isMesh || !m.geometry.attributes.position) continue;
+      const src = m.geometry, p = src.attributes.position, idx = src.index, keep = [];
+      const count = idx ? idx.count : p.count;
+      for (let i = 0; i < count; i += 3) {
+        const ids = [0, 1, 2].map((j) => idx ? idx.getX(i + j) : i + j);
+        const approach = ids.every((j) => Math.abs(p.getX(j)) < 2.2 && p.getZ(j) < -9.01 && p.getZ(j) > -12.0 && p.getY(j) < 1.2);
+        if (!approach) keep.push(...ids);
+      }
+      if (keep.length < count) { m.geometry = src.clone(); m.geometry.setIndex(keep); }
+    }
+  }
+  const entries = [];
+  const rows = authored ? 3 : 12, start = authored ? -11.48 : -10;
+  for (let i = 0; i < rows; i++) {
+    const z = start + i * 0.94;
+    for (let col = -1; col <= 1; col++) entries.push({ kind: 9, x: col * 1.21, z, w: 1.195, d: 0.925 });
+    for (const side of [-1, 1]) entries.push({ kind: 10, x: side * 1.99, z, ry: Math.PI / 2, w: 0.925, d: 0.335 });
+  }
+  pavingBatch(g, entries, groundAt, 0x9aa3c5);
+}
 function lathe(profile, seg, mat, x, y, z, p, o) { return mesh(new THREE.LatheGeometry(profile.map(([a, b]) => new THREE.Vector2(a, b)), seg), mat, x, y, z, p, o); }
 
 // Beam between two points on a wall. axis 'z': wall facing ±z (beam in XY at z=off); 'x': wall facing ±x (beam in ZY at x=off)
@@ -872,12 +1068,62 @@ export function lampPost(rnd = Math.random) {
   void rnd;
   return g;
 }
+// The bake already carries RGBA paint. Negative alpha on these opaque cloth
+// vertices stores the free length below the seam and survives the merge.
+const clothMaterials = new WeakSet();
+function clothSway(mat) {
+  if (clothMaterials.has(mat)) return mat;
+  clothMaterials.add(mat);
+  const compile = mat.onBeforeCompile, key = mat.customProgramCacheKey;
+  mat.onBeforeCompile = (sh, renderer) => {
+    compile.call(mat, sh, renderer);
+    Object.assign(sh.uniforms, windUniforms);
+    sh.vertexShader = WIND_GLSL + sh.vertexShader.replace('#include <begin_vertex>', `
+      #include <begin_vertex>
+      #ifdef USE_COLOR_ALPHA
+        if (color.a < 0.0) {
+          float hem = -color.a;
+          vec3 w = (modelMatrix * vec4(position, 1.0)).xyz;
+          float air = windStrength(w, uWindFlow.w).x;
+          float fold = sin(uWindFlow.w * 4.7 - hem * 5.0 + dot(w.xz, vec2(1.1, 0.8)));
+          float lean = min(1.8, air * (0.68 + 0.34 * fold));
+          vec2 dir = uWindFlow.xy;
+          vec2 slope = dir * lean + vec2(-dir.y, dir.x) * fold * air * 0.16;
+          float hang = inversesqrt(1.0 + dot(slope, slope));
+          vec2 billow = slope * (hem * hang);
+          vec3 displacement = vec3(billow.x, hem * (1.0 - hang), billow.y);
+          transformed += windLocalOffset(mat3(modelMatrix), displacement);
+          #ifndef FLAT_SHADED
+            vec3 tilt = mat3(viewMatrix) * vec3(0.0, 1.0, 0.0);
+            vec3 airView = mat3(viewMatrix) * vec3(dir.x, 0.0, dir.y);
+            vNormal = normalize(vNormal - tilt * dot(vNormal, airView) * lean);
+          #endif
+          vColor.a = 0.4;
+        }
+      #endif
+    `);
+  };
+  mat.customProgramCacheKey = () => key.call(mat) + '|wind-cloth';
+  mat.needsUpdate = true;
+  return mat;
+}
+
+function clothHem(geo, scale = 1) {
+  geo.computeBoundingBox();
+  const pos = geo.attributes.position, col = geo.attributes.color;
+  for (let i = 0; i < pos.count; i++) {
+    const length = (geo.boundingBox.max.y - pos.getY(i)) * scale;
+    if (length > 0.008) col.setW(i, -length);
+  }
+  return geo;
+}
+
 // Bunting between points (world or local): sagging cord with pennants, one mesh.
 export function bunting(points, rnd = Math.random, o = {}) {
   const g = new THREE.Group(); g.userData.noShadow = true;
   const cols = o.cols ?? [0xd8503e, 0xf0c050, 0x4f7ab8, 0xf2ece0, 0x5a9a4a];
   const pos = [], col = [];
-  const push = (p, c) => { pos.push(p.x, p.y, p.z); col.push(c.r, c.g, c.b, 0.4); };
+  const push = (p, c, hem = 0.4) => { pos.push(p.x, p.y, p.z); col.push(c.r, c.g, c.b, hem); };
   const c = new THREE.Color(), cord = hc(0x4a3a2a);
   for (let s = 0; s < points.length - 1; s++) {
     const a = points[s], b = points[s + 1];
@@ -889,7 +1135,10 @@ export function bunting(points, rnd = Math.random, o = {}) {
       const t0 = (i + 0.15) / n, t1 = (i + 0.85) / n;
       const p0 = at(t0), p1 = at(t1), pm = at((t0 + t1) / 2).add(new THREE.Vector3(0, -0.42, 0)).addScaledVector(side, (rnd() - 0.5) * 0.05);
       c.set(cols[(i + s) % cols.length]);
-      push(p0, c); push(p1, c); push(pm, c);
+      const u = p0.clone().lerp(pm, 0.5), v = p1.clone().lerp(pm, 0.5);
+      push(p0, c); push(p1, c); push(u, c, -0.21);
+      push(u, c, -0.21); push(p1, c); push(v, c, -0.21);
+      push(u, c, -0.21); push(v, c, -0.21); push(pm, c, -0.42);
       // cord segment as a thin quad
       const q0 = at(i / n), q1 = at((i + 1) / n);
       push(q0, cord); push(q1, cord); push(q1.clone().add(new THREE.Vector3(0, -0.03, 0)), cord);
@@ -900,7 +1149,7 @@ export function bunting(points, rnd = Math.random, o = {}) {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
   geo.computeVertexNormals();
-  const m = new THREE.Mesh(geo, MAT.paintDS); m.castShadow = false; m.receiveShadow = true;
+  const m = new THREE.Mesh(geo, clothSway(MAT.paintDS)); m.castShadow = false; m.receiveShadow = true;
   g.add(m);
   return g;
 }
@@ -916,7 +1165,9 @@ export function washingLine(len = 4.5, rnd = Math.random) {
       const cw = 0.4 + rnd() * 0.5, ch = 0.5 + rnd() * 0.45, sz = rnd() < 0.5 ? -0.25 : 0.25;
       const col = cols[Math.floor(rnd() * cols.length)], ry = (rnd() - 0.5) * 0.2;
       for (const { geo, mat, key } of P['cloth' + (k++ % 3)]) {
-        const m = mesh(key === 'cloth' ? tintedPart(geo, col) : geo, mat, x + cw / 2, 2.09, sz, g, { ry });
+        const cloth = key === 'cloth';
+        const part = cloth ? clothHem(tintedPart(geo, col).clone(), ch) : geo;
+        const m = mesh(part, cloth ? clothSway(mat) : mat, x + cw / 2, 2.09, sz, g, { ry });
         m.scale.set(cw, ch, 1);
       }
       x += cw + 0.15 + rnd() * 0.3;
@@ -936,7 +1187,7 @@ export function washingLine(len = 4.5, rnd = Math.random) {
     const pp = cg.attributes.position;
     for (let i = 0; i < pp.count; i++) pp.setZ(i, Math.sin((pp.getX(i) / cw + 0.5) * Math.PI) * 0.04 + (pp.getY(i) < 0 ? 0.03 : 0));
     cg.computeVertexNormals();
-    mesh(cg, MAT.paintDS, x + cw / 2, 2.08 - ch / 2, sz, g, { ry: (rnd() - 0.5) * 0.2 });
+    mesh(clothHem(cg), clothSway(MAT.paintDS), x + cw / 2, 2.08 - ch / 2, sz, g, { ry: (rnd() - 0.5) * 0.2 });
     x += cw + 0.15 + rnd() * 0.3;
   }
   return g;
@@ -1069,7 +1320,12 @@ export function stoneWall(len = 4, rnd = Math.random, o = {}) {
 // Authored tower (bd_moratower.glb): the model, then what moves or glows (star, chimes) and the annex.
 function authoredMoraTower(P) {
   const g = new THREE.Group(), H = 15;
-  bdAdd(P, 'body', g);
+  const body = bdAdd(P, 'body', g);
+  const cloth = bmat().cloth;
+  for (const piece of body) if (piece.material === cloth) {
+    piece.geometry = clothHem(piece.geometry.clone());
+    clothSway(cloth);
+  }
   bdPlants(P, g, mulberry32(99));
   const star = new THREE.Mesh(crystalGeometry('prism', { double: true, sides: 5, radius: 0.5, seed: 41 }), crystalMaterial({ color: 0xffe2a0, glow: 0xffc860, intensity: 1.5 }));
   star.scale.setScalar(0.5); star.position.set(2.4, H + 1 + 8.3, 0); g.add(star);
@@ -1192,7 +1448,8 @@ export function moraTower() {
   const an = house({ w: 5, d: 4.2, h: 2.8, roof: MAT.roofMora, wall: MAT.plaster, seed: 5, chimney: true, porch: false, woodpile: true, dormer: false, shutterCol: 0x3a3f86 });
   an.position.set(-2, 0, -6.2); an.rotation.y = Math.PI; g.add(an);
   // banners
-  const ban = new THREE.Mesh(new THREE.PlaneGeometry(1, 3, 1, 6), MAT.clothBlue);
+  const banner = clothHem(tinted(new THREE.PlaneGeometry(1, 3, 1, 6), 0x4a6fb0));
+  const ban = new THREE.Mesh(banner, clothSway(MAT.paintDS));
   ban.position.set(3.7, 10, 2.2); ban.rotation.y = 1.0; g.add(ban);
   // hanging crystal chimes
   const chimes = [];
@@ -2033,13 +2290,14 @@ export function weaponRack(rnd = Math.random) {
 // The random draws per drum follow the code-built versions (arch: offset then turn; pillar: tint then turn).
 function ruinColumn(p, x, y0, h, rnd, arch) {
   for (let k = 0; k < Math.ceil(h / 1.2); k++) {
-    const dh = Math.min(1.2, h - k * 1.2) - 0.05;
+    const dh = Math.min(1.2, h - k * 1.2);
     if (dh < 0.1) break;
     const a = rnd(), b = rnd();
     const [m] = authored('ruin', arch ? ['drumA', 'drumB', 'drumC'][k % 3] : (a < 0.5 ? 'drumA' : k % 2 ? 'drumC' : 'drumB'), p);
-    m.position.set(x + (arch ? (a - 0.5) * 0.05 : 0), y0 + k * 1.2 + dh / 2, 0);
+    m.position.set(x, y0 + k * 1.2 + dh / 2, 0);
     m.scale.y = dh / 1.15;
-    m.rotation.y = b * TAU;
+    // Tenfold rotation keeps carved flutes aligned while preserving random draws.
+    m.rotation.y = Math.floor(b * 10) * TAU / 10;
   }
 }
 export function ruinArch(rnd = Math.random) {
@@ -2128,9 +2386,17 @@ export function pillarBroken(h = 3, rnd = Math.random) {
 // line where it meets the gate's lip. Half sizes rx, ry; uAlpha fades the whole disc.
 function riftPortal(rx, ry) {
   const mat = new THREE.ShaderMaterial({
-    uniforms: { uTime: U.time, uAlpha: { value: 1 } },
-    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-    fragmentShader: `uniform float uTime; uniform float uAlpha; varying vec2 vUv;
+    // Shares the scene's fog uniforms (not a clone) so the portal sits behind the same aerial
+    // perspective as the gate stones instead of reading crisp from across the map.
+    uniforms: { ...THREE.UniformsLib.fog, uTime: U.time, uAlpha: { value: 1 }, uRift: { value: 0 } },
+    fog: true,
+    vertexShader: `#include <fog_pars_vertex>
+      varying vec2 vUv;
+      void main(){ vUv = uv; vec4 mvPosition = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mvPosition;
+      #include <fog_vertex>
+      }`,
+    fragmentShader: `uniform float uTime; uniform float uAlpha; uniform float uRift; varying vec2 vUv;
+      #include <fog_pars_fragment>
       float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
         return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y); }
@@ -2148,7 +2414,14 @@ function riftPortal(rx, ry) {
         col *= 1.0 - core * 0.92;
         float rim = smoothstep(0.8, 0.95, r) * smoothstep(1.0, 0.95, r);
         col += vec3(1.5, 1.05, 2.5) * rim * (0.8 + 0.2 * sin(uTime * 0.9));
-        gl_FragColor = vec4(col, smoothstep(1.0, 0.97, r) * uAlpha); }`,
+        float spiral = 0.5 + 0.5 * sin(a * 3.0 + dep * 8.0 - uTime * 0.68 + n2 * 5.5);
+        vec3 voidColor = mix(vec3(0.057,0.009,0.10), vec3(0.58,0.048,0.36), n2 * (0.5 + spiral));
+        voidColor += vec3(0.57,0.14,0.47) * fil + vec3(0.18,0.043,0.21) * rim;
+        col = mix(col, voidColor * (0.55 + 0.45 * (1.0 - core)), uRift);
+        float edgeAlpha = 1.0 - smoothstep(mix(0.97, 0.71, uRift), 1.0, r);
+        gl_FragColor = vec4(col, edgeAlpha * uAlpha);
+        #include <fog_fragment>
+      }`,
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
   });
   return new THREE.Mesh(new THREE.PlaneGeometry(rx * 2, ry * 2), mat);
@@ -2211,7 +2484,11 @@ function authoredRift(P, groundAt) {
 }
 export function riftGate(groundAt = () => 0) {
   const A = bdParts('riftgate');
-  if (A) return authoredRift(A, groundAt);
+  if (A) {
+    const g = authoredRift(A, groundAt);
+    riftPaving(g, groundAt, true);
+    return g;
+  }
   const g = new THREE.Group();
   const rnd = mulberry32(777);
   const veinMat = crystalMaterial({ color: 0x6a4a9a, glow: 0xa070ff, intensity: 1.4, seed: 9 });
@@ -2316,12 +2593,8 @@ export function riftGate(groundAt = () => 0) {
     const f = mesh(new THREE.DodecahedronGeometry(0.5 + rnd() * 0.8, 0), MAT.hushRock, Math.cos(a) * r, 5 + rnd() * 10, gz + Math.sin(a) * 3, g);
     f.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
   }
-  // cracked flagstones leading up to the gate
-  for (let i = 0; i < 12; i++) {
-    const z = gz + 4 + i * 1.3, x = (rnd() - 0.5) * 1.5;
-    const s = box(1.4 + rnd() * 0.6, 0.24, 1.1, MAT.hushRock, x, 0.42 + Math.abs(z) * 0.03, z, g, { ry: (rnd() - 0.5) * 0.4 });
-    s.rotation.z = (rnd() - 0.5) * 0.1;
-  }
+  // The legacy gate group is placed 0.3 m below the terrain by World.buildRift.
+  riftPaving(g, (x, z) => groundAt(x, z) + 0.3);
   const heartAnchor = new THREE.Object3D(); heartAnchor.position.set(0, 7, 0); g.add(heartAnchor);
   g.userData = { portal, heartAnchor };
   return g;

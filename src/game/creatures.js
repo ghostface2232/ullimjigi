@@ -2,7 +2,7 @@
 // motion, LOD, springs, secondary chains) plus Boreum the wind fox and the cat.
 import * as THREE from 'three';
 import { G } from '../core/context.js';
-import { fresnelMat } from '../render/materials.js';
+import { fresnelMat, characterMaterial, characterOutline } from '../render/materials.js';
 import { damp, clamp, rand } from '../core/util.js';
 import { SkelDef, Sculpt, Part, tube, blob, sheet, sstep, mix, TAU, instance, bodyMat, Chain, Spring } from './charkit.js';
 import { Rig } from './humanrig.js';
@@ -96,8 +96,8 @@ function altMap(key, variant) {
   return ALT.get(id);
 }
 // Surface response of an authored model on a toon material: the baked maps drive the detail
-// layer hooks of the toon shader (_rough / _specK / _cav), the light ramp becomes a soft
-// half-lambert so the sculpt reads, smooth and metallic texels mirror the sky, and the
+// layer hooks of the toon shader (_rough / _specK / _cav). The material group selects the
+// ramp, metallic texels use the metal row, smooth texels reflect the sky, and the
 // albedo's alpha is a glow mask lit with `glow` (a Color shared with the tier-coloured glow
 // material). o: { spec (highlight strength), metal (extra on metallic texels), ao, glowK, bump,
 // glowAlb (0..1: the glow takes the painted colour: lit eyes and marks), glowBoost (extra light
@@ -107,14 +107,19 @@ export function surfaced(m, tex, o = {}) {
   m.normalScale.set(o.bump ?? 1, o.bump ?? 1);
   for (const t of [tex.map, tex.normalMap, tex.orm]) if (t) t.anisotropy = 4;
   const u = { uOrm: { value: tex.orm }, uSurfP: { value: new THREE.Vector4(o.spec ?? 0.6, o.metal ?? 3, o.ao ?? 0.4, o.glowK ?? 1) }, uGlowC: { value: o.glow || new THREE.Color(0, 0, 0) }, uGlowA: { value: new THREE.Vector2(o.glowAlb ?? 0, o.glowBoost ?? 0) } };
+  u.uVisorLight = o.visorLight ?? { value: 0 };
   m.userData.surf = u;
-  return extendMat(m, 'surfaced', u, (sh) => {
-    sh.fragmentShader = 'uniform sampler2D uOrm;\nuniform vec4 uSurfP;\nuniform vec3 uGlowC;\nuniform vec2 uGlowA;\n' + sh.fragmentShader
-      .replace('float g = texture2D( gradientMap, vec2( clamp( ndl * 0.5 + 0.5, 0.0, 1.0 ), 0.5 ) ).r;', 'float g = smoothstep( -0.3, 0.7, ndl );')
+  extendMat(m, 'surfaced|' + !!tex.orm + '|' + !!tex.map, u, (sh) => {
+    if (tex.orm) {
+      sh.vertexShader = 'varying vec2 vActorUv;\n' + sh.vertexShader.replace('#include <uv_vertex>', '#include <uv_vertex>\nvActorUv = uv;');
+      sh.fragmentShader = 'varying vec2 vActorUv;\n' + sh.fragmentShader;
+    }
+    sh.fragmentShader = 'uniform sampler2D uOrm;\nuniform vec4 uSurfP;\nuniform vec3 uGlowC;\nuniform vec2 uGlowA;\nuniform float uVisorLight;\n' + sh.fragmentShader
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-  vec4 _mo = texture2D( uOrm, vMapUv );
-  float _mGlow = 1.0 - texture2D( map, vMapUv ).a;
-  _rough = clamp( _mo.g, 0.06, 1.0 ); _cav = mix( 1.0, _mo.r, uSurfP.z ); _specK = uSurfP.x * ( 1.0 + _mo.b * uSurfP.y );
+  vec4 _mo = ${tex.orm ? 'texture2D(uOrm, vActorUv)' : 'vec4(1.0, 0.68, 0.0, 1.0)'};
+  _actorMetal = _mo.b;
+  float _mGlow = ${tex.map ? '1.0 - diffuseColor.a / max(opacity, 0.0001)' : '0.0'};
+  _rough = clamp( _mo.g, 0.18, 1.0 ); _cav = mix( 1.0, _mo.r, uSurfP.z ); _specK = uSurfP.x * ( 1.0 + _mo.b * uSurfP.y );
   diffuseColor.rgb *= 1.0 - 0.5 * _mo.b;`)
       .replace('#include <opaque_fragment>', `{
   vec3 _sv = normalize( vViewPosition );
@@ -127,10 +132,21 @@ export function surfaced(m, tex, o = {}) {
   vec3 _tint = mix( vec3( 1.0 ), diffuseColor.rgb / max( max( diffuseColor.r, diffuseColor.g ), max( diffuseColor.b, 0.05 ) ), 0.85 );
   outgoingLight += _env * _tint * ( _mo.b * _gl * uSurfP.y * 0.35 * _cav );
   outgoingLight += uSkyRefl * ( ( 0.04 + 0.96 * _fr ) * _gl * _gl * _cav * _specK * 0.4 );
-  outgoingLight = mix( outgoingLight, mix( uGlowC, uGlowC * diffuseColor.rgb, uGlowA.x ) * ( uSurfP.w * ( 1.0 + uGlowA.y * smoothstep( 0.86, 1.0, _mGlow ) ) ), _mGlow );
+  // Keep the painted seam's edge, with only the full-intensity core feeding bloom.
+  float _glowEdge = smoothstep(0.02, 0.95, _mGlow);
+  vec3 _seam = mix(uGlowC, uGlowC * diffuseColor.rgb, uGlowA.x) * uSurfP.w;
+  #if defined(USE_COLOR) || defined(USE_COLOR_ALPHA)
+    // The knight's two recessed lenses carry a blue vertex tint. Preserve their painted cores and rings.
+    if (uVisorLight > 0.0 && vColor.b - vColor.r > 0.30) {
+      _seam = mix(diffuseColor.rgb, vec3(0.88, 0.96, 1.0), smoothstep(0.73, 0.96, _mGlow)) * uVisorLight;
+    }
+  #endif
+  outgoingLight = mix(outgoingLight, _seam, _glowEdge);
+  outgoingLight += _seam * uGlowA.y * smoothstep(0.86, 1.0, _mGlow);
 }
 #include <opaque_fragment>`);
   });
+  return characterMaterial(m, 'creature', { row: o.row, orm: tex.orm });
 }
 // give a rig's toon materials the baked maps of its authored model (if it has one).
 // o: { variant (albedo of that name), glow (Color for the glow mask), mat: { group: surfaced() options } }
@@ -139,7 +155,12 @@ export function dress(rig, o = {}) {
   if (!tx) return rig;
   const tex = o.variant ? { ...tx, map: altMap(tx.key, o.variant) } : tx;
   const glow = o.glow || (rig.glowMats && rig.glowMats[0] && rig.glowMats[0].color);
-  for (const k in rig.M) { const m = rig.M[k]; if (m && m.isMeshToonMaterial && !m.userData.surf) surfaced(m, tex, { glow, ...(o.mat && o.mat[k]) }); }
+  for (const k in rig.M) {
+    const m = rig.M[k];
+    const row = k === 'fur' ? 4 : k === 'skin' || k === 'in' ? 0 : k === 'metal' || k === 'ice' ? 2 : 1;
+    if (m?.isMeshToonMaterial && !m.userData.surf) surfaced(m, tex, { glow, row, ...o.mat?.[k] });
+  }
+  if (rig.outline?.geometry.hasAttribute('olw')) rig.outline.material = characterOutline(rig.outline.geometry, 1.8, tex.map);
   return rig;
 }
 // meshes of the model's unskinned pieces, parented to their bones: rigids(rig, { group: material })
@@ -597,8 +618,11 @@ export class CreatureRig extends Rig {
     const e = root.matrixWorld.elements;
     _v1.set(e[12], e[13], e[14]);
     const yaw = Math.atan2(e[8], e[10]);
-    if (!this.prevPos) this.prevPos = _v1.clone();
-    if (_v1.distanceToSquared(this.prevPos) > 4) { this.prevPos.copy(_v1); for (const c of this.chains) c.init = false; }
+    if (!this.prevPos || _v1.distanceToSquared(this.prevPos) > 4) {
+      this.prevPos = (this.prevPos || new V3()).copy(_v1);
+      this.prevYaw = yaw; this.vel.set(0, 0, 0); this.acc.set(0, 0, 0); this.yawRate = 0;
+      for (const c of this.chains) c.init = false;
+    }
     if (dt > 0) {
       _v2.subVectors(_v1, this.prevPos).multiplyScalar(1 / dt);
       if (_v2.lengthSq() > 3600) _v2.set(0, 0, 0);
@@ -779,6 +803,7 @@ class FoxRig extends CreatureRig {
     this.glanceT = 3; this.glance = 0; this.glanceTo = 0;
     this.lean = new V3();
     this.wind = new V3();
+    this.stridePhase = 0; this.travel = 0;
     this.t = rand() * 10;
   }
   update(dt, s = {}) {
@@ -789,11 +814,15 @@ class FoxRig extends CreatureRig {
     const vl = this.velL;
     const spd = Math.hypot(vl.x, vl.z);
     const fly = sstep(0.4, 5, spd);          // 0 hover .. 1 dashing through the air
+    this.travel = damp(this.travel, sstep(0.2, 1.6, spd), 9, dt);
+    this.stridePhase = (this.stridePhase + dt * mix(1.8, 3.4, fly) * this.travel) % 1;
+    const stride = this.stridePhase * TAU, bound = sstep(2.8, 6.5, spd);
+    const accel = this.acc.x * Math.sin(this.prevYaw) + this.acc.z * Math.cos(this.prevYaw);
     // body attitude: nose into motion, bank into turns, rise/fall pitch
-    this.lean.x = damp(this.lean.x, clamp(vl.z * 0.05 - vl.y * 0.06, -0.35, 0.35), 4, dt);
+    this.lean.x = damp(this.lean.x, clamp(vl.z * 0.05 - vl.y * 0.06 + accel * 0.008, -0.35, 0.35), 6, dt);
     this.lean.z = damp(this.lean.z, clamp(-this.yawRate * 0.12 - vl.x * 0.04, -0.4, 0.4), 4, dt);
     const bob = Math.sin(t * 2.2);
-    this.body.position.y = bob * 0.06;
+    this.body.position.y = bob * 0.06 * (1 - this.travel * 0.65) + Math.cos(stride * 2) * 0.018 * this.travel;
     rot(B.hips, this.lean.x * 0.6 + Math.sin(t * 2.2 - 0.6) * 0.04, 0, this.lean.z + Math.sin(t * 1.3) * 0.05);
     rot(B.spine, Math.sin(t * 2.2 - 1.2) * 0.05 + fly * 0.08, Math.sin(t * 1.1) * 0.04, 0);
     rot(B.chest, -Math.sin(t * 2.2 - 1.8) * 0.05 + this.lean.x * 0.3, -Math.sin(t * 1.1) * 0.04, 0);
@@ -816,7 +845,7 @@ class FoxRig extends CreatureRig {
     if (this.earT <= 0) { this.earT = 1.5 + rand() * 3.5; this.earSp[rand() < 0.5 ? 0 : 1].v += 14 + rand() * 10; }
     for (let k = 0; k < 2; k++) {
       const sd = k ? -1 : 1, ear = k ? B.earR : B.earL;
-      const tw = this.earSp[k].step(0, dt);
+      const tw = this.earSp[k].step(clamp(-accel * 0.3 + this.yawRate * sd, -4, 4), dt);
       rot(ear, -fly * 0.7 + (s.talk ? 0.15 : 0) + tw * 0.04 + Math.sin(t * 3 + k) * 0.03, sd * (tw * 0.05), sd * (-0.1 - fly * 0.3 + this.hurtSp.x * 0.05));
     }
     // blink
@@ -825,18 +854,21 @@ class FoxRig extends CreatureRig {
     this.blink = Math.max(0, this.blink - dt / 0.15);
     const bl = this.blink > 0 ? 1 - Math.sin(this.blink * Math.PI) * 0.9 : 1;
     B.eyeL.scale.set(1, bl, 1); B.eyeR.scale.set(1, bl, 1);
-    // legs: idle air-treading, stretched leap pose when flying fast
+    // Diagonal trot grows into a gathered/reaching bound. Feet continue cycling
+    // through fast flight instead of freezing into a stretched silhouette.
     const tr = t * 2.6;
     for (let k = 0; k < 2; k++) {
       const n = k ? 'R' : 'L', ph = k ? Math.PI : 0;
       const a = Math.sin(tr + ph), b = Math.cos(tr + ph);
-      rot(B['fArm' + n], mix(0.25 + a * 0.22, -0.9, fly), 0, 0);
-      rot(B['fFore' + n], mix(-0.35 - Math.max(0, b) * 0.5, -0.3, fly), 0, 0);
-      rot(B['fPaw' + n], mix(0.5 + Math.max(0, -b) * 0.3, 0.9, fly), 0, 0);
-      rot(B['hThigh' + n], mix(0.1 - a * 0.2, 0.9, fly), 0, 0);
-      rot(B['hShin' + n], mix(0.25 + Math.max(0, b) * 0.3, 0.2, fly), 0, 0);
-      rot(B['hFoot' + n], mix(-0.2, 0.5, fly), 0, 0);
-      rot(B['hPaw' + n], mix(0.45, 0.8, fly), 0, 0);
+      const fp = stride + ph * (1 - bound * 0.85), hp = fp + Math.PI * (1 - bound * 0.6);
+      const fs = Math.cos(fp), hs = Math.cos(hp), reach = 0.45 + 0.45 * fly;
+      rot(B['fArm' + n], mix(0.25 + a * 0.22, -0.2 - fs * reach, this.travel), 0, 0);
+      rot(B['fFore' + n], mix(-0.35 - Math.max(0, b) * 0.5, -0.3 - Math.max(0, Math.sin(fp)) * 0.85, this.travel), 0, 0);
+      rot(B['fPaw' + n], mix(0.5 + Math.max(0, -b) * 0.3, 0.65 + Math.sin(fp - 0.5) * 0.25, this.travel), 0, 0);
+      rot(B['hThigh' + n], mix(0.1 - a * 0.2, 0.25 - hs * reach, this.travel), 0, 0);
+      rot(B['hShin' + n], mix(0.25 + Math.max(0, b) * 0.3, 0.3 + Math.max(0, Math.sin(hp)) * 0.65, this.travel), 0, 0);
+      rot(B['hFoot' + n], mix(-0.2, 0.15 - Math.sin(hp - 0.5) * 0.3, this.travel), 0, 0);
+      rot(B['hPaw' + n], mix(0.45, 0.6 + Math.sin(hp - 0.7) * 0.2, this.travel), 0, 0);
     }
     // hit flinch
     const hk = this.hurtSp.x * 0.06;
@@ -956,7 +988,7 @@ class CatRig extends CreatureRig {
       main: bodyMat(0xffffff, { vertexColors: true, rim: 0.4 }),
     };
     // the painted eyes are lit by their own colour (their glow mask stays under the bloom boost)
-    super(T, M, { main: 'fur', outline: 0.004, dress: { glow: new THREE.Color(1, 1, 1), mat: { fur: { spec: 0.35 }, main: { spec: 1.4, glowAlb: 1 } } } });
+    super(T, M, { main: 'fur', outline: 0.0013, dress: { glow: new THREE.Color(1, 1, 1), mat: { fur: { spec: 0.25 }, main: { spec: 1.1, glowAlb: 1 } } } });
     const B = this.B;
     this.p = { head: B.head, torso: B.chest, hips: B.hips };
     this.t = rand() * 10;

@@ -6,6 +6,8 @@ import { AudioEngine } from '../core/audio.js';
 import { Music } from '../core/music.js';
 import { Renderer } from '../render/renderer.js';
 import { suggestTier } from '../render/quality.js';
+import { U } from '../render/materials.js';
+import { preloadFireVolume } from '../render/flame.js';
 import { preloadModels } from '../render/models.js';
 import { VFX } from '../render/vfx.js';
 import { World, LANTERNS } from '../world/world.js';
@@ -14,6 +16,7 @@ import { CameraRig } from './camera.js';
 import { Combat } from './combat.js';
 import { Spells } from './spells.js';
 import { EnemyManager, DEF } from './enemies.js';
+import { makeBrute } from './characters.js';
 import { NPCs, Companion } from './npcs.js';
 import { Player } from './player.js';
 import { Dialogue } from './dialogue.js';
@@ -99,7 +102,7 @@ export class Game {
     G.scene = G.renderer.scene; G.camera = G.renderer.camera;
     G.vfx = new VFX(G.scene);
     await nextFrame();
-    await preloadModels(); // authored GLB models, needed by the world and the characters
+    await Promise.all([preloadModels(), preloadFireVolume(U.fireVolume.value)]);
     G.world = new World(G.scene, (p, t) => this.progress(p, t));
     G.atlas = new Atlas(G.world.terrain);
     this.progress(0.75, '사람들을 깨우는 중…');
@@ -182,6 +185,7 @@ export class Game {
   async warmup() {
     const grp = new THREE.Group();
     const rigs = Object.values(DEF).map((d) => d.make());
+    rigs.push(makeBrute('warden')); // the shrine boss's own body is not a DEF entry
     rigs.forEach((r, i) => { r.root.position.set(i * 2, -50, 0); grp.add(r.root); });
     const orb = G.vfx.orb('fire', 0.3); grp.add(orb);
     const tor = G.vfx.tornado(new THREE.Vector3(0, -50, 0)); tor.done = true;

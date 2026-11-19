@@ -6,12 +6,14 @@
 // glow materials in rig.glowMats (enemies.js sets color * 2.6). Fissures are
 // real geometry: grooves cut down to a glowing inner mass.
 import * as THREE from 'three';
+import { G } from '../core/context.js';
 import { damp, clamp, lerp, rand } from '../core/util.js';
 import { tube, blob, sheet, sstep, mix, TAU, bodyMat, vnoise3, rotateTowards, ik2, setWorldQuat, Spring } from './charkit.js';
 import { CHAR, HumanRig, humanType, makeGhost } from './humanrig.js';
 import { glowBasic, glowTwin, Field, shard, shade, sheen, rigidType, spike, tatter, prism, megalith, builtFromModel, dress, rigids } from './creatures.js';
 import { model } from '../render/models.js';
 import { WardenShell } from './warden.js';
+import { knightMotion, wardenMotion } from './bossmotion.js';
 
 const V3 = THREE.Vector3;
 const v = (x, y, z) => new V3(x, y, z);
@@ -193,18 +195,22 @@ const ASH = { normal: ashlingCfg(false), frost: ashlingCfg(true) };
 
 // a claw swipe: windup (arm cocked back, torso twisted) → swipe across on flick
 function clawPose(q, s, R) {
+  q.lunge = s.action === 'attack' ? sstep(0, .085, s.actionTime)
+    : s.action === 'recover' && s.fromAction === 'attack' ? 1 - sstep(0, .24, s.actionTime) : 0;
   const a = R.w.cast;
   if (a < 0.01) return;
   const ft = R.flickT;
-  const sw = sstep(0, 0.08, ft) * (1 - sstep(0.35, 0.7, ft));
+  const sw = s.action === 'attack' ? sstep(0, .10, s.actionTime)
+    : s.action === 'windup' ? 0 : sstep(0, .10, ft) * (1 - sstep(.30, .64, ft));
   const wu = 1 - sw;
   const L = (x, y) => lerp(x, y, a);
-  q.armRx = L(q.armRx, wu * -1.9 + sw * -0.9); q.armRz = L(q.armRz, wu * -0.5 + sw * 0.9); q.armRy = L(q.armRy, wu * -0.4 + sw * 0.6);
+  q.armRx = L(q.armRx, wu * -1.9 + sw * -1.62); q.armRz = L(q.armRz, wu * -0.5 + sw * 0.40); q.armRy = L(q.armRy, wu * -0.4 + sw * 0.23);
   q.foreRx = L(q.foreRx, wu * -1.3 + sw * -0.2); q.handRx = L(q.handRx, wu * -0.4 + sw * 0.4); q.fingR = L(q.fingR, wu * -0.3 + sw * 0.9);
   q.armLx = L(q.armLx, -0.5 - sw * 0.3); q.armLz = L(q.armLz, 0.5); q.foreLx = L(q.foreLx, -0.9);
   q.chesty += a * (wu * -0.45 + sw * 0.55); q.spiney += a * (wu * -0.2 + sw * 0.3);
   q.spinex += a * (wu * -0.1 + sw * 0.35); q.headx += a * (-0.25 * wu); q.jawx += a * 0.25;
   q.hipsPY -= a * 0.03;
+  q.hipsPZ += a * (.11 * sw - .045 * wu); q.clavRy += a * (.33 * sw - .24 * wu);
 }
 function twitch(q, s, R) {
   // ashlings: deep hunch, restless head twitches and dangling, swaying arms
@@ -229,7 +235,7 @@ export function makeAshling(variant = 'normal') {
   const glow = glowBasic(frost ? 0x8fe3ff : 0xc9a0ff, 2.6);
   const M = { main: skinMat(), glow };
   if (frost) M.ice = iceMat();
-  const rig = new HumanRig(T, { mats: M, castPose: false, outline: 0.0045, rim: 0.7, style: { armHang: 0.14, lift: 1.2 }, pose: (q, s, R, dt) => { twitch(q, s, R); clawPose(q, s, R, dt); } });
+  const rig = new HumanRig(T, { mats: M, castPose: false, plantedGait: true, outline: 0.0045, rim: 0.7, style: { armHang: 0.14, lift: 1.2, cadence: 1.17, twist: 1.3 }, pose: (q, s, R, dt) => { twitch(q, s, R); clawPose(q, s, R, dt); } });
   dress(rig, { variant: frost ? 'frost' : null, mat: { main: { spec: 0.5 }, ice: { spec: 1.6 } } });
   rig.eyeMat = glow;
   rig.height = 1.5;
@@ -307,9 +313,9 @@ const BRUTE = { normal: bruteCfg(false), frost: bruteCfg(true), warden: { ...bru
 
 
 // overhead two-handed slam: raise with aimPitch < 0, smash down with aimPitch > 0
-function slamPose(q, s, R) {
+function slamPose(q, s, R, dt) {
   const a = R.w.cast;
-  const ch = R.chargeW = damp(R.chargeW ?? 0, s.charge ?? 0, 6, 1 / 60);
+  const ch = R.chargeW = damp(R.chargeW ?? 0, s.charge ?? 0, 6, dt);
   if (ch > 0.01) {
     // shoulder-first bull rush
     q.spinex += 0.45 * ch; q.chestx += 0.2 * ch; q.headx -= 0.25 * ch; q.chesty += 0.25 * ch;
@@ -350,6 +356,23 @@ function stoneGeo(kind) {
   }, { stone: 0xffffff }));
 }
 
+// The guardian catches its weight on its knuckles. Keep the wrist above the
+// local floor even when one side of the warning circle is on a higher step.
+function plantWardenHands(s, rig) {
+  if (!G.world?.ground || rig.lod > 1) return;
+  const striking = s.action === 'slamWind' || (s.action === 'recover' && s.fromAction === 'slamWind');
+  if (!striking && !s.kneel && s.deathProgress === undefined) return;
+  for (const side of ['L', 'R']) {
+    const hand = rig.B['hand' + side], fore = rig.B['fore' + side];
+    const wrist = hand.getWorldPosition(_v1);
+    const floor = G.world.ground(wrist.x, wrist.z, rig.root.position.y + .6) + .29 * rig.root.scale.x;
+    if (wrist.y >= floor) continue;
+    wrist.y = floor;
+    const elbow = fore.getWorldPosition(_v2);
+    ik2(rig.B['arm' + side], fore, hand.position, wrist, elbow);
+  }
+}
+
 export function makeBrute(variant = 'normal') {
   const warden = variant === 'warden' && model('mn_warden');
   const frost = variant === 'frost' || variant === 'warden';
@@ -357,11 +380,15 @@ export function makeBrute(variant = 'normal') {
   const glow = glowBasic(frost ? 0x8fe3ff : 0xc080ff, 2.6);
   const M = { main: skinMat(0.5), glow };
   if (frost) M.ice = warden ? skinMat(0.35) : iceMat();
-  const rig = new HumanRig(T, { mats: M, castPose: false, outline: 0.006, rim: 0.55, style: { armHang: 0.25, lift: 0.7, sway: 1.6 }, pose: (q, s, R) => {
+  const guardian = variant === 'warden';
+  const rig = new HumanRig(T, { mats: M, castPose: false, plantedGait: true, post: guardian ? plantWardenHands : null,
+    outline: 0.006, rim: 0.55, style: { armHang: 0.25, lift: 0.7, sway: 1.6, cadence: guardian ? .8 : .9, base: 1.35, arm: .55 }, pose: (q, s, R, dt) => {
+    if (guardian) return wardenMotion(q, s, R);
     q.armLx -= 0.15; q.armRx -= 0.15; q.foreLx -= 0.25; q.foreRx -= 0.25;
-    if (warden) { q.spinex += 0.09; q.chestx += 0.09; q.headx -= 0.19; }
-    slamPose(q, s, R);
+    q.chestz += .07 * Math.cos(R.phase * TAU) * R.w.gait;
+    slamPose(q, s, R, dt);
   } });
+  rig.isWarden = guardian;
   dress(rig, { variant: frost && !warden ? 'frost' : null, mat: { main: { spec: 0.45 }, ice: { spec: warden ? 0.65 : 1.6 } } });
   if (warden) {
     // Apply the authored parent scale to the rebuilt skeleton and its rigid attachments.
@@ -786,16 +813,29 @@ function knightPost(s, R, dt) {
   const fw = _v2.set(re[8], re[9], re[10]).multiplyScalar(1 / rs);
   const a = R.w.cast * (1 - Math.max(R.w.dead, R.w.down));
   const raise = clamp((0.8 - (s.aimPitch ?? 0)) / 2.4, 0, 1);
-  const ang = mix(-0.54, mix(-0.3, 2.6, raise), a) + R.w.kneel * -0.6;
+  const ang = R.plantedGait ? -.54 + R.q.bladePitch : mix(-0.54, mix(-0.3, 2.6, raise), a) + R.w.kneel * -0.6;
   const guardSide = _v5.crossVectors(up, fw);
-  const guardYaw = -2.25 * (1 - a);
+  const guardYaw = R.plantedGait ? -2.25 + R.q.bladeYaw : -2.25 * (1 - a);
   const want = _v3.copy(fw).multiplyScalar(Math.cos(ang) * Math.cos(guardYaw))
     .addScaledVector(guardSide, Math.cos(ang) * Math.sin(guardYaw)).addScaledVector(up, Math.sin(ang)).normalize();
   const hand = R.B.handR;
+  if (R.q.groundStrike > 0 && G.world?.ground) {
+    const grip = R.p.sword.getWorldPosition(_v4);
+    const length = R.bladeLength * rs * R.s;
+    const ground = G.world.ground(grip.x + want.x * length, grip.z + want.z * length, grip.y);
+    const y = mix(want.y, clamp((ground - grip.y) / length, -.99, .99), R.q.groundStrike);
+    want.set(want.x, 0, want.z).normalize().multiplyScalar(Math.sqrt(1 - y * y));
+    want.y = y;
+  }
   hand.getWorldQuaternion(_q1);
   const cur = _v4.set(0, 0, 1).applyQuaternion(_q1);
-  rotateTowards(hand, cur, want, 0.95 * (1 - R.w.shock));
+  rotateTowards(hand, cur, want, (.95 + .05 * (R.q.groundStrike || 0)) * (1 - R.w.shock));
   hand.updateMatrixWorld(true);
+  if (R.q.twoHands > .001) {
+    const grip = R.p.sword.localToWorld(_v1.set(0, 0, -.105));
+    const elbow = R.root.localToWorld(_v2.set(.74 * R.s, .86 * R.s, -.24 * R.s));
+    ik2(R.B.armL, R.B.foreL, R.B.handL.position, grip, elbow, R.q.twoHands);
+  }
   animateKnightArmour(R, s.phase, dt);
 }
 
@@ -804,7 +844,7 @@ export function makeKnight(spectral = false) {
   const glow = glowBasic(spectral ? 0x9ad0ff : 0xb080ff, 2.5);
   const metal = metalMat();
   const main = skinMat(0.6);
-  const rig = new HumanRig(T, { mats: { main, metal, glow }, castPose: false, hold: null, outline: 0.0032, rim: 0.6, style: { armHang: 0.1, stanceDepth: 0.19 }, pose: knightPose, post: knightPost });
+  const rig = new HumanRig(T, { mats: { main, metal, glow }, castPose: false, hold: null, plantedGait: !spectral, outline: 0.0032, rim: 0.6, style: { armHang: 0.1, stanceDepth: 0.19, arm: .58 }, pose: spectral ? knightPose : knightMotion, post: knightPost });
   // Keep the rib light cold while retaining a little of the level tint.
   const cold = new THREE.Color(0.92, 1.53, 2.25);
   rig.p.visorLight = { value: spectral ? 0 : knightVisorStrength };
@@ -819,6 +859,9 @@ export function makeKnight(spectral = false) {
   sword.position.set(0, -rig.L.hand * 0.36, 0.004);
   rig.B.handR.add(sword);
   rig.p.sword = sword; rig.p.swordEdge = edge;
+  const steelGeometry = held.sword?.geo || swordGeo;
+  if (!steelGeometry.boundingBox) steelGeometry.computeBoundingBox();
+  rig.bladeLength = steelGeometry.boundingBox.max.z;
   rig.glowMat = glow; rig.glowMats = spectral ? [] : [glow];
   rig.height = 2.4;
   if (spectral) makeGhost(rig, 0x9ad0ff, 0.7);
@@ -925,6 +968,10 @@ function getMaceGeo() {
 function shieldPose(q, s, R, dt) {
   R.g = damp(R.g ?? 0, s.guard ? 1 : 0, 8, dt);
   R.bashW = damp(R.bashW ?? 0, s.bash ? 1 : 0, s.bash ? 22 : 6, dt);
+  if (s.action === 'bashWind' || s.action === 'shoveWind') {
+    R.bashW = -.48 * sstep(0, .34, s.actionTime);
+  } else if (s.action === 'bash') R.bashW = mix(-.48, 1, sstep(0, .08, s.actionTime));
+  else if (s.action === 'shove') R.bashW = 1;
   R.brk = damp(R.brk ?? 0, s.broken ? 1 : 0, s.broken ? 10 : 3, dt);
   const g = R.g * (1 - R.brk), b = R.bashW;
   // braced stance behind the shield, shove with the shoulder on a bash
@@ -932,6 +979,7 @@ function shieldPose(q, s, R, dt) {
   q.thighLx -= 0.3 * g + 0.3 * b; q.shinLx += 0.35 * g + 0.2 * b; q.thighRx += 0.15 * g; q.shinRx += 0.15 * g; q.hipsPY -= 0.05 * g;
   // mace arm: cocked when guarding, raised on the bash
   q.armRx += -0.25 - 0.3 * g - 0.9 * b; q.armRz -= 0.15 * g; q.foreRx += -0.6 - 0.5 * b; q.fingR = 1.3; q.thumbR = 1.1;
+  q.hipsPZ += .085 * b; q.clavLy += .23 * b; q.heady += .20 * b;
   q.fingL = 1.2; q.thumbL = 1.0;
   // staggered off balance when the guard breaks
   q.spinex -= 0.25 * R.brk; q.chesty += 0.3 * R.brk; q.headx += 0.2 * R.brk;
@@ -968,7 +1016,7 @@ export function makeShieldBearer() {
   const glow = glowBasic(0xc9a0ff, 2.6);
   const main = skinMat(0.6), held = T.built.rigid || {};
   const gear = held.shield ? main : metalMat(0.8);
-  const rig = new HumanRig(T, { mats: { main, metal: metalMat(0.8), glow }, castPose: false, hold: null, outline: 0.0036, rim: 0.6, pose: shieldPose, post: shieldPost });
+  const rig = new HumanRig(T, { mats: { main, metal: metalMat(0.8), glow }, castPose: false, hold: null, plantedGait: true, style: { base: 1.25, arm: .4 }, outline: 0.0036, rim: 0.6, pose: shieldPose, post: shieldPost });
   dress(rig, { mat: { main: { spec: 1.0 } } });
   const B = rig.B;
   if (!held.shield) rig.mats.push(gear);
@@ -1103,12 +1151,17 @@ function archerPose(q, s, R, dt) {
   q.spinex -= 0.08 * a; q.chestx += (s.aimPitch ?? 0) * 0.3 * a;
   q.thighLz += 0.12 * a; q.thighRz -= 0.12 * a; q.thighLy -= 0.4 * a;
   q.fingL = 1.4; q.thumbL = 1.2; q.fingR = lerp(q.fingR, 0.7, a);
+  if (s.action === 'loose') {
+    const recoil = 1 - sstep(.045, .34, s.actionTime);
+    q.chesty += .28 * recoil; q.clavRy -= .32 * recoil;
+    q.headx -= .12 * recoil; q.fingR -= .88 * recoil;
+  }
 }
 function archerPost(s, R, dt) {
   const B = R.B;
   const a = R.aimW ?? 0;
   const lie = Math.max(R.w.dead, R.w.down);
-  R.drawW = damp(R.drawW ?? 0, s.draw ?? 0, s.draw ? 8 : 30, dt);
+  R.drawW = s.action === 'loose' ? 0 : damp(R.drawW ?? 0, s.draw ?? 0, s.draw ? 8 : 30, dt);
   const d = R.drawW * a;
   const re = R.root.matrixWorld.elements, rs = R.root.scale.x || 1;
   const up = _v1.set(re[4], re[5], re[6]).multiplyScalar(1 / rs), fw = _v2.set(re[8], re[9], re[10]).multiplyScalar(1 / rs);
@@ -1122,7 +1175,8 @@ function archerPost(s, R, dt) {
     const tL = R._tL.copy(_v3).addScaledVector(aim, reach * 0.97);
     ik2(B.armL, B.foreL, R._hOffL, tL, _v4.copy(_v3).addScaledVector(up, -1).addScaledVector(fw, -0.3), a * W);
     const bowP = B.handL.getWorldPosition(R._bp);
-    const tR = R._tR.copy(bowP).addScaledVector(aim, -mix(0.16, reach * 0.95, d)).addScaledVector(up, 0.02);
+    const pull = s.action === 'loose' ? reach * (1.16 - .78 * sstep(.045, .28, s.actionTime)) : mix(0.16, reach * 0.95, d);
+    const tR = R._tR.copy(bowP).addScaledVector(aim, -pull).addScaledVector(up, 0.02);
     B.armR.getWorldPosition(_v3);
     ik2(B.armR, B.foreR, R._hOffR, tR, _v4.copy(_v3).addScaledVector(up, 0.2).addScaledVector(aim, -1), a * W);
   }
@@ -1149,7 +1203,7 @@ export function makeArcher() {
   const T = enemyType(ARCHER_CFG);
   const glow = glowBasic(0x9aeaff, 2.6);
   const main = skinMat(0.6), held = T.built.rigid || {};
-  const rig = new HumanRig(T, { mats: { main, glow }, castPose: false, hold: null, outline: 0.0045, rim: 0.6, pose: archerPose, post: archerPost });
+  const rig = new HumanRig(T, { mats: { main, glow }, castPose: false, hold: null, plantedGait: true, style: { cadence: 1.13, twist: .8 }, outline: 0.0045, rim: 0.6, pose: archerPose, post: archerPost });
   dress(rig, { mat: { main: { spec: 0.6 } } });
   const B = rig.B;
   const gear = held.bow ? main : bodyMat(0xffffff, { vertexColors: true, rim: 0.6 });

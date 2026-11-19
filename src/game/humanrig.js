@@ -548,6 +548,7 @@ export class HumanRig extends Rig {
     // people (makeHumanoid) move with the gaits, idle life and action poses below; rigs built
     // directly (enemies) keep the first-generation motion their own pose hooks were written against
     this.person = !!o.person;
+    this.plantedGait = this.person || !!o.plantedGait;
     this.s = c.scale ?? 1;
     this.L = T.L;
     const body = (this.body = new THREE.Group()); body.scale.setScalar(this.s); this.root.add(body);
@@ -895,7 +896,10 @@ export class HumanRig extends Rig {
     const vis = root.visible && this.lod < 2;
 
     // --- state weights
-    const speed = Math.min(s.speed ?? 0, 60);
+    const speed = s.lockStride ? 0 : this.plantedGait && !this.person && dt > 0 && this.prevStrideX !== undefined
+      ? Math.min(20, Math.hypot(e[12] - this.prevStrideX, e[14] - this.prevStrideZ) / dt)
+      : Math.min(s.speed ?? 0, 60);
+    if (this.plantedGait && !this.person) { this.prevStrideX = e[12]; this.prevStrideZ = e[14]; }
     const grounded = s.grounded !== false;
     const lie = Math.max(W.down, W.dead);
     const casting = s.cast || (this.person && (this.cast.wt >= 0 || (s.charge ?? 0) > 0.01 || (this.cast.clip && this.cast.rt < this.cast.clip.rec)));
@@ -909,7 +913,7 @@ export class HumanRig extends Rig {
     W.kneel = damp(W.kneel, s.kneel ? 1 : 0, 4, dt);
     W.wave = damp(W.wave, s.wave ? 1 : 0, 6, dt);
     W.spread = damp(W.spread, s.spread ? 1 : 0, 6, dt);
-    W.down = damp(W.down, s.down ? 1 : 0, s.down ? 12 : 4, dt);
+    W.down = s.floorFall !== undefined ? 0 : damp(W.down, s.down ? 1 : 0, s.down ? 12 : 4, dt);
     W.stagger = damp(W.stagger, s.stagger ? 1 : 0, 8, dt);
     W.shock = damp(W.shock, s.shock ? 1 : 0, 20, dt);
     W.panic = damp(W.panic, s.panic ? 1 : 0, 10, dt);
@@ -921,7 +925,7 @@ export class HumanRig extends Rig {
     const P = this.person;
     W.gait = damp(W.gait, spn > 0.2 && grounded ? 1 : 0, spn > 0.2 ? 18 : 10, dt);
     W.run = damp(W.run, P ? sstep(2.3, 4.0, spn) : sstep(2.6, 5.2, spn), P ? 7 : 5, dt);
-    const sprint = P ? (W.sprint = damp(W.sprint, sstep(6.6, 8.6, spn), 6, dt)) : sstep(6.5, 9, spn);
+    const sprint = this.plantedGait ? (W.sprint = damp(W.sprint, sstep(6.6, 8.6, spn), 6, dt)) : sstep(6.5, 9, spn);
     if (!grounded) this.airT += dt; else this.airT = 0;
     // landing impact
     if (grounded && !this.prevGrounded && !s.swim) {
@@ -941,7 +945,7 @@ export class HumanRig extends Rig {
     // gait phase
     let freq = (1.0 + 0.3 * spn) * st.cadence;
     let duty = mix(0.6, 0.34, sstep(1.5, 7, spn));
-    if (P) {
+    if (this.plantedGait) {
       gaitOf(spn, this.gt); freq = this.gt.freq * st.cadence; duty = this.gt.duty;
       // sideways and backwards the legs cannot reach as far: shorter, quicker steps
       const vl = Math.hypot(this.velL.x, this.velL.z), fwd = vl > 0.3 ? Math.max(0, this.velL.z / vl) : 1;
@@ -953,7 +957,7 @@ export class HumanRig extends Rig {
     const run = W.run;
     const hold = this.hold;
     const idle = 1 - W.gait;
-    if (P) this.bodyPose(q, dt, s, ph, duty, gw, spn, speed, accF);
+    if (this.plantedGait) this.bodyPose(q, dt, s, ph, duty, gw, spn, speed, accF);
     else {
     // idle breathing & weight shift
     const breath = Math.sin(t * 2.1);
@@ -1220,6 +1224,7 @@ export class HumanRig extends Rig {
     if (this.face2) q.headx += this.nod * 0.035 - this.browFlash * 0.01;
 
     if (this.poseHook) this.poseHook(q, s, this, dt);
+    if (s.floorFall !== undefined) this.floorPose(q, s);
     // --- write FK to bones
     const B = this.B;
     const hipsRest = this.rest.hips;
@@ -1298,9 +1303,9 @@ export class HumanRig extends Rig {
     }
     // --- legs: planted-foot IK when standing / walking
     const upright = Math.abs(root.rotation.x) < 0.2 && Math.abs(root.rotation.z) < 0.2;
-    const ikTarget = grounded && !s.climb && !s.dash && upright && W.swim < 0.5 && W.glide < 0.5 && lie < 0.2 && W.sit < 0.5 && W.kneel < 0.5 && W.dash < 0.5 && this.lod < 2 ? 1 : 0;
+    const ikTarget = grounded && s.floorFall === undefined && !s.climb && !s.dash && upright && W.swim < 0.5 && W.glide < 0.5 && lie < 0.2 && W.sit < 0.5 && W.kneel < 0.5 && W.dash < 0.5 && this.lod < 2 ? 1 : 0;
     this.ikW = damp(this.ikW, ikTarget, ikTarget ? 10 : 14, dt);
-    if (this.ikW > 0.01 && vis) { if (P) this.legIK2(dt, speed, freq, duty, gw); else this.legIK(dt, speed, spn, freq, duty, gw, run); }
+    if (this.ikW > 0.01 && vis) { if (this.plantedGait) this.legIK2(dt, speed, freq, duty, gw); else this.legIK(dt, speed, spn, freq, duty, gw, run); }
     else { for (const f of this.feet) f.init = false; this.pelvisDrop = damp(this.pelvisDrop, 0, 8, dt); }
 
     // --- secondary motion
@@ -1467,6 +1472,25 @@ export class HumanRig extends Rig {
   }
 
   // ---------------------------------------------------------------- people: body
+  floorPose(q, s) {
+    const rise = s.rise || 0, push = sstep(.1, .62, rise), stand = sstep(.53, 1, rise);
+    const a = s.floorFall * (1 - stand), side = s.fallZ < 0 ? -1 : 1;
+    const roll = Math.sin(Math.PI * push);
+    q.hipsPY = mix(q.hipsPY, -this.hipY * mix(.80, .45, push), a);
+    q.hipsPZ += .09 * a * push;
+    q.hipsx = mix(q.hipsx, s.fallX * (1 - push) + .24 * push, a);
+    q.hipsz = mix(q.hipsz, s.fallZ * (1 - push) + side * .46 * roll, a);
+    q.spinex = mix(q.spinex, .32 + .27 * roll, a); q.chestx = mix(q.chestx, -.08 + .22 * roll, a);
+    q.chesty = mix(q.chesty, side * (.32 - .62 * push), a);
+    q.headx = mix(q.headx, -.18 - .28 * push, a); q.heady = mix(q.heady, side * .27, a);
+    q.thighLx = mix(q.thighLx, -.79 - .70 * push, a); q.shinLx = mix(q.shinLx, 1.18 + .36 * push, a);
+    q.thighRx = mix(q.thighRx, -.14 + .25 * push, a); q.shinRx = mix(q.shinRx, .64 + 1.13 * push, a);
+    q.armLx = mix(q.armLx, -.52 - .60 * roll, a); q.armLz = mix(q.armLz, .74 - .56 * push, a);
+    q.foreLx = mix(q.foreLx, -.96 + .83 * push, a); q.handLx = mix(q.handLx, -.52 * push, a);
+    q.armRx = mix(q.armRx, -.93 - .18 * roll, a); q.foreRx = mix(q.foreRx, -.69 + .47 * push, a);
+    q.fingL = mix(q.fingL, .18 - .34 * roll, a);
+  }
+
   // Idle life and the upper body of the three gaits. The legs come from legIK2 on the same phase
   // (left foot strikes at phase 0, right at 0.5).
   bodyPose(q, dt, s, ph, duty, gw, spn, speed, accF) {
@@ -1500,7 +1524,7 @@ export class HumanRig extends Rig {
     q.hipsz += side * 0.065; q.hipsPY -= Math.abs(side) * 0.012;
     q.spinez -= side * 0.05 + drift * 0.01 * idle; q.chestz -= side * 0.03; q.neckz += side * 0.02; q.headz += side * 0.03; q.hipsy -= side * 0.06; q.chesty += side * 0.05;
     // now and then something to do with a free hand, a stiff neck or restless feet
-    if (idle > 0.9 && !s.talk && !s.sit && !s.kneel && !s.dead && W.cast < 0.05 && W.air < 0.05 && W.swim < 0.05 && W.climb < 0.05 && !this.gestures.length) {
+    if (this.person && idle > 0.9 && !s.talk && !s.sit && !s.kneel && !s.dead && W.cast < 0.05 && W.air < 0.05 && W.swim < 0.05 && W.climb < 0.05 && !this.gestures.length) {
       I.fidT -= dt;
       if (I.fidT <= 0) {
         const kid = c.kid ?? 0, r = rand();
@@ -1708,6 +1732,15 @@ export class HumanRig extends Rig {
           // (into a casting stance both feet go at once, quickly: a short hop)
           if ((!stepping || cs > 0.5) && (err > 0.085 * k || twist > 0.6 || (turning && (err > 0.06 * k || twist > 0.25)))) { f.from.copy(f.plant); f.p0 = 0; f.stepping = 1; f.stepDur = cs > 0.5 ? 0.13 : turning ? 0.18 : err > 0.2 * k ? 0.24 : 0.36; f.planted = false; stepping = true; }
         }
+      }
+      if (this.q.lunge > 0) {
+        // A lunge advances faster than a walking step. Carry the lead foot
+        // with the strike and keep the rear boot behind the pelvis.
+        const spread = (sd > 0 ? .42 : -.38) * k;
+        f.pos.x = mix(f.pos.x, restX + fwdX * spread, this.q.lunge);
+        f.pos.z = mix(f.pos.z, restZ + fwdZ * spread, this.q.lunge);
+        f.pos.y = groundAt(f.pos.x, f.pos.z, ry);
+        if (this.q.lunge > .98) { f.from.copy(f.pos); f.plant.copy(f.pos); f.planted = true; f.stepping = 0; }
       }
       // Fit a small sole-sized plane to the same walkable surface as collision.
       // A stair edge is a height discontinuity, not a steep ramp to roll onto.

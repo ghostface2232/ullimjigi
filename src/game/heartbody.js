@@ -149,6 +149,15 @@ export class HeartBody {
         action.paused = true; action.time = clip.duration; action.weight = 0;
         return { action, windup: clip.name === 'SealWindup' };
       });
+    this.arms = [];
+    for (const suffix of ['L', 'R']) {
+      const arm = this.root.getObjectByName('UpperArm' + suffix);
+      if (!arm) continue;
+      const joints = ['UpperArm', 'Forearm', 'Wrist'].map(name => this.root.getObjectByName(name + suffix));
+      this.arms.push({ side: suffix === 'L' ? -1 : 1, joints, base: joints.map(b => b.quaternion.clone()) });
+    }
+    this.castKind = ''; this.castStart = 0; this.castWind = 0; this.releaseAt = -Infinity;
+    this.buckle = 0;
     this.vortex = this.root.getObjectByName('Vortex');
     this.vortexScale = this.vortex?.scale.clone();
     this.skirt = this.root.getObjectByName('VortexSkirt');
@@ -163,6 +172,36 @@ export class HeartBody {
     this.cracks = [];
   }
 
+  gather(kind, duration) {
+    this.castKind = kind; this.castStart = G.time; this.castWind = duration; this.releaseAt = -Infinity;
+  }
+
+  release() { this.releaseAt = G.time; }
+
+  hands(wind, impulse, buckle, death, breath) {
+    // Restore the mixer's previous output first. Three skips unchanged tracks
+    // when the weights hold, including during pauses and the long break pose.
+    for (const { joints, base } of this.arms) {
+      for (let i = 0; i < joints.length; i++) joints[i].quaternion.copy(base[i]);
+    }
+    this.mixer.update(0);
+    for (const { joints, base, side } of this.arms) {
+      for (let i = 0; i < joints.length; i++) base[i].copy(joints[i].quaternion);
+      const [arm, fore, wrist] = joints;
+      const sweep = this.castKind === 'beam', wave = this.castKind === 'wave';
+      arm.rotation.x += -.045 * breath - .25 * wind - (wave ? .14 : .50) * impulse + .30 * death;
+      arm.rotation.z += side * (.035 * breath + (wave ? .68 : .27) * wind
+        + (wave ? -.56 : .46) * impulse - .65 * buckle - .80 * death);
+      fore.rotation.x += -.09 * breath - .46 * wind + .59 * impulse + .32 * buckle;
+      fore.rotation.y += side * (.44 * wind - .66 * impulse + .25 * death);
+      wrist.rotation.z += side * (.21 * wind - .31 * impulse - .27 * buckle);
+      const recoil = this.heart.flash * (1 - death);
+      fore.rotation.x -= .31 * recoil; arm.rotation.z += side * .18 * recoil;
+      if (sweep) arm.rotation.y += side * .76 * impulse;
+      if (death) wrist.rotation.x += death * .76;
+    }
+  }
+
   update(dt) {
     const h = this.heart, t = G.time;
     this.yaw = angleDamp(this.yaw, Math.atan2(G.player.pos.x - h.center0.x, G.player.pos.z - h.center0.z), 5, dt);
@@ -171,11 +210,16 @@ export class HeartBody {
     this.split = damp(this.split, h.phase === 3 ? 1 : 0, 2.3, dt);
     this.open = damp(this.open, h.exposed > 0 ? 1 : 0, 5, dt);
     const breath = Math.sin(t * 1.55);
-    const windup = h.state === 'active' && h.exposed <= 0 ? 1 - THREE.MathUtils.smoothstep(h.atkT, .08, .76) : 0;
+    if (h.brk.down > 0) { this.castKind = ''; this.releaseAt = -Infinity; }
+    this.buckle = damp(this.buckle, h.brk.down > 0 ? 1 : 0, h.brk.down > 0 ? 7 : 2.8, dt);
+    const age = G.time - this.releaseAt;
+    const windup = this.castKind && age === Infinity
+      ? THREE.MathUtils.smoothstep(G.time - this.castStart, 0, this.castWind * .73) : 0;
+    const impulse = 1 - THREE.MathUtils.smoothstep(age, .07, this.castKind === 'beam' ? 1.55 : .62);
     for (const { action, windup: isWindup } of this.poses) {
       action.weight = isWindup ? windup * .78 : this.split * (1 - windup) * .80;
     }
-    this.mixer.update(0);
+    this.hands(windup, impulse, this.buckle, 0, breath);
     for (const { part, height } of this.lenses) {
       part.scale.y = height * (1 + .045 * breath + .16 * this.open);
     }
@@ -185,7 +229,7 @@ export class HeartBody {
       part.position.y += .10 * this.stage + .13 * this.split + .035 * Math.sin(t + home.y);
       part.rotation.z = side * (.045 * this.stage + .14 * this.split);
     }
-    this.root.rotation.z = Math.sin(t * 0.68) * 0.013;
+    this.root.rotation.z = Math.sin(t * 0.68) * 0.013 + h.flash * .043 - this.buckle * .065;
     this.root.scale.set(1 + breath * .009, 1 + breath * .006, 1);
     this.eye.scale.set(this.eyeScale.x * (.65 + .58 * this.open + .13 * this.split),
       this.eyeScale.y * (.50 + .96 * this.open + .21 * this.split), this.eyeScale.z);
@@ -227,6 +271,18 @@ export class HeartBody {
     this.portal.scale.x *= 1 + this.split * 1.95;
     this.portal.scale.y *= 1 + this.split * 1.28;
     if (h.phase === 3) this.fracture();
+  }
+
+  death(t) {
+    const fold = THREE.MathUtils.smoothstep(t, .08, 1.52);
+    const fall = THREE.MathUtils.smoothstep(t, .7, 2.95);
+    // The arms lose their suspension before the seal disappears beneath them.
+    this.hands(0, 0, this.buckle * (1 - fold), fold, 0);
+    this.root.rotation.z = -.08 * fold - .08 * fall;
+    this.deathY ??= this.heart.core.position.y;
+    this.heart.core.position.y = THREE.MathUtils.lerp(this.deathY, this.heart.center0.y, fall);
+    this.heart.core.scale.setScalar(1 - .985 * fall);
+    this.eye.scale.y = this.eyeScale.y * Math.max(.02, 1 - fold);
   }
 
   // Reuse the ground-decal pool. A full pool may recycle a mark during a long fight.

@@ -3,8 +3,9 @@
 // sculpts for the seamless masses, lofted parts for the crisp ones, procedural
 // animation and verlet secondary motion.
 import * as THREE from 'three';
+import { G } from '../core/context.js';
 import { damp, clamp, rand } from '../core/util.js';
-import { SkelDef, tube, blob, sheet, sstep, mix, TAU, bodyMat, vnoise3, Spring } from './charkit.js';
+import { SkelDef, tube, blob, sheet, sstep, mix, TAU, bodyMat, vnoise3, Spring, ik2 } from './charkit.js';
 import { model } from '../render/models.js';
 import { CreatureRig, creatureType, bakeType, rigidType, glowBasic, rot, Field, shard, spike, tatter, prism, sheen, jelly, extendMat, megalith as megalithBlock } from './creatures.js';
 
@@ -140,17 +141,23 @@ class WailerRig extends CreatureRig {
     this.motion(dt);
     this.ch = damp(this.ch, s.charge ?? 0, 10, dt);
     const c = this.ch;
+    const cry = s.action === 'chase' && s.fromAction === 'charge' ? 1 - sstep(.055, .47, s.actionTime) : 0;
+    const slack = s.dead ? s.deathProgress ?? 1 : s.stagger ? .64 : 0;
     this.body.position.y = Math.sin(t * 2) * 0.12;
     const vl = this.velL;
     rot(B.body, -0.08 - c * 0.3 + clamp(vl.z * 0.05, -0.3, 0.3) + Math.sin(t * 1.7) * 0.04 - this.hurtSp.x * 0.08, 0, Math.sin(t * 1.4) * 0.08 + clamp(-this.yawRate * 0.1, -0.3, 0.3));
     rot(B.mask, Math.sin(t * 2.3) * 0.05 - c * 0.2, Math.sin(t * 0.9) * 0.15 * (1 - c), Math.sin(t * 1.3) * 0.06);
     // wail: the jaw drops and shudders while charging
-    rot(B.jaw, c * (0.35 + Math.sin(t * 30) * 0.05) + (s.dead ? 0.4 : 0), 0, 0);
+    rot(B.jaw, c * (.35 + Math.sin(t * 30) * .05) + .68 * cry + .40 * slack, 0, 0);
+    B.body.rotation.x += .48 * cry + .41 * slack; B.mask.rotation.x -= .29 * cry;
     // hands hover at its sides and rise to the face while it wails
     for (const sd of [1, -1]) {
       const hb = sd > 0 ? B.handL : B.handR, r0 = this.rest[hb.name];
       hb.position.set(r0.x - sd * 0.17 * c, r0.y + 0.34 * c + Math.sin(t * 1.6 + sd) * 0.04, r0.z + 0.05 * c);
       rot(hb, -0.3 + c * 0.55 + Math.sin(t * 2.1 + sd) * 0.12 + (s.dead ? 1.2 : 0), sd * (0.5 - c * 0.3), sd * (0.25 + Math.sin(t * 1.3) * 0.1 - c * 0.5));
+      hb.position.x += sd * (.38 * cry + .12 * this.hurtW);
+      hb.position.y -= (.38 + sd * .10) * slack;
+      hb.position.z += .30 * cry; hb.rotation.z += sd * (.47 * cry - .52 * slack);
     }
     const k = 1 + c * 1.3 + Math.sin(t * 8) * 0.08;
     B.core.scale.setScalar(k);
@@ -256,21 +263,26 @@ class OozeRig extends CreatureRig {
     const t = this.t, B = this.B;
     this.motion(dt);
     this.squash = damp(this.squash, s.squash ?? 0, 12, dt);
-    const q = this.squash + Math.sin(t * 4) * 0.04;
+    const coil = s.action === 'hopWind' ? sstep(0, .35, s.actionTime) : 0;
+    const q = this.squash + Math.sin(t * 4) * .04 - .20 * coil;
     // jelly: the top lags behind motion and rebounds
     const al = this.acc;
     const x = this.jx.step(clamp(-al.x * 0.02, -0.3, 0.3), dt), z = this.jz.step(clamp(-al.z * 0.02, -0.3, 0.3), dt);
-    const y = this.jy.step(q, dt);
+    const springY = this.jy.step(q, dt);
+    const landing = s.landBeat ?? 0;
+    const y = clamp(springY * (1 - landing) - .51 * landing - (s.stagger ? .13 : 0)
+      - (s.dead ? .25 * (s.deathProgress ?? 1) : 0), -.65, .7);
     const cy = Math.cos(this.prevYaw), sy = Math.sin(this.prevYaw);
     const lx = x * cy - z * sy, lz = x * sy + z * cy;
-    B.body.scale.set(1 - y * 0.3, 1 + y, 1 - y * 0.3);
+    const spread = 1 / Math.sqrt(1 + y);
+    B.body.scale.set(spread, 1 + y, spread);
     rot(B.body, lz * 0.8, 0, -lx * 0.8);
     B.top.position.set(this.rest.top.x + lx * 0.2, this.rest.top.y + y * 0.1, this.rest.top.z + lz * 0.2);
     rot(B.top, lz * 1.2 + Math.sin(t * 3.1) * 0.05, 0, -lx * 1.2 + Math.sin(t * 2.3) * 0.05);
     B.core.rotation.y += dt * 2;
     // Keep the inner heart below the face as it turns through the jelly.
     B.core.scale.setScalar(0.48);
-    B.core.position.y = this.rest.core.y - 0.15 + Math.sin(t * 3) * 0.02;
+    B.core.position.y = this.rest.core.y - .15 + Math.sin(t * 3) * .02 - .09 * coil + .09 * landing;
     B.core.position.z = this.rest.core.z - 0.04;
     for (let i = 0; i < 5; i++) B['drip' + i].scale.setScalar(0.8 + Math.sin(t * 3 + i) * 0.25);
     B.face.scale.setScalar(1 - this.hurtW * 0.15);
@@ -399,12 +411,17 @@ class MothRig extends CreatureRig {
       return;
     }
     const f = s.dive ? 38 : s.shock ? 60 : 22;
-    const ph = t * f;
+    const ph = this.wingPhase = ((this.wingPhase ?? 0) + dt * f) % TAU;
+    const flare = s.action === 'diveWind' ? sstep(0, .27, s.actionTime)
+      : s.action === 'chase' && s.fromAction === 'dive' ? 1 - sstep(.06, .35, s.actionTime) : 0;
     for (const n of ['L', 'R']) {
       const sd = n === 'L' ? 1 : -1;
       const fw = Math.sin(ph) * 0.9 + 0.15, hw = Math.sin(ph - 0.6) * 0.8 + 0.1;
       rot(B['wF' + n], Math.cos(ph) * 0.12, sd * Math.sin(ph) * 0.1, sd * (s.dive ? 0.9 + Math.sin(ph) * 0.3 : fw));
       rot(B['wH' + n], Math.cos(ph - 0.6) * 0.1, 0, sd * (s.dive ? 0.8 + Math.sin(ph) * 0.25 : hw));
+      B['wF' + n].rotation.z = mix(B['wF' + n].rotation.z, -.42 * sd, flare);
+      B['wH' + n].rotation.z = mix(B['wH' + n].rotation.z, -.72 * sd, flare);
+      B['wF' + n].rotation.y += sd * (.48 * flare + .34 * this.hurtW);
       rot(B['ant' + n], Math.sin(t * 5 + sd) * 0.15 - (s.dive ? 0.4 : 0), 0, sd * Math.sin(t * 3.3) * 0.1);
     }
     const lift = Math.sin(ph) * 0.02;
@@ -413,6 +430,8 @@ class MothRig extends CreatureRig {
     rot(B.abd, Math.sin(t * 3.1) * 0.12 - 0.05, Math.sin(t * 2.2) * 0.1, 0);
     rot(B.abd2, Math.sin(t * 3.1 - 0.7) * 0.15, Math.sin(t * 2.2 - 0.5) * 0.12, 0);
     rot(B.head, Math.sin(t * 1.7) * 0.1, Math.sin(t * 1.1) * 0.2, 0);
+    B.body.rotation.x -= .54 * flare;
+    if (s.stagger) { B.body.rotation.z += .62; B.abd.rotation.y -= .4; }
     this.root.updateMatrixWorld(true);
   }
 }
@@ -542,7 +561,8 @@ class RootHandRig extends CreatureRig {
     this.t += dt;
     const t = this.t, B = this.B;
     this.motion(dt);
-    const e = s.emerge ?? 1;
+    const erupt = s.action === 'strike';
+    const e = erupt ? Math.max(.86, s.emerge ?? 1) : s.emerge ?? 1;
     this.emerge = e;
     this.body.position.y = -2.5 * (1 - e) + (s.strike ? 0.25 : 0);
     this.body.visible = e > 0.02;
@@ -559,6 +579,14 @@ class RootHandRig extends CreatureRig {
     rot(B.arm0, Math.sin(t * 1.1) * 0.04 + this.droop * 0.5 + (s.strike ? -0.1 : 0), Math.sin(t * 0.7) * 0.1, Math.sin(t * 1.3) * 0.05 * (1 - this.droop) + sh);
     rot(B.arm1, Math.sin(t * 1.1 - 0.6) * 0.05 + this.droop * 0.4 - this.hurtSp.x * 0.05, 0, Math.sin(t * 1.3 - 0.8) * 0.05);
     rot(B.palm, Math.sin(t * 1.4) * 0.06 + (s.strike ? -0.15 : 0), Math.sin(t * 0.9) * 0.1, 0);
+    const wind = s.action === 'slapWind' ? sstep(.02, .27, s.actionTime) : 0;
+    const slap = s.action === 'slapWind' ? sstep(.39, .52, s.actionTime)
+      : s.action === 'exposed' && s.fromAction === 'slapWind' ? 1 - sstep(1.25, 1.69, s.actionTime) : 0;
+    B.arm0.rotation.x += -.41 * wind * (1 - slap) + .79 * slap;
+    B.arm1.rotation.x += -.26 * wind * (1 - slap) + .78 * slap;
+    B.palm.rotation.x += .55 * slap; B.palm.rotation.z -= this.hurtW * .29;
+    this.mound.rotation.y = .15 * Math.sin(t * 3.7) * (1 - e);
+    this.tips.position.y = (1 - e) * (.065 * Math.sin(t * 4.8) + .14 * sstep(0, 1, s.surfaceWind ?? 0));
     const sc = s.strike ? 1.12 : 1;
     B.arm0.scale.y = damp(B.arm0.scale.y, sc, 14, dt);
     B.eye.scale.set(1, s.dead ? 0.2 : 0.85 + Math.max(0, Math.sin(t * 0.6)) * 0.15, 1);
@@ -668,7 +696,8 @@ class WatcherRig extends CreatureRig {
     const tip = (this.eyeTip = new THREE.Object3D());
     tip.position.set(0, 3.17 - 2.65, 1.0);
     B.head.add(tip);
-    this.legs = T.legs.map((L, i) => ({ ...L, hip: B['hip' + i], knee: B['knee' + i], foot: B['foot' + i], lat: v(Math.cos(L.a), 0, -Math.sin(L.a)) }));
+    this.legs = T.legs.map((L, i) => ({ ...L, sole: L.foot.clone(), plant: new V3(), from: new V3(), target: new V3(), pole: new V3(),
+      hip: B['hip' + i], knee: B['knee' + i], foot: B['foot' + i], lat: v(Math.cos(L.a), 0, -Math.sin(L.a)) }));
     this.t = rand() * 5; this.height = 3.9; this.walk = 0; this.sink = 0;
     this.hy = 0; this.hp = 0;
     this.p = { head: B.head, torso: B.body, hips: B.body };
@@ -678,10 +707,11 @@ class WatcherRig extends CreatureRig {
     this.t += dt;
     const t = this.t, B = this.B;
     this.motion(dt);
-    const sp = s.speed ?? 0;
+    const sp = Math.min(5, Math.hypot(this.vel.x, this.vel.z));
     this.walk += dt * sp * 2.2;
     const stomp = s.stomp ?? 0;
-    this.sink = damp(this.sink, s.dead ? 1 : 0, 3, dt);
+    this.sink = damp(this.sink, s.dead ? 1 : s.stagger ? .49 : 0, 4, dt);
+    const land = s.action === 'recover' && s.fromAction === 'stompWind' ? 1 - sstep(.08, .64, s.actionTime) : 0;
     this.legs.forEach((L, i) => {
       const ph = this.walk + i * 2.1;
       const lift = Math.max(0, Math.sin(ph)) * Math.min(1, sp / 2);
@@ -692,14 +722,39 @@ class WatcherRig extends CreatureRig {
       L.knee.quaternion.setFromAxisAngle(L.lat, lift * 0.5 + stomp * 0.25 + this.sink * 0.6);
       L.foot.quaternion.setFromAxisAngle(L.lat, -lift * 0.2);
     });
-    B.body.position.y = this.rest.body.y + Math.sin(t * 2) * 0.04 + Math.abs(Math.sin(this.walk)) * 0.06 - this.sink * 1.1 + stomp * 0.5;
+    B.body.position.y = this.rest.body.y + Math.sin(t * 2) * .04 + Math.abs(Math.sin(this.walk)) * .06 - this.sink * 1.1 + stomp * .54 - land * .53;
     this.hy = damp(this.hy, s.headYaw ?? 0, s.headK ?? 6, dt);
     this.hp = damp(this.hp, s.headPitch ?? 0, 6, dt);
     rot(B.head, this.hp, this.hy, 0);
     const c = s.charge ?? 0;
     B.eye.scale.set(1 + c * 0.35, (1 + c * 0.35) * (s.dead ? 0.3 : 1), 1);
     rot(B.body, -this.hurtSp.x * 0.015, 0, (s.stagger ? Math.sin(t * 5) * 0.08 : 0) + this.hurtSp.x * 0.01);
+    B.head.rotation.x += .44 * this.sink - .19 * land;
+    B.head.rotation.z += .14 * this.hurtW;
     this.root.updateMatrixWorld(true);
+    if (!s.dead && this.root.visible && (!G.camera || G.camera.position.distanceToSquared(this.root.position) < 40 * 40)) {
+      for (let i = 0; i < this.legs.length; i++) {
+        const L = this.legs[i], ph = (this.walk / TAU + i / 3) % 1;
+        const target = this.root.localToWorld(L.target.copy(L.sole));
+        const floor = G.world?.ground ? G.world.ground(target.x, target.z, this.root.position.y + .6) : this.root.position.y;
+        target.y = floor;
+        if (!L.ready || target.distanceToSquared(L.plant) > 2.4 * 2.4) {
+          L.plant.copy(target); L.from.copy(target); L.ready = true;
+        }
+        if (ph > .67 && sp > .12 && !stomp) {
+          const u = (ph - .67) / .33;
+          if (!L.swing) L.from.copy(L.plant);
+          target.x += this.vel.x * .17; target.z += this.vel.z * .17;
+          target.lerp(L.from, 1 - sstep(0, 1, u)); target.y += .32 * Math.sin(Math.PI * u);
+          L.plant.copy(target); L.swing = true;
+        } else {
+          L.swing = false; L.plant.y = G.world?.ground?.(L.plant.x, L.plant.z, this.root.position.y + .6) ?? floor;
+          target.copy(L.plant); target.y += stomp * .27;
+        }
+        L.knee.getWorldPosition(L.pole);
+        ik2(L.hip, L.knee, L.foot.position, target, L.pole);
+      }
+    }
   }
 }
 export function makeWatcher() { return new WatcherRig(); }

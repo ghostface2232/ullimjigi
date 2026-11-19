@@ -309,7 +309,7 @@ export class Enemy {
     this.dodgeCD = randRange(0.6, 1.6);
     this.dodgeSkill = def.dodge ? Math.min(0.8, def.dodge + (this.elite ? 0.2 : 0) + this.tier * 0.05) : 0;
     this.burnRolled = false; this.panicT = 0; this.panicCD = 0;
-    this.deathStyle = def.deathStyle || (def.flying ? 'fall' : 'topple');
+    this.deathStyle = opts.warden ? 'kneel' : def.deathStyle || (def.flying ? 'fall' : 'topple');
     this.bigDeath = !!(def.boss || def.bigDeath || this.elite || this.base === 'brute');
     this.ghost = false; // burrowed: no pushing, not targetable
   }
@@ -330,6 +330,7 @@ export class Enemy {
       this.navRetry = G.time + (this.slot % 8) * 0.02;
       this.navStallT = 0; this.navSideT = 0;
     }
+    this.fromAction = this.st.frozen > 0 || this.st.stun > 0 ? null : this.state;
     this.state = s; this.stateT = 0; this.glinted = false; this.telegraph = false;
     if (s === 'return') {
       this.awareness = this.sightRate = this.searchTime = 0;
@@ -664,13 +665,13 @@ export class Enemy {
     if (G.player.lockTarget === this) G.player.lockTarget = G.enemies.lockNext(this);
     // fall direction and death pose (already lying → stay down the same way)
     this.lie0X = this.lieX * this.lieW; this.lie0Z = this.lieZ * this.lieW;
-    if (this.lieW < 0.3) {
+    if (this.lieW < 0.3 && !this.floorWeight) {
       const { lz, lx } = this.local(this.hitDir);
       const l = Math.hypot(lz, lx) || 1;
       this.lieX = (lz / l) * 1.5; this.lieZ = (-lx / l) * 1.5;
     }
     this.baseScale = this.root.scale.x;
-    this.deathT1 = this.def.boss ? 1.0 : this.bigDeath ? 0.7 : 0.42;
+    this.deathT1 = this.deathStyle === 'kneel' ? 1.0 : this.bigDeath ? 0.7 : 0.42;
     this.deathT2 = this.def.boss ? 2.2 : this.bigDeath ? 1.4 : 1.0;
     if (this.deathStyle === 'fall' && this.pos.y - G.world.ground(this.pos.x, this.pos.z, this.pos.y + 1) > 0.3) { this.airborne = true; this.vel.y = Math.min(this.vel.y, 1); }
     if (this.onDeath) this.onDeath(this);
@@ -723,11 +724,17 @@ export class Enemy {
     const c = clamp(k / T1, 0, 1);
     let rx = 0, rz = 0, py = 0;
     const s = { ...(this.deathPose ? this.deathPose() : null), speed: 0, grounded: true, dead: true };
+    s.deathProgress = c;
     switch (this.deathStyle) {
       case 'topple': {
         const e = easeIn(c);
-        rx = lerp(this.lie0X, this.lieX, e); rz = lerp(this.lie0Z, this.lieZ, e);
-        py = e * this.radius * 0.3;
+        if (this.rig.plantedGait) {
+          s.floorFall = Math.max(this.floorWeight || 0, smooth(c));
+          s.rise = (this.riseProgress || 0) * (1 - smooth(c)); s.fallX = this.lieX; s.fallZ = this.lieZ;
+        } else {
+          rx = lerp(this.lie0X, this.lieX, e); rz = lerp(this.lie0Z, this.lieZ, e);
+          py = e * this.radius * 0.3;
+        }
         if (c >= 1 && !this._thud) { this._thud = true; G.audio.play('body_fall', { pos: this.pos, v: this.bigDeath ? 1 : 0.6, gap: 0.03 }); G.vfx.burst(this.pos, 'dust', this.bigDeath ? 16 : 7, { speed: this.bigDeath ? 6 : 3, size: this.bigDeath ? 1.2 : 0.7 }); if (this.bigDeath) G.cameraRig.shake(0.2); }
         break;
       }
@@ -737,7 +744,7 @@ export class Enemy {
         break;
       }
       case 'fall': rx = this.airborne ? Math.sin(k * 9) * 0.4 : 1.3 * smooth(c); rz = 0.4 * smooth(c); break;
-      case 'kneel': s.kneel = true; s.dead = false; break;
+      case 'kneel': s.kneel = true; s.dead = false; s.deathProgress = c; s.phase = this.phase; break;
       case 'sink': break;
     }
     this.root.position.set(this.pos.x, this.pos.y + py, this.pos.z);
@@ -1063,8 +1070,9 @@ export class Enemy {
       const lying = this.state === 'down';
       this.lieW = damp(this.lieW, lying ? 1 : 0, lying ? 9 : 4.5, dt);
     }
-    let rx = T.x + this.lieX * this.lieW, rz = T.z + this.lieZ * this.lieW;
-    let px = 0, py = this.lieW * this.radius * 0.3, pz = 0;
+    const rootFall = this.rig.plantedGait ? 0 : this.lieW;
+    let rx = T.x + this.lieX * rootFall, rz = T.z + this.lieZ * rootFall;
+    let px = 0, py = rootFall * this.radius * 0.3, pz = 0;
     if (this.state === 'stagger') rz += Math.sin(G.time * 4.2) * 0.07;
     const shocked = !frozen && st.stun > 0;
     if (shocked) { px = randRange(-0.035, 0.035); pz = randRange(-0.035, 0.035); rx += randRange(-0.05, 0.05); }
@@ -1096,6 +1104,23 @@ export class Enemy {
     }
     if (disabled && frozen) return;
     const s = this.animState ? this.animState() : { speed: this.curSpeed, grounded: !this.airborne };
+    s.action = this.state; s.fromAction = this.fromAction; s.actionTime = this.stateT;
+    if (this.rig.plantedGait && (this.floorWeight || this.state === 'down' || this.state === 'getup')) {
+      if (this.state === 'down') {
+        this.floorWeight = smooth(clamp(this.stateT / .24, 0, 1)); this.riseProgress = 0;
+      } else if (this.state === 'getup') {
+        this.floorWeight = 1; this.riseProgress = clamp(this.stateT / .55, 0, 1);
+      } else {
+        // Losing sight or returning home can interrupt getup. Keep its visual
+        // recovery continuous without delaying the new gameplay state.
+        this.riseProgress = Math.min(1, this.riseProgress + dt / .55);
+        if (this.riseProgress >= 1) this.floorWeight = this.riseProgress = 0;
+      }
+      if (this.floorWeight > 0) {
+        s.floorFall = this.floorWeight; s.rise = this.riseProgress;
+        s.fallX = this.lieX; s.fallZ = this.lieZ;
+      }
+    }
     if (this.state === 'down' || (this.state === 'getup' && this.stateT < 0.25)) s.down = true;
     if (this.state === 'stagger') s.stagger = true;
     if (this.state === 'panic') { s.panic = true; s.speed = this.curSpeed; s.cast = false; }
@@ -1192,7 +1217,8 @@ export class Enemy {
     }
   }
   animState() {
-    return { speed: this.curSpeed || 0, grounded: !this.airborne, cast: this.state === 'windup' || this.state === 'attack', aimPitch: -0.3 };
+    const swipe = this.state === 'windup' || this.state === 'attack';
+    return { speed: this.curSpeed || 0, grounded: !this.airborne, cast: swipe, lockStride: swipe, aimPitch: -0.3 };
   }
 }
 
@@ -1413,8 +1439,19 @@ class Brute extends Enemy {
   }
   animState() {
     const s = { speed: this.curSpeed || 0, grounded: !this.airborne };
+    if (this.rig.isWarden) {
+      const dur = this.state === 'slamWind' ? (this.fastSlam ? .6 : this.elite ? .85 : 1.05)
+        : this.state === 'novaWind' ? 1.1 : .8;
+      return { ...s, action: this.state, fromAction: this.fromAction, actionTime: this.stateT,
+        windProgress: this.stateT / dur, breakLeft: this.brk?.down || 0,
+        kneel: this.state === 'stagger' && this.staggerT > .22 };
+    }
     if (this.state === 'slamWind' || this.state === 'alert') s.wave = false, s.cast = true, s.aimPitch = -1.3;
     if (this.state === 'recover' && this.stateT < 0.3) s.cast = true, s.aimPitch = 0.6;
+    if (this.state === 'slamWind') {
+      const p = this.stateT / (this.fastSlam ? .6 : this.elite ? .85 : 1.05);
+      s.aimPitch = -.12 - 1.3 * smooth(clamp(p / .55, 0, 1)) + 2.02 * smooth(clamp((p - .78) / .22, 0, 1));
+    }
     if (this.state === 'chargeWind' || this.state === 'charge') s.charge = this.state === 'charge' ? 1 : 0.6;
     if (this.state === 'novaWind') s.cast = true, s.aimPitch = -1.5;
     if (this.state === 'stagger' && this.brk && this.brk.down > 0) s.kneel = true;
@@ -1509,7 +1546,7 @@ class Ooze extends Enemy {
         break;
     }
   }
-  animState() { return { squash: this.hopping ? (this.vel.y > 0 ? 0.35 : -0.05) : this.landT > 0 ? -0.45 : this.hopT < 0.15 && this.aggroed ? -0.3 : 0 }; }
+  animState() { return { landBeat: clamp(this.landT / .2, 0, 1), squash: this.hopping ? (this.vel.y > 0 ? .35 : .12) : this.landT > 0 ? -.30 : this.hopT < .15 && this.aggroed ? -.22 : 0 }; }
   die(h) {
     super.die(h);
     const pos = this.pos.clone();
@@ -1617,7 +1654,7 @@ class Moth extends Enemy {
         break;
     }
   }
-  animState() { return { dive: this.state === 'dive' || this.state === 'diveWind' }; }
+  animState() { return { dive: this.state === 'dive' }; }
 }
 
 // ------------------------------------------------------------------
@@ -2057,7 +2094,8 @@ class RootHand extends Enemy {
     }
   }
   animState() {
-    return { emerge: this.emerge, grip: this.state === 'slapWind' ? 0.9 : this.state === 'burrow' ? 0.8 : 0.3, strike: this.state === 'strike' || (this.state === 'slapWind' && this.stateT > 0.4) };
+    return { emerge: this.emerge, surfaceWind: this.state === 'surfaceWind' ? this.stateT / this.windT : 0,
+      grip: this.state === 'slapWind' ? .9 : this.state === 'burrow' ? .8 : .3, strike: this.state === 'strike' };
   }
   updateDying(dt) {
     this.emerge = Math.max(0.35, this.emerge - dt * 0.4);
@@ -2395,13 +2433,12 @@ class Knight extends Enemy {
     });
   }
   animState() {
-    const s = { speed: this.curSpeed || 0, grounded: true, phase: this.phase };
-    if (this.state === 'slashWind') { s.cast = true; s.aimPitch = -1.2 + this.stateT; }
-    if (this.state === 'slash') { s.cast = true; s.aimPitch = 0.8; }
-    if (this.state === 'dashWind' || this.state === 'dash') { s.cast = true; s.aimPitch = 0; }
-    if (this.state === 'waveWind') { s.cast = true; s.aimPitch = -1.6; }
-    if (this.state === 'dormant' || this.state === 'stagger') s.kneel = true;
-    return s;
+    const dur = this.state === 'slashWind' ? (this.phase >= 3 ? KNIGHT_SLASH_PHASE3 : KNIGHT_SLASH)[this.combo]
+      : this.state === 'dashWind' ? (this.dashLeft === 1 && this.phase >= 3 ? .42 : .6) : .9;
+    return { speed: this.curSpeed || 0, grounded: !this.airborne, phase: this.phase, cut: this.combo,
+      lockStride: this.state === 'slash' || this.state === 'slashWind',
+      action: this.state, fromAction: this.fromAction, actionTime: this.stateT, windProgress: this.stateT / dur,
+      breakLeft: this.brk?.down || 0, kneel: this.state === 'dormant' || (this.state === 'stagger' && this.staggerT > .22) };
   }
 }
 
@@ -2566,8 +2603,7 @@ class Heart {
     if (this.removed) return false;
     if (!this.alive) {
       this.dyingT = (this.dyingT || 0) + dt;
-      this.core.scale.setScalar(Math.max(0.01, 1 - this.dyingT / 3));
-      this.core.rotation.y += dt * (3 + this.dyingT * 6);
+      this.appearance.death(this.dyingT);
       if (Math.random() < 0.6) G.vfx.burst(this.core.position, 'soul', 3, { el: 'gold' });
       if (this.dyingT > 3) { G.scene.remove(this.core); this.appearance.dispose(); return false; }
       return true;
@@ -2596,7 +2632,6 @@ class Heart {
       this.hittable = false;
       if (this.plates.length === 0) this.expose();
     }
-    this.appearance.update(dt);
     for (const plate of this.plates) plate.update(dt);
     // attacks
     this.atkT -= dt; this.addsCD -= dt;
@@ -2609,6 +2644,7 @@ class Heart {
       this.atkT = a === 'beam' ? 6.5 : (this.phase === 3 ? 2.9 : this.phase === 2 ? 3.5 : 4.2);
     }
     for (let i = this.beams.length - 1; i >= 0; i--) if (!this.beams[i].tick(dt)) this.beams.splice(i, 1);
+    this.appearance.update(dt);
     return true;
   }
   // attack damage grows 7% a level (not the 12% of ordinary enemies): the heart's level sits
@@ -2616,6 +2652,7 @@ class Heart {
   hurt(base) { return Math.round(base * (1 + 0.07 * (this.level - 1)) * this.phaseMul); }
   volley() {
     const gen = this.atkGen;
+    this.appearance.gather('volley', .65);
     const c = this.core.position.clone();
     const n = 5 + this.phase;
     G.vfx.telegraph(this.center0, 3, 0.65, 0xb080ff);
@@ -2623,6 +2660,7 @@ class Heart {
     for (let i = 0; i < n; i++) {
       G.later(() => {
         if (!this.alive || gen !== this.atkGen) return;
+        this.appearance.release();
         const toP = G.player.center().sub(c).normalize();
         const a = (i / n) * Math.PI * 2;
         const side = new THREE.Vector3(Math.cos(a), 0.3, Math.sin(a)).multiplyScalar(0.8);
@@ -2640,8 +2678,10 @@ class Heart {
       G.later(() => {
         if (!this.alive || gen !== this.atkGen) return;
         G.vfx.telegraph(c, 4, 0.7, 0xb080ff);
+        this.appearance.gather('wave', .7);
         G.later(() => {
           if (!this.alive || gen !== this.atkGen) return;
+          this.appearance.release();
           G.audio.play('shockwave', { pos: c }); G.cameraRig.shake(0.35);
           let r = 2, hit = false;
           const maxR = 34, sp = 12;
@@ -2662,6 +2702,7 @@ class Heart {
     this.addsCD = 20;
     const live = G.enemies.list.filter((e) => e.alive && !e.boss && e.type !== undefined && !(e instanceof Plate)).length;
     if (live > 4) return;
+    this.appearance.gather('summon', 0); this.appearance.release();
     for (let i = 0; i < 3; i++) {
       const a = rand() * Math.PI * 2;
       const p = this.center0.clone().add(new THREE.Vector3(Math.cos(a) * 14, 0, Math.sin(a) * 14));
@@ -2673,6 +2714,7 @@ class Heart {
   }
   beam() {
     const gen = this.atkGen;
+    this.appearance.gather('beam', .9);
     const c = this.center0;
     const n = 2;
     for (let k = 0; k < n; k++) {
@@ -2686,6 +2728,7 @@ class Heart {
         end: endBeam,
         tick: (dt) => {
           if (!this.alive || gen !== this.atkGen) { endBeam(); return false; }
+          if (k === 0 && t <= .9 && t + dt > .9) this.appearance.release();
           t += dt;
           const a = start + (t < 0.9 ? 0 : (t - 0.9) * 0.75 * (this.phase >= 3 ? 1.3 : 1));
           const end = new THREE.Vector3(c.x + Math.cos(a) * R, 0, c.z + Math.sin(a) * R);

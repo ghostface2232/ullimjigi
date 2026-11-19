@@ -37,8 +37,9 @@ export const model = (name) => cache.get(name) || null;
 export function uploadModelTextures(renderer) {
   const late = new Set();
   for (const n of LATE) if (cache.has(n)) textures(cache.get(n), late);
-  // monsters are dressed when they spawn (creatures.js surfaced() sets the same)
-  for (const [n, g] of cache) if (groupOf.get(n) === 'monsters') for (const t of textures(g)) t.anisotropy = Math.max(t.anisotropy, 4);
+  // monsters are dressed when they spawn and people may first appear later in the story
+  // (creatures.js surfaced() and humanrig.js set the same)
+  for (const [n, g] of cache) if (groupOf.get(n) === 'monsters' || groupOf.get(n) === 'chars') for (const t of textures(g)) t.anisotropy = Math.max(t.anisotropy, 4);
   for (const [s, texs] of sources()) {
     if (texs.some((t) => late.has(t))) { releaseAfterUpload(s, texs); continue; }
     for (const t of texs) renderer.initTexture(t);

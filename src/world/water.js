@@ -167,14 +167,19 @@ export class Water {
     // each also keeps the box of its wet samples, which bounds the reflection's window
     for (let cz = 0; cz < n; cz++) for (let cx = 0; cx < n; cx++) {
       let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+      let wet = false;
       for (let iz = cz * per; iz <= Math.min(T.seg, (cz + 1) * per); iz += 2) for (let ix = cx * per; ix <= Math.min(T.seg, (cx + 1) * per); ix += 2) {
-        if (T.h[iz * T.N + ix] >= -0.15) continue;
+        const h = T.h[iz * T.N + ix];
+        if (h < -0.15) wet = true;
+        if (h >= 0.05) continue; // the shader draws water up to about here
         const x = -T.half + ix * T.step, z = -T.half + iz * T.step;
         x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z);
       }
-      if (x0 > x1) continue;
+      if (!wet) continue;
       const c = new THREE.Vector3(-T.half + (cx + 0.5) * CELL, 0, -T.half + (cz + 0.5) * CELL);
       c.box = [x0, z0, x1, z1];
+      // water at the map's edge runs on past it (the sea): such a cell opens the whole view
+      c.open = x0 <= -T.half + 4 || z0 <= -T.half + 4 || x1 >= T.half - 4 || z1 >= T.half - 4;
       this.cells.push(c);
     }
     this.vcam = new THREE.PerspectiveCamera();
@@ -203,10 +208,10 @@ export class Water {
   }
 
   // Where water can show in the mirror image: the outline of the wet boxes in view on the
-  // water plane (points on the plane land at the same pixel in both views), clipped to the
-  // near plane, as an NDC box of the view matrix m. false = the whole view (the open sea).
+  // water plane through the mirror camera m (the frame the target is drawn and read in),
+  // clipped to the near plane, as an NDC box. false = the whole view (the open sea).
   window(m) {
-    if (this.sea) return false;
+    if (this.sea || this.seen.some((c) => c.open)) return false;
     const e = m.elements, L = this.level, M = 2 * 2 + 6, EPS = 0.05; // sample spacing + wave lookup offset
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     const add = (x, y, w) => { x /= w; y /= w; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; };

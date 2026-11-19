@@ -7,6 +7,8 @@ import * as HR from './src/game/humanrig.js';
 import { preloadModels } from './src/render/models.js';
 import { Renderer } from './src/render/renderer.js';
 
+// the tier caps model textures at load
+G.settings.quality = new URLSearchParams(location.search).get('q') || 'high';
 await preloadModels();
 
 // ?wip: load work-in-progress models from ref/blender/wip/ instead of public/models/

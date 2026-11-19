@@ -1221,7 +1221,8 @@ export function instance(parent, def, built, mats, o = {}) {
     parent.add(mesh);
     mesh.updateMatrixWorld(true);
     mesh.bind(skeleton, mesh.matrixWorld);
-    mesh.castShadow = o.shadow ?? true;
+    // eyes and the mouth's inside sit within the head: their shadow is the head's
+    mesh.castShadow = (o.shadow ?? true) && k !== 'eye' && k !== 'in';
     mesh.boundingSphere = bs;
     meshes.push(mesh); byGroup[k] = mesh;
   });

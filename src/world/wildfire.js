@@ -432,6 +432,14 @@ export class Wildfire {
     const R = G.renderer && G.renderer.renderer;
     if (z1 < z0) return;
     if (!R) { this.tex.needsUpdate = true; return; }
+    if (!this.unpackKnown) {
+      // copyTextureToTexture saves and restores five unpack settings; three asks the driver for
+      // any it has not set itself, a GPU sync that stalled the first fire for ~180 ms. These
+      // are the GL defaults, so telling three's state cache about them changes nothing else.
+      this.unpackKnown = true;
+      const gl = R.getContext();
+      for (const p of [gl.UNPACK_ROW_LENGTH, gl.UNPACK_IMAGE_HEIGHT, gl.UNPACK_SKIP_PIXELS, gl.UNPACK_SKIP_ROWS, gl.UNPACK_SKIP_IMAGES]) R.state.pixelStorei(p, 0);
+    }
     this.texBox.min.set(0, z0); this.texBox.max.set(N, z1 + 1);
     this.texAt.set(0, z0);
     R.copyTextureToTexture(this.stage, this.tex, this.texBox, this.texAt);

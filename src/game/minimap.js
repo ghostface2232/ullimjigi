@@ -23,6 +23,9 @@ export class Minimap {
     this.tiles = new Map();
     this.prints = null;
     this.size = 0;
+    // reading the canvas size every draw forced a layout of the whole HUD 30 times a second
+    if (typeof ResizeObserver === 'function') new ResizeObserver(() => this.resize()).observe(this.cv);
+    else this.poll = true;
   }
 
   // Building footprints (large, tall boxes); trees and small props are skipped.
@@ -81,7 +84,7 @@ export class Minimap {
     if (this.t > 0) return;
     this.t = 1 / 30;
     if (!mapBase) return;
-    this.resize();
+    if (this.poll) this.resize();
     if (!this.size) return;
     this.draw(mapBase);
   }

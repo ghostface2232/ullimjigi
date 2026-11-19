@@ -558,7 +558,7 @@ export class Distort {
     this.base = new THREE.ShaderMaterial({
       uniforms: { uKind: { value: 0 }, uR: { value: 0.7 }, uW: { value: 0.12 }, uAmp: { value: 0 }, uTime: U.time, uSeed: { value: 0 }, uNoise: U.noise, uBill: { value: 0 } },
       vertexShader: DIST_VS, fragmentShader: DIST_FS,
-      transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, forceSinglePass: true,
     });
   }
   bind(scene) { this.scene = scene; }
@@ -676,12 +676,14 @@ export function applyLook(mat, look, o = {}) {
   mat.blending = add ? THREE.AdditiveBlending : THREE.NormalBlending;
   // additive shells stay visible when the camera is inside them (big domes)
   mat.side = add || o.inside ? THREE.DoubleSide : THREE.FrontSide;
+  // additive faces sum in any order: one draw instead of three's back-then-front pair
+  mat.forceSinglePass = !!add;
   mat.depthWrite = false;
 }
 export function makeSlash(scene, span) {
   const mat = new THREE.ShaderMaterial({
     uniforms: { uCore: { value: new THREE.Color() }, uGlow: { value: new THREE.Color() }, uAlpha: { value: 1 }, uTime: U.time, uErode: { value: 0 }, uReveal: { value: 1.2 }, uThick: { value: 0.5 }, uSeed: { value: 0 }, uNoise: U.noise, uFogD: FXU.fogD, uFogC: FXU.fogC },
-    vertexShader: SLASH_VS, fragmentShader: SLASH_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    vertexShader: SLASH_VS, fragmentShader: SLASH_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, forceSinglePass: true,
   });
   const m = new THREE.Mesh(slashGeometry(span), mat);
   m.visible = false; m.frustumCulled = false; m.renderOrder = 11;

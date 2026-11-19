@@ -219,7 +219,7 @@ export class Spells {
       p.ribB = V.ribbon({ el: 'wind', width: 0.1, life: 0.16, follow: p.tipB, core: PAL.white.core });
       p.slashH = V.slash(p.pos, p.vel, { el: 'wind', face: true, roll: randRange(-0.6, 0.6) + (rand() < 0.5 ? Math.PI : 0), radius: 0.75 * (p.bladeR ?? 1), dur: 0, thick: 0.45 });
       if (!p.slashH) {
-        p.mesh = new THREE.Mesh(this.crescentGeo, new THREE.MeshBasicMaterial({ color: PAL.wind.core.clone().multiplyScalar(1.1), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+        p.mesh = new THREE.Mesh(this.crescentGeo, new THREE.MeshBasicMaterial({ color: PAL.wind.core.clone().multiplyScalar(1.1), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true }));
         G.scene.add(p.mesh);
       }
     }

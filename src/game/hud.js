@@ -98,6 +98,7 @@ export class HUD {
     document.documentElement.style.setProperty('--ui', s.toFixed(3));
     this.uiScale = s;
     this.compassHalf = 0;
+    this.minimap?.resize(); // a zoom change need not reach the minimap's resize observer
   }
 
   // ---------------- vitals ----------------

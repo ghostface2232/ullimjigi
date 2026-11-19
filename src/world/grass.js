@@ -203,6 +203,13 @@ const FLOWER_COLORS = [0xf4f0e2, 0xffd445, 0x9d82e6, 0x7fa8f2, 0xf49cc2].map((h)
 export class Grass {
   constructor(scene, terrain, water) {
     this.scene = scene; this.terrain = terrain;
+    // chunks live in one group so the water's mirrored view can leave them out (tufts are
+    // sub-pixel at reflection resolution but cost dozens of draws and their vertex load)
+    this.group = new THREE.Group();
+    this.group.name = 'grass';
+    this.group.userData.noBake = true;
+    scene.add(this.group);
+    if (water) water.skip.push(this.group);
     this.chunk = 16;
     this.radius = 64;
     this.flowerRadius = 30;
@@ -240,8 +247,8 @@ export class Grass {
   }
 
   disposeChunk(c) {
-    if (c.mesh) { this.scene.remove(c.mesh); c.mesh.geometry.dispose(); }
-    if (c.flowers) { this.scene.remove(c.flowers); c.flowers.geometry.dispose(); }
+    if (c.mesh) { this.group.remove(c.mesh); c.mesh.geometry.dispose(); }
+    if (c.flowers) { this.group.remove(c.flowers); c.flowers.geometry.dispose(); }
   }
 
   // Wind burst that flattens grass (used by wind spells / explosions)
@@ -264,6 +271,7 @@ export class Grass {
     mesh.frustumCulled = true;
     mesh.receiveShadow = true;
     mesh.castShadow = false;
+    mesh.matrixAutoUpdate = false; // world-space instances at the origin
     mesh.userData.noBake = true;
     return mesh;
   }
@@ -355,21 +363,26 @@ export class Grass {
     const S = this.chunk, R = this.radius;
     const ccx = Math.floor(camPos.x / S), ccz = Math.floor(camPos.z / S);
     const rc = Math.ceil(R / S);
-    let built = 0;
+    // missing chunks, nearest first, a few milliseconds' worth per frame (a dense chunk takes
+    // ~10 ms: three at once stalled frames after a teleport)
+    const want = this._want || (this._want = []);
+    want.length = 0;
     for (let dz = -rc; dz <= rc; dz++) for (let dx = -rc; dx <= rc; dx++) {
       const cx = ccx + dx, cz = ccz + dz;
-      const key = cx + ',' + cz;
       const d = Math.hypot((cx + 0.5) * S - camPos.x, (cz + 0.5) * S - camPos.z);
-      if (d > R + S) continue;
-      if (!this.chunks.has(key)) {
-        if (built >= 3) continue;
-        const H = this.terrain.half; // chunks lying on the map (edges included: the last one ends exactly at ±half)
-        if (cx * S < -H || cz * S < -H || (cx + 1) * S > H || (cz + 1) * S > H) { this.chunks.set(key, { mesh: null, cx, cz }); continue; }
-        const r = this.build(cx, cz);
-        if (r) { this.scene.add(r.mesh); if (r.flowers) this.scene.add(r.flowers); }
-        this.chunks.set(key, { mesh: r ? r.mesh : null, flowers: r ? r.flowers : null, cx, cz });
-        built++;
-      }
+      if (d > R + S || this.chunks.has(cx + ',' + cz)) continue;
+      want.push({ cx, cz, d });
+    }
+    want.sort((a, b) => a.d - b.d);
+    const t0 = performance.now();
+    for (const { cx, cz } of want) {
+      if (performance.now() - t0 > 4) break;
+      const key = cx + ',' + cz;
+      const H = this.terrain.half; // chunks lying on the map (edges included: the last one ends exactly at ±half)
+      if (cx * S < -H || cz * S < -H || (cx + 1) * S > H || (cz + 1) * S > H) { this.chunks.set(key, { mesh: null, cx, cz }); continue; }
+      const r = this.build(cx, cz);
+      if (r) { this.group.add(r.mesh); if (r.flowers) this.group.add(r.flowers); }
+      this.chunks.set(key, { mesh: r ? r.mesh : null, flowers: r ? r.flowers : null, cx, cz });
     }
     for (const [key, c] of this.chunks) {
       if (c.cx === undefined) continue;

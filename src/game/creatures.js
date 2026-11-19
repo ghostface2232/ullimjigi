@@ -88,8 +88,21 @@ export function builtFromModel(key, def, o = {}) {
   return { geo, mats: used.map(groupOf), tris: geo.index.count / 3, stats: {}, tex, rigid };
 }
 // Variant albedo of an authored model (public/models/mn_<key>_<variant>.webp): same mesh,
-// normal map and ORM, repainted colours. Fetched once, when the variant is first dressed.
+// normal map and ORM, repainted colours. Loaded with the models and uploaded during loading,
+// so a variant's first spawn neither shows an empty map nor stalls on the upload.
 const ALT = new Map();
+const VARIANTS = ['ashling_frost', 'brute_frost'];
+export async function preloadVariants() {
+  const loader = new THREE.TextureLoader();
+  await Promise.all(VARIANTS.map(async (id) => {
+    try {
+      const t = await loader.loadAsync(`./models/mn_${id}.webp`);
+      t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+      ALT.set(id, t);
+    } catch (e) { console.warn('variant texture failed to load:', id, e); }
+  }));
+}
+export const variantTextures = () => ALT.values();
 function altMap(key, variant) {
   const id = key + '_' + variant;
   if (!ALT.has(id)) { const t = new THREE.TextureLoader().load(`./models/mn_${id}.webp`); t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; ALT.set(id, t); }

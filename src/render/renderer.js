@@ -369,6 +369,9 @@ const fsMat = (o) => new THREE.ShaderMaterial({ vertexShader: QUAD_VS, depthTest
 export class Renderer {
   constructor(canvas) {
     const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false }));
+    // Authored textures and baked meshes let their CPU copies go once uploaded (models.js,
+    // World.bakeStatics), so a restored context cannot be refilled: start again from the last save.
+    canvas.addEventListener('webglcontextrestored', () => location.reload());
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.NeutralToneMapping ?? THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 0.92;
@@ -606,9 +609,14 @@ export class Renderer {
     // water mirrors the world on the top tier: that view is drawn first
     // (once the sun's shadow map exists: the mirrored view reuses it)
     const water = G.world && G.world.water;
-    if (water && (!r.shadowMap.enabled || G.world.sky.sun.shadow.map)) water.reflect(r, this.scene, cam, tier().reflect, this.sceneRT.width, this.sceneRT.height);
-    r.setRenderTarget(this.sceneRT);
-    r.render(this.scene, cam);
+    // one scene-graph update serves the mirrored and the main view
+    const sc = this.scene, auto = sc.matrixWorldAutoUpdate;
+    if (auto) { sc.updateMatrixWorld(); sc.matrixWorldAutoUpdate = false; }
+    try {
+      if (water && (!r.shadowMap.enabled || G.world.sky.sun.shadow.map)) water.reflect(r, sc, cam, tier().reflect, this.sceneRT.width, this.sceneRT.height);
+      r.setRenderTarget(this.sceneRT);
+      r.render(sc, cam);
+    } finally { sc.matrixWorldAutoUpdate = auto; }
     this.bloom.render(r, null, this.sceneRT);
     if (this.fxOn) this.fxPass();
     r.setRenderTarget(null);

@@ -85,7 +85,12 @@ export class HUD {
   }
   // world-anchored elements move by `translate` (compositor only, and it composes with their
   // own transform animations) instead of left / top
-  at(el, x, y) { el.style.translate = `${Math.round(x)}px ${Math.round(y)}px`; }
+  at(el, x, y) {
+    x = Math.round(x); y = Math.round(y);
+    if (el._hudX === x && el._hudY === y) return;
+    el._hudX = x; el._hudY = y;
+    el.style.translate = `${x}px ${y}px`;
+  }
   // a small mark next to the minimap whenever the journey is written down
   saved() { this.restart(this.el.saveMark, 'show'); }
 
@@ -93,7 +98,8 @@ export class HUD {
   // Interface size follows the window (1600×900 = 1, eased so it neither balloons on big
   // screens nor shrinks to unreadable on small ones) times the player's own setting.
   applyScale() {
-    const fit = Math.min(innerWidth / 1600, innerHeight / 900);
+    this.screenW = window.innerWidth; this.screenH = window.innerHeight;
+    const fit = Math.min(this.screenW / 1600, this.screenH / 900);
     const s = clamp(Math.pow(fit, 0.8), 0.68, 1.5) * clamp((G.settings.ui ?? 100) / 100, 0.75, 1.35);
     document.documentElement.style.setProperty('--ui', s.toFixed(3));
     this.uiScale = s;
@@ -180,10 +186,18 @@ export class HUD {
     const fx = -Math.sin(cr.yaw), fz = -Math.cos(cr.yaw);
     const heading = Math.atan2(fx, -fz);
     this.compassHalf ||= this.el.compassStrip.clientWidth / 2 || 260; // measured once per resize
+    // All ticks scroll together. Only a tick wrapping past north changes its local position.
+    const pxPerRad = 260 / (Math.PI / 2);
+    this.el.compassStrip.style.translate = `${-heading * pxPerRad}px`;
     for (const it of this.compassItems) {
-      const x = this.compassPos(heading, it.a);
-      if (x === null) it.e.style.display = 'none';
-      else { it.e.style.display = ''; it.e.style.left = x + 'px'; }
+      const rel = wrapAngle(it.a - heading);
+      const visible = Math.abs(rel) <= Math.PI * 0.55;
+      if (it.visible !== visible) { it.visible = visible; it.e.style.display = visible ? '' : 'none'; }
+      if (visible) {
+        const turn = Math.round((rel + heading - it.a) / (2 * Math.PI));
+        const x = this.compassHalf + (it.a + turn * 2 * Math.PI) * pxPerRad;
+        if (it.x !== x) { it.x = x; it.e.style.left = x + 'px'; }
+      }
     }
     const P = G.player.pos;
     const marks = [];
@@ -209,7 +223,7 @@ export class HUD {
       const show = x !== null && (d >= 4 || m.dist);
       if (e._show !== show) { e._show = show; e.style.display = show ? '' : 'none'; }
       if (!show) continue;
-      e.style.left = x + 'px';
+      e.style.translate = x + 'px';
       if (e._d) { const t = Math.round(d) + 'm'; if (e._t !== t) { e._t = t; e._d.textContent = t; } }
     }
     for (const [id, e] of this.cmarks) if (!seen.has(id)) { e.remove(); this.cmarks.delete(id); }
@@ -345,8 +359,8 @@ export class HUD {
   project(pos, out = { x: 0, y: 0, vis: false }) {
     v3.copy(pos).project(G.camera);
     out.vis = v3.z < 1 && v3.z > -1 && Math.abs(v3.x) < 1.2 && Math.abs(v3.y) < 1.2;
-    out.x = (v3.x * 0.5 + 0.5) * window.innerWidth;
-    out.y = (-v3.y * 0.5 + 0.5) * window.innerHeight;
+    out.x = (v3.x * 0.5 + 0.5) * this.screenW;
+    out.y = (-v3.y * 0.5 + 0.5) * this.screenH;
     return out;
   }
   damage(pos, n, el, crit, reaction, small = false) {
@@ -377,8 +391,12 @@ export class HUD {
     this.addFloat(d, pos.clone().add(new THREE.Vector3(0, 0.8, 0)), 1200);
   }
   addFloat(el, pos, ms, plateOf = null) {
-    this.el.dmg.appendChild(el);
-    const f = { el, pos, t: ms / 1000, plateOf };
+    // Moving the anchor must not invalidate the child's running pop animation.
+    const anchor = document.createElement('div');
+    anchor.className = 'float-anchor';
+    anchor.appendChild(el);
+    this.el.dmg.appendChild(anchor);
+    const f = { el: anchor, pos, t: ms / 1000, plateOf };
     this.floats.push(f);
     this.placeFloat(f);
     if (this.floats.length > 60) { const o = this.floats.shift(); o.el.remove(); }
@@ -687,7 +705,7 @@ export class HUD {
       if (b._full !== full) { b._full = full; b.classList.toggle('brief', !full); }
       // health in half-percent steps: the bar (and its trailing ghost) is only written when it moves
       const hp = Math.round(clamp(e.hp / e.maxHp, 0, 1) * 200) / 2;
-      if (b._hp !== hp) { b._hp = hp; b._fill.style.width = b._ghost.style.width = hp + '%'; }
+      if (b._hp !== hp) { b._hp = hp; b._fill.style.transform = b._ghost.style.transform = `scaleX(${hp / 100})`; }
       // status marks: a key of the active ones, rebuilt only when the set changes
       const st = e.st; let s = '';
       for (const [k] of STATUS) if (st[k] > 0 && !(k === 'chill' && st.frozen > 0)) s += k + ' ';

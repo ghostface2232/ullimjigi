@@ -1403,10 +1403,18 @@ export class Chain {
     // orient bones along the simulated points (keep animated twist)
     for (let k = 0; k < B.length; k++) {
       const b = B[k];
-      b.updateMatrixWorld(true);
-      const from = (k + 1 < B.length ? B[k + 1].getWorldPosition(_e) : _e.copy(this.tail).applyMatrix4(b.matrixWorld)).sub(b.getWorldPosition(_c)).normalize();
+      // Only the two endpoints enter this solve. Propagate the finished
+      // pose to attachments once at the end, keeping the original tip twist.
+      if (k + 1 < B.length) {
+        B[k + 1].getWorldPosition(_e); // also refreshes b and its ancestors
+      } else {
+        b.updateWorldMatrix(false, false, true);
+        _e.copy(this.tail).applyMatrix4(b.matrixWorld);
+        b.updateWorldMatrix(true, false);
+      }
+      const from = _e.sub(_c.setFromMatrixPosition(b.matrixWorld)).normalize();
       const to = _m.subVectors(this.p[k + 1], this.p[k]).normalize();
-      rotateTowards(b, from, to, 1);
+      rotateWithMatrices(b, from, to, 1);
     }
     B[0].updateMatrixWorld(true);
   }

@@ -20,6 +20,7 @@
 // around the rift, blossom trees in village gardens.
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { G } from '../core/context.js';
 import { toon, useCasterDepth } from '../render/materials.js';
 import { tier } from '../render/quality.js';
 import { SHADOW_LAYER } from '../render/renderer.js';
@@ -1470,7 +1471,12 @@ export class Props {
           this.meshes.push(im);
           return im;
         };
-        this.batches.push({ t, name, mats, cols, sphs, n, near: mk(geoN, 'near'), far: geoF ? mk(geoF, 'far') : null, shadow: geoF && t.shadow ? mk(geoF, 'shadow') : null });
+        const batch = { t, name, mats, cols, sphs, n, near: mk(geoN, 'near'), far: geoF ? mk(geoF, 'far') : null, shadow: geoF && t.shadow ? mk(geoF, 'shadow') : null };
+        if (batch.shadow) {
+          batch.nearShadow = mk(geoF, 'shadow');
+          fitNearShadow(batch, geoF);
+        }
+        this.batches.push(batch);
       });
     }
     this.dirty = false;
@@ -1543,9 +1549,49 @@ export class Props {
       }
       finishInstances(b.near, nn, nearEnd, nearFadeEnd);
       if (b.far) finishInstances(b.far, nf, farEnd, farFadeEnd);
-      if (b.shadow) finishInstances(b.shadow, ns, shadowEnd, 0);
+      if (b.shadow) {
+        finishInstances(b.shadow, ns, shadowEnd, 0);
+        if (b.nearShadow) b.nearShadow.visible = ns > 0;
+      }
     }
   }
+}
+
+// The outer caster list includes trees behind the camera. In the inner cascade
+// most of their low-poly crowns still miss the viewport. Use the cascade's
+// actual six planes and the far model's own bound, preserving source order.
+function fitNearShadow(batch, geometry) {
+  const { shadow, nearShadow, mats, n } = batch;
+  const bounds = new Float64Array(n * 4);
+  if (!geometry.boundingSphere) geometry.computeBoundingSphere();
+  for (let i = 0; i < n; i++) {
+    tmpM.fromArray(mats, i * 16);
+    sph.copy(geometry.boundingSphere).applyMatrix4(tmpM);
+    sph.center.toArray(bounds, i * 4);
+    bounds[i * 4 + 3] = sph.radius + 0.01;
+  }
+  shadow.frustumCulled = nearShadow.frustumCulled = true;
+  shadow.intersectsFrustum = f => f !== G.world?.sky?.sun?.shadow.getFrustum(0);
+  nearShadow.intersectsFrustum = f => {
+    if (f !== G.world?.sky?.sun?.shadow.getFrustum(0)) return false;
+    const source = shadow.userData.sourceIds, slots = nearShadow.userData.sourceIds;
+    const dst = nearShadow.instanceMatrix.array;
+    let count = 0, end = 0;
+    for (let j = 0; j < shadow.count; j++) {
+      const id = source[j], i = id - 1;
+      sph.center.fromArray(bounds, i * 4); sph.radius = bounds[i * 4 + 3];
+      if (!f.intersectsSphere(sph)) continue;
+      if (slots[count] !== id) {
+        slots[count] = id;
+        for (let k = 0; k < 16; k++) dst[count * 16 + k] = mats[i * 16 + k];
+        end = count + 1;
+      }
+      count++;
+    }
+    nearShadow.count = count;
+    if (end) uploadPrefix(nearShadow.instanceMatrix, end * 16);
+    return count > 0;
+  };
 }
 
 function finishInstances(mesh, count, changedEnd, fadeEnd) {

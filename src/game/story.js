@@ -444,12 +444,14 @@ export class Story {
       this.obj('q_morning', '허깨비 물리치기');
       const lv = 1;
       const wave = (defs) => defs.map(([t, x, z]) => { const e = G.enemies.spawn(t, V(x, 0, z), lv); G.vfx.burst(e.center(), 'hush', 10, { size: 1 }); return e; });
+      // They come up the hill road. The yard is a mesa: anything set down on its flanks stands
+      // under a cliff, further from the road than enemy navigation searches.
       const yard = V(8, 0, 126);
-      await this.scriptedWave(() => wave([['ashling', 10, 124], ['ashling', 4, 120], ['ashling', 16, 130]]), yard, 45);
+      await this.scriptedWave(() => wave([['ashling', -5, 114], ['ashling', -3, 110], ['ashling', -7, 118]]), yard, 45);
       await this.sleep(1.2);
       G.hud.bark(mora, '또 온다! 이번엔 다른 놈들도 섞여 있구나!');
       G.later(() => this.hint('<b>울음탈</b>은 멀리서 구체를 쏜다 — 마법으로 구체를 맞혀 없앨 수 있다<br><b>잿물</b>은 쓰러뜨리면 둘로 갈라진다', 8), 1500);
-      await this.scriptedWave(() => wave([['ooze', 12, 124], ['ashling', 2, 118], ['wailer', 16, 132]]), yard, 45);
+      await this.scriptedWave(() => wave([['ooze', -4, 120], ['ashling', -6, 113], ['wailer', -3, 108]]), yard, 45);
       this.set('p_fight');
       await this.sleep(1.5);
     }

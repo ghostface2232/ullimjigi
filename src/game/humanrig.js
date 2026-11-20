@@ -712,7 +712,7 @@ export class HumanRig extends Rig {
     this.height = (T.L.HC.y + T.L.hr * 1.1) * this.s;
     this.vel = new V3(); this.velL = new V3(); this.prevPos = null; this.prevYaw = 0; this.yawRate = 0; this.acc = new V3();
     this.moveDir = new V3(0, 0, 1);
-    this.feet = [0, 1].map((k) => ({ side: k ? -1 : 1, n: k ? 'R' : 'L', plant: new V3(), pos: new V3(), from: new V3(), to: new V3(), planted: false, stepping: 0, stepDur: 0.22, pitch: 0, init: false, lift: 0, yaw: 0, sg0: 0, p0: 0, tilt: 0, x0: 0, l0: 0 }));
+    this.feet = [0, 1].map((k) => ({ side: k ? -1 : 1, n: k ? 'R' : 'L', plant: new V3(), pos: new V3(), from: new V3(), to: new V3(), planted: false, stepping: 0, stepDur: 0.22, pitch: 0, init: false, lift: 0, yaw: 0, sg0: 0, p0: 0, tilt: 0, x0: 0, l0: 0, duty: 1 }));
     this.pelvisDrop = 0;
     this.footPlants = []; // contacts from this update, consumed by Player after posing
     this.drive = new Spring(180, 20); this.bank = new Spring(140, 18);
@@ -1675,16 +1675,20 @@ export class HumanRig extends Rig {
       }
       if (moving) {
         const pk = (this.phase + (sd > 0 ? 0 : 0.5)) % 1;
-        if (pk < duty) {
+        // A foot leaves the ground at the phase it was planted for, or sooner. Braking lengthens
+        // the gait's stance while the body coasts on: a foot held for the longer stance is left
+        // far behind, and the pelvis sinks onto a knee to reach it.
+        const fd = (f.duty = !f.planted && pk < f.duty ? duty : Math.min(f.duty, duty));
+        if (pk < fd) {
           if (!f.planted) {
             f.plant.set(f.pos.x, groundAt(f.pos.x, f.pos.z, ry), f.pos.z); f.planted = true; f.yaw = yaw + sd * toeOut * (1 - run);
             if (this.ikW > 0.8) this.footPlants.push(f);
           }
           f.pos.copy(f.plant);
-          const ss = pk / duty;
+          const ss = pk / fd;
           f.pitch = strike * (1 - sstep(0, mix(0.22, 0.16, run), ss)) + mix(0.78, 1.0, run) * sstep(mix(0.5, 0.28, run), 1, ss) * (0.3 + 0.7 * fwd);
         } else {
-          const sg = (pk - duty) / (1 - duty);
+          const sg = (pk - fd) / (1 - fd);
           const mx = this.moveDir.x, mz = this.moveDir.z;
           if (f.planted) {
             // toe-off: from here the foot is steered in the body's frame (along and across the way)
@@ -1693,7 +1697,7 @@ export class HumanRig extends Rig {
             f.x0 = ox * mx + oz * mz; f.l0 = oz * mx - ox * mz;
           }
           const u = clamp((sg - f.sg0) / (1 - f.sg0), 0, 1);
-          const Tsw = (1 - duty) / freq, remain = (1 - sg) * Tsw;
+          const Tsw = (1 - fd) / freq, remain = (1 - sg) * Tsw;
           const ly = groundAt(restX + mx * ahead + this.vel.x * remain, restZ + mz * ahead + this.vel.z * remain, ry);
           // along the way: the foot trails off the toe, swings through, reaches a little past
           // its landing spot and sweeps back to meet the ground (a runner's retraction)
@@ -1716,6 +1720,7 @@ export class HumanRig extends Rig {
         f.stepping = 0;
       } else {
         // standing: step to the rest spot when too far off (turning, stopping, pushed)
+        f.duty = 1;
         if (f.stepping > 0) {
           f.stepping = Math.max(0, f.stepping - dt / f.stepDur);
           const sg = 1 - f.stepping, ee = ease(sg);

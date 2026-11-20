@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import { G, EL_INFO } from '../core/context.js';
 import { PAL } from '../render/vfx.js';
-import { rand, randRange } from '../core/util.js';
+import { rand, randRange, clamp, lerp, smoothstep } from '../core/util.js';
 
 const R = (id) => (G.skills ? G.skills.r(id) : 0);
 const NOLOOP = { set() {}, vol() {}, stop() {} };
@@ -21,6 +21,8 @@ const C = (r, g, b) => new THREE.Color(r, g, b);
 const STEAM_C = C(0.92, 0.95, 1.0), STEAM_C1 = C(0.82, 0.86, 0.92);
 const MIST_C = C(0.86, 0.95, 1.05), MIST_C1 = C(0.75, 0.88, 1.0);
 const MAX_FIELDS = 12;
+// A burning field sinks to this as it runs out, then leaves flamelets that go out one by one.
+const EMBER = 0.55, EMBER_T = 1.7;
 
 // el: the element the field carries (what a wind blade picks up, what it applies)
 export const FIELDS = {
@@ -75,6 +77,7 @@ const carry = (f) => (f.kind === 'whirl' ? (f.zone.infused || f.el) : f.def.el);
 export class Fields {
   constructor() {
     this.list = [];
+    this.embers = []; // the last flames of burnt-out fields (looks only)
     this.envT = 0;
   }
 
@@ -149,6 +152,7 @@ export class Fields {
     const V = G.vfx, def = f.def;
     const left = Math.max(0.5, f.dur - f.t);
     f.visualFloor = G.world.h(f.pos.x, f.pos.z) < -0.2 && G.world.ground(f.pos.x, f.pos.z, f.pos.y + 2) < f.pos.y - 0.3 ? f.pos.y : -Infinity;
+    f.flames = f.kind === 'blaze' || f.kind === 'plasma' ? this.flameSpots(f) : null;
     if (f.surface) f.surface.end();
     f.surface = V.fieldSurface(f.kind, f.pos, f.r, 0);
     f.surfaceR = f.r;
@@ -183,6 +187,18 @@ export class Fields {
       }
     }
   }
+  // Where a burning field's flames stand. The wildfire's flame cards draw them (`Wildfire.writeFields`),
+  // sized by `heat`: a surge as it catches, sinking as it runs out.
+  flameSpots(f) {
+    const n = clamp(3 + Math.round(f.r * 1.5), 5, 12), turn = (f.turn ??= rand() * 6.28), out = [];
+    for (let j = 0; j < n; j++) {
+      const a = turn + j * 2.4, rr = f.r * 0.74 * Math.sqrt((j + 0.5) / n), phase = (j * 0.618034 + turn) % 1;
+      const x = f.pos.x + Math.cos(a) * rr, z = f.pos.z + Math.sin(a) * rr;
+      out.push({ x, y: Math.max(f.visualFloor, G.world.ground(x, z, f.pos.y + 2)), z, phase,
+        width: clamp(0.85 + 0.4 * f.r, 1.2, 3.2) * (0.75 + 0.5 * phase), aspect: 0.7 + 0.42 * (1 - j / n), glow: j % 3 === 0 });
+    }
+    return out;
+  }
   loop(name, pos, v) {
     const A = G.audio;
     if (!A || !A.loop) return NOLOOP;
@@ -213,7 +229,7 @@ export class Fields {
     return f;
   }
 
-  clear() { for (const f of this.list) this.end(f, 0.3); this.list.length = 0; }
+  clear() { for (const f of this.list) this.end(f, 0.3); this.list.length = 0; this.embers.length = 0; }
   // after a long jump (fast travel, waking at a waystone) nothing is left burning behind
   clearFar(pos, r) {
     this.list = this.list.filter((f) => { if (Math.hypot(f.pos.x - pos.x, f.pos.z - pos.z) <= r) return true; this.end(f, 0.3); return false; });
@@ -508,6 +524,11 @@ export class Fields {
     let live = 0;
     for (const f of this.list) if (!f.ended && f.kind !== 'whirl') live++;
     this.rateK = Math.min(1, 5 / Math.max(1, live)) * (G.settings && G.settings.quality === 'low' ? 0.5 : 1);
+    for (let i = this.embers.length - 1; i >= 0; i--) {
+      const e = this.embers[i];
+      e.t += dt; e.heat = EMBER * Math.max(0, 1 - e.t / EMBER_T) ** 1.5;
+      if (e.t >= EMBER_T) this.embers.splice(i, 1);
+    }
     for (let i = this.list.length - 1; i >= 0; i--) {
       const f = this.list[i];
       if (f.ended) { this.list.splice(i, 1); continue; }
@@ -527,6 +548,7 @@ export class Fields {
       if (f.envT <= 0) { f.envT = 0.5; this.env(f); }
       if (left <= 0) {
         const then = f.thenRime;
+        if (f.flames) this.embers.push({ pos: f.pos, flames: f.flames, heat: EMBER, t: 0 });
         this.end(f);
         if (then) this.add('rime', f.pos, { r: f.r * 0.8, dur: 5, P: f.P, noGround: true });
         this.list.splice(i, 1);
@@ -568,6 +590,7 @@ export class Fields {
     if (f.kind === 'blaze' && c.distanceToSquared(G.camera.position) < 18 * 18) {
       V.fireLight(f, tmp.copy(c).setY(c.y + 0.48), 10, 2.5 + r);
     }
+    if (f.flames) f.heat = smoothstep(0, 0.3, f.t) * (1 + 0.2 * Math.sin(Math.PI * Math.min(1, f.t / 0.8))) * lerp(EMBER, 1, smoothstep(0, 1.3, f.dur - f.t));
     const area = Math.min(1.8, 0.5 + r * 0.25) * (this.rateK ?? 1);
     f.visualAcc = (f.visualAcc || 0) + dt * area * k * 8;
     let budget = 0;
@@ -582,22 +605,8 @@ export class Fields {
       switch (f.kind) {
         case 'blaze':
         case 'plasma': {
-          const s = randRange(0.7, 1.05) * (f.kind === 'blaze' ? Math.min(2.45, 0.8 + r * 0.47) : 1);
-          V.norm.emit({ p: [p.x, p.y + s * 0.34, p.z], v: [Math.sin(a) * 0.16, 0.18, -Math.cos(a) * 0.16], life: 0.54, size: s, size1: s * 0.7, color: PAL.fire.glow, alpha: 0.98 * k, alpha1: 0.25, fadeIn: 0.12, shape: 7 });
-          if (f.kind === 'blaze') {
-            const seed = (rr * 2.71 + f.t * 0.84) % 1;
-            // Overlapping billows move from the hot centre to the draft side.
-            for (let j = 0; j < 3; j++) {
-              const fseed = (seed + j * 0.382) % 1, travel = 0.08 + j * 0.32;
-              const x = c.x + (p.x - c.x) * travel, z = c.z + (p.z - c.z) * travel;
-              const y = Math.max(f.visualFloor ?? -Infinity, G.world.ground(x, z, c.y + 2));
-              const width = s * (1.38 - j * 0.16);
-              V.norm.emit({ p: [x, y + width * 0.24, z], v: [G.wind.flow.x * 0.44, 0.64 + fseed * 0.66, G.wind.flow.y * 0.44],
-                life: 0.42 + fseed * 0.20, size: width, size1: width * 0.64,
-                color: PAL.fire.core, alpha: k * 0.87, alpha1: 0, fadeIn: 0.10, shape: 7, seed: fseed });
-            }
-            V.fireAir(p, Math.floor((f.t + rr) * 211), 0.60, island === 0 && seed > 0.58);
-          }
+          // (the flames themselves are the flame cards at `f.flames`)
+          if (f.kind === 'blaze') V.fireAir(p, Math.floor((f.t + rr) * 211), 0.60, island === 0 && (rr * 2.71 + f.t * 0.84) % 1 > 0.58);
           if (rand() < 0.25) V.burst(p, 'ember', 1, { speed: 2, size: 0.06 });
           if (f.kind === 'plasma' && rand() < 0.2) {
             const end = p.clone().add(new THREE.Vector3(-Math.sin(a), 0.2, Math.cos(a)));

@@ -627,7 +627,7 @@ export class CreatureRig extends Rig {
   // root motion: world velocity (smoothed), local velocity, yaw rate, LOD
   motion(dt) {
     const root = this.root;
-    root.updateMatrixWorld();
+    root.updateWorldMatrix(false, false);
     const e = root.matrixWorld.elements;
     _v1.set(e[12], e[13], e[14]);
     const yaw = Math.atan2(e[8], e[10]);

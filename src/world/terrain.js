@@ -565,11 +565,15 @@ export class Terrain {
     const a = arr[iz * N + ix], b = arr[iz * N + ix + 1], c = arr[(iz + 1) * N + ix], d = arr[(iz + 1) * N + ix + 1];
     return lerp(lerp(a, b, u), lerp(c, d, u), v);
   }
-  grassAt(x, z) {
+  grassAt(x, z, surface) {
     const g = this.sampleGrid(this.gf, x, z), w = CWR(this.sampleGrid(this.cw, x, z));
-    if (w <= 0) return g;
+    if (w <= 0) {
+      if (surface) surface.y = this.gridHeight(this.base, x, z);
+      return g;
+    }
     // on rock: only the gentle tops grow grass, right up to their edge and no further
-    this.cliffAt(x, z, this.gridHeight(this.base, x, z), w);
+    const y = this.cliffAt(x, z, this.gridHeight(this.base, x, z), w);
+    if (surface) surface.y = y;
     const ramp = 4 * w * (1 - w) * smoothstep(1.2, 3, Math.abs(this._dh));
     return lerp(g * (1 - ramp), this._top > 0.5 ? this.cliffGrid(this.gfG, 1, x, z) : 0, w);
   }
@@ -818,6 +822,7 @@ export class Terrain {
       ch.mesh.matrixAutoUpdate = false;
       ch.lod = 3;
       this.mesh.add(ch.mesh);
+      if (cliff) ch.skins[2] = this.farSkin(ch);
       this.chunks.push(ch);
     }
   }
@@ -1160,8 +1165,6 @@ export class Terrain {
       }
       if (!ch.geos[want]) ch.geos[want] = this.chunkGeometry(ch, want);
       if (want !== ch.lod) { ch.mesh.geometry = ch.geos[want]; ch.lod = want; }
-      // far away the rock keeps its masses, as a few quads (cheap enough to build on the spot)
-      if (ch.cliff && want >= 2 && !ch.skins[2]) ch.skins[2] = this.farSkin(ch);
       const s0 = ch.skins[0], s1 = ch.skins[1];
       if (ch.skins[2]) ch.skins[2].visible = ch.lod >= 2;
       if (s0) { s0.visible = ch.lod === 0; s0.castShadow = !s1; }

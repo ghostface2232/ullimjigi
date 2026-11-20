@@ -18,6 +18,7 @@ import { Colliders } from './collision.js';
 import { POI, PATHS, regionAt } from './layout.js';
 import * as B from './buildings.js';
 import { U } from '../render/materials.js';
+import { SHADOW_LAYER } from '../render/renderer.js';
 import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
 import { rand, randRange, mulberry32, TAU } from '../core/util.js';
 
@@ -143,6 +144,7 @@ export class World {
         const bk = buckets.get(key); bk.list.push(m); bk.cast = bk.cast || m.castShadow;
       });
     }
+    const shadowCells = new Map();
     let merged = 0;
     for (const b of buckets.values()) {
       if (b.list.length < 2) continue;
@@ -174,8 +176,35 @@ export class World {
       mesh.castShadow = b.cast; mesh.receiveShadow = true;
       mesh.matrixAutoUpdate = false;
       this.scene.add(mesh);
+      // These triangles are already in world space. Opaque surfaces with the
+      // same cull side write identical depth, independent of the colour shader.
+      if (b.cast && b.mat.visible && !b.mat.alphaTest && !b.mat.alphaToCoverage &&
+          !b.mat.displacementMap && !b.mat.wireframe && !b.mat.clippingPlanes) {
+        const wp = b.list[0].getWorldPosition(tmp);
+        const side = b.mat.shadowSide ?? (b.mat.side === THREE.FrontSide ? THREE.BackSide : b.mat.side === THREE.BackSide ? THREE.FrontSide : THREE.DoubleSide);
+        const key = Math.floor(wp.x / CELL) + ',' + Math.floor(wp.z / CELL) + ',' + side;
+        if (!shadowCells.has(key)) shadowCells.set(key, []);
+        shadowCells.get(key).push(mesh);
+      }
       for (const m of b.list) m.parent.remove(m);
       merged += b.list.length;
+    }
+    for (const meshes of shadowCells.values()) {
+      if (meshes.length < 2) continue;
+      const parts = meshes.map(({ geometry }) => {
+        const part = new THREE.BufferGeometry();
+        part.setAttribute('position', geometry.attributes.position);
+        part.setIndex(geometry.index);
+        return part;
+      });
+      const geometry = mergeGeometries(parts);
+      compactStatic(geometry);
+      const caster = new THREE.Mesh(geometry, meshes[0].material);
+      caster.matrixAutoUpdate = false;
+      caster.layers.set(SHADOW_LAYER);
+      caster.castShadow = true;
+      this.scene.add(caster);
+      for (const mesh of meshes) mesh.castShadow = false;
     }
     this.bakedCount = merged;
   }

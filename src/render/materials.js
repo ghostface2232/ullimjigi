@@ -1765,3 +1765,19 @@ export function ghostMat(color = 0xbfe8ff, alpha = 0.55) {
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   });
 }
+// The default shadow material is shared by static, instanced, skinned and
+// morphing meshes. Switching layouts makes three rebuild its program key per
+// draw. Reuse a depth material with each geometry's fixed vertex layout.
+const casterDepth = new WeakMap();
+export function useCasterDepth(mesh) {
+  const m = mesh.material;
+  if (m.alphaTest || m.alphaToCoverage || m.displacementMap || m.clippingPlanes || mesh.customDepthMaterial) return;
+  const geometry = mesh.geometry;
+  let depth = casterDepth.get(geometry);
+  if (!depth) {
+    depth = new THREE.MeshDepthMaterial();
+    casterDepth.set(geometry, depth);
+    geometry.addEventListener('dispose', () => depth.dispose());
+  }
+  mesh.customDepthMaterial = depth;
+}

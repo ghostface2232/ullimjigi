@@ -125,7 +125,18 @@ export class HUD {
       this.el.xpLv.textContent = P.level;
     }
   }
-  restart(el, cls) { if (!el) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
+  // Replay a one-shot CSS animation: the class comes off now and goes back on after the
+  // browser has rendered a frame without it. (Reading offsetWidth in between restarts it at
+  // once, but that reflows the whole HUD in the middle of the frame: 5-10 ms per cast, hit
+  // or mana orb in a fight.)
+  restart(el, cls) {
+    if (!el) return;
+    el.classList.remove(cls);
+    const waiting = (el._restart ||= new Set());
+    if (waiting.has(cls)) return;
+    waiting.add(cls);
+    requestAnimationFrame(() => requestAnimationFrame(() => { waiting.delete(cls); el.classList.add(cls); }));
+  }
   // not enough mana: bar shake + red flash, "마나 부족" under the crosshair (rate-limited)
   manaShort(cost) {
     this.restart(this.el.mana, 'short');
@@ -225,7 +236,7 @@ export class HUD {
       n.classList.toggle('gone', !P.unlocked.has(e));
       n.classList.toggle('active', P.element === e);
       n.classList.toggle('prev', P.prevElement === e && P.prevElement !== P.element);
-      if (unlockEl === e) { n.classList.remove('unlock'); void n.offsetWidth; n.classList.add('unlock'); }
+      if (unlockEl === e) this.restart(n, 'unlock');
     }
     const info = weaveInfo(P.element, P.prevElement);
     const wKnown = P.canWeave();
@@ -267,15 +278,15 @@ export class HUD {
     const b = this.el.sp;
     b.classList.toggle('hidden', K.points <= 0);
     b.querySelector('b').textContent = K.points;
-    if (flash) { b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); }
+    if (flash) this.restart(b, 'pop');
   }
-  ultReady() { const u = this.el.ult; u.classList.remove('flash'); void u.offsetWidth; u.classList.add('flash'); }
+  ultReady() { this.restart(this.el.ult, 'flash'); }
   ultShort() { this.restart(this.el.ult, 'bump'); this.toast(`울림 게이지가 아직 차지 않았다 — 적을 맞히고, 특히 <b>원소 반응</b>을 일으키면 빨리 찬다`); }
   chain(n, kinds) {
     let el = this.chainEl;
     if (!el) { el = this.chainEl = document.createElement('div'); el.className = 'chain'; this.el.hud.appendChild(el); }
     el.innerHTML = `<span class="cn">${n}</span><span class="cl">연쇄 반응${kinds > 1 ? ` · ${kinds}종` : ''}</span>`;
-    el.classList.remove('bump', 'out'); void el.offsetWidth; el.classList.add('bump');
+    el.classList.remove('out'); this.restart(el, 'bump');
     clearTimeout(this.chainT); this.chainT = setTimeout(() => el.classList.add('out'), 3800);
   }
   chainEnd(n, xp) { if (this.chainEl) { this.chainEl.innerHTML = `<span class="cn">${n}</span><span class="cl">연쇄 반응 · +${xp} XP</span>`; this.chainEl.classList.add('out'); } }
@@ -314,7 +325,7 @@ export class HUD {
     r.classList.toggle('ready', ready);
     r.classList.toggle('short', !affordable);
   }
-  castPulse() { const c = this.el.crosshair; c.classList.remove('cast'); void c.offsetWidth; c.classList.add('cast'); }
+  castPulse() { this.restart(this.el.crosshair, 'cast'); }
   // The name of a charged shot or a weave, in the action lane at the right above the spell bar
   // (see styles.css). One node, reused: a new cast replaces the name still showing.
   castName(name, els, big = false) {
@@ -458,7 +469,7 @@ export class HUD {
   // not enough stamina for a climbing lunge: the wheel shakes red
   staminaShort() {
     const e = this.el.stamina;
-    e.classList.remove('short'); void e.offsetWidth; e.classList.add('short');
+    this.restart(e, 'short');
     G.audio.play('mana_empty', { v: 0.5 });
   }
   inCombat() { return !!(G.bossActive || (G.enemies && G.enemies.inCombat())); }
@@ -467,7 +478,7 @@ export class HUD {
     const a = this.el.area;
     a.querySelector('.at-name').textContent = name;
     a.querySelector('.at-sub').textContent = en;
-    a.classList.remove('show'); void a.offsetWidth; a.classList.add('show');
+    this.restart(a, 'show');
   }
   // o.minor: frequent notices (quests, waystones, seeds, level-ups) always use the slim ribbon
   // under the compass; the full band is kept for rare moments (a new song, Mora's memories…)

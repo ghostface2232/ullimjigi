@@ -583,7 +583,13 @@ const RIM_FRAG = `
       outgoingLight += uSkyRefl * ((0.04 + 0.96 * _r * _r * _r * _r * _r) * _gl * _gl * _cav * _specK);
     #endif
   }
-  #include <opaque_fragment>`;
+  #include <opaque_fragment>
+  #if defined(ACTOR_RAMP) && defined(OPAQUE)
+    // People and creatures shade their own creases with the actor ramps. Screen-space
+    // occlusion only touches them lightly (the scene alpha is the occlusion mask); the
+    // contact shadow on the ground under them is unchanged.
+    gl_FragColor.a = 0.3;
+  #endif`;
 
 const WIND_VERT = `
   vec3 transformed = vec3(position);
@@ -679,7 +685,10 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
       #ifdef ACTOR_CLOTH
         if (_actorRow == 4.0) visibility = mix(1.0, _dirShadow, 0.3) * _cloudSh;
       #endif
-      float plane = mix(ndl, _facePlane, _faceWeight) - (1.0 - _cav) * 0.45;
+      // Baked occlusion only nudges the ramp: a full push dropped soft creases across the
+      // painted terminator in patches (blotches at the sleeves and belt). It still darkens
+      // the light below through _cav.
+      float plane = mix(ndl, _facePlane, _faceWeight) - (1.0 - _cav) * 0.12;
       float coord = mix(-1.0, plane, visibility) * 0.5 + 0.5;
       float moon = (1.0 - smoothstep(0.28, 0.95, dot(directLight.color, vec3(0.25, 0.55, 0.2))))
                  * (1.0 - smoothstep(0.08, 0.36, dot(uSkyRefl, vec3(0.25, 0.55, 0.2))));
@@ -724,7 +733,7 @@ void RE_Direct_Toon( const in IncidentLight directLight, const in vec3 geometryP
       vec3 hv = normalize( directLight.direction + geometryViewDir );
       float nh = max( dot( geometryNormal, hv ), 0.0 ), a = _rough * _rough, a2 = a * a;
       float dd = nh * nh * ( a2 - 1.0 ) + 1.0;
-      float fr = 0.04 + 0.96 * pow( 1.0 - max( dot( hv, geometryViewDir ), 0.0 ), 5.0 );
+      float fr = 0.04 + 0.96 * pow( 1.0 - clamp( dot( hv, geometryViewDir ), 0.0, 1.0 ), 5.0 );
       float gloss = min(a2 / (3.14159 * dd * dd), 40.0) * fr * 0.25 * _specK;
       vec3 highlight = vec3(gloss);
       #ifdef ACTOR_RAMP
@@ -1723,7 +1732,7 @@ export function fresnelMat(core, edge, opts = {}) {
       uniform vec3 uCore, uEdge; uniform float uIntensity, uAlpha, uTime, uPow;
       varying vec3 vN; varying vec3 vV; varying vec3 vP;
       void main(){
-        float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), uPow);
+        float f = pow(1.0 - min(abs(dot(normalize(vN), normalize(vV))), 1.0), uPow);
         float flick = 0.9 + 0.1 * sin(uTime * 17.0 + vP.y * 9.0);
         vec3 col = mix(uCore, uEdge, f) * uIntensity * flick;
         float a = mix(0.85, 1.0, f) * uAlpha;
@@ -1748,7 +1757,7 @@ export function ghostMat(color = 0xbfe8ff, alpha = 0.55) {
     fragmentShader: `
       uniform vec3 uColor; uniform float uAlpha, uTime; varying vec3 vN; varying vec3 vV; varying float vY;
       void main(){
-        float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 1.4);
+        float f = pow(1.0 - min(abs(dot(normalize(vN), normalize(vV))), 1.0), 1.4);
         float scan = 0.75 + 0.25 * sin(vY * 22.0 - uTime * 4.0);
         float a = (0.18 + f * 0.9) * uAlpha * scan;
         gl_FragColor = vec4(uColor * (1.4 + f * 1.6) * a, a);

@@ -123,7 +123,7 @@ const WAVE_FS = `
     float n2 = texture2D(uNoise, vec2(vUv.x * 7.0 + uTime * 0.2, vUv.y * 2.2 - uTime * 2.0)).b;
     float n3 = texture2D(uNoise, vec2(vUv.x * 14.0 - uTime * 0.3, vUv.y * 3.5 - uTime * 3.1)).g;
     float h = vUv.y;
-    float facing = abs(dot(normalize(vN), normalize(vV)));
+    float facing = min(abs(dot(normalize(vN), normalize(vV))), 1.0);
     float fres = pow(1.0 - facing, 2.0);
     vec3 deep = uColor * 0.55, shallow = uColor * 1.4 + vec3(0.05, 0.15, 0.2);
     vec3 col = mix(deep, shallow, smoothstep(0.0, 0.8, h + n * 0.2));

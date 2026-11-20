@@ -57,7 +57,7 @@ void main(){
   amp *= 1.0 - uValleyLight * (0.16 + 0.40 * smoothstep(10.0, 70.0, dist));
   vec2 nd = vec2(h0 - hx, h0 - hz) / e * 0.55 * amp;
   vec3 N = normalize(vec3(nd.x, 1.0, nd.y));
-  float ndv = max(dot(N, V), 0.0);
+  float ndv = clamp(dot(N, V), 0.0, 1.0);
   float fres = 0.03 + 0.97 * pow(1.0 - ndv, 5.0);
   // cloud shadow on the surface
   float cloud = landscapeCloudShadow(vW, uCloudLight, uCloud.w);

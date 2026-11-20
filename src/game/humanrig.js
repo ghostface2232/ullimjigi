@@ -926,7 +926,9 @@ export class HumanRig extends Rig {
     W.gait = damp(W.gait, spn > 0.2 && grounded ? 1 : 0, spn > 0.2 ? 18 : 10, dt);
     W.run = damp(W.run, P ? sstep(2.3, 4.0, spn) : sstep(2.6, 5.2, spn), P ? 7 : 5, dt);
     const sprint = this.plantedGait ? (W.sprint = damp(W.sprint, sstep(6.6, 8.6, spn), 6, dt)) : sstep(6.5, 9, spn);
-    if (!grounded) this.airT += dt; else this.airT = 0;
+    // the leg that was ahead at take-off leads in the air pose (also when walking off a ledge,
+    // where the air weight only rises after a few frames)
+    if (!grounded) { if (this.airT === 0) this.lead = Math.cos(this.phase * TAU) > 0 ? 1 : -1; this.airT += dt; } else this.airT = 0;
     // landing impact
     if (grounded && !this.prevGrounded && !s.swim) {
       if (!this.landPending) this.landImpact(this.prevVy);
@@ -1354,7 +1356,6 @@ export class HumanRig extends Rig {
     const vl = Math.hypot(this.velL.x, this.velL.z), fz = vl > 0.5 ? this.velL.z / vl : 1, fx = vl > 0.5 ? this.velL.x / vl : 0;
     if (W.air > 0.01) {
       const a = W.air, at = this.airT;
-      if (at < 0.03) this.lead = Math.cos(this.phase * TAU) > 0 ? 1 : -1;        // the leg that was ahead at take-off leads
       // weights of the four poses along the arc
       let wl = sstep(0.16, 0.02, at) * sstep(2, 6, vy), wr = sstep(1.5, 6, vy) * (1 - wl), wf = sstep(-1.5, -8, vy), wa = Math.max(0, 1 - wl - wr - wf);
       const long = sstep(0.75, 1.5, at) * wf, fl = Math.sin(t * 8.5) * long, fl2 = Math.sin(t * 7.3 + 1.3) * long;

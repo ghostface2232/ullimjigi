@@ -506,7 +506,7 @@ const SHELL_VS = `
 const SHELL_FS = `
   uniform vec3 uColor; uniform float uAlpha; uniform float uPow;
   varying vec3 vN; varying vec3 vV;
-  void main(){ float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), uPow); gl_FragColor = vec4(uColor, f * uAlpha); }`;
+  void main(){ float f = pow(1.0 - min(abs(dot(normalize(vN), normalize(vV))), 1.0), uPow); gl_FragColor = vec4(uColor, f * uAlpha); }`;
 
 // light pillars
 const PILLAR_VS = `

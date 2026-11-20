@@ -320,7 +320,7 @@ void main(){
   float a = rim * fingers * smoothstep(0.0, 0.05, vUv.y) * uAlpha;
   if (a < 0.004) discard;
   vec3 V = normalize(cameraPosition - vW);
-  float fres = pow(1.0 - abs(dot(normalize(vN), V)), 1.4);
+  float fres = pow(1.0 - min(abs(dot(normalize(vN), V)), 1.0), 1.4);
   float foam = smoothstep(0.35, 0.0, top) * 0.8 + smoothstep(0.7, 0.9, n2) * 0.4;
   vec3 col = mix(uBody, uCore, clamp(fres * 0.9 + foam, 0.0, 1.0));
   a *= mix(0.5, 1.0, clamp(fres + foam, 0.0, 1.0));

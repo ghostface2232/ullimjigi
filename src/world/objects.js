@@ -11,7 +11,8 @@ import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometr
 import { G } from '../core/context.js';
 import { toon } from '../render/materials.js';
 import { mulberry32, clamp, smoothstep } from '../core/util.js';
-import { CAMPS } from '../game/enemies.js';
+import { CAMPS, campSite } from '../game/enemies.js';
+import { campMember, fightGround, nearbyGround } from '../game/enemyground.js';
 import { POI } from './layout.js';
 import { authoredParts, authoredTex } from './buildings.js';
 
@@ -165,8 +166,10 @@ export class WorldObjects {
   // ---------------------------------------------------------------- placement
   place() {
     const W = this.W, rnd = mulberry32(2024);
-    // spots are picked on the original map's grid (Terrain.legacy) so every camp keeps its layout
+    // Lay out all props at the authored sites before moving any of them.
+    // Rejected placements also consume draws from this shared stream.
     const L = W.terrain.legacy();
+    const moved = [];
     const flatAt = (x, z) => L.normal(x, z).y > 0.86 && L.height(x, z) > 0.8 && !W.col.pointHit(x, L.height(x, z) + 0.5, z, 0.9);
     const near = (x, z, r) => this.list.some((b) => Math.hypot(b.pos.x - x, b.pos.z - z) < r);
     // no powder anywhere near where people live: a stray spark there would burn the home region
@@ -174,6 +177,7 @@ export class WorldObjects {
       || Math.hypot(x - POI.towerYard.x, z - POI.towerYard.z) < 60 || Math.hypot(x - POI.spawn.x, z - POI.spawn.z) < 60;
     for (const c of CAMPS) {
       if (c.elite) continue;
+      const start = this.list.length, site = campSite(W, c);
       // a couple of powder barrels and a crate at every camp: the camp's own supplies can be its undoing.
       // Camps close to the village keep only crates.
       const safe = settled(c.x, c.z);
@@ -196,6 +200,7 @@ export class WorldObjects {
         if (b) b.camp = c;
         break;
       }
+      if (site && (site.x !== c.x || site.z !== c.z)) moved.push({ c, site, props: this.list.slice(start) });
     }
     // crates by the village stalls and the tower yard (break them for a little mana)
     for (const [x, z] of [[12, 12], [-1, 29], [-10, 139], [24, 36]]) if (flatAt(x, z)) this.add('crate', x, z);
@@ -206,6 +211,34 @@ export class WorldObjects {
       const nn = L.normal(x, z);
       if (nn.y < 0.75 || nn.y > 0.92 || L.height(x, z) < 6 || near(x, z, 20) || W.col.pointHit(x, L.height(x, z) + 1, z, 1.4)) continue;
       this.add('boulder', x, z, 0.9 + rnd() * 0.5); n++;
+    }
+    for (const { c, site, props } of moved) {
+      const camp = { ...c, ...site };
+      const members = c.units.map((_, i) => campMember(camp, i));
+      const floor = W.h(site.x, site.z);
+      for (const b of props) {
+        const x = b.home.x + site.x - c.x, z = b.home.z + site.z - c.z;
+        const isRock = b.kind === 'boulder';
+        const fits = (px, pz) => {
+          const d = Math.hypot(px - site.x, pz - site.z);
+          if (d > (isRock ? 32 : 10)
+            || this.list.some(o => o !== b && Math.hypot(px - o.home.x, pz - o.home.z) < b.r + o.r + 0.3)
+            || !fightGround(W, px, pz, b.r, b.h)) return false;
+          if (isRock) return d >= 10 && W.terrain.pathAt(px, pz) <= 0.3
+            && W.terrain.supportsFootprint(px, pz, b.r, b.r * 0.88, 0.88);
+          if (b.kind === 'barrel' && settled(px, pz)) return false;
+          return d >= 3 && members.every(m => Math.hypot(m.x - px, m.z - pz) >= b.r + 1.5);
+        };
+        const p = isRock
+          ? nearbyGround(x, z, 16, (px, pz) => W.h(px, pz) >= floor + 2 && fits(px, pz))
+            || nearbyGround(site.x, site.z, 32, fits)
+          : nearbyGround(x, z, 18, fits);
+        if (!p) continue;
+        b.home.set(p.x, W.ground(p.x, p.z), p.z);
+        b.pos.copy(b.home);
+        this.center(b, b.target.pos);
+        if (isRock) b.camp = camp;
+      }
     }
   }
 

@@ -443,7 +443,7 @@ export class Story {
       this.hint(`${KBD('Shift')} 짧게 누르기: 순간이동 — 잠깐 무적 · ${KBD('T')} 대상 고정`, 10);
       this.obj('q_morning', '허깨비 물리치기');
       const lv = 1;
-      const wave = (defs) => defs.map(([t, x, z]) => { const e = G.enemies.spawn(t, V(x, 0, z), lv); G.vfx.burst(e.center(), 'hush', 10, { size: 1 }); return e; });
+      const wave = (defs) => defs.map(([t, x, z]) => { const e = G.enemies.spawnEncounter(t, V(x, 0, z), lv); G.vfx.burst(e.center(), 'hush', 10, { size: 1 }); return e; });
       // They come up the hill road. The yard is a mesa: anything set down on its flanks stands
       // under a cliff, further from the road than enemy navigation searches.
       const yard = V(8, 0, 126);
@@ -584,7 +584,7 @@ export class Story {
     this.cSay('온다. 셋… 아니, 기척이 훨씬 많구나. 한 놈도 마을 안에 들이지 마라!');
     G.hud.bark(this.npc('bau'), '이놈들! 종은 못 쳐도 창은 쓸 줄 알어!');
     const lv = G.enemies.levelFor(0);
-    const spawnAt = (t, x, z) => { const e = G.enemies.spawn(t, V(x + randRange(-2, 2), 0, z + randRange(-2, 2)), lv); G.vfx.burst(e.center(), 'hush', 10, { size: 1 }); return e; };
+    const spawnAt = (t, x, z) => { const e = G.enemies.spawnEncounter(t, V(x + randRange(-2, 2), 0, z + randRange(-2, 2)), lv); G.vfx.burst(e.center(), 'hush', 10, { size: 1 }); return e; };
     const waves = [
       { say: '북쪽 길이다!', units: [['ashling', 0, -26], ['ashling', 4, -28], ['ashling', -4, -24], ['moth', 0, -30], ['moth', 2, -30]] },
       { say: '서쪽! 호수 쪽에서도 기어 온다!', units: [['ashling', -44, 16], ['ooze', -46, 20], ['ashling', -44, 22], ['wailer', -48, 12]] },
@@ -708,7 +708,7 @@ export class Story {
       if (!this.flag('f_guard')) {
         this.set('f_guard');
         const lv = G.enemies.levelFor(1);
-        for (const [t, a] of [['ashlingFrost', 0.5], ['ashlingFrost', 2.6], ['oozeFrost', 4.4]]) G.enemies.spawn(t, V(S.pos.x + Math.cos(a) * 16, 0, S.pos.z + Math.sin(a) * 16), lv);
+        for (const [t, a] of [['ashlingFrost', 0.5], ['ashlingFrost', 2.6], ['oozeFrost', 4.4]]) G.enemies.spawnEncounter(t, V(S.pos.x + Math.cos(a) * 16, 0, S.pos.z + Math.sin(a) * 16), lv);
       }
       for (const b of S.braziers) b.onLit = () => {
         const n = S.braziers.filter((x) => x.lit).length;
@@ -729,12 +729,12 @@ export class Story {
     if (!this.flag('f_boss')) {
       await this.bossFight(() => {
         const lv = G.enemies.levelFor(1) + 1;
-        const b = G.enemies.spawn('bruteFrost', V(S.pos.x, 0, S.pos.z + 2.2), lv, { elite: true, name: '서리무덤 파수꾼', warden: true, leash: 999, hpMul: 5.5, brk: true });
+        const b = G.enemies.spawnEncounter('bruteFrost', V(S.pos.x, 0, S.pos.z + 2.2), lv, { elite: true, name: '서리무덤 파수꾼', warden: true, leash: 999, hpMul: 5.5, brk: true });
         b.aggro();
         G.vfx.burst(b.center(), 'frostmist', 30, { size: 2 }); G.vfx.burst(b.center(), 'hush', 20, { size: 1.5 });
         G.audio.play('boss_roar', { pos: b.pos });
         G.hud.bossBar(b, '서리무덤 파수꾼 — 무엇을 지키는지 잊은 것');
-        const adds = [G.enemies.spawn('ashlingFrost', V(S.pos.x + 5, 0, S.pos.z - 2), lv - 1), G.enemies.spawn('ashlingFrost', V(S.pos.x - 5, 0, S.pos.z - 2), lv - 1)];
+        const adds = [G.enemies.spawnEncounter('ashlingFrost', V(S.pos.x + 5, 0, S.pos.z - 2), lv - 1), G.enemies.spawnEncounter('ashlingFrost', V(S.pos.x - 5, 0, S.pos.z - 2), lv - 1)];
         adds.forEach((e) => { e.scripted = true; e.aggro(); });
         this.cSay('서리무덤이다! 저 얼음 갑옷에 서리는 안 먹힌다. 불을 붙여라— 타는 동안엔 갑옷이 녹느니라!', null, 6);
         return b;
@@ -851,13 +851,13 @@ export class Story {
       let first = true;
       const knight = await this.bossFight(async () => {
         const lv = G.enemies.levelFor(1) + 1;
-        const k = G.enemies.spawn('knight', V(S.pos.x + 3.2, 0, S.pos.z + 0.5), lv);
-        k.pos.y = S.y + 0.8; k.yaw = Math.PI / 2;
+        const k = G.enemies.spawnEncounter('knight', V(S.pos.x + 3.2, 0, S.pos.z + 0.5), lv);
+        k.yaw = Math.PI / 2;
         if (first) {
           first = false;
           await this.conv(async () => {
             // inside the pillar ring, between two pillars (they stand at r 8.2, every 45° from 22.5°), facing the knight
-            G.cameraRig.setCine(V(S.pos.x + 7.4, S.y + 2.9, S.pos.z - 1.2), V(S.pos.x + 3.2, S.y + 2.1, S.pos.z + 0.5));
+            G.cameraRig.setCine(V(S.pos.x + 7.4, S.y + 2.9, S.pos.z - 1.2), k.pos.clone().add(V(0, 1.3, 0)));
             G.audio.play('dissolve', { pos: k.pos });
             G.vfx.burst(k.center(), 'hush', 30, { size: 1.5 });
             await this.say('kaelShadow', '…돌아… 가라…', { cam: false });

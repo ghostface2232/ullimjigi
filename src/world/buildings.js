@@ -1835,7 +1835,7 @@ export function windWheel() {
     const glow = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), glowMat(0x6effc0, 2, { nocache: true, opacity: 0 }));
     rotor.add(glow);
     consolidate(g, [rotor]);
-    for (const arm of rotor.children) if (arm.isGroup) consolidate(arm);
+    consolidate(rotor, [glow]);
     g.userData = { rotor, glow };
     return g;
   }
@@ -1860,7 +1860,7 @@ export function windWheel() {
   const glow = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), glowMat(0x6effc0, 2, { nocache: true, opacity: 0 }));
   rotor.add(glow);
   consolidate(g, [rotor]);
-  for (const arm of rotor.children) if (arm.isGroup) consolidate(arm);
+  consolidate(rotor, [glow]);
   g.userData = { rotor, glow };
   return g;
 }

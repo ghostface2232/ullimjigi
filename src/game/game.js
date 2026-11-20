@@ -198,6 +198,11 @@ export class Game {
     G.world.props.update(G.camera);
     G.world.terrain.update(G.camera, Infinity);
     try { await this.compileScene(); } catch (_) { /* ignore */ }
+    // compileAsync waits for linking, but r186 reads the driver logs and
+    // reflects uniforms/attributes on the first draw. Do that during loading
+    // for the world and the retained spell variants, including the fogless ones.
+    G.vfx.prewarm();
+    for (const program of G.renderer.renderer.info.programs) program.getUniforms();
     G.vfx.rings.forEach((r) => (r.m.visible = false));
     G.scene.remove(grp);
     G.vfx.disposeOrb(orb);

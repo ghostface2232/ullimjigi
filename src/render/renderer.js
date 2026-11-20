@@ -614,7 +614,14 @@ export class Renderer {
     const water = G.world && G.world.water;
     // one scene-graph update serves the mirrored and the main view
     const sc = this.scene, auto = sc.matrixWorldAutoUpdate;
-    if (auto) { sc.updateMatrixWorld(); sc.matrixWorldAutoUpdate = false; }
+    if (auto) {
+      sc.updateWorldMatrix(false, false);
+      // Hidden roots (distant villagers, idle effect pools) cannot draw in
+      // either view. A newly visible root gets its whole subtree refreshed,
+      // including its hidden bones, before skinning and shadow submission.
+      for (const root of sc.children) if (root.visible) root.updateMatrixWorld(true);
+      sc.matrixWorldAutoUpdate = false;
+    }
     try {
       if (water && (!r.shadowMap.enabled || G.world.sky.sun.shadow.map)) water.reflect(r, sc, cam, tier().reflect, this.sceneRT.width, this.sceneRT.height);
       r.setRenderTarget(this.sceneRT);

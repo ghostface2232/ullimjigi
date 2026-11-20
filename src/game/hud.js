@@ -85,7 +85,12 @@ export class HUD {
   }
   // world-anchored elements move by `translate` (compositor only, and it composes with their
   // own transform animations) instead of left / top
-  at(el, x, y) { el.style.translate = `${Math.round(x)}px ${Math.round(y)}px`; }
+  at(el, x, y) {
+    x = Math.round(x); y = Math.round(y);
+    if (el._hudX === x && el._hudY === y) return;
+    el._hudX = x; el._hudY = y;
+    el.style.translate = `${x}px ${y}px`;
+  }
   // a small mark next to the minimap whenever the journey is written down
   saved() { this.restart(this.el.saveMark, 'show'); }
 
@@ -93,7 +98,8 @@ export class HUD {
   // Interface size follows the window (1600×900 = 1, eased so it neither balloons on big
   // screens nor shrinks to unreadable on small ones) times the player's own setting.
   applyScale() {
-    const fit = Math.min(innerWidth / 1600, innerHeight / 900);
+    this.screenW = window.innerWidth; this.screenH = window.innerHeight;
+    const fit = Math.min(this.screenW / 1600, this.screenH / 900);
     const s = clamp(Math.pow(fit, 0.8), 0.68, 1.5) * clamp((G.settings.ui ?? 100) / 100, 0.75, 1.35);
     document.documentElement.style.setProperty('--ui', s.toFixed(3));
     this.uiScale = s;
@@ -125,7 +131,21 @@ export class HUD {
       this.el.xpLv.textContent = P.level;
     }
   }
-  restart(el, cls) { if (!el) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
+  // Replay a one-shot CSS animation: the class comes off now and goes back on after the
+  // browser has rendered a frame without it. (Reading offsetWidth in between restarts it at
+  // once, but that reflows the whole HUD in the middle of the frame: 5-10 ms per cast, hit
+  // or mana orb in a fight.)
+  // `now`: for something seen at rest and shown outside a fight (a new objective, a menu
+  // heading), where two frames of the resting state before the animation would flash.
+  restart(el, cls, now = false) {
+    if (!el) return;
+    el.classList.remove(cls);
+    if (now) { void el.offsetWidth; el.classList.add(cls); return; }
+    const waiting = (el._restart ||= new Set());
+    if (waiting.has(cls)) return;
+    waiting.add(cls);
+    requestAnimationFrame(() => requestAnimationFrame(() => { waiting.delete(cls); el.classList.add(cls); }));
+  }
   // not enough mana: bar shake + red flash, "마나 부족" under the crosshair (rate-limited)
   manaShort(cost) {
     this.restart(this.el.mana, 'short');
@@ -166,10 +186,18 @@ export class HUD {
     const fx = -Math.sin(cr.yaw), fz = -Math.cos(cr.yaw);
     const heading = Math.atan2(fx, -fz);
     this.compassHalf ||= this.el.compassStrip.clientWidth / 2 || 260; // measured once per resize
+    // All ticks scroll together. Only a tick wrapping past north changes its local position.
+    const pxPerRad = 260 / (Math.PI / 2);
+    this.el.compassStrip.style.translate = `${Math.round(-heading * pxPerRad)}px`;
     for (const it of this.compassItems) {
-      const x = this.compassPos(heading, it.a);
-      if (x === null) it.e.style.display = 'none';
-      else { it.e.style.display = ''; it.e.style.left = x + 'px'; }
+      const rel = wrapAngle(it.a - heading);
+      const visible = Math.abs(rel) <= Math.PI * 0.55;
+      if (it.visible !== visible) { it.visible = visible; it.e.style.display = visible ? '' : 'none'; }
+      if (visible) {
+        const turn = Math.round((rel + heading - it.a) / (2 * Math.PI));
+        const x = this.compassHalf + (it.a + turn * 2 * Math.PI) * pxPerRad;
+        if (it.x !== x) { it.x = x; it.e.style.left = x + 'px'; }
+      }
     }
     const P = G.player.pos;
     const marks = [];
@@ -195,7 +223,7 @@ export class HUD {
       const show = x !== null && (d >= 4 || m.dist);
       if (e._show !== show) { e._show = show; e.style.display = show ? '' : 'none'; }
       if (!show) continue;
-      e.style.left = x + 'px';
+      e.style.translate = Math.round(x) + 'px';
       if (e._d) { const t = Math.round(d) + 'm'; if (e._t !== t) { e._t = t; e._d.textContent = t; } }
     }
     for (const [id, e] of this.cmarks) if (!seen.has(id)) { e.remove(); this.cmarks.delete(id); }
@@ -206,7 +234,7 @@ export class HUD {
     this.el.qtTitle.textContent = title || '';
     if (this.el.qtObj.textContent !== obj) {
       this.el.qtObj.innerHTML = obj || '';
-      if (flash) { this.restart(this.el.qtObj, 'flash'); this.restart($('.qt-ico'), 'flash'); }
+      if (flash) { this.restart(this.el.qtObj, 'flash', true); this.restart($('.qt-ico'), 'flash', true); }
     }
     $('#quest-tracker').style.opacity = title ? 1 : 0;
   }
@@ -225,7 +253,7 @@ export class HUD {
       n.classList.toggle('gone', !P.unlocked.has(e));
       n.classList.toggle('active', P.element === e);
       n.classList.toggle('prev', P.prevElement === e && P.prevElement !== P.element);
-      if (unlockEl === e) { n.classList.remove('unlock'); void n.offsetWidth; n.classList.add('unlock'); }
+      if (unlockEl === e) this.restart(n, 'unlock');
     }
     const info = weaveInfo(P.element, P.prevElement);
     const wKnown = P.canWeave();
@@ -267,15 +295,15 @@ export class HUD {
     const b = this.el.sp;
     b.classList.toggle('hidden', K.points <= 0);
     b.querySelector('b').textContent = K.points;
-    if (flash) { b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); }
+    if (flash) this.restart(b, 'pop');
   }
-  ultReady() { const u = this.el.ult; u.classList.remove('flash'); void u.offsetWidth; u.classList.add('flash'); }
+  ultReady() { this.restart(this.el.ult, 'flash'); }
   ultShort() { this.restart(this.el.ult, 'bump'); this.toast(`울림 게이지가 아직 차지 않았다 — 적을 맞히고, 특히 <b>원소 반응</b>을 일으키면 빨리 찬다`); }
   chain(n, kinds) {
     let el = this.chainEl;
     if (!el) { el = this.chainEl = document.createElement('div'); el.className = 'chain'; this.el.hud.appendChild(el); }
     el.innerHTML = `<span class="cn">${n}</span><span class="cl">연쇄 반응${kinds > 1 ? ` · ${kinds}종` : ''}</span>`;
-    el.classList.remove('bump', 'out'); void el.offsetWidth; el.classList.add('bump');
+    el.classList.remove('out'); this.restart(el, 'bump');
     clearTimeout(this.chainT); this.chainT = setTimeout(() => el.classList.add('out'), 3800);
   }
   chainEnd(n, xp) { if (this.chainEl) { this.chainEl.innerHTML = `<span class="cn">${n}</span><span class="cl">연쇄 반응 · +${xp} XP</span>`; this.chainEl.classList.add('out'); } }
@@ -314,7 +342,7 @@ export class HUD {
     r.classList.toggle('ready', ready);
     r.classList.toggle('short', !affordable);
   }
-  castPulse() { const c = this.el.crosshair; c.classList.remove('cast'); void c.offsetWidth; c.classList.add('cast'); }
+  castPulse() { this.restart(this.el.crosshair, 'cast'); }
   // The name of a charged shot or a weave, in the action lane at the right above the spell bar
   // (see styles.css). One node, reused: a new cast replaces the name still showing.
   castName(name, els, big = false) {
@@ -331,8 +359,8 @@ export class HUD {
   project(pos, out = { x: 0, y: 0, vis: false }) {
     v3.copy(pos).project(G.camera);
     out.vis = v3.z < 1 && v3.z > -1 && Math.abs(v3.x) < 1.2 && Math.abs(v3.y) < 1.2;
-    out.x = (v3.x * 0.5 + 0.5) * window.innerWidth;
-    out.y = (-v3.y * 0.5 + 0.5) * window.innerHeight;
+    out.x = (v3.x * 0.5 + 0.5) * this.screenW;
+    out.y = (-v3.y * 0.5 + 0.5) * this.screenH;
     return out;
   }
   damage(pos, n, el, crit, reaction, small = false) {
@@ -363,8 +391,12 @@ export class HUD {
     this.addFloat(d, pos.clone().add(new THREE.Vector3(0, 0.8, 0)), 1200);
   }
   addFloat(el, pos, ms, plateOf = null) {
-    this.el.dmg.appendChild(el);
-    const f = { el, pos, t: ms / 1000, plateOf };
+    // Moving the anchor must not invalidate the child's running pop animation.
+    const anchor = document.createElement('div');
+    anchor.className = 'float-anchor';
+    anchor.appendChild(el);
+    this.el.dmg.appendChild(anchor);
+    const f = { el: anchor, pos, t: ms / 1000, plateOf };
     this.floats.push(f);
     this.placeFloat(f);
     if (this.floats.length > 60) { const o = this.floats.shift(); o.el.remove(); }
@@ -458,7 +490,7 @@ export class HUD {
   // not enough stamina for a climbing lunge: the wheel shakes red
   staminaShort() {
     const e = this.el.stamina;
-    e.classList.remove('short'); void e.offsetWidth; e.classList.add('short');
+    this.restart(e, 'short');
     G.audio.play('mana_empty', { v: 0.5 });
   }
   inCombat() { return !!(G.bossActive || (G.enemies && G.enemies.inCombat())); }
@@ -467,7 +499,7 @@ export class HUD {
     const a = this.el.area;
     a.querySelector('.at-name').textContent = name;
     a.querySelector('.at-sub').textContent = en;
-    a.classList.remove('show'); void a.offsetWidth; a.classList.add('show');
+    this.restart(a, 'show');
   }
   // o.minor: frequent notices (quests, waystones, seeds, level-ups) always use the slim ribbon
   // under the compass; the full band is kept for rare moments (a new song, Mora's memories…)
@@ -673,7 +705,7 @@ export class HUD {
       if (b._full !== full) { b._full = full; b.classList.toggle('brief', !full); }
       // health in half-percent steps: the bar (and its trailing ghost) is only written when it moves
       const hp = Math.round(clamp(e.hp / e.maxHp, 0, 1) * 200) / 2;
-      if (b._hp !== hp) { b._hp = hp; b._fill.style.width = b._ghost.style.width = hp + '%'; }
+      if (b._hp !== hp) { b._hp = hp; b._fill.style.transform = b._ghost.style.transform = `scaleX(${hp / 100})`; }
       // status marks: a key of the active ones, rebuilt only when the set changes
       const st = e.st; let s = '';
       for (const [k] of STATUS) if (st[k] > 0 && !(k === 'chill' && st.frozen > 0)) s += k + ' ';
@@ -1229,7 +1261,7 @@ export class HUD {
       b.addEventListener('mouseenter', () => { if (!this.crBusy) G.audio.play('ui_hover'); });
       b.addEventListener('click', (e) => { e.stopPropagation(); this.crPick(+b.dataset.i); });
     });
-    this.restart(root.querySelector('.cr-head'), 'in');
+    this.restart(root.querySelector('.cr-head'), 'in', true);
     return true;
   }
   crPick(i) {

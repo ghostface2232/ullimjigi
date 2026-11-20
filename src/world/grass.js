@@ -304,17 +304,24 @@ export class Grass {
     const off = new Float32Array(n * 3), col = new Float32Array(n * 3), par = new Float32Array(n * 4), shape = new Float32Array(n * 4);
     const fOff = [], fCol = [], fPar = [];
     let k = 0;
-    const c = this.tmpC;
+    const c = this.tmpC, surface = { y: 0 };
     // Reuse the world's existing footprints. Query once per streamed chunk, never per
     // frame; the collision grid already contains trees, rocks, walls and buildings.
-    const solids = [];
-    G.world?.col?.query(cx * S + S / 2, cz * S + S / 2, S * 0.71 + 1, (s) => solids.push(s));
+    // A footprint can shorten a tuft only within 0.75 m. Keep its original
+    // query order in each jittered row, with a millimetre of rounding margin.
+    const rowSolids = Array.from({ length: side }, () => []);
+    G.world?.col?.query(cx * S + S / 2, cz * S + S / 2, S * 0.71 + 1, (s) => {
+      const reach = (s.type === 'circle' ? s.r : Math.abs(s.sin) * s.hw + Math.abs(s.cos) * s.hd) + 0.751;
+      const first = Math.max(0, Math.floor(((s.z - reach) / S - cz) * side));
+      const last = Math.min(side - 1, Math.floor(((s.z + reach) / S - cz) * side));
+      for (let row = first; row <= last; row++) rowSolids[row].push(s);
+    });
     const paving = U.paveTex.value?.image;
     for (let i = 0; i < n; i++) {
       const x = (cx + (i % side + rnd()) / side) * S, z = (cz + (Math.floor(i / side) + rnd()) / side) * S;
-      const g = T.grassAt(x, z);
+      const g = T.grassAt(x, z, surface);
       if (g < 0.08) continue;
-      const y = T.height(x, z);
+      const y = surface.y;
       const path = T.pathAt(x, z);
       const paved = paving?.width === T.N && paving.data.length === T.N * T.N ? T.sampleGrid(paving.data, x, z) / 255 : 0;
       // Paving and well-trodden paths have a clear open centre. Short little islands
@@ -322,7 +329,7 @@ export class Grass {
       const verge = 1 - smoothstep(0.12, 0.74, Math.max(path, paved));
       if (verge <= 0) continue;
       let contact = 1;
-      for (const s of solids) {
+      for (const s of rowSolids[Math.floor(i / side)]) {
         if (s.h0 > y + 0.35 || s.h1 < y + 0.08) continue;
         let d;
         if (s.type === 'circle') d = Math.hypot(x - s.x, z - s.z) - s.r;
@@ -393,7 +400,7 @@ export class Grass {
     return { mesh, flowers };
   }
 
-  update(_dt, camPos, _playerPos, sky) {
+  update(_dt, camPos, _playerPos, sky, budget = 4) {
     this.uni.uCam.value.copy(camPos);
     this.uni.uSun.value.copy(sky.sun.color).multiplyScalar(sky.sun.intensity * 0.34);
     this.uni.uAmb.value.copy(sky.hemi.color).multiplyScalar(sky.hemi.intensity * 0.4);
@@ -413,7 +420,7 @@ export class Grass {
     want.sort((a, b) => a.d - b.d);
     const t0 = performance.now();
     for (const { cx, cz } of want) {
-      if (performance.now() - t0 > 4) break;
+      if (performance.now() - t0 > budget) break;
       const key = cx + ',' + cz;
       const H = this.terrain.half; // chunks lying on the map (edges included: the last one ends exactly at ±half)
       if (cx * S < -H || cz * S < -H || (cx + 1) * S > H || (cz + 1) * S > H) { this.chunks.set(key, { mesh: null, cx, cz }); continue; }

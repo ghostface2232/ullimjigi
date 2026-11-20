@@ -3,6 +3,42 @@ import * as THREE from 'three';
 import { G } from '../core/context.js';
 import { makeHumanoid, makeFox, makeCat, makeGhost, CHAR } from './characters.js';
 import { damp, angleDamp, randRange, rand, pick, wrapAngle, clamp } from '../core/util.js';
+import { SHADOW_LAYER } from '../render/renderer.js';
+import { useCasterDepth } from '../render/materials.js';
+
+// A villager's body materials are separate colour draws over the same
+// skinned vertex buffers. Draw their identical opaque depth together. The
+// morphing face, equipment, ghosts and separate-sided surfaces stay separate.
+function batchBodyShadow(rig) {
+  const main = rig.mesh;
+  if (!main?.isSkinnedMesh) return;
+  const base = main.geometry, mat = main.material;
+  const parts = rig.meshes.filter(m => m.geometry.index === base.index && m.castShadow &&
+    m.geometry.attributes.position === base.attributes.position && m.skeleton === main.skeleton &&
+    !m.material.transparent && !m.material.alphaTest && !m.material.alphaToCoverage &&
+    !m.material.displacementMap && !m.material.clippingPlanes && !m.material.wireframe &&
+    m.material.shadowSide === mat.shadowSide && m.material.side === mat.side);
+  if (parts.length < 2) return;
+  const geometry = new THREE.BufferGeometry();
+  Object.assign(geometry.attributes, base.attributes);
+  const index = base.index.array;
+  const indices = new index.constructor(parts.reduce((n, m) => n + m.geometry.drawRange.count, 0));
+  let offset = 0;
+  for (const mesh of parts) {
+    const { start, count } = mesh.geometry.drawRange;
+    indices.set(index.subarray(start, start + count), offset);
+    offset += count;
+    mesh.castShadow = false;
+  }
+  geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  const shadow = new THREE.SkinnedMesh(geometry, parts[0].material);
+  main.parent.add(shadow);
+  shadow.bind(main.skeleton, main.bindMatrix);
+  shadow.boundingSphere = main.boundingSphere;
+  shadow.castShadow = true;
+  shadow.layers.set(SHADOW_LAYER);
+  useCasterDepth(shadow);
+}
 
 export const SPEAKERS = {
   mora: { name: '모라', voice: { f: 250, type: 'triangle', formant: 950, d: 0.065, v: 0.085, slide: 0.94 } },
@@ -31,6 +67,7 @@ export class NPC {
     this.rig = opts.rig || makeHumanoid(CHAR[charKey]);
     this.root = this.rig.root;
     this.root.traverse((o) => { if (o.isMesh && !o.userData.isOutline) o.castShadow = true; });
+    if (!opts.rig) batchBodyShadow(this.rig);
     G.scene.add(this.root);
     this.pos = new THREE.Vector3(x, 0, z);
     this.yaw = yaw; this.homeYaw = yaw;

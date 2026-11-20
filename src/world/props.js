@@ -20,7 +20,8 @@
 // around the rift, blossom trees in village gardens.
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { toon } from '../render/materials.js';
+import { G } from '../core/context.js';
+import { toon, useCasterDepth } from '../render/materials.js';
 import { tier } from '../render/quality.js';
 import { SHADOW_LAYER } from '../render/renderer.js';
 import { mulberry32, fbm, smoothstep, lerp, clamp } from '../core/util.js';
@@ -1455,8 +1456,13 @@ export class Props {
           im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
           if (kind !== 'shadow') { im.setColorAt(0, tmpC); im.instanceColor.setUsage(THREE.DynamicDrawUsage); }
           im.count = 0;
+          // The source transforms and colours never change after placement.
+          // Remember which source already occupies each GPU instance slot.
+          im.userData.sourceIds = new Uint32Array(n);
+          im.matrixAutoUpdate = false;
           im.frustumCulled = false;
           im.castShadow = t.shadow && (kind === 'shadow' || (kind === 'near' && !geoF));
+          if (im.castShadow) useCasterDepth(im);
           im.receiveShadow = kind !== 'shadow';
           if (kind === 'shadow') im.layers.set(SHADOW_LAYER);
           im.name = name + (kind === 'near' ? '' : ':' + kind);
@@ -1465,7 +1471,12 @@ export class Props {
           this.meshes.push(im);
           return im;
         };
-        this.batches.push({ t, name, mats, cols, sphs, n, near: mk(geoN, 'near'), far: geoF ? mk(geoF, 'far') : null, shadow: geoF && t.shadow ? mk(geoF, 'shadow') : null });
+        const batch = { t, name, mats, cols, sphs, n, near: mk(geoN, 'near'), far: geoF ? mk(geoF, 'far') : null, shadow: geoF && t.shadow ? mk(geoF, 'shadow') : null };
+        if (batch.shadow) {
+          batch.nearShadow = mk(geoF, 'shadow');
+          fitNearShadow(batch, geoF);
+        }
+        this.batches.push(batch);
       });
     }
     this.dirty = false;
@@ -1496,42 +1507,109 @@ export class Props {
       // LOD band: inside it an item is in both meshes, dithered from near to far
       const b0 = fA ? t.near - FADE : 1e9, b1 = t.near + FADE, b02 = b0 * b0, b12 = b1 * b1;
       let nn = 0, nf = 0, ns = 0;
+      let nearEnd = 0, farEnd = 0, shadowEnd = 0, nearFadeEnd = 0, farFadeEnd = 0;
+      const ni = b.near.userData.sourceIds, fi = b.far?.userData.sourceIds, si = b.shadow?.userData.sourceIds;
       for (let i = 0; i < n; i++) {
         const dx = sphs[i * 4] - cx, dy = sphs[i * 4 + 1] - cy, dz = sphs[i * 4 + 2] - cz;
         const d2 = dx * dx + dy * dy + dz * dz;
         if (d2 > max2) continue;
-        if (sA && d2 < sh2) { for (let k = 0; k < 16; k++) sA[ns * 16 + k] = mats[i * 16 + k]; ns++; }
+        if (sA && d2 < sh2) {
+          if (si[ns] !== i + 1) {
+            si[ns] = i + 1;
+            for (let k = 0; k < 16; k++) sA[ns * 16 + k] = mats[i * 16 + k];
+            shadowEnd = ns + 1;
+          }
+          ns++;
+        }
         if (d2 > keep2) {
           sph.center.set(sphs[i * 4], sphs[i * 4 + 1], sphs[i * 4 + 2]); sph.radius = sphs[i * 4 + 3];
           if (!frustum.intersectsSphere(sph) && !(mirror && mirror.intersectsSphere(sph))) continue;
         }
         const fade = d2 <= b02 ? 0 : d2 >= b12 ? 1 : (Math.sqrt(d2) - b0) / (b1 - b0);
         if (fade < 1) {
-          for (let k = 0; k < 16; k++) nA[nn * 16 + k] = mats[i * 16 + k];
-          nC[nn * 3] = cols[i * 3]; nC[nn * 3 + 1] = cols[i * 3 + 1]; nC[nn * 3 + 2] = cols[i * 3 + 2];
-          nFd[nn] = fade;
+          if (ni[nn] !== i + 1) {
+            ni[nn] = i + 1;
+            for (let k = 0; k < 16; k++) nA[nn * 16 + k] = mats[i * 16 + k];
+            nC[nn * 3] = cols[i * 3]; nC[nn * 3 + 1] = cols[i * 3 + 1]; nC[nn * 3 + 2] = cols[i * 3 + 2];
+            nearEnd = nn + 1;
+          }
+          if (nFd[nn] !== Math.fround(fade)) { nFd[nn] = fade; nearFadeEnd = nn + 1; }
           nn++;
         }
         if (fade > 0) {
-          for (let k = 0; k < 16; k++) fA[nf * 16 + k] = mats[i * 16 + k];
-          fC[nf * 3] = cols[i * 3]; fC[nf * 3 + 1] = cols[i * 3 + 1]; fC[nf * 3 + 2] = cols[i * 3 + 2];
-          fFd[nf] = -fade;
+          if (fi[nf] !== i + 1) {
+            fi[nf] = i + 1;
+            for (let k = 0; k < 16; k++) fA[nf * 16 + k] = mats[i * 16 + k];
+            fC[nf * 3] = cols[i * 3]; fC[nf * 3 + 1] = cols[i * 3 + 1]; fC[nf * 3 + 2] = cols[i * 3 + 2];
+            farEnd = nf + 1;
+          }
+          if (fFd[nf] !== Math.fround(-fade)) { fFd[nf] = -fade; farFadeEnd = nf + 1; }
           nf++;
         }
       }
-      const setN = (im, c, fd) => {
-        im.count = c; im.visible = c > 0;
-        if (c) {
-          im.instanceMatrix.clearUpdateRanges(); im.instanceMatrix.addUpdateRange(0, c * 16); im.instanceMatrix.needsUpdate = true;
-          if (im.instanceColor) { im.instanceColor.clearUpdateRanges(); im.instanceColor.addUpdateRange(0, c * 3); im.instanceColor.needsUpdate = true; }
-          if (fd) { const a = im.geometry.attributes.aFade; a.clearUpdateRanges(); a.addUpdateRange(0, c); a.needsUpdate = true; }
-        }
-      };
-      setN(b.near, nn, !!fA);
-      if (b.far) setN(b.far, nf, true);
-      if (b.shadow) setN(b.shadow, ns);
+      finishInstances(b.near, nn, nearEnd, nearFadeEnd);
+      if (b.far) finishInstances(b.far, nf, farEnd, farFadeEnd);
+      if (b.shadow) {
+        finishInstances(b.shadow, ns, shadowEnd, 0);
+        if (b.nearShadow) b.nearShadow.visible = ns > 0;
+      }
     }
   }
+}
+
+// The outer caster list includes trees behind the camera. In the inner cascade
+// most of their low-poly crowns still miss the viewport. Use the cascade's
+// actual six planes and the far model's own bound, preserving source order.
+function fitNearShadow(batch, geometry) {
+  const { shadow, nearShadow, mats, n } = batch;
+  const bounds = new Float64Array(n * 4);
+  if (!geometry.boundingSphere) geometry.computeBoundingSphere();
+  for (let i = 0; i < n; i++) {
+    tmpM.fromArray(mats, i * 16);
+    sph.copy(geometry.boundingSphere).applyMatrix4(tmpM);
+    sph.center.toArray(bounds, i * 4);
+    bounds[i * 4 + 3] = sph.radius + 0.01;
+  }
+  shadow.frustumCulled = nearShadow.frustumCulled = true;
+  shadow.intersectsFrustum = f => f !== G.world?.sky?.sun?.shadow.getFrustum(0);
+  nearShadow.intersectsFrustum = f => {
+    if (f !== G.world?.sky?.sun?.shadow.getFrustum(0)) return false;
+    const source = shadow.userData.sourceIds, slots = nearShadow.userData.sourceIds;
+    const dst = nearShadow.instanceMatrix.array;
+    let count = 0, end = 0;
+    for (let j = 0; j < shadow.count; j++) {
+      const id = source[j], i = id - 1;
+      sph.center.fromArray(bounds, i * 4); sph.radius = bounds[i * 4 + 3];
+      if (!f.intersectsSphere(sph)) continue;
+      if (slots[count] !== id) {
+        slots[count] = id;
+        for (let k = 0; k < 16; k++) dst[count * 16 + k] = mats[i * 16 + k];
+        end = count + 1;
+      }
+      count++;
+    }
+    nearShadow.count = count;
+    if (end) uploadPrefix(nearShadow.instanceMatrix, end * 16);
+    return count > 0;
+  };
+}
+
+function finishInstances(mesh, count, changedEnd, fadeEnd) {
+  mesh.count = count;
+  mesh.visible = count > 0;
+  if (changedEnd) {
+    uploadPrefix(mesh.instanceMatrix, changedEnd * 16);
+    if (mesh.instanceColor) uploadPrefix(mesh.instanceColor, changedEnd * 3);
+  }
+  if (fadeEnd) uploadPrefix(mesh.geometry.attributes.aFade, fadeEnd);
+}
+
+function uploadPrefix(attribute, count) {
+  // A hidden shadow batch may still have an upload pending from a prior sort.
+  const pending = attribute.updateRanges[0];
+  if (pending) pending.count = Math.max(pending.count, count);
+  else attribute.addUpdateRange(0, count);
+  attribute.needsUpdate = true;
 }
 
 // Geometry of one tree. kind: oak | maple | blossom | willow | birch | poplar | pine | dead; far: the far model

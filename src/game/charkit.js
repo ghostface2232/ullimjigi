@@ -6,7 +6,7 @@
 // and shared between instances (each instance gets its own bones/materials).
 import * as THREE from 'three';
 import { G } from '../core/context.js';
-import { toon, outlineMat, U } from '../render/materials.js';
+import { toon, outlineMat, useCasterDepth, U } from '../render/materials.js';
 
 const V3 = THREE.Vector3;
 export const sat = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
@@ -45,6 +45,13 @@ export function vnoise3(x, y, z) {
 
 // ---------------------------------------------------------------------------
 // Skeleton definition (rest pose in body space, all rest rotations identity)
+// A bone-only branch supplies matrices but never submits draws. Attachments
+// (including equipment reparented later) open their path for all render passes.
+function showAttachmentPath({ child }) {
+  if (child.isBone && !child.visible) return;
+  for (let b = this; b?.isBone && !b.visible; b = b.parent) b.visible = true;
+}
+
 export class SkelDef {
   constructor() { this.b = []; this.map = {}; }
   add(name, parent, x, y, z, tail = null) {
@@ -72,7 +79,11 @@ export class SkelDef {
       if (B.parent >= 0) { o.position.copy(B.pos).sub(this.b[B.parent].pos); bones[B.parent].add(o); } else o.position.copy(B.pos);
     });
     const by = {};
-    bones.forEach((o) => { by[o.name] = o; });
+    bones.forEach((o) => {
+      by[o.name] = o;
+      o.visible = false;
+      o.addEventListener('childadded', showAttachmentPath);
+    });
     return { bones, by, root: bones[0] };
   }
 }
@@ -1217,6 +1228,7 @@ export function instance(parent, def, built, mats, o = {}) {
   built.mats.forEach((k, i) => {
     if (!mats[k]) return;
     const mesh = new THREE.SkinnedMesh(parts[i], mats[k]);
+    useCasterDepth(mesh);
     mesh.name = k;
     parent.add(mesh);
     mesh.updateMatrixWorld(true);
@@ -1247,9 +1259,11 @@ export function instance(parent, def, built, mats, o = {}) {
 // point in b's space). pole: world point the middle joint bends towards.
 const _a = new V3(), _b = new V3(), _c = new V3(), _n = new V3(), _m = new V3(), _e = new V3(), _t = new V3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion(), _q4 = new THREE.Quaternion();
+const _rotPos = new V3(), _rotScale = new V3();
 export function ik2(a, b, endLocal, target, pole, weight = 1) {
   if (weight <= 0.001) return;
-  a.getWorldPosition(_a); b.getWorldPosition(_b); _c.copy(endLocal).applyMatrix4(b.matrixWorld);
+  b.updateWorldMatrix(true, false);
+  _a.setFromMatrixPosition(a.matrixWorld); _b.setFromMatrixPosition(b.matrixWorld); _c.copy(endLocal).applyMatrix4(b.matrixWorld);
   const L1 = _a.distanceTo(_b), L2 = _b.distanceTo(_c);
   _t.copy(target);
   let D = _t.distanceTo(_a);
@@ -1264,18 +1278,24 @@ export function ik2(a, b, endLocal, target, pole, weight = 1) {
   _e.copy(_a).addScaledVector(_n, x).addScaledVector(_m, h);
   _t.copy(_a).addScaledVector(_n, D);
   // upper bone
-  rotateTowards(a, _b.sub(_a).normalize(), _e.clone().sub(_a).normalize(), weight);
+  rotateWithMatrices(a, _b.sub(_a).normalize(), _e.sub(_a).normalize(), weight);
   a.updateMatrixWorld(true);
-  b.getWorldPosition(_b); _c.copy(endLocal).applyMatrix4(b.matrixWorld);
-  rotateTowards(b, _c.sub(_b).normalize(), _t.sub(_b).normalize(), weight);
+  _b.setFromMatrixPosition(b.matrixWorld); _c.copy(endLocal).applyMatrix4(b.matrixWorld);
+  rotateWithMatrices(b, _c.sub(_b).normalize(), _t.sub(_b).normalize(), weight);
   b.updateMatrixWorld(true);
 }
 // rotate `o` so that world direction `from` maps to `to` (blend by w)
 export function rotateTowards(o, from, to, w = 1) {
+  o.updateWorldMatrix(true, false);
+  rotateWithMatrices(o, from, to, w);
+}
+// The solver has already propagated these two matrices for this pose.
+function rotateWithMatrices(o, from, to, w) {
   _q1.setFromUnitVectors(from, to);
-  o.getWorldQuaternion(_q2);
+  o.matrixWorld.decompose(_rotPos, _q2, _rotScale);
   _q3.multiplyQuaternions(_q1, _q2);                 // desired world rotation
-  o.parent.getWorldQuaternion(_q4).invert();
+  o.parent.matrixWorld.decompose(_rotPos, _q4, _rotScale);
+  _q4.invert();
   _q3.premultiply(_q4);                              // to local
   if (w >= 0.999) o.quaternion.copy(_q3); else o.quaternion.slerp(_q3, w);
 }
@@ -1311,10 +1331,12 @@ export class Chain {
   }
   targets() {
     const B = this.bones;
-    for (let k = 0; k < B.length; k++) B[k].getWorldPosition(this.t[k]);
+    B[0].parent?.updateWorldMatrix(true, false);
+    B[0].updateMatrixWorld(true);
+    for (let k = 0; k < B.length; k++) this.t[k].setFromMatrixPosition(B[k].matrixWorld);
     this.t[this.n - 1].copy(this.tail).applyMatrix4(B[B.length - 1].matrixWorld);
   }
-  reset() { this.targets(); for (let k = 0; k < this.n; k++) { this.p[k].copy(this.t[k]); this.q[k].copy(this.t[k]); } this.init = true; }
+  reset(refresh = true) { if (refresh) this.targets(); for (let k = 0; k < this.n; k++) { this.p[k].copy(this.t[k]); this.q[k].copy(this.t[k]); } this.init = true; }
   // an impulse along dir (world), growing towards the free end: d metres per step at the tip
   kick(dir, d) { if (this.init) for (let k = 1; k < this.n; k++) this.q[k].addScaledVector(dir, -d * k / (this.n - 1)); }
   // call after the skeleton's animated pose has been applied and matrixWorld updated
@@ -1322,10 +1344,9 @@ export class Chain {
   step(dt, wind = null, sim = true, defer = false) {
     const B = this.bones;
     for (let k = 0; k < B.length; k++) B[k].quaternion.copy(this.base[k]);
-    B[0].updateMatrixWorld(true);
     this.targets();
-    if (!this.init || !sim) { this.reset(); if (!sim) return; }
-    if (this.p[0].distanceToSquared(this.t[0]) > 4) this.reset();
+    if (!this.init || !sim) { this.reset(false); if (!sim) return; }
+    if (this.p[0].distanceToSquared(this.t[0]) > 4) this.reset(false);
     for (let k = 0; k < this.n - 1; k++) this.len[k] = this.t[k].distanceTo(this.t[k + 1]);
     const tmp = _t;
     const air = this.drag > 0 && dt > 0 ? G.wind?.sample(this.t[0], chainWind) : null;
@@ -1382,10 +1403,18 @@ export class Chain {
     // orient bones along the simulated points (keep animated twist)
     for (let k = 0; k < B.length; k++) {
       const b = B[k];
-      b.updateMatrixWorld(true);
-      const from = (k + 1 < B.length ? B[k + 1].getWorldPosition(_e) : _e.copy(this.tail).applyMatrix4(b.matrixWorld)).sub(b.getWorldPosition(_c)).normalize();
+      // Only the two endpoints enter this solve. Propagate the finished
+      // pose to attachments once at the end, keeping the original tip twist.
+      if (k + 1 < B.length) {
+        B[k + 1].getWorldPosition(_e); // also refreshes b and its ancestors
+      } else {
+        b.updateWorldMatrix(false, false, true);
+        _e.copy(this.tail).applyMatrix4(b.matrixWorld);
+        b.updateWorldMatrix(true, false);
+      }
+      const from = _e.sub(_c.setFromMatrixPosition(b.matrixWorld)).normalize();
       const to = _m.subVectors(this.p[k + 1], this.p[k]).normalize();
-      rotateTowards(b, from, to, 1);
+      rotateWithMatrices(b, from, to, 1);
     }
     B[0].updateMatrixWorld(true);
   }

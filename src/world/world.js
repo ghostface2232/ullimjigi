@@ -18,6 +18,8 @@ import { Colliders } from './collision.js';
 import { POI, PATHS, regionAt } from './layout.js';
 import * as B from './buildings.js';
 import { U } from '../render/materials.js';
+import { SHADOW_LAYER } from '../render/renderer.js';
+import { tier } from '../render/quality.js';
 import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
 import { rand, randRange, mulberry32, TAU } from '../core/util.js';
 
@@ -143,6 +145,7 @@ export class World {
         const bk = buckets.get(key); bk.list.push(m); bk.cast = bk.cast || m.castShadow;
       });
     }
+    const shadowCells = new Map();
     let merged = 0;
     for (const b of buckets.values()) {
       if (b.list.length < 2) continue;
@@ -174,8 +177,39 @@ export class World {
       mesh.castShadow = b.cast; mesh.receiveShadow = true;
       mesh.matrixAutoUpdate = false;
       this.scene.add(mesh);
+      // These triangles are already in world space. Opaque surfaces with the
+      // same cull side write identical depth, independent of the colour shader.
+      // (Not on a tier without shadows: a caster that is never drawn would keep its arrays.)
+      if (tier().shadowMap && b.cast && b.mat.visible && !b.mat.alphaTest && !b.mat.alphaToCoverage &&
+          !b.mat.displacementMap && !b.mat.wireframe && !b.mat.clippingPlanes) {
+        const wp = b.list[0].getWorldPosition(tmp);
+        const side = b.mat.shadowSide ?? (b.mat.side === THREE.FrontSide ? THREE.BackSide : b.mat.side === THREE.BackSide ? THREE.FrontSide : THREE.DoubleSide);
+        const key = Math.floor(wp.x / CELL) + ',' + Math.floor(wp.z / CELL) + ',' + side;
+        if (!shadowCells.has(key)) shadowCells.set(key, []);
+        shadowCells.get(key).push(mesh);
+      }
       for (const m of b.list) m.parent.remove(m);
       merged += b.list.length;
+    }
+    for (const [key, meshes] of shadowCells) {
+      if (meshes.length < 2) continue;
+      const parts = meshes.map(({ geometry }) => {
+        const part = new THREE.BufferGeometry();
+        part.setAttribute('position', geometry.attributes.position);
+        part.setIndex(geometry.index);
+        return part;
+      });
+      const geometry = mergeGeometries(parts);
+      if (!geometry) continue;
+      compactStatic(geometry);
+      // its own plain material: only the cull side reaches the depth pass, and the colour
+      // materials of the merged meshes would compile extra programs for this layout
+      const caster = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ shadowSide: +key.slice(key.lastIndexOf(',') + 1) }));
+      caster.matrixAutoUpdate = false;
+      caster.layers.set(SHADOW_LAYER);
+      caster.castShadow = true;
+      this.scene.add(caster);
+      for (const mesh of meshes) mesh.castShadow = false;
     }
     this.bakedCount = merged;
   }
@@ -203,13 +237,14 @@ export class World {
   }
   // Extra boxes of an authored building (chimney stacks, lean-tos, dormers), in its local frame:
   // { x, z, hw, hd, y0, y1, tilt?: [per metre of local x, of local z] (a sloping top; y1 at the centre) }
+  // Like the walls they belong to, they give no grip; a top within reach of the ground can still be vaulted.
   solidParts(obj, list) {
     const by = obj.getWorldPosition(new THREE.Vector3()).y;
     for (const s of list || []) {
       const p = obj.localToWorld(new THREE.Vector3(s.x, 0, s.z));
       const c = this.col.addBox(p.x, p.z, s.hw, s.hd, obj.rotation.y, by + s.y0, by + s.y1 + (s.tilt ? Math.abs(s.tilt[0]) * s.hw + Math.abs(s.tilt[1]) * s.hd : 0));
       if (s.tilt) c.topFn = (lx, lz) => by + s.y1 + s.tilt[0] * lx + s.tilt[1] * lz;
-      c.base = by;
+      c.base = by; c.climb = false;
     }
   }
   // shapes it would look odd to scale or stand on (lanterns, columns, braziers, altars)
@@ -302,7 +337,8 @@ export class World {
       const ry = this.faceTo(hd.x, hd.z, plaza.x, plaza.z) + randRange(-0.12, 0.12);
       this.place(g, hd.x, hd.z, ry, -0.2);
       const u = g.userData, by = g.position.y;
-      this.solid(g, { hw: u.w / 2, hd: u.d / 2, top: by + u.height, topFn: (lx, lz) => by + u.roofTop(lx, lz) });
+      // house walls give no grip (the roof is still a floor for whoever glides onto it)
+      this.solid(g, { hw: u.w / 2, hd: u.d / 2, climb: false, top: by + u.height, topFn: (lx, lz) => by + u.roofTop(lx, lz) });
       this.solidParts(g, u.solids);
       if (g.userData.chimney) this.chimneys.push(g.localToWorld(g.userData.chimney.clone()));
       this.houses[hd.id] = g;
@@ -375,8 +411,8 @@ export class World {
     this.anims.push((dt) => { wm.userData.rotor.rotation.z += dt * 0.6 * U.wind.value; });
     // well, stalls, benches
     this.place(B.well(), -4, 16); this.col.addCircle(-4, 16, 1.5, this.h(-4, 16) - 1, this.h(-4, 16) + 1.2);
-    const s1 = B.stall(B.MAT.clothRed); this.place(s1, 15, 9, this.faceTo(15, 9, 6, 14)); this.col.addBox(15, 9, 1.6, 0.8, s1.rotation.y, -10, this.h(15, 9) + 2.95);
-    const s2 = B.stall(B.MAT.clothBlue); this.place(s2, -2, 26, this.faceTo(-2, 26, 6, 14)); this.col.addBox(-2, 26, 1.6, 0.8, s2.rotation.y, -10, this.h(-2, 26) + 2.95);
+    const s1 = B.stall(B.MAT.clothRed); this.place(s1, 15, 9, this.faceTo(15, 9, 6, 14)); this.col.addBox(15, 9, 1.6, 0.8, s1.rotation.y, -10, this.h(15, 9) + 2.95).climb = false;
+    const s2 = B.stall(B.MAT.clothBlue); this.place(s2, -2, 26, this.faceTo(-2, 26, 6, 14)); this.col.addBox(-2, 26, 1.6, 0.8, s2.rotation.y, -10, this.h(-2, 26) + 2.95).climb = false;
     for (const [x, z] of [[-12, 6], [-4, -6], [-12, -8]]) this.place(B.bench(), x, z, this.faceTo(x, z, -8, -2) + Math.PI);
     // fences at village edge
     // (the south run stands either side of the tower road, which crosses z = 58 at x = 4)

@@ -2,7 +2,7 @@
 // animation, faces, expressions and gestures. See characters.js for the contract.
 import * as THREE from 'three';
 import { G } from '../core/context.js';
-import { toon, addOutline, glowMat, ghostMat, characterMaterial, characterOutline } from '../render/materials.js';
+import { toon, addOutline, glowMat, ghostMat, characterMaterial, characterOutline, useCasterDepth } from '../render/materials.js';
 import { damp, clamp, lerp, rand } from '../core/util.js';
 import { Sculpt, tube, blob, sheet, prof, sstep, mix, TAU, instance, bodyMat, faceMat, crackMat, ghostSkinMat, ik2, setWorldQuat, rotateTowards, Chain, Spring, SkelDef, clothMat, SURF, faceMat2, olMat, skinMat, eyeMat } from './charkit.js';
 import * as HB from './humanoid.js';
@@ -616,6 +616,7 @@ export class HumanRig extends Rig {
     if (F2) {
       // the head: its own skinned mesh (and outline hull) on the same skeleton, driven by shape keys
       const fm = new THREE.SkinnedMesh(F2.geo, M.skin);
+      useCasterDepth(fm);
       fm.name = 'face'; body.add(fm); fm.bind(I.skeleton, I.mesh.bindMatrix); fm.castShadow = true; fm.boundingSphere = I.mesh.boundingSphere;
       this.meshes.push(fm);
       this.morph = fm.morphTargetInfluences; this.morphIdx = Object.fromEntries(F2.morphs.map((n, i) => [n, i]));
@@ -865,7 +866,8 @@ export class HumanRig extends Rig {
     this.t += dt;
     const W = this.w;
     const root = this.root;
-    root.updateMatrixWorld();
+    // Motion reads the root only. The FK pose below updates its descendants.
+    root.updateWorldMatrix(false, false);
     // --- root motion (world velocity, yaw rate)
     const e = root.matrixWorld.elements;
     _v1.set(e[12], e[13], e[14]);

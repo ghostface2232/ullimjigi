@@ -17,6 +17,12 @@ const SKIRT = [3, 6, 12, 24];     // skirt depth per LOD: hides cracks between n
 // Cliffs (Terrain.initCliffs): plan size (m) of a rock mass, the least half-width of the
 // face between two masses, and how far (m) the walls swell and hollow (Terrain.sculpt).
 const CL0 = 19, BEV0 = 1.0, BAMP = 0.45;
+// How far (m) a narrow strip of rock may stand above the smooth ground it replaces, d metres
+// in from the nearest ground that is not rock: ENV[0] + d * (ENV[1] + d * ENV[2]), eased over
+// ENV[3]. Where the same rock within ENV_W[0] grid cells runs deeper than a strip, the limit
+// opens up by 1 + (depth / ENV_W[1]) ^ 4, so the foot of a massif keeps its wall
+// (Terrain.initCliffs, cliffAt).
+const ENV = [0.3, 0.4, 0.2, 1.2], ENV_W = [10, 9];
 // Mirror Lake, clockwise in local metres. The third value is the shore grade:
 // a shallow landing on the village road, a willow point in the southeast,
 // a long western inlet and a raised headland separating it from the north bay.
@@ -149,6 +155,51 @@ function* bounds(g) {
 }
 
 // Area-weighted vertex normals of a heightfield grid (what computeVertexNormals gives the mesh).
+// a 3x3 blur of a grid, `passes` times over
+function gridBlur(d, N, passes) {
+  for (let pass = 0; pass < passes; pass++) {
+    const b = d.slice();
+    for (let iz = 1; iz < N - 1; iz++) for (let ix = 1; ix < N - 1; ix++) {
+      const i = iz * N + ix;
+      b[i] = (d[i] * 4 + (d[i - 1] + d[i + 1] + d[i - N] + d[i + N]) * 2 + d[i - N - 1] + d[i - N + 1] + d[i + N - 1] + d[i + N + 1]) / 16;
+    }
+    d = b;
+  }
+  return d;
+}
+// Distance (m) from each grid point to the nearest one where `inside` is false (a chamfer
+// transform), blurred so a limit made from it has no crease down the middle.
+function gridDistance(N, st, inside) {
+  const d = new Float32Array(N * N);
+  const o = st, g = st * Math.SQRT2;
+  for (let i = 0; i < N * N; i++) d[i] = inside(i) ? 1e6 : 0;
+  for (let iz = 1; iz < N - 1; iz++) for (let ix = 1; ix < N - 1; ix++) {
+    const i = iz * N + ix;
+    if (d[i] > 0) d[i] = Math.min(d[i], d[i - 1] + o, d[i - N] + o, d[i - N - 1] + g, d[i - N + 1] + g);
+  }
+  for (let iz = N - 2; iz > 0; iz--) for (let ix = N - 2; ix > 0; ix--) {
+    const i = iz * N + ix;
+    if (d[i] > 0) d[i] = Math.min(d[i], d[i + 1] + o, d[i + N] + o, d[i + N + 1] + g, d[i + N - 1] + g);
+  }
+  return gridBlur(d, N, 2);
+}
+// The greatest value within r cells of each grid point, reached through cells above zero
+// only (so the depth of the rock across a road does not count for a strip beside it), blurred.
+function gridReach(H, N, r) {
+  let a = H.slice();
+  for (let pass = 0; pass < r; pass++) {
+    const b = a.slice();
+    for (let iz = 1; iz < N - 1; iz++) for (let ix = 1; ix < N - 1; ix++) {
+      const i = iz * N + ix;
+      if (H[i] > 0) b[i] = Math.max(a[i], a[i - 1], a[i + 1], a[i - N], a[i + N], a[i - N - 1], a[i - N + 1], a[i + N - 1], a[i + N + 1]);
+    }
+    a = b;
+  }
+  return gridBlur(a, N, 2);
+}
+// the lower of a and b, rounded where they cross (within k)
+const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * 0.25; };
+
 function gridNormals(H, N, st) {
   const nrm = new Float32Array(N * N * 3), seg = N - 1;
   const add = (i, x, y, z) => { nrm[i * 3] += x; nrm[i * 3 + 1] += y; nrm[i * 3 + 2] += z; };
@@ -257,6 +308,13 @@ export class Terrain {
     // ...and make it a clear either/or with a narrow blend, so planes stay planes
     for (let i = 0; i < cnt; i++) w[i] = smoothstep(0.08, 0.5, w[i]);
     this.cw = w;
+    // how far the rock may stand above the smooth ground at each grid point (see ENV)
+    const cd = gridDistance(N, st, (i) => CWR(w[i]) > 0), deep = gridReach(cd, N, ENV_W[0]);
+    this.rise = new Float32Array(cnt);
+    for (let i = 0; i < cnt; i++) {
+      const d = cd[i], k = deep[i] / ENV_W[1];
+      this.rise[i] = ENV[0] + d * (ENV[1] + d * ENV[2]) * (1 + k * k * k * k);
+    }
     this.sites = new Map();
     this._top = 1;
     for (let i = 0; i < cnt; i++) if (CWR(w[i]) > 0) H[i] = this.cliffAt(-this.half + (i % N) * st, -this.half + Math.floor(i / N) * st, this.base[i], CWR(w[i]));
@@ -332,10 +390,16 @@ export class Terrain {
   }
 
   // The rock surface at (x, z), given the smooth ground hb and the cliff weight w there.
+  // A mass is a plane fitted where it stands, so over curved ground (the lip of a bank, a
+  // road on a causeway) it can run metres above the surface it replaces. In a narrow strip
+  // of rock that showed as a thin blade standing up from the grass, so there the rock may
+  // only rise as it goes in from its edge (`rise`) and stays a low outcrop. Rock held down
+  // like this lies on the slope: it is a face, not a top for grass.
   cliffAt(x, z, hb, w) {
     this.warp(x, z);
-    const t = this.mass(this._qx, this._qz);
-    this._top = this._t; this._dh = t - hb;
+    const m = this.mass(this._qx, this._qz), lim = hb + this.sampleGrid(this.rise, x, z);
+    const t = smin(m, lim, ENV[3]);
+    this._top = m > lim ? 0 : this._t; this._dh = t - hb;
     return hb + (t - hb) * w;
   }
 
@@ -527,11 +591,15 @@ export class Terrain {
     const a = arr[iz * N + ix], b = arr[iz * N + ix + 1], c = arr[(iz + 1) * N + ix], d = arr[(iz + 1) * N + ix + 1];
     return lerp(lerp(a, b, u), lerp(c, d, u), v);
   }
-  grassAt(x, z) {
+  grassAt(x, z, surface) {
     const g = this.sampleGrid(this.gf, x, z), w = CWR(this.sampleGrid(this.cw, x, z));
-    if (w <= 0) return g;
+    if (w <= 0) {
+      if (surface) surface.y = this.gridHeight(this.base, x, z);
+      return g;
+    }
     // on rock: only the gentle tops grow grass, right up to their edge and no further
-    this.cliffAt(x, z, this.gridHeight(this.base, x, z), w);
+    const y = this.cliffAt(x, z, this.gridHeight(this.base, x, z), w);
+    if (surface) surface.y = y;
     const ramp = 4 * w * (1 - w) * smoothstep(1.2, 3, Math.abs(this._dh));
     return lerp(g * (1 - ramp), this._top > 0.5 ? this.cliffGrid(this.gfG, 1, x, z) : 0, w);
   }
@@ -780,6 +848,7 @@ export class Terrain {
       ch.mesh.matrixAutoUpdate = false;
       ch.lod = 3;
       this.mesh.add(ch.mesh);
+      if (cliff) ch.skins[2] = this.farSkin(ch);
       this.chunks.push(ch);
     }
   }
@@ -1122,8 +1191,6 @@ export class Terrain {
       }
       if (!ch.geos[want]) ch.geos[want] = this.chunkGeometry(ch, want);
       if (want !== ch.lod) { ch.mesh.geometry = ch.geos[want]; ch.lod = want; }
-      // far away the rock keeps its masses, as a few quads (cheap enough to build on the spot)
-      if (ch.cliff && want >= 2 && !ch.skins[2]) ch.skins[2] = this.farSkin(ch);
       const s0 = ch.skins[0], s1 = ch.skins[1];
       if (ch.skins[2]) ch.skins[2].visible = ch.lod >= 2;
       if (s0) { s0.visible = ch.lod === 0; s0.castShadow = !s1; }

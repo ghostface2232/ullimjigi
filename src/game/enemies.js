@@ -8,6 +8,7 @@ import { PAL } from '../render/vfx.js';
 import { HeartBody, heartWard, prepareHeart } from './heartbody.js';
 import { clamp, damp, angleDamp, randRange, rand, pick, wrapAngle, lerp, josa } from '../core/util.js';
 import { regionAt } from '../world/layout.js';
+import { campMember, fightGround, fightRoute, resolveCamp, resolveEncounter } from './enemyground.js';
 
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), tmp3 = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
@@ -312,6 +313,19 @@ export class Enemy {
     this.deathStyle = opts.warden ? 'kneel' : def.deathStyle || (def.flying ? 'fall' : 'topple');
     this.bigDeath = !!(def.boss || def.bigDeath || this.elite || this.base === 'brute');
     this.ghost = false; // burrowed: no pushing, not targetable
+  }
+
+  idleDestination(range) {
+    const { x, z } = this.home;
+    for (let i = 0; i < 6; i++) {
+      const tx = x + randRange(-range, range), tz = z + randRange(-range, range);
+      const W = G.world, r = this.radius + 0.15, h = this.height;
+      if (fightGround(W, tx, tz, r, h)
+        && fightRoute(W, x, z, tx, tz, r, h)
+        && fightRoute(W, this.pos.x, this.pos.z, tx, tz, r, h)
+        && G.enemies.nav.clear(this, this.pos.x, this.pos.z, tx, tz)) return { x: tx, z: tz };
+    }
+    return null;
   }
 
   center() { return new THREE.Vector3(this.pos.x, this.pos.y + this.height * 0.55, this.pos.z); }
@@ -1150,7 +1164,7 @@ export class Enemy {
     switch (this.state) {
       case 'idle':
         this.wanderT -= dt;
-        if (this.wanderT <= 0) { this.wanderT = randRange(3, 6); this.wanderTo = new THREE.Vector3(this.home.x + randRange(-6, 6), 0, this.home.z + randRange(-6, 6)); }
+        if (this.wanderT <= 0) { this.wanderT = randRange(3, 6); this.wanderTo = this.idleDestination(6); }
         if (this.wanderTo) { if (this.moveToward(this.wanderTo.x, this.wanderTo.z, 1.3 * mul, dt) < 0.3) this.wanderTo = null; }
         break;
       case 'alert':
@@ -1241,7 +1255,7 @@ class Wailer extends Enemy {
     switch (this.state) {
       case 'idle':
         this.wanderT -= dt;
-        if (this.wanderT <= 0) { this.wanderT = randRange(3, 6); this.wanderTo = new THREE.Vector3(this.home.x + randRange(-8, 8), 0, this.home.z + randRange(-8, 8)); }
+        if (this.wanderT <= 0) { this.wanderT = randRange(3, 6); this.wanderTo = this.idleDestination(8); }
         if (this.wanderTo) this.moveToward(this.wanderTo.x, this.wanderTo.z, 1.5 * mul, dt);
         break;
       case 'alert': this.facePlayer(dt); if (this.stateT > 0.6) this.setState('chase'); break;
@@ -1340,7 +1354,7 @@ class Brute extends Enemy {
     switch (this.state) {
       case 'idle':
         this.wanderT -= dt;
-        if (this.wanderT <= 0) { this.wanderT = randRange(4, 7); this.wanderTo = new THREE.Vector3(this.home.x + randRange(-5, 5), 0, this.home.z + randRange(-5, 5)); }
+        if (this.wanderT <= 0) { this.wanderT = randRange(4, 7); this.wanderTo = this.idleDestination(5); }
         if (this.wanderTo && this.moveToward(this.wanderTo.x, this.wanderTo.z, 1.0 * mul, dt) < 0.4) this.wanderTo = null;
         break;
       case 'alert':
@@ -1510,7 +1524,7 @@ class Ooze extends Enemy {
     };
     switch (this.state) {
       case 'idle':
-        if (this.hopT <= 0) { this.hopT = randRange(1.5, 3); hop(this.home.x + randRange(-4, 4), this.home.z + randRange(-4, 4), 1.5); }
+        if (this.hopT <= 0) { this.hopT = randRange(1.5, 3); const to = this.idleDestination(4); if (to) hop(to.x, to.z, 1.5); }
         break;
       case 'alert': this.facePlayer(dt); if (this.stateT > 0.4) this.setState('chase'); break;
       case 'chase':
@@ -1731,7 +1745,7 @@ class ShieldBearer extends Enemy {
     switch (this.state) {
       case 'idle':
         this.wanderT -= dt;
-        if (this.wanderT <= 0) { this.wanderT = randRange(4, 7); this.wanderTo = new THREE.Vector3(this.home.x + randRange(-5, 5), 0, this.home.z + randRange(-5, 5)); }
+        if (this.wanderT <= 0) { this.wanderT = randRange(4, 7); this.wanderTo = this.idleDestination(5); }
         if (this.wanderTo && this.moveToward(this.wanderTo.x, this.wanderTo.z, 1.1 * mul, dt) < 0.4) this.wanderTo = null;
         break;
       case 'alert':
@@ -1864,7 +1878,7 @@ class Archer extends Enemy {
     switch (this.state) {
       case 'idle':
         this.wanderT -= dt;
-        if (this.wanderT <= 0) { this.wanderT = randRange(3, 6); this.wanderTo = new THREE.Vector3(this.home.x + randRange(-6, 6), 0, this.home.z + randRange(-6, 6)); }
+        if (this.wanderT <= 0) { this.wanderT = randRange(3, 6); this.wanderTo = this.idleDestination(6); }
         if (this.wanderTo && this.moveToward(this.wanderTo.x, this.wanderTo.z, 1.2 * mul, dt) < 0.3) this.wanderTo = null;
         break;
       case 'alert':
@@ -2146,7 +2160,7 @@ class Watcher extends Enemy {
       case 'idle':
         this.headYaw = Math.sin(G.time * 0.6 + this.home.x) * 1.1;
         this.wanderT -= dt;
-        if (this.wanderT <= 0) { this.wanderT = randRange(5, 9); this.wanderTo = new THREE.Vector3(this.home.x + randRange(-6, 6), 0, this.home.z + randRange(-6, 6)); }
+        if (this.wanderT <= 0) { this.wanderT = randRange(5, 9); this.wanderTo = this.idleDestination(6); }
         if (this.wanderTo && this.moveToward(this.wanderTo.x, this.wanderTo.z, 1.0 * mul, dt) < 0.5) this.wanderTo = null;
         break;
       case 'alert':
@@ -2706,9 +2720,8 @@ class Heart {
     for (let i = 0; i < 3; i++) {
       const a = rand() * Math.PI * 2;
       const p = this.center0.clone().add(new THREE.Vector3(Math.cos(a) * 14, 0, Math.sin(a) * 14));
-      p.y = G.world.ground(p.x, p.z);
-      G.vfx.burst(p, 'hush', 12, { size: 1.2 });
-      const e = G.enemies.spawn(i === 2 && this.phase >= 3 ? 'wailer' : 'ashling', p, Math.max(1, this.level - 1), { scripted: true });
+      const e = G.enemies.spawnEncounter(i === 2 && this.phase >= 3 ? 'wailer' : 'ashling', p, Math.max(1, this.level - 1), { scripted: true });
+      G.vfx.burst(e.pos, 'hush', 12, { size: 1.2 });
       e.aggro();
     }
   }
@@ -2796,6 +2809,21 @@ export const CAMPS = [
 ];
 
 const tmpP = new THREE.Vector3(), side = new THREE.Vector3();
+const campSites = new WeakMap();
+export function campSite(world, camp) {
+  let sites = campSites.get(world);
+  if (!sites) { sites = new Map(); campSites.set(world, sites); }
+  if (!sites.has(camp.id)) {
+    const scale = camp.elite ? 1.15 : 1;
+    const radius = Math.max(...camp.units.map(t => DEF[t].radius)) * scale + 0.15;
+    const height = Math.max(...camp.units.map(t => DEF[t].height)) * scale;
+    const site = resolveCamp(world, camp, radius, height);
+    if (!site) console.warn('No walkable camp site, using the authored one:', camp.id);
+    sites.set(camp.id, site);
+  }
+  return sites.get(camp.id);
+}
+
 export class EnemyManager {
   constructor() {
     this.heartKit = prepareHeart();
@@ -2807,7 +2835,10 @@ export class EnemyManager {
     this.lastShot = -99;
     this.lastGlint = null; // { t, e, pos } — most recent dangerous-attack glint
     this.pickups = [];
-    this.camps = CAMPS.map((c) => ({ ...c, members: [], spawned: false, cleared: false }));
+    this.camps = CAMPS.map(c => {
+      const site = campSite(G.world, c);
+      return { ...c, ...site, site, members: [], spawned: false, cleared: false };
+    });
     this.checkT = 0;
   }
 
@@ -2822,6 +2853,15 @@ export class EnemyManager {
     const base = (G.story ? G.story.progressLevel() : 1) + offset;
     const pl = G.player ? G.player.level : 1;
     return Math.max(1, Math.round(base + (pl - base) * 0.35));
+  }
+
+  spawnEncounter(type, pos, level, opts = {}) {
+    const def = DEF[type], scale = opts.elite ? 1.15 : 1;
+    const radius = def.radius * scale;
+    const site = resolveEncounter(G.world, pos.x, pos.z, radius + 0.15, def.height * scale,
+      (x, z) => !this.list.some(e => e.alive && Math.hypot(x - e.pos.x, z - e.pos.z) < radius + (e.radius || 0) + 0.25));
+    if (!site) console.warn('No walkable encounter site:', type, pos.x, pos.z);
+    return this.spawn(type, site ? new THREE.Vector3(site.x, 0, site.z) : pos, level, opts);
   }
 
   spawn(type, pos, level, opts = {}) {
@@ -2876,8 +2916,8 @@ export class EnemyManager {
         const reg = regionAt(c.x, c.z);
         const lv = this.levelFor((reg.lv || 0) + (c.elite ? 2 : 0));
         c.units.forEach((u, i) => {
-          const a = (i / c.units.length) * Math.PI * 2;
-          const p = new THREE.Vector3(c.x + Math.cos(a) * 3, 0, c.z + Math.sin(a) * 3);
+          const { x, z } = campMember(c, i);
+          const p = new THREE.Vector3(x, 0, z);
           const e = this.spawn(u, p, lv, { camp: c, elite: c.elite && (i === 0 || c.units.length <= 3), name: c.names ? c.names[i] || undefined : undefined, onDeath: () => this.checkCamp(c) });
           c.members.push(e);
         });

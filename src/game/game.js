@@ -127,6 +127,7 @@ export class Game {
     await nextFrame();
     uploadModelTextures(G.renderer.renderer);
     for (const t of variantTextures()) G.renderer.renderer.initTexture(t);
+    G.hud.ensureMapBase();
     await this.warmup();
     this.progress(1, '준비되었습니다');
     G.state = 'title';
@@ -135,9 +136,8 @@ export class Game {
     this.loop();
     const ld = $('#loading');
     if (DEV) {
-      ld.classList.add('hidden');
       G.playerName = '리안';
-      this.devStart(new URLSearchParams(location.search).get('dev'));
+      await this.devStart(new URLSearchParams(location.search).get('dev'));
       if (new URLSearchParams(location.search).has('rec')) import('./devrec.js').then((m) => m.startRecorder());
       return;
     }
@@ -147,12 +147,12 @@ export class Game {
     G.audio.init();
     G.music.setMood('title');
     ld.style.opacity = 0;
-    setTimeout(() => ld.classList.add('hidden'), 1000);
+    setTimeout(() => { if (!this.preparingPlay) ld.classList.add('hidden'); }, 1000);
     this.showTitle();
   }
 
   devStart(preset) {
-    if (preset === 'continue') { $('#title-screen').classList.add('hidden'); this.continueGame(); return; }
+    if (preset === 'continue') { $('#loading').classList.add('hidden'); $('#title-screen').classList.add('hidden'); return this.continueGame(); }
     const P = G.player;
     const pro = ['p_intro', 'p_run', 'p_bolt', 'p_fire', 'p_heavy', 'p_fight', 'p_end', 'prologueDone'];
     const vil = ['v_arrive', 'v_bau', 'v_isol', 'v_altar', 'v_defend', 'v_wind', 'worldOpen', 'bountyActive'];
@@ -170,7 +170,7 @@ export class Game {
       // the south pass saddle, facing the outer lands (glide / scale checks for the 1280 m map)
       outer: { ch: 'mora', flags: [...pro, ...vil, ...bel, 'water_learn'], els: ['arcane', 'fire', 'wind', 'frost', 'storm', 'water'], lv: 12, pos: [37, 240] }, // yaw 0 faces south
     }[preset];
-    if (!P_) { this.startPlay(new Story(), null); return; }
+    if (!P_) return this.startPlay(new Story(), null);
     const flags = {}; P_.flags.forEach((f) => (flags[f] = true));
     const story = new Story({ chapter: P_.ch, flags, quests: {}, counters: {}, seeds: [], memories: {}, said: [], hush: 0.12 });
     P.unlocked = new Set(P_.els); P.element = P_.els[P_.els.length - 1]; P.prevElement = P_.els[P_.els.length - 2];
@@ -182,7 +182,7 @@ export class Game {
     G.skills.grantBasics();
     if (preset === 'skills') G.skills.gauge = 100;
     G.world.sky.setHour(10);
-    this.startPlay(story, { player: { pos: P_.pos, yaw: 0 } });
+    return this.startPlay(story, { player: { pos: P_.pos, yaw: 0 } });
   }
 
   async warmup() {
@@ -198,6 +198,11 @@ export class Game {
     G.world.props.update(G.camera);
     G.world.terrain.update(G.camera, Infinity);
     try { await this.compileScene(); } catch (_) { /* ignore */ }
+    // compileAsync waits for linking, but r186 reads the driver logs and
+    // reflects uniforms/attributes on the first draw. Do that during loading
+    // for the world and the retained spell variants, including the fogless ones.
+    G.vfx.prewarm();
+    for (const program of G.renderer.renderer.info.programs) program.getUniforms();
     G.vfx.rings.forEach((r) => (r.m.visible = false));
     G.scene.remove(grp);
     G.vfx.disposeOrb(orb);
@@ -414,7 +419,7 @@ export class Game {
     $('#title-screen').classList.add('hidden');
     G.music.setMood('silence');
     await this.intro();
-    this.startPlay(new Story(), null);
+    await this.startPlay(new Story(), null);
   }
 
   async intro() {
@@ -442,7 +447,7 @@ export class Game {
     await new Promise((r) => setTimeout(r, 400));
   }
 
-  continueGame() {
+  async continueGame() {
     if (this.starting) return;
     let d;
     try { d = JSON.parse(readSave()); } catch (_) { this.titleNote('저장된 여정이 손상되어 불러올 수 없습니다.'); return; }
@@ -450,7 +455,7 @@ export class Game {
     // check the shape first, so a bad save is turned away before anything is changed
     const bad = saveProblem(d);
     if (bad) { this.titleNote(`저장된 여정을 읽을 수 없습니다 (${bad}).`); return; }
-    try { this.loadSave(d); } catch (e) {
+    try { await this.loadSave(d); } catch (e) {
       // loading had already changed the player, the story and the world: nothing to roll back
       // cleanly, so start the page over and say why on the title
       console.error('continue failed', e);
@@ -458,7 +463,7 @@ export class Game {
       location.reload();
     }
   }
-  loadSave(d) {
+  async loadSave(d) {
     this.starting = true;
     $('#title-screen').classList.add('hidden');
     G.playerName = d.name || '리안';
@@ -476,31 +481,82 @@ export class Game {
     this.respawn = d.respawn ? G.world.lanterns[d.respawn] : null;
     G.world.sky.setHour(d.hour ?? 9);
     const f = $('#fade'); f.style.transition = 'opacity 0.1s'; f.style.opacity = 1;
-    this.startPlay(story0, d);
+    await this.startPlay(story0, d);
     if (techMigrated) setTimeout(() => G.hud.toast('울림 나무가 새로 자랐다 — 뿌리에 <b>기술</b>이 돋았다. 이미 쓰던 고유 마법과 엮기는 그대로 익힌 채다.', 6000), 3000);
     if (this.migratedSkills) setTimeout(() => G.hud.banner('새로운 울림', '울림 나무', `지금까지의 여정으로 <b>울림점 ${G.skills.points}점</b>을 모았다.<br><kbd>K</kbd> 울림 나무에서 속성마다 새로운 노래를 익힐 수 있다.`, '#f1d48a', 6000), 2500);
   }
 
-  startPlay(story, d) {
+  async startPlay(story, d) {
     // a second story would run its own chapter coroutine and spawn a second cast
-    if (G.story && G.state === 'play') return;
-    G.story = story;
-    G.state = 'play'; G.mode = 'free';
-    G.cameraRig.mode = 'follow';
-    G.player.root.visible = true;
-    G.hud.show(true);
-    G.hud.updateHearts(); G.hud.updateXP(); G.hud.updateSpells();
-    if (d && d.player.pos) {
-      const [x, z] = d.player.pos;
-      G.player.teleport(x, z, d.player.yaw ?? 0);
-    } else G.player.teleport(POI.spawn.x, POI.spawn.z, 2.2);
-    story.start();
-    // the story has placed its people and animals: compile whatever is new among them
-    this.compileScene().catch(() => {});
-    G.input.requestLock();
+    if (this.preparingPlay || (G.story && G.state === 'play')) return;
+    this.preparingPlay = true;
+    const loading = $('#loading');
+    try {
+      loading.classList.remove('ready', 'hidden');
+      loading.style.transition = 'none';
+      loading.style.opacity = 1;
+      this.progress(1, '골짜기를 여는 중…');
+      G.input.requestLock();
+      // Give the loading screen a paint before entering the shadow pass.
+      await nextFrame(); await nextFrame();
+      G.story = story;
+      G.state = 'play'; G.mode = 'free';
+      G.cameraRig.mode = 'follow';
+      G.player.root.visible = true;
+      G.hud.show(true);
+      G.hud.updateHearts(); G.hud.updateXP(); G.hud.updateSpells();
+      if (d && d.player.pos) {
+        const [x, z] = d.player.pos;
+        G.player.teleport(x, z, d.player.yaw ?? 0);
+      } else G.player.teleport(POI.spawn.x, POI.spawn.z, 2.2);
+      story.setupNPCs();
+      // A driver can reject asynchronous compilation. The real draw below
+      // also compiles missing variants synchronously while loading is visible.
+      try { await this.compileScene(); } catch (_) { /* fall back to the draw */ }
+      // a warm-up only: if it fails, the first frames compile what they need, as before
+      try { this.prepareView(); } catch (e) { console.error(e); }
+      story.start();
+    } finally {
+      this.lastT = performance.now();
+      this.preparingPlay = false;
+      // the pointer is locked while this ran with the loop held: drop what was typed and moved meanwhile
+      G.input.endFrame();
+      loading.classList.add('hidden');
+    }
     if (d) {
       const f = $('#fade'); f.style.transition = 'opacity 1.2s'; f.style.opacity = 0;
       G.hud.areaTitle(regionAt(G.player.pos.x, G.player.pos.z).name, regionAt(G.player.pos.x, G.player.pos.z).en);
+    }
+  }
+
+  // Submit the entry view while loading. compileAsync covers colour materials,
+  // but depth variants, morph arrays, vertex buffers and VAOs need a real draw.
+  prepareView() {
+    const r = G.renderer.renderer, target = r.getRenderTarget(), P = G.player;
+    G.cameraRig.update(0, P, null);
+    const camera = G.camera, world = G.world;
+    camera.updateMatrixWorld();
+    world.terrain.update(camera, Infinity);
+    world.grass.update(0, camera.position, P.pos, world.sky, Infinity);
+    world.props.update(camera);
+    const cull = [];
+    for (const root of [P.root, G.companion.root, ...G.npcs.list.map(n => n.root)]) {
+      root.traverse(o => { if (o.isSkinnedMesh && o.frustumCulled) { cull.push(o); o.frustumCulled = false; } });
+    }
+    try {
+      G.vfx.prewarm();
+      if (world.sky.clouds.rtB) r.initRenderTarget(world.sky.clouds.rtB);
+      r.setRenderTarget(G.renderer.sceneRT);
+      r.render(G.scene, camera);
+      for (const program of r.info.programs) program.getUniforms();
+      G.renderer.effectsWarm = true;
+      G.hud.minimap.resize();
+      if (G.hud.minimap.size) G.hud.minimap.draw(G.hud.ensureMapBase());
+    } finally {
+      r.setRenderTarget(target);
+      for (const o of cull) o.frustumCulled = true;
+      // The first follow update still seats the camera on the story's actual pose.
+      G.cameraRig.initialized = false;
     }
   }
 
@@ -650,6 +706,7 @@ export class Game {
   // ------------------------------------------------------------ loop
   loop() {
     raf(() => this.loop());
+    if (this.preparingPlay) return;
     const now = performance.now();
     const raw = Math.min((now - this.lastT) / 1000, 0.05);
     this.lastT = now;

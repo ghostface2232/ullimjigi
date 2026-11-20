@@ -1178,7 +1178,7 @@ export function ghostSkinMat(color = 0xbfe8ff, alpha = 0.55) {
     fragmentShader: `
       uniform vec3 uColor; uniform float uAlpha, uTime; varying vec3 vN; varying vec3 vV; varying float vY;
       void main(){
-        float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 1.4);
+        float f = pow(1.0 - min(abs(dot(normalize(vN), normalize(vV))), 1.0), 1.4);
         float scan = 0.75 + 0.25 * sin(vY * 22.0 - uTime * 4.0);
         float a = (0.18 + f * 0.9) * uAlpha * scan;
         gl_FragColor = vec4(uColor * (1.4 + f * 1.6) * a, a);

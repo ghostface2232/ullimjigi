@@ -221,6 +221,29 @@ export class World {
     obj.updateMatrixWorld(true);
     return obj;
   }
+  // Columns and arches stand on the lowest ground under their pillars, so none hangs over a
+  // dip. A footprint that straddles a cliff step moves to the nearest spot within 6 m that
+  // does not (a fixed search: the scatter's random sequence is untouched). Returns
+  // { x, z, dy } for place(), or null when there is no such spot.
+  seatPillars(o, x, z, ry, r = 0.8, maxStep = 1.2) {
+    const pil = o.userData.pillars;
+    for (let ring = 0; ring <= 3; ring++) {
+      for (let s = 0; s < (ring ? 8 : 1); s++) {
+        const cx = x + Math.cos(s * Math.PI / 4) * ring * 2, cz = z + Math.sin(s * Math.PI / 4) * ring * 2;
+        const legs = pil ? pil.map(([lx]) => [cx + Math.cos(ry) * lx, cz - Math.sin(ry) * lx]) : [[cx, cz]];
+        let lo = Infinity, hi = -Infinity;
+        for (const [px, pz] of legs) {
+          for (let k = 0; k <= 12; k++) {
+            const a = k * Math.PI / 6, rr = k === 12 ? 0 : r;
+            const h = this.h(px + Math.cos(a) * rr, pz + Math.sin(a) * rr);
+            lo = Math.min(lo, h); hi = Math.max(hi, h);
+          }
+        }
+        if (hi - lo <= maxStep) return { x: cx, z: cz, dy: lo - this.h(cx, cz) };
+      }
+    }
+    return null;
+  }
   faceTo(px, pz, tx, tz) { return Math.atan2(tx - px, tz - pz); }
 
   addInteract(o) { this.interactables.push(o); return o; }
@@ -656,11 +679,13 @@ export class World {
       const x = POI.storm.x + Math.cos(a) * r, z = POI.storm.z + Math.sin(a) * r;
       if (Math.hypot(x - POI.storm.x, z - POI.storm.z) > 46) continue;
       const o = rr() < 0.4 ? B.ruinArch(rr) : B.pillarBroken(2 + rr() * 4, rr);
-      this.place(o, x, z, rr() * 3);
+      const ry = rr() * 3, seat = this.seatPillars(o, x, z, ry);
+      if (!seat) continue;
+      this.place(o, seat.x, seat.z, ry, seat.dy);
       if (o.userData.pillars) {
         // one solid column per side (the arch between them stays open)
         for (const [lx, top] of o.userData.pillars) {
-          const px = x + Math.cos(o.rotation.y) * lx, pz = z - Math.sin(o.rotation.y) * lx;
+          const px = seat.x + Math.cos(o.rotation.y) * lx, pz = seat.z - Math.sin(o.rotation.y) * lx;
           this.noClimb(this.col.addCircle(px, pz, 0.62, -10, o.position.y + top));
         }
       } else this.solid(o, { r: 0.7, climb: false, noTop: true });
@@ -794,7 +819,11 @@ export class World {
         const r = Math.atan2(dx, dz) + Math.PI / 2 + (rnd() - 0.5) * 0.5;
         this.place(w, ox, oz, r);
         this.col.addBox(ox, oz, l / 2, 0.32, r, -10, this.h(ox, oz) + w.userData.top);
-        if (rnd() < 0.5) { const pb = B.pillarBroken(1.5 + rnd() * 2, rnd); this.place(pb, ox + dx * 3, oz + dz * 3, rnd() * 3); this.solid(pb, { r: 0.7, climb: false, noTop: true }); }
+        if (rnd() < 0.5) {
+          const pb = B.pillarBroken(1.5 + rnd() * 2, rnd), ry = rnd() * 3;
+          const seat = this.seatPillars(pb, ox + dx * 3, oz + dz * 3, ry);
+          if (seat) { this.place(pb, seat.x, seat.z, ry, seat.dy); this.solid(pb, { r: 0.7, climb: false, noTop: true }); }
+        }
       });
       if (path.id === 'rift') along(path, 18, (x, z, dx, dz) => {
         if (x < 40) return;

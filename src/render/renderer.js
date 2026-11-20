@@ -297,6 +297,9 @@ void main(){
     // occlusion cools and darkens what it shades; glowing pixels are left alone
     float lsc = dot(sc, vec3(0.2126, 0.7152, 0.0722));
     float occ = (1.0 - fx.r) * (1.0 - smoothstep(0.9, 2.2, lsc)) * clamp(mid.a, 0.0, 1.0);
+    // Light occlusion passes almost unchanged; full contact occlusion stops near 55% of the
+    // way to the shade tint (about 0.35 in red), so creases and feet stay readable.
+    occ = 0.56 * (1.0 - exp(-1.8 * occ));
     sc *= mix(vec3(1.0), uAoTint, occ);
     sc += uShaftColor * fx.g;
     #if FX_DEBUG == 1

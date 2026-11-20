@@ -35,7 +35,7 @@ function paintFirmament(mat, floor, sky) {
         float cloud = smoothstep(.005, .066, distant.b);
         float stars = smoothstep(.058, .36, distant.g);
         vec3 gas = mix(vec3(.014,.024,.13), vec3(.21,.046,.46), cloud);
-        float grazing = pow(1.0 - max(0.0,dot(normal,look)), 3.22);
+        float grazing = pow(1.0 - clamp(dot(normal,look), 0.0, 1.0), 3.22);
         outgoingLight += gas * (.23 + .80 * cloud + .61 * cavity + .20 * uInterior) +
           grazing * mix(vec3(.16,.14,.36),vec3(.40,.22,.64),heightBand) * (0.86 + 0.14 * clamp(uRiftSky.b,0.0,1.0));
         outgoingLight += stars * vec3(.69,.85,1.03);

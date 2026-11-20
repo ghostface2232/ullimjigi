@@ -513,11 +513,14 @@ export class Game {
       // A driver can reject asynchronous compilation. The real draw below
       // also compiles missing variants synchronously while loading is visible.
       try { await this.compileScene(); } catch (_) { /* fall back to the draw */ }
-      this.prepareView();
+      // a warm-up only: if it fails, the first frames compile what they need, as before
+      try { this.prepareView(); } catch (e) { console.error(e); }
       story.start();
     } finally {
       this.lastT = performance.now();
       this.preparingPlay = false;
+      // the pointer is locked while this ran with the loop held: drop what was typed and moved meanwhile
+      G.input.endFrame();
       loading.classList.add('hidden');
     }
     if (d) {

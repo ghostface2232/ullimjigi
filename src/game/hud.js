@@ -188,7 +188,7 @@ export class HUD {
     this.compassHalf ||= this.el.compassStrip.clientWidth / 2 || 260; // measured once per resize
     // All ticks scroll together. Only a tick wrapping past north changes its local position.
     const pxPerRad = 260 / (Math.PI / 2);
-    this.el.compassStrip.style.translate = `${-heading * pxPerRad}px`;
+    this.el.compassStrip.style.translate = `${Math.round(-heading * pxPerRad)}px`;
     for (const it of this.compassItems) {
       const rel = wrapAngle(it.a - heading);
       const visible = Math.abs(rel) <= Math.PI * 0.55;
@@ -223,7 +223,7 @@ export class HUD {
       const show = x !== null && (d >= 4 || m.dist);
       if (e._show !== show) { e._show = show; e.style.display = show ? '' : 'none'; }
       if (!show) continue;
-      e.style.translate = x + 'px';
+      e.style.translate = Math.round(x) + 'px';
       if (e._d) { const t = Math.round(d) + 'm'; if (e._t !== t) { e._t = t; e._d.textContent = t; } }
     }
     for (const [id, e] of this.cmarks) if (!seen.has(id)) { e.remove(); this.cmarks.delete(id); }

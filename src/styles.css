@@ -422,7 +422,8 @@ kbd [data-ico] { font-size: 1.25em; }
 
 /* ---- world-anchored labels: placed in screen pixels by script (never zoomed) ---- */
 #enemy-bars, #dmg-layer, #markers-layer, #barks { position: absolute; inset: 0; overflow: hidden; }
-.ebar, .dmg, .wmark, .alert-mark, .bark { position: absolute; left: 0; top: 0; will-change: translate; }
+.dmg, .alert-mark { position: absolute; left: 0; top: 0; }
+.ebar, .float-anchor, .wmark, .bark { position: absolute; left: 0; top: 0; will-change: translate; }
 /* nameplate: name, then the level in a small diamond (the player's emblem, in miniature) beside a
    framed health bar; marks and weaknesses below. Red is the enemy's colour whatever its rank: an
    elite is told by a gold frame with diamond end caps, not by a gold bar (gold is the boss break). */
@@ -432,8 +433,8 @@ kbd [data-ico] { font-size: 1.25em; }
 .ebar .elv { position: relative; z-index: 1; flex: none; width: calc(20px * var(--uiw)); height: calc(20px * var(--uiw)); margin: calc(-6px * var(--uiw)) 0; display: grid; place-items: center; font: 700 calc(11.5px * var(--uiw))/1 var(--num); color: var(--ink-0); -webkit-text-stroke: 2.5px rgba(7, 9, 20, 0.8); }
 .ebar .elv::before { content: ''; position: absolute; inset: 15%; z-index: -1; transform: rotate(45deg); background: linear-gradient(135deg, #252c4c, #0a0d1c); box-shadow: inset 0 0 0 1px rgba(241, 234, 219, 0.42), 0 0 0 1px rgba(7, 9, 20, 0.85), 0 1px 3px rgba(0, 0, 0, 0.6); }
 .ebar .etrack { position: relative; flex: 1; height: calc(6px * var(--uiw)); border-radius: 1px; background: linear-gradient(180deg, rgba(2, 3, 8, 0.92), rgba(14, 16, 28, 0.86)); box-shadow: 0 0 0 1px rgba(5, 7, 16, 0.95), 0 0 0 2px rgba(241, 234, 219, 0.2), 0 2px 4px rgba(0, 0, 0, 0.45); }
-.ebar .efill, .ebar .eghost { position: absolute; left: 0; top: 0; bottom: 0; width: 100%; }
-.ebar .eghost { background: #ffe6d4; transition: width 0.5s ease 0.2s; }
+.ebar .efill, .ebar .eghost { position: absolute; left: 0; top: 0; bottom: 0; width: 100%; transform-origin: left; }
+.ebar .eghost { background: #ffe6d4; transition: transform 0.5s ease 0.2s; }
 .ebar .efill { z-index: 1; background: linear-gradient(180deg, #ffb1a4 0 1px, #f0505a 1px, #c92a3e 70%, #a51d34); }
 .ebar .armor { position: absolute; left: 0; right: 0; bottom: calc(-4px * var(--uiw)); height: 2px; background: linear-gradient(90deg, #e8e2d6, #a9a49b); box-shadow: 0 0 0 1px rgba(5, 7, 16, 0.7); transition: opacity 0.2s; }
 .ebar .emeta { display: flex; justify-content: space-between; align-items: center; height: calc(14px * var(--uiw)); margin-top: calc(5px * var(--uiw)); padding-left: calc(25px * var(--uiw)); }

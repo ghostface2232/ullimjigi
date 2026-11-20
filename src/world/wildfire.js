@@ -5,10 +5,10 @@
 // The burn map (R scorched, G burning) is shared with terrain and grass shaders.
 import * as THREE from 'three';
 import { G } from '../core/context.js';
-import { BRAZIER_GLSL, COMBUSTION_GLSL } from '../render/flame.js';
+import { BRAZIER_GLSL, FIRE_RAMP, GRASS_FLAME_GLSL } from '../render/flame.js';
 import { windUniforms } from './wind.js';
 import { U } from '../render/materials.js';
-import { rand, randRange, clamp, smoothstep } from '../core/util.js';
+import { rand, randRange, clamp, lerp, smoothstep } from '../core/util.js';
 import { POI } from './layout.js';
 
 const TICK = 0.12;            // spread step (s)
@@ -21,38 +21,60 @@ const VIGOR_DECAY = 0.72, VIGOR_DECAY_DOWNWIND = 0.8, VIGOR_MIN = 0.32;
 const EDGE_X = [1, 0, -1, 0], EDGE_Z = [0, 1, 0, -1];
 const TMP = new THREE.Vector3();
 const FLAMES = 180;           // flame cards drawn around the camera
+// Looks only: a cell's flames wane to this as its fuel runs out, then linger on the ash as
+// low flamelets for a few seconds (no heat, no spread) instead of vanishing with the cell.
+const WANE = 0.62, LINGER = [1.5, 3.2];
+const FIELD_FLAMES = 72;      // most cards the spells' burning fields may take from the pool
 
-// Each instance is a wind-blown fuel particle. Successive births stay tied
-// to a patch of grass and run on the game clock, including during hitstop.
+// Each instance is a card of flame. A brazier's is a short-lived tongue reborn on its own clock.
+// Grass fire stands where it is rooted: its motion comes from the noise rising through the
+// card and its size from the cell's burn, so no two flames keep time with each other.
 const FLAME_VS = /* glsl */ `
 attribute vec4 iFuel;   // foot XYZ, width
-attribute vec2 iCycle;  // phase, aspect (negative for grass rooted on the heightmap)
+attribute vec4 iCycle;  // phase, aspect (negative: ground fire), its heat, glow (negative: -1 - glow, rooted at the foot's own height)
 uniform float uTime;
 uniform vec4 uWindFlow, uHeightP;
 uniform sampler2D uHeightTex;
 varying vec2 vUv;
 varying vec4 vFire;
 varying vec3 vWP;
+varying float vGlow;
 void main() {
-  vUv = uv;
+  vUv = uv; vGlow = 0.0;
   float seed = iCycle.x;
-  float clock = uTime * (1.54 + 1.31 * seed) + seed * 91.0;
-  float age = fract(clock);
-  float birth = fract(sin(floor(clock) * 13.21 + seed * 493.0) * 3914.76);
-  float growth = smoothstep(0.0, 0.18, age);
-  float width = iFuel.w * (0.70 + 0.30 * growth) * (1.0 - 0.43 * age);
-  float height = iFuel.w * abs(iCycle.y) * (0.76 + 0.27 * birth) * (1.0 - 0.16 * age);
   vec3 right = normalize(vec3(viewMatrix[0].x, 0.0, viewMatrix[2].x));
-  vec3 wp = iFuel.xyz + right * (uv.x - 0.5) * width;
-  if (iCycle.y < 0.0) wp.y = texture2D(uHeightTex, (iFuel.xz + uHeightP.x) * uHeightP.y + uHeightP.z).r - 0.025;
-  wp.y += height * (uv.y - 0.10 + 0.38 * age);
-  float pull = age * age * 0.35 + uv.y * uv.y * 0.19;
-  wp.xz += uWindFlow.xy * height * pull * min(1.2, 0.30 + uWindFlow.z * 0.16);
-  if (iCycle.y < 0.0) wp.xz += uWindFlow.xy * height * age * 0.12;
-  wp.xz += right.xz * (birth - 0.5) * iFuel.w * 0.23;
+  float draft = min(1.2, 0.30 + uWindFlow.z * 0.16);
+  vec3 wp;
+  if (iCycle.y < 0.0) {
+    float heat = iCycle.z, vigor = min(heat, 1.0);
+    // an uneven draught: each flame stands taller and sinks back on its own slow beat
+    float gust = 1.0 + 0.17 * sin(uTime * (1.9 + 1.7 * seed) + seed * 40.0) * sin(uTime * (0.83 + 0.9 * seed) + seed * 17.0);
+    float width = iFuel.w * mix(0.58, 1.0, vigor);
+    float height = iFuel.w * -iCycle.y * mix(0.34, 1.0, vigor) * max(1.0, heat) * gust;
+    // a glowing flame's quad reaches past the flame itself, for the light around it
+    vGlow = iCycle.w < 0.0 ? -1.0 - iCycle.w : iCycle.w;
+    if (vGlow > 0.0) vUv = vec2((uv.x - 0.5) * 1.4 + 0.5, uv.y * 1.45);
+    wp = iFuel.xyz + right * (vUv.x - 0.5) * width;
+    wp.y = (iCycle.w < 0.0 ? iFuel.y : texture2D(uHeightTex, (iFuel.xz + uHeightP.x) * uHeightP.y + uHeightP.z).r) - 0.04 + height * vUv.y;
+    wp.xz += uWindFlow.xy * height * vUv.y * 0.36 * draft;
+    // (a flame the camera stands in thins out instead of filling the screen)
+    float fade = smoothstep(0.0, 0.09, heat) * smoothstep(1.1, 3.4, distance(cameraPosition, iFuel.xyz));
+    vFire = vec4(-seed - 0.01, heat, fade, dot(right.xz, uWindFlow.xy) * 0.30 * draft);
+  } else {
+    float clock = uTime * (1.54 + 1.31 * seed) + seed * 91.0;
+    float age = fract(clock);
+    float birth = fract(sin(floor(clock) * 13.21 + seed * 493.0) * 3914.76);
+    float growth = smoothstep(0.0, 0.18, age);
+    float width = iFuel.w * (0.70 + 0.30 * growth) * (1.0 - 0.43 * age);
+    float height = iFuel.w * iCycle.y * (0.76 + 0.27 * birth) * (1.0 - 0.16 * age);
+    wp = iFuel.xyz + right * (uv.x - 0.5) * width;
+    wp.y += height * (uv.y - 0.10 + 0.38 * age);
+    float pull = age * age * 0.35 + uv.y * uv.y * 0.19;
+    wp.xz += uWindFlow.xy * height * pull * draft;
+    wp.xz += right.xz * (birth - 0.5) * iFuel.w * 0.23;
+    vFire = vec4(seed + birth * 0.38, age, growth * (1.0 - smoothstep(0.61, 1.0, age)), dot(right.xz, uWindFlow.xy) * 0.19);
+  }
   vWP = wp;
-  float phase = seed + birth * 0.38;
-  vFire = vec4(iCycle.y < 0.0 ? -phase - 0.01 : phase, age, growth * (1.0 - smoothstep(0.61, 1.0, age)), dot(right.xz, uWindFlow.xy) * 0.19);
   gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
 }`;
 const FLAME_FS = /* glsl */ `
@@ -62,16 +84,22 @@ uniform float uTime;
 varying vec2 vUv;
 varying vec4 vFire;
 varying vec3 vWP;
-${COMBUSTION_GLSL}
+varying float vGlow;
+${FIRE_RAMP}
 ${BRAZIER_GLSL}
+${GRASS_FLAME_GLSL}
 void main() {
-  vec4 flame = vFire.x < 0.0 ? grassCombustion(vUv, -vFire.x, vFire.y)
+  float halo = 0.0;
+  vec4 flame = vFire.x < 0.0 ? grassFlame(vUv, -vFire.x, uTime, vFire.w, vFire.y, halo)
     : brazierCombustion(vUv, vFire.x, vFire.y, uTime, vFire.w);
   float alpha = flame.a * vFire.z;
-  if (alpha < 0.004) discard;
+  halo *= vGlow * vFire.z;
+  if (alpha < 0.004 && halo < 0.004) discard;
   float ground = texture2D(uHeightTex, (vWP.xz + uHeightP.x) * uHeightP.y + uHeightP.z).r;
-  alpha *= smoothstep(-0.035, 0.13, vWP.y - ground);
-  gl_FragColor = vec4(flame.rgb * alpha, alpha * (vFire.x < 0.0 ? 0.96 : 0.85));
+  float above = smoothstep(-0.035, 0.13, vWP.y - ground);
+  alpha *= above;
+  // the glow is added light: it covers nothing (premultiplied, no alpha of its own)
+  gl_FragColor = vec4(flame.rgb * alpha + vec3(0.30, 0.118, 0.022) * halo * above, alpha * (vFire.x < 0.0 ? 0.96 : 0.85));
 }`;
 
 export class Wildfire {
@@ -91,6 +119,9 @@ export class Wildfire {
     this.state = new Uint8Array(N * N);   // 0 grass, 1 burning, 2 scorched
     this.timer = new Float32Array(N * N); // burn / regrow countdown
     this.vigor = new Float32Array(N * N); // how much further this flame can travel
+    this.span = new Float32Array(N * N);  // burn time the cell was lit with
+    this.cardHeat = new Float32Array(N * N); // this frame's flame size of the cells that show flame
+    this.dying = new Map();               // burnt-out cells whose last flamelets still stand, by the time they burnt out
     this.burning = new Set();
     this.airT = 0; this.airBeat = 0;
     this.heatSince = new Map(); // visual age, including the brief afterglow on cooling ash
@@ -114,12 +145,12 @@ export class Wildfire {
     // Key phases to cells so culling, distance sorting and regrowth cannot pop the tongues.
     this.flamePhases = Float32Array.from({ length: FLAMES }, () => rand() * 10);
     this.candBuf = []; this.orderBuf = []; this.edgeBuf = []; this.innerBuf = [];
-    this.cycles = new THREE.InstancedBufferAttribute(new Float32Array(FLAMES * 2), 2).setUsage(THREE.DynamicDrawUsage);
+    this.cycles = new THREE.InstancedBufferAttribute(new Float32Array(FLAMES * 4), 4).setUsage(THREE.DynamicDrawUsage);
     g.setAttribute('iFuel', this.particles); g.setAttribute('iCycle', this.cycles);
     g.instanceCount = 0;
     const mat = new THREE.ShaderMaterial({
       vertexShader: FLAME_VS, fragmentShader: FLAME_FS,
-      uniforms: { uTime: U.time, uNoise: U.noise, uFireVolume: U.fireVolume, uWindFlow: windUniforms.uWindFlow, uHeightTex: U.heightTex, uHeightP: U.heightP },
+      uniforms: { uTime: U.time, uNoise: U.noise, uWindFlow: windUniforms.uWindFlow, uHeightTex: U.heightTex, uHeightP: U.heightP },
       transparent: true, depthWrite: false, blending: THREE.CustomBlending,
       blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
     });
@@ -143,8 +174,8 @@ export class Wildfire {
 
   _light(i, vigor = 1) {
     if (this.state[i] !== 0 || this.fuel[i] < 0.12 || this.burning.size >= MAX_BURNING) return false;
-    this.state[i] = 1; this.vigor[i] = vigor; this.timer[i] = randRange(BURN_TIME[0], BURN_TIME[1]) * (0.7 + 0.5 * this.fuel[i]);
-    this.burning.add(i); this.heatSince.set(i, G.time); this.dirty = true;
+    this.state[i] = 1; this.vigor[i] = vigor; this.timer[i] = this.span[i] = randRange(BURN_TIME[0], BURN_TIME[1]) * (0.7 + 0.5 * this.fuel[i]);
+    this.burning.add(i); this.dying.delete(i); this.heatSince.set(i, G.time); this.dirty = true;
     return true;
   }
   // Set grass alight in a radius. Returns the number of cells that caught.
@@ -174,6 +205,7 @@ export class Wildfire {
       this._scorch(i); n++;
       if (n < 10) G.vfx.burst(tmp.setY(tmp.y + 0.3), 'smoke', 1, { size: 1.2, alpha: 0.35, color: new THREE.Color(0.9, 0.92, 0.95), color1: new THREE.Color(1, 1, 1) });
     }
+    for (const i of this.dying.keys()) { this.cellPos(i, tmp); if ((tmp.x - x) ** 2 + (tmp.z - z) ** 2 <= r * r) this.dying.delete(i); }
     if (n && G.audio.ready) G.audio.play('fizzle', { pos: new THREE.Vector3(x, this.T.height(x, z), z), gap: 0.2 });
     return n;
   }
@@ -226,27 +258,60 @@ export class Wildfire {
         const aspect = chimney ? 1.51 + seed * 0.36 : body ? 1.21 + seed * 0.52 : 0.59 + seed * 0.37;
         this.particles.setXYZW(n, f.pos.x + Math.cos(angle) * r, f.pos.y - 0.08 * f.scale,
           f.pos.z + Math.sin(angle) * r, width * f.scale);
-        this.cycles.setXY(n++, seed, aspect);
+        this.cycles.setXYZW(n++, seed, aspect, 1, 0);
       }
     }
     return n;
   }
 
+  // Burning ground left by spells: the fields own the spots and their heat (`Fields.flameSpots`).
+  writeFields(fields, camera, n, limit) {
+    for (const list of [fields.list, fields.embers]) for (const f of list) {
+      if (!f.flames || f.ended || !(f.heat > 0.03) || f.pos.distanceToSquared(camera) > 70 * 70) continue;
+      for (const c of f.flames) {
+        const gate = 0.04 + 0.24 * c.phase, stands = f.heat * smoothstep(gate, gate + 0.14, f.heat);
+        if (stands < 0.03) continue;
+        if (n >= limit) return n;
+        this.particles.setXYZW(n, c.x, c.y, c.z, c.width);
+        this.cycles.setXYZW(n++, c.phase, -c.aspect, stands, -1 - (c.glow ? smoothstep(0.72, 1.05, f.heat) : 0));
+      }
+    }
+    return n;
+  }
+
+  // How tall a cell's flames stand, for the cards only: a surge as the grass catches, an uneven
+  // burn, waning as the fuel runs out, then the flamelets left on the ash. 0 once they are out.
+  flameHeat(i, rate) {
+    const now = G.time, a = this.flamePhases[i % FLAMES] * 0.1, b = this.flamePhases[(i * 7 + 3) % FLAMES] * 0.1;
+    const uneven = (0.66 + 0.34 * Math.min(1, this.vigor[i]))
+      * (1 + 0.13 * Math.sin(now * (2.0 + 1.4 * a) + b * 40) * Math.sin(now * (0.8 + 0.7 * b) + a * 40));
+    if (this.state[i] === 1) {
+      const age = now - this.heatSince.get(i), left = (this.timer[i] - this.acc * rate) / this.span[i];
+      return smoothstep(0, 0.34, age) * (1 + 0.24 * Math.sin(Math.PI * Math.min(1, age / 0.8))) * lerp(WANE, 1, smoothstep(0, 0.5, left)) * uneven;
+    }
+    const gone = (now - this.dying.get(i)) * rate / lerp(LINGER[0], LINGER[1], b);
+    return gone >= 1 ? 0 : WANE * (1 - gone) ** 1.5 * uneven;
+  }
+
   // Each pocket spans several neighboring emitters on the advancing edge.
-  // Layer short convecting puffs in the gaps and a billowing crown in the pockets.
+  // Low flames fill the gaps and taller ones stand in the pockets.
   writeEdge(cell, side, layer, n, force = false) {
     const phase = this.flamePhases[(cell + side * 13 + layer * 37) % FLAMES] * 0.1;
+    // The flames higher up the front need a hot cell. The lowest go out one by one as it cools.
+    const heat = this.cardHeat[cell], gate = layer ? 0.30 + 0.055 * layer : 0.04 + 0.24 * phase;
+    const stands = heat * smoothstep(gate, gate + 0.14, heat);
+    if (stands < 0.03) return n;
     const nx = EDGE_X[side], nz = EDGE_Z[side], ix = cell % this.N, iz = Math.floor(cell / this.N);
     const along = ((layer * 0.618034 + phase * 0.27 + cell * 0.271) % 1 - 0.5) * 0.95;
     const depth = 0.31 + phase * 0.18 - (layer % 3) * 0.15;
     const x = (ix + nx * depth - nz * along) * this.step - this.half;
     const z = (iz + nz * depth + nx * along) * this.step - this.half;
     const pocket = smoothstep(-0.79, 0.82, Math.sin(x * 0.65 + 1.46 * Math.cos(z * 0.41)) + 0.61 * Math.sin(z * 0.69 - x * 0.24));
-    const growth = smoothstep(0, 0.27, G.time - this.heatSince.get(cell));
     if (!force && pocket < 0.14 + 0.14 * phase && (layer > 0 || phase < 0.70)) return n;
-    const width = (1.20 + phase * 1.04) * (0.44 + 0.77 * pocket) * (0.73 + 0.27 * growth);
+    const width = (1.20 + phase * 1.04) * (0.44 + 0.77 * pocket);
     this.particles.setXYZW(n, x, this.T.h[cell], z, width);
-    this.cycles.setXY(n, phase, -(0.72 + pocket * (0.15 + phase * 0.49)));
+    // only a strong flame glows, and one card of a cell carries it: the light of every layer would add up
+    this.cycles.setXYZW(n, phase, -(0.60 + pocket * (0.13 + phase * 0.45)), stands, layer ? 0 : smoothstep(0.72, 1.05, heat));
     return n + 1;
   }
 
@@ -284,7 +349,7 @@ export class Wildfire {
             if (rand() < p) { fresh.push(j); fv.push(this.vigor[i] * (down > 0.5 ? VIGOR_DECAY_DOWNWIND : VIGOR_DECAY) * (0.85 + 0.15 * f)); }
           }
         }
-        fresh.forEach((j, k) => { if (j < 0) this._scorch(-1 - j); else this._light(j, fv[k]); });
+        fresh.forEach((j, k) => { if (j < 0) { this._scorch(-1 - j); this.dying.set(-1 - j, G.time); } else this._light(j, fv[k]); });
       }
       // regrowth
       if (this.scorched.size) {
@@ -300,14 +365,18 @@ export class Wildfire {
     // --- visuals: flames on burning cells near the camera, one warm light, smoke and embers
     const q = G.settings.quality === 'low' ? 0.5 : 1;
     let n = this.writeBraziers(W.flames || [], camPos, FLAMES * q);
+    if (G.spells) n = this.writeFields(G.spells.fields, camPos, n, Math.min(FLAMES * q, n + FIELD_FLAMES * q));
     let lx = 0, lz = 0, ly = 0, ln = 0;
-    if (this.burning.size) {
+    if (this.burning.size || this.dying.size) {
       const cand = this.candBuf; cand.length = 0;
-      for (const i of this.burning) {
+      const rate = 1 + rain * 3;
+      const show = (i, heat) => {
         this.cellPos(i, tmp);
         const d = (tmp.x - camPos.x) ** 2 + (tmp.z - camPos.z) ** 2;
-        if (d < 110 * 110) cand.push(d, i);
-      }
+        if (d < 110 * 110) { cand.push(d, i); this.cardHeat[i] = heat; }
+      };
+      for (const i of this.burning) show(i, this.flameHeat(i, rate));
+      for (const i of this.dying.keys()) { const heat = this.flameHeat(i, rate); if (heat > 0) show(i, heat); else this.dying.delete(i); }
       // keep the nearest cells (pairs of [dist, idx])
       const order = this.orderBuf; order.length = 0;
       for (let k = 0; k < cand.length; k += 2) order.push(k);
@@ -315,7 +384,9 @@ export class Wildfire {
       const limit = FLAMES * q;
       for (const k of order) {
         if (cand[k] >= 40 * 40) continue;
-        this.cellPos(cand[k + 1], tmp); lx += tmp.x; ly += tmp.y; lz += tmp.z; ln++;
+        // the glow sinks with the last flames instead of cutting out with the last cell
+        const glow = Math.min(1, this.cardHeat[cand[k + 1]]);
+        this.cellPos(cand[k + 1], tmp); lx += tmp.x * glow; ly += tmp.y * glow; lz += tmp.z * glow; ln += glow;
       }
       const edges = this.edgeBuf, inner = this.innerBuf;
       edges.length = 0; inner.length = 0;
@@ -371,7 +442,7 @@ export class Wildfire {
     if (n) this.particles.needsUpdate = this.cycles.needsUpdate = true;
     this.flames.geometry.instanceCount = n;
     this.flames.visible = n > 0;
-    if (ln) {
+    if (ln > 0.01) {
       this.light.position.set(lx / ln, ly / ln + 2, lz / ln);
       // sized for the dark; by day the same light only bleaches the grass (see VFX.lightK)
       this.light.intensity = Math.min(1, ln / 12) * (22 + Math.sin(G.time * 17) * 4) * (G.vfx ? G.vfx.lightK() : 1);
@@ -380,7 +451,7 @@ export class Wildfire {
       }
     } else this.light.intensity = 0;
     // crackle bed at the fire nearest the player
-    const near = ln > 0;
+    const near = ln > 0.01;
     if (near && !this.loop && G.audio.ready) this.loop = G.audio.loop('loop_fire', { pos: this.light.position, v: 0.9, max: 600 });
     if (this.loop) {
       if (!near) { this.loop.stop(1.2); this.loop = null; }

@@ -71,22 +71,6 @@ vec4 combustion(vec2 uv, float seed, float age, float t, float lean) {
   gas.a *= margin.x * margin.y * foot;
   return gas;
 }
-
-vec4 grassCombustion(vec2 uv, float seed, float age) {
-  if (fract(seed * 9.31) < 0.5) uv.x = 1.0 - uv.x;
-  vec4 field = pyroVolume(uv, age * 0.87 + seed * 3.63, 2.0);
-  // Cool soot under brighter pockets provides occlusion between layers.
-  float hot = smoothstep(0.18, 0.63, field.g);
-  float underside = 1.0 - smoothstep(0.11, 0.43, uv.y);
-  float soot = clamp(field.b + (1.0 - hot) * (0.32 + 0.69 * underside), 0.0, 1.0);
-  field.r = clamp(field.r + 0.085 * (fract(seed * 5.73) - 0.5) - soot * 0.29, 0.0, 1.0);
-  field.g *= mix(0.32, 0.87, hot) * (1.0 - soot * 0.39);
-  float bed = underside * (0.37 + 0.54 * (1.0 - hot));
-  field.b = max(field.b, max(soot * 0.85, bed));
-  field.r *= 1.0 - bed * 0.59;
-  field.a *= 0.90;
-  return pyroLight(field, 0.23 * age);
-}
 `;
 
 // The brazier retains its turbulent fuel mask, with the shared gold-to-white emission.
@@ -110,5 +94,38 @@ vec4 brazierCombustion(vec2 uv, float seed, float age, float t, float lean) {
   heat += (1.0 - heat) * 0.18 * (1.0 - smoothstep(0.22, 0.79, y));
   float heart = (1.0 - smoothstep(0.19, 0.49, y)) * smoothstep(0.51, 0.91, thickness);
   return vec4(fireRadiance(heat, heart * (1.0 - smoothstep(0.15, 0.40, y))), mask);
+}
+`;
+
+// Grass fire: one card holds a low bed of flame with several tongues. Fuel noise rises through
+// the card, so the tongues lift, lean and tear at their own pace with no cycle to repeat.
+// `heat` is the cell's burn (1 full, over 1 a flare-up, towards 0 dying): a cooling bed thins
+// into separate red flamelets before it goes out. `halo` is the soft light around the bed, for
+// the cards that carry a glow (their quad leaves room for it beyond the flame).
+export const GRASS_FLAME_GLSL = /* glsl */ `
+vec4 grassFlame(vec2 uv, float seed, float t, float lean, float heat, out float halo) {
+  float y = uv.y, x = uv.x * 2.0 - 1.0;
+  float vigor = min(heat, 1.0), cool = 1.0 - vigor;
+  vec2 travel = vec2(seed * 5.79, seed * 3.87 - t * (0.40 + 0.17 * seed));
+  vec2 sway = texture2D(uNoise, vec2(x * 0.16, y * 0.21) + travel * vec2(1.0, 0.55)).rg - 0.5;
+  x -= y * (lean + 0.62 * sway.x);
+  vec2 p = vec2(x * 0.31, y * 0.30) + travel + sway * vec2(0.13, 0.07);
+  float tongue = texture2D(uNoise, p).g;
+  vec3 lick = texture2D(uNoise, p * vec2(2.6, 1.7) - vec2(seed, t * 0.23)).rgb;
+  float side = abs(uv.x * 2.0 - 1.0);
+  float thickness = 1.20 - 1.34 * y - side * side * (0.50 + 0.62 * y) - 0.50 * cool;
+  thickness += (tongue - 0.5) * 1.66 + (lick.b - 0.5) * 0.40;
+  float mask = smoothstep(0.30, 0.50, thickness) * (1.0 - smoothstep(0.84, 1.0, y));
+  // round and soft, densest about the body of the flame and gone before the quad ends
+  float reach = side * side * 0.56 + (y - 0.34) * (y - 0.34) * (y > 0.34 ? 0.95 : 8.0);
+  halo = (1.0 - smoothstep(0.0, 1.0, reach)) * (0.70 + 0.60 * tongue);
+  halo *= halo;
+  // the bed thins out to nothing at its foot and ends, so no card shows a straight edge on the ground
+  mask *= smoothstep(0.0, 0.11, y - 0.13 * side * side + 0.05 * (lick.g - 0.5)) * (1.0 - smoothstep(0.72, 1.0, side));
+  // gold at the foot and through the body, red only where a tongue thins out towards its tip
+  float temp = clamp(0.46 + min(thickness, 1.3) * 0.37 - 0.34 * y + 0.14 * (lick.r - 0.5) - 0.24 * cool, 0.0, 1.0);
+  float heart = smoothstep(0.80, 1.45, thickness) * (1.0 - smoothstep(0.10, 0.42, y)) * vigor;
+  // thin red gas at the tips lets the flames behind show through
+  return vec4(fireRadiance(temp, heart), mask * (0.58 + 0.42 * smoothstep(0.26, 0.56, temp)));
 }
 `;

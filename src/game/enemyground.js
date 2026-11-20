@@ -54,7 +54,7 @@ export function campMember(c, i, x = c.x, z = c.z) {
 
 export function resolveCamp(W, c, radius, height) {
   const region = regionAt(c.x, c.z).id;
-  let side, formation = c;
+  let formation = c;
   const fitsRing = (c, x, z) => c.units.every((_, i) => {
     const p = campMember(c, i, x, z);
     return fightRoute(W, x, z, p.x, p.z, radius, height);
@@ -62,8 +62,7 @@ export function resolveCamp(W, c, radius, height) {
   const viable = (x, z) => regionAt(x, z).id === region && fightGround(W, x, z, radius, height);
   const accepts = (x, z) => {
     if (!viable(x, z) || !fitsRing(c, x, z)) return false;
-    side = openSide(W, x, z, radius, height, 13, true);
-    return side !== null;
+    return openSide(W, x, z, radius, height, 13, true) !== null;
   };
   const roadDistance = W.terrain.pathInfo(c.x, c.z).d;
   const roadside = roadDistance <= 14 && nearbyGround(c.x, c.z, 25, (x, z) => {
@@ -80,13 +79,12 @@ export function resolveCamp(W, c, radius, height) {
           && fightRoute(W, px, pz, px + d.x * 13, pz + d.z * 13, radius, height);
       })) continue;
       formation = ring;
-      side = d;
       return true;
     }
     return false;
   });
   const site = roadside || nearbyGround(c.x, c.z, 64, accepts);
-  return site && { ...site, side, formationRadius: formation.formationRadius, formationAngle: formation.formationAngle };
+  return site && { ...site, formationRadius: formation.formationRadius, formationAngle: formation.formationAngle };
 }
 
 export function resolveEncounter(W, x, z, radius, height, available) {

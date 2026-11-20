@@ -851,13 +851,13 @@ export class Story {
       let first = true;
       const knight = await this.bossFight(async () => {
         const lv = G.enemies.levelFor(1) + 1;
-        const k = G.enemies.spawnEncounter('knight', V(S.pos.x + 3.2, 0, S.pos.z + 0.5), lv);
-        k.yaw = Math.PI / 2;
+        const k = G.enemies.spawn('knight', V(S.pos.x + 3.2, 0, S.pos.z + 0.5), lv);
+        k.pos.y = S.y + 0.8; k.yaw = Math.PI / 2;
         if (first) {
           first = false;
           await this.conv(async () => {
             // inside the pillar ring, between two pillars (they stand at r 8.2, every 45° from 22.5°), facing the knight
-            G.cameraRig.setCine(V(S.pos.x + 7.4, S.y + 2.9, S.pos.z - 1.2), k.pos.clone().add(V(0, 1.3, 0)));
+            G.cameraRig.setCine(V(S.pos.x + 7.4, S.y + 2.9, S.pos.z - 1.2), V(S.pos.x + 3.2, S.y + 2.1, S.pos.z + 0.5));
             G.audio.play('dissolve', { pos: k.pos });
             G.vfx.burst(k.center(), 'hush', 30, { size: 1.5 });
             await this.say('kaelShadow', '…돌아… 가라…', { cam: false });

@@ -1524,7 +1524,7 @@ class Ooze extends Enemy {
     };
     switch (this.state) {
       case 'idle':
-        if (this.hopT <= 0) { this.hopT = randRange(1.5, 3); hop(this.home.x + randRange(-4, 4), this.home.z + randRange(-4, 4), 1.5); }
+        if (this.hopT <= 0) { this.hopT = randRange(1.5, 3); const to = this.idleDestination(4); if (to) hop(to.x, to.z, 1.5); }
         break;
       case 'alert': this.facePlayer(dt); if (this.stateT > 0.4) this.setState('chase'); break;
       case 'chase':
@@ -2818,7 +2818,7 @@ export function campSite(world, camp) {
     const radius = Math.max(...camp.units.map(t => DEF[t].radius)) * scale + 0.15;
     const height = Math.max(...camp.units.map(t => DEF[t].height)) * scale;
     const site = resolveCamp(world, camp, radius, height);
-    if (!site) console.warn('No walkable camp site:', camp.id);
+    if (!site) console.warn('No walkable camp site, using the authored one:', camp.id);
     sites.set(camp.id, site);
   }
   return sites.get(camp.id);
@@ -2910,7 +2910,6 @@ export class EnemyManager {
   updateCamps() {
     const P = G.player.pos;
     for (const c of this.camps) {
-      if (!c.site) continue;
       const d = Math.hypot(P.x - c.x, P.z - c.z);
       if (!c.spawned && !c.cleared && d < 80 && d > 30 && this.campAllowed(c)) {
         c.spawned = true;

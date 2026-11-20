@@ -129,9 +129,12 @@ export class HUD {
   // browser has rendered a frame without it. (Reading offsetWidth in between restarts it at
   // once, but that reflows the whole HUD in the middle of the frame: 5-10 ms per cast, hit
   // or mana orb in a fight.)
-  restart(el, cls) {
+  // `now`: for something seen at rest and shown outside a fight (a new objective, a menu
+  // heading), where two frames of the resting state before the animation would flash.
+  restart(el, cls, now = false) {
     if (!el) return;
     el.classList.remove(cls);
+    if (now) { void el.offsetWidth; el.classList.add(cls); return; }
     const waiting = (el._restart ||= new Set());
     if (waiting.has(cls)) return;
     waiting.add(cls);
@@ -217,7 +220,7 @@ export class HUD {
     this.el.qtTitle.textContent = title || '';
     if (this.el.qtObj.textContent !== obj) {
       this.el.qtObj.innerHTML = obj || '';
-      if (flash) { this.restart(this.el.qtObj, 'flash'); this.restart($('.qt-ico'), 'flash'); }
+      if (flash) { this.restart(this.el.qtObj, 'flash', true); this.restart($('.qt-ico'), 'flash', true); }
     }
     $('#quest-tracker').style.opacity = title ? 1 : 0;
   }
@@ -1240,7 +1243,7 @@ export class HUD {
       b.addEventListener('mouseenter', () => { if (!this.crBusy) G.audio.play('ui_hover'); });
       b.addEventListener('click', (e) => { e.stopPropagation(); this.crPick(+b.dataset.i); });
     });
-    this.restart(root.querySelector('.cr-head'), 'in');
+    this.restart(root.querySelector('.cr-head'), 'in', true);
     return true;
   }
   crPick(i) {

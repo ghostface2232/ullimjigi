@@ -28,8 +28,11 @@ export function fightRoute(W, x, z, tx, tz, radius, height, minNormal = 0.8) {
 
 // Adjacent clear rays leave room beside the exit as well as along it.
 function openSide(W, x, z, radius, height, distance, wide) {
-  const open = directions.map(d => fightRoute(W, x, z, x + d.x * distance, z + d.z * distance, radius, height, wide ? 0.8 : 0.64));
-  const i = open.findIndex((clear, i) => clear && (!wide || (open[(i + 23) % 24] && open[(i + 1) % 24])));
+  const clear = d => fightRoute(W, x, z, x + d.x * distance, z + d.z * distance, radius, height, wide ? 0.8 : 0.64);
+  // One way out is enough for a single spawn: stop at the first (this runs in the frame a wave appears).
+  if (!wide) return directions.find(clear) ?? null;
+  const open = directions.map(clear);
+  const i = open.findIndex((clear, i) => clear && open[(i + 23) % 24] && open[(i + 1) % 24]);
   return i < 0 ? null : directions[i];
 }
 

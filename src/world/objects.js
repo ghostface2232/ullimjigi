@@ -218,26 +218,33 @@ export class WorldObjects {
       const floor = W.h(site.x, site.z);
       for (const b of props) {
         const x = b.home.x + site.x - c.x, z = b.home.z + site.z - c.z;
-        const isRock = b.kind === 'boulder';
-        const fits = (px, pz) => {
-          const d = Math.hypot(px - site.x, pz - site.z);
-          if (d > (isRock ? 32 : 10)
-            || this.list.some(o => o !== b && Math.hypot(px - o.home.x, pz - o.home.z) < b.r + o.r + 0.3)
-            || !fightGround(W, px, pz, b.r, b.h)) return false;
-          if (isRock) return d >= 10 && W.terrain.pathAt(px, pz) <= 0.3
-            && W.terrain.supportsFootprint(px, pz, b.r, b.r * 0.88, 0.88);
-          if (b.kind === 'barrel' && settled(px, pz)) return false;
-          return d >= 3 && members.every(m => Math.hypot(m.x - px, m.z - pz) >= b.r + 1.5);
-        };
-        const p = isRock
-          ? nearbyGround(x, z, 16, (px, pz) => W.h(px, pz) >= floor + 2 && fits(px, pz))
-            || nearbyGround(site.x, site.z, 32, fits)
-          : nearbyGround(x, z, 18, fits);
+        const apart = (px, pz) => !this.list.some(o => o !== b && Math.hypot(px - o.home.x, pz - o.home.z) < b.r + o.r + 0.3);
+        let p;
+        if (b.kind === 'boulder') {
+          // A boulder sits on a slope above its camp, not on fighting ground. One that is
+          // still above the moved camp stays (seatBoulders settles it); otherwise it takes
+          // the nearest perch that is.
+          b.camp = camp;
+          const perch = (px, pz) => {
+            const d = Math.hypot(px - site.x, pz - site.z), y = W.h(px, pz);
+            return d >= 10 && d <= 32 && y >= floor + 2 && W.terrain.pathAt(px, pz) <= 0.3 && apart(px, pz)
+              && !W.col.navBlocked(px, y, pz, b.r, b.h, 0.05) && W.terrain.supportsFootprint(px, pz, b.r, b.r * 0.88, 0.88);
+          };
+          const d = Math.hypot(b.home.x - site.x, b.home.z - site.z);
+          if (d >= 10 && d <= 32 && W.h(b.home.x, b.home.z) >= floor + 2) continue;
+          p = nearbyGround(x, z, 16, perch) || nearbyGround(site.x, site.z, 32, perch);
+        } else {
+          p = nearbyGround(x, z, 18, (px, pz) => {
+            const d = Math.hypot(px - site.x, pz - site.z);
+            if (d < 3 || d > 10 || !apart(px, pz) || !fightGround(W, px, pz, b.r, b.h)) return false;
+            if (b.kind === 'barrel' && settled(px, pz)) return false;
+            return members.every(m => Math.hypot(m.x - px, m.z - pz) >= b.r + 1.5);
+          });
+        }
         if (!p) continue;
         b.home.set(p.x, W.ground(p.x, p.z), p.z);
         b.pos.copy(b.home);
         this.center(b, b.target.pos);
-        if (isRock) b.camp = camp;
       }
     }
   }

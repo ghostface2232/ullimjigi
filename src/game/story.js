@@ -1524,7 +1524,8 @@ export class Story {
     const done = [1, 2, 3].filter((i) => this.flag('bounty' + i)).length;
     if (!this.quests.q_bounty) return;
     const names = ['뿌리 삼킨 돌무덤 (속삭이는 숲)', '세 자매 울음탈 (동쪽 벼랑)', '눈먼 파수꾼 (북쪽 설원)'];
-    const pts = [[-118, 150], [156, 30], [40, -150]];
+    // where the camps actually stand (EnemyManager resolves them on the terrain)
+    const pts = [1, 2, 3].map((n) => { const c = G.enemies.camps.find((c) => c.bounty === n); return [c.x, c.z]; });
     this.obj('q_bounty', names.map((t, i) => `${this.flag('bounty' + (i + 1)) ? '✓' : '·'} ${t}`).join('<br>') + (this.count('bountyNew') ? '<br>▸ 이솔에게 보고하기' : ''), this.count('bountyNew') ? [{ x: 18, z: 26.5, h: 2.6 }] : pts.filter((_, i) => !this.flag('bounty' + (i + 1))).map(([x, z]) => ({ x, z, h: 4 })));
     if (done >= 3 && !this.count('bountyNew')) this.done('q_bounty', '이솔의 연구 노트를 받았다.');
   }

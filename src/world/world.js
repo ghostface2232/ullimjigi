@@ -19,6 +19,7 @@ import { POI, PATHS, regionAt } from './layout.js';
 import * as B from './buildings.js';
 import { U } from '../render/materials.js';
 import { SHADOW_LAYER } from '../render/renderer.js';
+import { tier } from '../render/quality.js';
 import { crystalMaterial, crystalGeometry, crystalGlowSprite } from '../render/crystal.js';
 import { rand, randRange, mulberry32, TAU } from '../core/util.js';
 
@@ -178,7 +179,8 @@ export class World {
       this.scene.add(mesh);
       // These triangles are already in world space. Opaque surfaces with the
       // same cull side write identical depth, independent of the colour shader.
-      if (b.cast && b.mat.visible && !b.mat.alphaTest && !b.mat.alphaToCoverage &&
+      // (Not on a tier without shadows: a caster that is never drawn would keep its arrays.)
+      if (tier().shadowMap && b.cast && b.mat.visible && !b.mat.alphaTest && !b.mat.alphaToCoverage &&
           !b.mat.displacementMap && !b.mat.wireframe && !b.mat.clippingPlanes) {
         const wp = b.list[0].getWorldPosition(tmp);
         const side = b.mat.shadowSide ?? (b.mat.side === THREE.FrontSide ? THREE.BackSide : b.mat.side === THREE.BackSide ? THREE.FrontSide : THREE.DoubleSide);
@@ -189,7 +191,7 @@ export class World {
       for (const m of b.list) m.parent.remove(m);
       merged += b.list.length;
     }
-    for (const meshes of shadowCells.values()) {
+    for (const [key, meshes] of shadowCells) {
       if (meshes.length < 2) continue;
       const parts = meshes.map(({ geometry }) => {
         const part = new THREE.BufferGeometry();
@@ -198,8 +200,11 @@ export class World {
         return part;
       });
       const geometry = mergeGeometries(parts);
+      if (!geometry) continue;
       compactStatic(geometry);
-      const caster = new THREE.Mesh(geometry, meshes[0].material);
+      // its own plain material: only the cull side reaches the depth pass, and the colour
+      // materials of the merged meshes would compile extra programs for this layout
+      const caster = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ shadowSide: +key.slice(key.lastIndexOf(',') + 1) }));
       caster.matrixAutoUpdate = false;
       caster.layers.set(SHADOW_LAYER);
       caster.castShadow = true;
@@ -232,7 +237,7 @@ export class World {
   }
   // Extra boxes of an authored building (chimney stacks, lean-tos, dormers), in its local frame:
   // { x, z, hw, hd, y0, y1, tilt?: [per metre of local x, of local z] (a sloping top; y1 at the centre) }
-  // Like the walls they belong to, they give no grip; a top within reach can still be vaulted.
+  // Like the walls they belong to, they give no grip; a top within reach of the ground can still be vaulted.
   solidParts(obj, list) {
     const by = obj.getWorldPosition(new THREE.Vector3()).y;
     for (const s of list || []) {

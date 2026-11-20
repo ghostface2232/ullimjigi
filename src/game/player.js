@@ -18,6 +18,7 @@ const CLIMB_NORMAL_Y = Math.cos(65 * Math.PI / 180);
 const CLIMB_NORMAL_SPAN = 0.25; // Resolve the face instead of averaging it with adjacent shelves.
 const MANTLE_HEIGHT = 1.45;
 const SLIDE_ACCEL = 20; // down the fall line of ground too steep to stand on (m/s²)
+const LEDGE_NORMAL_Y = 0.8; // a foothold on a steep face has to be about this level to hold
 
 export function xpNeed(lv) { return Math.round(30 * Math.pow(lv, 1.6)); }
 
@@ -327,13 +328,15 @@ export class Player {
         } else this.grounded = false;
       }
       // Ground too steep to walk up is no footing either: the body slides down the fall
-      // line and cannot jump from it. Both spans must be steep, so a ledge under a wall
-      // (steep on average) and the riser of a step (steep only locally) still hold.
+      // line and cannot jump from it. The wide span decides (so the riser of a step holds),
+      // unless the spot itself is close to level: a ledge under a wall, the flat at a cliff's
+      // foot. A patch of 45 degrees on a steeper face is not a ledge (hops chained up those). Only
+      // in free play: a body that is down, talking or staged by the story stays where it is.
       this.sliding = false;
-      if (this.grounded && !this.swimming && ground - W.h(this.pos.x, this.pos.z) < 0.01) {
+      if (act && this.grounded && !this.swimming && ground - W.h(this.pos.x, this.pos.z) < 0.01) {
         const s = W.terrain.normal(this.pos.x, this.pos.z, tmp2);
         const sl = Math.hypot(s.x, s.z) || 1, sx = s.x / sl, sz = s.z / sl;
-        if (s.y < WALK_NORMAL_Y && W.terrain.normal(this.pos.x, this.pos.z, tmp2, undefined, CLIMB_NORMAL_SPAN).y < WALK_NORMAL_Y) {
+        if (s.y < WALK_NORMAL_Y && W.terrain.normal(this.pos.x, this.pos.z, tmp2, undefined, CLIMB_NORMAL_SPAN).y < LEDGE_NORMAL_Y) {
           this.sliding = true;
           this.vel.x += sx * SLIDE_ACCEL * dt; this.vel.z += sz * SLIDE_ACCEL * dt;
         }

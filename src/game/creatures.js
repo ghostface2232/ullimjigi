@@ -816,7 +816,7 @@ class FoxRig extends CreatureRig {
     this.glanceT = 3; this.glance = 0; this.glanceTo = 0;
     this.lean = new V3();
     this.wind = new V3();
-    this.stridePhase = 0; this.travel = 0;
+    this.swim = 0; this.travel = 0; this.legSp = new Spring(60, 9);
     this.t = rand() * 10;
   }
   update(dt, s = {}) {
@@ -828,17 +828,17 @@ class FoxRig extends CreatureRig {
     const spd = Math.hypot(vl.x, vl.z);
     const fly = sstep(0.4, 5, spd);          // 0 hover .. 1 dashing through the air
     this.travel = damp(this.travel, sstep(0.2, 1.6, spd), 9, dt);
-    this.stridePhase = (this.stridePhase + dt * mix(1.8, 3.4, fly) * this.travel) % 1;
-    const stride = this.stridePhase * TAU, bound = sstep(2.8, 6.5, spd);
+    // One slow wave runs from nose to tail. It quickens in flight but never becomes a gait.
+    this.swim = (this.swim + dt * mix(2.2, 3.3, this.travel)) % TAU;
+    const sw = this.swim, amp = 1 + 0.8 * this.travel * (1 - fly * 0.5);
     const accel = this.acc.x * Math.sin(this.prevYaw) + this.acc.z * Math.cos(this.prevYaw);
     // body attitude: nose into motion, bank into turns, rise/fall pitch
     this.lean.x = damp(this.lean.x, clamp(vl.z * 0.05 - vl.y * 0.06 + accel * 0.008, -0.35, 0.35), 6, dt);
     this.lean.z = damp(this.lean.z, clamp(-this.yawRate * 0.12 - vl.x * 0.04, -0.4, 0.4), 4, dt);
-    const bob = Math.sin(t * 2.2);
-    this.body.position.y = bob * 0.06 * (1 - this.travel * 0.65) + Math.cos(stride * 2) * 0.018 * this.travel;
-    rot(B.hips, this.lean.x * 0.6 + Math.sin(t * 2.2 - 0.6) * 0.04, 0, this.lean.z + Math.sin(t * 1.3) * 0.05);
-    rot(B.spine, Math.sin(t * 2.2 - 1.2) * 0.05 + fly * 0.08, Math.sin(t * 1.1) * 0.04, 0);
-    rot(B.chest, -Math.sin(t * 2.2 - 1.8) * 0.05 + this.lean.x * 0.3, -Math.sin(t * 1.1) * 0.04, 0);
+    this.body.position.y = Math.sin(sw) * 0.06 * (1 - this.travel * 0.65);
+    rot(B.hips, this.lean.x * 0.6 + Math.sin(sw - 0.6) * 0.04 * amp, 0, this.lean.z + Math.sin(t * 1.3) * 0.05);
+    rot(B.spine, Math.sin(sw - 1.2) * 0.05 * amp + fly * 0.08, Math.sin(t * 1.1) * 0.04, 0);
+    rot(B.chest, -Math.sin(sw - 1.8) * 0.05 * amp + this.lean.x * 0.3, -Math.sin(t * 1.1) * 0.04, 0);
     // head: look target, idle glances and curious tilts, talk nods
     this.glanceT -= dt;
     if (this.glanceT <= 0) { this.glanceT = 2.5 + rand() * 4; this.glanceTo = rand() < 0.5 ? (rand() - 0.5) * 1.2 : 0; this.tiltTo = rand() < 0.35 ? (rand() - 0.5) * 0.7 : 0; }
@@ -850,7 +850,7 @@ class FoxRig extends CreatureRig {
     else this.talkTo = 0;
     this.jaw = damp(this.jaw, this.talkTo, 20, dt);
     const nod = s.talk ? Math.sin(t * 5.2) * 0.06 : 0;
-    rot(B.neck, -0.12 - this.lean.x * 0.5 + Math.sin(t * 2.2 - 2.2) * 0.04 - fly * 0.12, look * 0.45, this.tilt * 0.3);
+    rot(B.neck, -0.12 - this.lean.x * 0.5 + Math.sin(sw - 2.2) * 0.04 - fly * 0.12, look * 0.45, this.tilt * 0.3);
     rot(B.head, 0.05 + nod + Math.sin(t * 1.7) * 0.04 - fly * 0.1, look * 0.55, this.tilt * 0.7 - this.lean.z * 0.3);
     rot(B.jaw, this.jaw, 0, 0);
     // ears: back in fast flight, perk while talking, random twitches
@@ -867,21 +867,20 @@ class FoxRig extends CreatureRig {
     this.blink = Math.max(0, this.blink - dt / 0.15);
     const bl = this.blink > 0 ? 1 - Math.sin(this.blink * Math.PI) * 0.9 : 1;
     B.eyeL.scale.set(1, bl, 1); B.eyeR.scale.set(1, bl, 1);
-    // Diagonal trot grows into a gathered/reaching bound. Feet continue cycling
-    // through fast flight instead of freezing into a stretched silhouette.
-    const tr = t * 2.6;
+    // Legs are carried, not cycled: loose under a hovering body, the fore paws folded to the
+    // chest and the hind legs trailing in flight. They only lag the body's accelerations
+    // (start, stop, rise, fall) and drift with its wave.
+    const drag = this.legSp.step(clamp(accel * 0.025 - vl.y * 0.06, -0.4, 0.4), dt), tk = this.travel;
     for (let k = 0; k < 2; k++) {
-      const n = k ? 'R' : 'L', ph = k ? Math.PI : 0;
-      const a = Math.sin(tr + ph), b = Math.cos(tr + ph);
-      const fp = stride + ph * (1 - bound * 0.85), hp = fp + Math.PI * (1 - bound * 0.6);
-      const fs = Math.cos(fp), hs = Math.cos(hp), reach = 0.45 + 0.45 * fly;
-      rot(B['fArm' + n], mix(0.25 + a * 0.22, -0.2 - fs * reach, this.travel), 0, 0);
-      rot(B['fFore' + n], mix(-0.35 - Math.max(0, b) * 0.5, -0.3 - Math.max(0, Math.sin(fp)) * 0.85, this.travel), 0, 0);
-      rot(B['fPaw' + n], mix(0.5 + Math.max(0, -b) * 0.3, 0.65 + Math.sin(fp - 0.5) * 0.25, this.travel), 0, 0);
-      rot(B['hThigh' + n], mix(0.1 - a * 0.2, 0.25 - hs * reach, this.travel), 0, 0);
-      rot(B['hShin' + n], mix(0.25 + Math.max(0, b) * 0.3, 0.3 + Math.max(0, Math.sin(hp)) * 0.65, this.travel), 0, 0);
-      rot(B['hFoot' + n], mix(-0.2, 0.15 - Math.sin(hp - 0.5) * 0.3, this.travel), 0, 0);
-      rot(B['hPaw' + n], mix(0.45, 0.6 + Math.sin(hp - 0.7) * 0.2, this.travel), 0, 0);
+      const n = k ? 'R' : 'L', off = (k ? -1 : 1) * mix(0.13, 0.06, tk);   // one paw held a little higher
+      const df = Math.sin(sw - 1.4 + k * 1.1) * 0.05, dh = Math.sin(sw - 2.6 + k * 1.1) * 0.06;
+      rot(B['fArm' + n], mix(0.45, 0.9, tk) + fly * 0.1 + off + drag + df, 0, 0);
+      rot(B['fFore' + n], mix(-1.15, -2.3, tk) - fly * 0.1 - off * 2 - drag * 0.6 - df * 0.5, 0, 0);
+      rot(B['fPaw' + n], mix(1.0, 1.5, tk) + drag * 0.5, 0, 0);
+      rot(B['hThigh' + n], mix(0.05, 0.7, tk) + fly * 0.35 - off + drag + dh, 0, 0);
+      rot(B['hShin' + n], mix(0.4, 0.35, tk) + fly * 0.2 + drag * 0.5 + dh * 0.5, 0, 0);
+      rot(B['hFoot' + n], mix(-0.1, 0.1, tk) + fly * 0.2, 0, 0);
+      rot(B['hPaw' + n], mix(0.7, 0.8, tk) + drag * 0.4, 0, 0);
     }
     // hit flinch
     const hk = this.hurtSp.x * 0.06;

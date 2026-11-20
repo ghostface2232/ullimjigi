@@ -203,13 +203,14 @@ export class World {
   }
   // Extra boxes of an authored building (chimney stacks, lean-tos, dormers), in its local frame:
   // { x, z, hw, hd, y0, y1, tilt?: [per metre of local x, of local z] (a sloping top; y1 at the centre) }
+  // Like the walls they belong to, they give no grip; a top within reach can still be vaulted.
   solidParts(obj, list) {
     const by = obj.getWorldPosition(new THREE.Vector3()).y;
     for (const s of list || []) {
       const p = obj.localToWorld(new THREE.Vector3(s.x, 0, s.z));
       const c = this.col.addBox(p.x, p.z, s.hw, s.hd, obj.rotation.y, by + s.y0, by + s.y1 + (s.tilt ? Math.abs(s.tilt[0]) * s.hw + Math.abs(s.tilt[1]) * s.hd : 0));
       if (s.tilt) c.topFn = (lx, lz) => by + s.y1 + s.tilt[0] * lx + s.tilt[1] * lz;
-      c.base = by;
+      c.base = by; c.climb = false;
     }
   }
   // shapes it would look odd to scale or stand on (lanterns, columns, braziers, altars)
@@ -302,7 +303,8 @@ export class World {
       const ry = this.faceTo(hd.x, hd.z, plaza.x, plaza.z) + randRange(-0.12, 0.12);
       this.place(g, hd.x, hd.z, ry, -0.2);
       const u = g.userData, by = g.position.y;
-      this.solid(g, { hw: u.w / 2, hd: u.d / 2, top: by + u.height, topFn: (lx, lz) => by + u.roofTop(lx, lz) });
+      // house walls give no grip (the roof is still a floor for whoever glides onto it)
+      this.solid(g, { hw: u.w / 2, hd: u.d / 2, climb: false, top: by + u.height, topFn: (lx, lz) => by + u.roofTop(lx, lz) });
       this.solidParts(g, u.solids);
       if (g.userData.chimney) this.chimneys.push(g.localToWorld(g.userData.chimney.clone()));
       this.houses[hd.id] = g;
@@ -375,8 +377,8 @@ export class World {
     this.anims.push((dt) => { wm.userData.rotor.rotation.z += dt * 0.6 * U.wind.value; });
     // well, stalls, benches
     this.place(B.well(), -4, 16); this.col.addCircle(-4, 16, 1.5, this.h(-4, 16) - 1, this.h(-4, 16) + 1.2);
-    const s1 = B.stall(B.MAT.clothRed); this.place(s1, 15, 9, this.faceTo(15, 9, 6, 14)); this.col.addBox(15, 9, 1.6, 0.8, s1.rotation.y, -10, this.h(15, 9) + 2.95);
-    const s2 = B.stall(B.MAT.clothBlue); this.place(s2, -2, 26, this.faceTo(-2, 26, 6, 14)); this.col.addBox(-2, 26, 1.6, 0.8, s2.rotation.y, -10, this.h(-2, 26) + 2.95);
+    const s1 = B.stall(B.MAT.clothRed); this.place(s1, 15, 9, this.faceTo(15, 9, 6, 14)); this.col.addBox(15, 9, 1.6, 0.8, s1.rotation.y, -10, this.h(15, 9) + 2.95).climb = false;
+    const s2 = B.stall(B.MAT.clothBlue); this.place(s2, -2, 26, this.faceTo(-2, 26, 6, 14)); this.col.addBox(-2, 26, 1.6, 0.8, s2.rotation.y, -10, this.h(-2, 26) + 2.95).climb = false;
     for (const [x, z] of [[-12, 6], [-4, -6], [-12, -8]]) this.place(B.bench(), x, z, this.faceTo(x, z, -8, -2) + Math.PI);
     // fences at village edge
     // (the south run stands either side of the tower road, which crosses z = 58 at x = 4)

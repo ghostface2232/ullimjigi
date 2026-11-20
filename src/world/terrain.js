@@ -17,6 +17,10 @@ const SKIRT = [3, 6, 12, 24];     // skirt depth per LOD: hides cracks between n
 // Cliffs (Terrain.initCliffs): plan size (m) of a rock mass, the least half-width of the
 // face between two masses, and how far (m) the walls swell and hollow (Terrain.sculpt).
 const CL0 = 19, BEV0 = 1.0, BAMP = 0.45;
+// How far (m) a rock mass may stand above the smooth ground it replaces, d metres into the
+// rock from the nearest ground that is not rock: ENV[0] + d * (ENV[1] + d * ENV[2]), eased
+// over ENV[3] (Terrain.cliffAt).
+const ENV = [0.4, 0.6, 0.25, 1.2];
 // Mirror Lake, clockwise in local metres. The third value is the shore grade:
 // a shallow landing on the village road, a willow point in the southeast,
 // a long western inlet and a raised headland separating it from the north bay.
@@ -149,6 +153,33 @@ function* bounds(g) {
 }
 
 // Area-weighted vertex normals of a heightfield grid (what computeVertexNormals gives the mesh).
+// Distance (m) from each grid point to the nearest one where `inside` is false (a chamfer
+// transform), blurred so the limit it sets on the rock has no crease down the middle.
+function gridDistance(N, st, inside) {
+  let d = new Float32Array(N * N);
+  const o = st, g = st * Math.SQRT2;
+  for (let i = 0; i < N * N; i++) d[i] = inside(i) ? 1e6 : 0;
+  for (let iz = 1; iz < N - 1; iz++) for (let ix = 1; ix < N - 1; ix++) {
+    const i = iz * N + ix;
+    if (d[i] > 0) d[i] = Math.min(d[i], d[i - 1] + o, d[i - N] + o, d[i - N - 1] + g, d[i - N + 1] + g);
+  }
+  for (let iz = N - 2; iz > 0; iz--) for (let ix = N - 2; ix > 0; ix--) {
+    const i = iz * N + ix;
+    if (d[i] > 0) d[i] = Math.min(d[i], d[i + 1] + o, d[i + N] + o, d[i + N + 1] + g, d[i + N - 1] + g);
+  }
+  for (let pass = 0; pass < 2; pass++) {
+    const b = d.slice();
+    for (let iz = 1; iz < N - 1; iz++) for (let ix = 1; ix < N - 1; ix++) {
+      const i = iz * N + ix;
+      b[i] = (d[i] * 4 + (d[i - 1] + d[i + 1] + d[i - N] + d[i + N]) * 2 + d[i - N - 1] + d[i - N + 1] + d[i + N - 1] + d[i + N + 1]) / 16;
+    }
+    d = b;
+  }
+  return d;
+}
+// the lower of a and b, rounded where they cross (within k)
+const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * 0.25; };
+
 function gridNormals(H, N, st) {
   const nrm = new Float32Array(N * N * 3), seg = N - 1;
   const add = (i, x, y, z) => { nrm[i * 3] += x; nrm[i * 3 + 1] += y; nrm[i * 3 + 2] += z; };
@@ -257,6 +288,7 @@ export class Terrain {
     // ...and make it a clear either/or with a narrow blend, so planes stay planes
     for (let i = 0; i < cnt; i++) w[i] = smoothstep(0.08, 0.5, w[i]);
     this.cw = w;
+    this.cd = gridDistance(N, st, (i) => CWR(w[i]) > 0);
     this.sites = new Map();
     this._top = 1;
     for (let i = 0; i < cnt; i++) if (CWR(w[i]) > 0) H[i] = this.cliffAt(-this.half + (i % N) * st, -this.half + Math.floor(i / N) * st, this.base[i], CWR(w[i]));
@@ -332,9 +364,15 @@ export class Terrain {
   }
 
   // The rock surface at (x, z), given the smooth ground hb and the cliff weight w there.
+  // A mass is a plane fitted where it stands, so over curved ground (the lip of a bank, a
+  // road on a causeway) it can run metres above the surface it replaces. Next to ground that
+  // is not rock that showed as a thin blade standing up from the grass, so the rock may only
+  // rise as it goes in from its edge: a narrow strip stays a low outcrop, a wide massif is
+  // not affected past its foot.
   cliffAt(x, z, hb, w) {
     this.warp(x, z);
-    const t = this.mass(this._qx, this._qz);
+    const d = this.sampleGrid(this.cd, x, z);
+    const t = smin(this.mass(this._qx, this._qz), hb + ENV[0] + d * (ENV[1] + d * ENV[2]), ENV[3]);
     this._top = this._t; this._dh = t - hb;
     return hb + (t - hb) * w;
   }

@@ -10,7 +10,7 @@ const directions = Array.from({ length: 24 }, (_, i) => {
 export function fightGround(W, x, z, radius, height, minNormal = 0.8) {
   const T = W.terrain, y = T.height(x, z);
   return T.inWorld(x, z) && y >= W.water.level + 0.5
-    && T.sampleGrid(T.cw, x, z) === 0 && T.normal(x, z, normal).y >= minNormal
+    && T.sampleGrid(T.cw, x, z) <= 0.3 && T.normal(x, z, normal).y >= minNormal
     && !W.col.navBlocked(x, W.ground(x, z), z, radius, height, 0);
 }
 
